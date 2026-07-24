@@ -3,9 +3,9 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ShirtStockTable } from "@/components/mvp/ShirtStockTable";
-import { EmptyState } from "@/components/mvp/EmptyState";
 
 type ShirtInventoryRow = {
+  id: string;
   events?: { name?: string | null } | null;
   shirt_type: string;
   shirt_size: string;
@@ -23,6 +23,7 @@ async function getStock() {
   if (error) throw error;
 
   return (data ?? []).map((row: ShirtInventoryRow) => ({
+    id: row.id,
     event_name: row.events?.name ?? null,
     shirt_type: row.shirt_type,
     shirt_size: row.shirt_size,
@@ -41,12 +42,8 @@ export default async function ShirtsPage() {
         <Sidebar />
         <div className="flex-1 space-y-6">
           <TopBar title="Camisetas" subtitle="Controle de estoque por modelo e tamanho" />
-          <SectionCard title="Estoque real" description="Consulte total, reservadas, entregues e disponíveis.">
-            {rows.length === 0 ? (
-              <EmptyState title="Sem estoque para o evento ativo" description="Cadastre linhas de estoque para o evento ativo para começar." />
-            ) : (
-              <ShirtStockTable rows={rows} />
-            )}
+          <SectionCard title="Estoque real" description="Gerencie encomendas e ajustes sem duplicar combinações de modelo e tamanho.">
+            <ShirtStockTable rows={rows} />
           </SectionCard>
         </div>
       </div>
