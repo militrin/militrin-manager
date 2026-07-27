@@ -12,11 +12,11 @@ const BENEFITS_BY_LEVEL: Record<string, string[]> = {
 };
 
 function progressMessage(remaining: number, nextLevelName: string | null, completed: boolean) {
-  if (completed) return 'Voce alcancou o nivel maximo do Militrin.';
-  if (!nextLevelName) return 'Seu proximo nivel sera exibido quando houver nova faixa ativa.';
+  if (completed) return 'Você alcançou o nível máximo do Militrin.';
+  if (!nextLevelName) return 'Seu próximo nível será exibido quando houver nova faixa ativa.';
   return remaining === 1
-    ? `Falta 1 participacao confirmada para chegar ao ${nextLevelName}.`
-    : `Faltam ${remaining} participacoes confirmadas para chegar ao ${nextLevelName}.`;
+    ? `Falta 1 participação oficial para chegar ao ${nextLevelName}.`
+    : `Faltam ${remaining} participações oficiais para chegar ao ${nextLevelName}.`;
 }
 
 export default async function NivelPage() {
@@ -50,7 +50,7 @@ export default async function NivelPage() {
       <MilitrinSection
         eyebrow="Minha categoria"
         title={String(currentLevel.name)}
-        description={`Voce possui ${confirmedParticipations} participacoes confirmadas no Militrin.`}
+        description={`Você possui ${confirmedParticipations} participações oficiais no Militrin.`}
         action={<MilitrinBadge tone="success">{String(currentLevel.badge)}</MilitrinBadge>}
       >
         <MilitrinProgress
@@ -60,14 +60,14 @@ export default async function NivelPage() {
         />
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <MilitrinStat label="Participacoes" value={confirmedParticipations} />
-          <MilitrinStat label="Nivel atual" value={String(currentLevel.name)} />
+          <MilitrinStat label="Participações oficiais" value={confirmedParticipations} />
+          <MilitrinStat label="Nível atual" value={String(currentLevel.name)} />
           <MilitrinStat label="Badge" value={String(currentLevel.badge)} />
         </div>
       </MilitrinSection>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <MilitrinSection eyebrow="Historico" title="Ultimas participacoes" description="Pedidos confirmados mais recentes.">
+        <MilitrinSection eyebrow="Histórico" title="Últimas participações" description="Pedidos confirmados mais recentes.">
           <div className="space-y-2">
             {history.length ? history.map((item) => {
               const eventObj = Array.isArray(item.events) ? item.events[0] : item.events;
@@ -101,7 +101,7 @@ export default async function NivelPage() {
               <article key={level.slug} className={`rounded-2xl border p-4 ${active ? 'border-emerald-400/50 bg-emerald-400/10' : 'border-slate-800 bg-slate-950/60'}`}>
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{String(level.badge)}</p>
                 <h3 className="mt-2 text-lg font-semibold text-white">{String(level.name)}</h3>
-                <p className="mt-2 text-xs text-slate-300">{level.minConfirmedParticipations}+ participacoes</p>
+                <p className="mt-2 text-xs text-slate-300">{level.minConfirmedParticipations}+ participações oficiais</p>
                 <p className="mt-1 text-xs text-slate-400">{active ? 'Nivel atual' : 'Disponivel'}</p>
               </article>
             );

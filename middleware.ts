@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 
 function getSupabaseKey() {
   return process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -43,6 +44,7 @@ export async function middleware(request: NextRequest) {
     '/cupons',
     '/financeiro',
     '/configuracao',
+    '/configuracoes',
   ];
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 
@@ -56,7 +58,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname === '/entrar' && user) {
-    const destination = request.nextUrl.searchParams.get('next') || '/minha-conta';
+    const destination = sanitizePostFirstAccessNextPath(request.nextUrl.searchParams.get('next'), '/minha-conta');
     return NextResponse.redirect(new URL(destination, request.url));
   }
 

@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
+import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { inferColumnMapping, type CanonicalField } from '@/lib/imports/columns';
 import { parseSpreadsheetFile } from '@/lib/imports/parse-file';
@@ -172,32 +174,29 @@ async function maybeCreateOrInviteImportedAccount(params: {
     return { userId: null as string | null, activationSent, pendingActivation: true };
   }
 
-  await supabase.rpc('upsert_customer_profile', {
-    p_user_id: invitedUserId,
-    p_full_name: params.fullName,
-    p_cpf: params.cpf,
-    p_birth_date: params.birthDate,
-    p_gender: params.gender,
-    p_phone: params.phone,
-    p_email: params.email,
-    p_city: params.city,
-    p_loyalty_tier_id: null,
-    p_loyalty_override: false,
-    p_loyalty_override_reason: null,
-    p_show_in_participant_list: true,
-    p_allow_friend_requests: true,
-    p_profile_visibility: 'participants',
+  await upsertCustomerProfileCompat(supabase, {
+    userId: invitedUserId,
+    fullName: params.fullName,
+    cpf: params.cpf,
+    birthDate: params.birthDate,
+    gender: params.gender,
+    phone: params.phone,
+    email: params.email,
+    city: params.city,
+    loyaltyTierId: null,
+    loyaltyOverride: false,
+    loyaltyOverrideReason: null,
+    showInParticipantList: true,
+    allowFriendRequests: true,
+    profileVisibility: 'participants',
   });
 
-  await supabase
-    .from('customer_profiles')
-    .update({
-      account_status: allowDevCpfPassword ? 'active' : 'pending_activation',
-      must_complete_profile: true,
-      must_change_password: allowDevCpfPassword,
-      imported_at: new Date().toISOString(),
-    })
-    .eq('user_id', invitedUserId);
+  await updateCustomerProfileCompat(supabase, invitedUserId, {
+    account_status: allowDevCpfPassword ? 'active' : 'pending_activation',
+    must_complete_profile: true,
+    must_change_password: allowDevCpfPassword,
+    imported_at: new Date().toISOString(),
+  });
 
   return {
     userId: invitedUserId,

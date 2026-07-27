@@ -10,11 +10,8 @@ import {
   checkPublicCpfAction,
   createPublicRegistrationAction,
   generatePublicPixAction,
-  getPublicAccountEmailStatusAction,
   getPublicPricingPreviewAction,
-  getPublicSessionAction,
-  signInPublicAccountAction,
-  signUpPublicAccountAction,
+  saveCheckoutBuyerProfileAction,
   simulatePublicPaymentAction,
 } from '@/app/inscricao/actions';
 import { TicketViewer } from '@/components/public/TicketViewer';
@@ -23,7 +20,6 @@ import {
   formatCpf,
   formatPhone,
   removeCpfMask,
-  registrationSchema,
 } from '@/lib/validation/registration';
 import { formatDateTimeBR, formatISOToDateBR } from '@/lib/utils/date';
 
@@ -81,6 +77,22 @@ type WizardProps = {
   benefitsByCategory: Record<string, Benefit[]>;
   kitItems: KitItem[];
   inventory: InventoryRow[];
+  initialBuyer: {
+    full_name: string;
+    cpf: string;
+    birth_date: string;
+    gender: string;
+    phone: string;
+    email: string;
+    city: string;
+    privacy_policy_accepted: boolean;
+    privacy_policy_accepted_at: string | null;
+    missing_fields: string[];
+    locked: {
+      cpf: boolean;
+      birth_date: boolean;
+    };
+  };
 };
 
 type PricingState = {
@@ -180,27 +192,29 @@ export function RegistrationWizard({
   benefitsByCategory,
   kitItems,
   inventory,
+  initialBuyer,
 }: WizardProps) {
   const canSimulatePayment = process.env.NODE_ENV === 'development';
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [step, setStep] = useState(1);
+  const [maxUnlockedStep, setMaxUnlockedStep] = useState(1);
   const [liveMessage, setLiveMessage] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>({
-    full_name: '',
-    cpf: '',
-    birth_date: '',
-    gender: '',
-    phone: '',
-    email: '',
-    city: '',
+    full_name: initialBuyer.full_name || '',
+    cpf: initialBuyer.cpf ? formatCpf(initialBuyer.cpf) : '',
+    birth_date: initialBuyer.birth_date ? formatISOToDateBR(initialBuyer.birth_date) : '',
+    gender: initialBuyer.gender || '',
+    phone: initialBuyer.phone ? formatPhone(initialBuyer.phone) : '',
+    email: initialBuyer.email || '',
+    city: initialBuyer.city || '',
     category_id: '',
     payment_method: 'pix',
     coupon_code: '',
     shirt_type: '',
     shirt_size: '',
-    lgpd: false,
+    lgpd: Boolean(initialBuyer.privacy_policy_accepted),
   });
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [couponFeedback, setCouponFeedback] = useState<string | null>(null);
@@ -212,18 +226,11 @@ export function RegistrationWizard({
     shirtType: '',
     shirtSize: '',
   });
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [accountExists, setAccountExists] = useState<boolean | null>(null);
-  const [checkingEmail, setCheckingEmail] = useState(false);
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [courtesyMessage, setCourtesyMessage] = useState<string | null>(null);
   const [timeTick, setTimeTick] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
   const submitLockRef = useRef(false);
 
   const topRef = useRef<HTMLHeadingElement | null>(null);
@@ -270,11 +277,17 @@ export function RegistrationWizard({
   const storageKey = useMemo(() => `militrin:wizard:${event.id}:${STORAGE_VERSION}`, [event.id]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem('militrin:last-wizard-next', `/inscricao/${event.slug}`);
+  }, [event.slug]);
+
+  useEffect(() => {
     const persisted = sessionStorage.getItem(storageKey);
     if (!persisted) return;
     try {
       const parsed = JSON.parse(persisted) as {
         step: number;
+        maxUnlockedStep?: number;
         form: FormState;
         shirtType?: string;
         shirtSize?: string;
@@ -290,6 +303,7 @@ export function RegistrationWizard({
         setShirtSize(restoredShirtSize);
         setKitSelections(parsed.kitSelections ?? { shirtType: restoredShirtType, shirtSize: restoredShirtSize });
         if (parsed.step) setStep(Math.min(7, Math.max(1, parsed.step)));
+        if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(7, Math.max(1, parsed.maxUnlockedStep)));
         if (parsed.pricing) setPricing(parsed.pricing);
         if (parsed.registration) setRegistration(parsed.registration);
       }, 0);
@@ -303,6 +317,7 @@ export function RegistrationWizard({
       storageKey,
       JSON.stringify({
         step,
+        maxUnlockedStep,
         form,
         shirtType,
         shirtSize,
@@ -311,57 +326,7 @@ export function RegistrationWizard({
         registration,
       }),
     );
-  }, [form, shirtType, shirtSize, kitSelections, pricing, registration, step, storageKey]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadSession() {
-      const result = await getPublicSessionAction();
-      if (!mounted || !result.success || !result.authenticated || !result.user) return;
-
-      setIsLoggedIn(true);
-      setAuthUserId(result.user.id);
-      setAccountExists(true);
-
-      setForm((prev) => ({
-        ...prev,
-        full_name: result.profile?.full_name || prev.full_name,
-        cpf: result.profile?.cpf ? formatCpf(result.profile.cpf) : prev.cpf,
-        birth_date: result.profile?.birth_date ? formatISOToDateBR(result.profile.birth_date) : prev.birth_date,
-        gender: result.profile?.gender || prev.gender,
-        phone: result.profile?.phone ? formatPhone(result.profile.phone) : prev.phone,
-        email: result.user?.email || prev.email,
-        city: result.profile?.city || prev.city,
-      }));
-    }
-
-    void loadSession();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  async function checkAccountByEmail(email: string) {
-    if (isLoggedIn) return;
-    const normalized = email.trim();
-    if (!normalized.includes('@')) {
-      setAccountExists(null);
-      return;
-    }
-
-    setCheckingEmail(true);
-    setAuthMessage(null);
-    const status = await getPublicAccountEmailStatusAction(normalized);
-    setCheckingEmail(false);
-
-    if (!status.success) {
-      setAuthMessage(status.message || 'Nao foi possivel validar o e-mail.');
-      return;
-    }
-
-    setAccountExists(Boolean(status.has_account));
-  }
+  }, [form, shirtType, shirtSize, kitSelections, pricing, registration, step, maxUnlockedStep, storageKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -388,9 +353,49 @@ export function RegistrationWizard({
 
   const stepShown = step > 3 && !hasKitStep ? step - 1 : step;
 
+  const cpfLocked = initialBuyer.locked.cpf;
+  const birthDateLocked = initialBuyer.locked.birth_date;
+  const needsPrivacyConsent = !initialBuyer.privacy_policy_accepted;
+
+  const missingBuyerFields = useMemo(() => {
+    const missing: Array<'full_name' | 'cpf' | 'birth_date' | 'gender' | 'phone' | 'city' | 'privacy_policy'> = [];
+    if (!form.full_name.trim()) missing.push('full_name');
+    if (removeCpfMask(form.cpf).length !== 11) missing.push('cpf');
+    if (!form.birth_date.trim()) missing.push('birth_date');
+    if (!form.gender.trim()) missing.push('gender');
+    if (form.phone.replace(/\D/g, '').length < 10) missing.push('phone');
+    if (!form.city.trim()) missing.push('city');
+    if (needsPrivacyConsent && !form.lgpd) missing.push('privacy_policy');
+    return missing;
+  }, [form, needsPrivacyConsent]);
+
+  const buyerProfileComplete = missingBuyerFields.length === 0;
+  const buyerDataDirty = useMemo(() => {
+    return (
+      form.full_name.trim() !== (initialBuyer.full_name ?? '').trim()
+      || removeCpfMask(form.cpf) !== String(initialBuyer.cpf ?? '').replace(/\D/g, '')
+      || form.birth_date.trim() !== (initialBuyer.birth_date ? formatISOToDateBR(initialBuyer.birth_date) : '')
+      || form.gender.trim() !== (initialBuyer.gender ?? '').trim()
+      || form.phone.replace(/\D/g, '') !== String(initialBuyer.phone ?? '').replace(/\D/g, '')
+      || form.city.trim() !== (initialBuyer.city ?? '').trim()
+      || (needsPrivacyConsent && form.lgpd)
+    );
+  }, [form, initialBuyer, needsPrivacyConsent]);
+
+  const hasActiveReservation = registration?.payment?.payment_status === 'pending' || registration?.reservation_status === 'pending';
+  const shouldConfirmLeave = hasActiveReservation || buyerDataDirty;
+
   function goTo(target: number) {
     const next = Math.min(7, Math.max(1, target));
+    if (next > maxUnlockedStep) return;
     setStep(next);
+    setErrors([]);
+  }
+
+  function unlockAndGoTo(target: number) {
+    const normalized = Math.min(7, Math.max(1, target));
+    setMaxUnlockedStep((prev) => Math.max(prev, normalized));
+    setStep(normalized);
     setErrors([]);
   }
 
@@ -406,6 +411,19 @@ export function RegistrationWizard({
       return;
     }
     goTo(step - 1);
+  }
+
+  function onClickMinhaConta() {
+    if (!shouldConfirmLeave) {
+      router.push('/minha-conta');
+      return;
+    }
+    setShowLeaveConfirm(true);
+  }
+
+  function onConfirmLeaveWizard() {
+    setShowLeaveConfirm(false);
+    router.push('/minha-conta');
   }
 
   function setField<K extends keyof FormState>(field: K, value: FormState[K]) {
@@ -448,37 +466,19 @@ export function RegistrationWizard({
       }
       setPricing(result.pricing as PricingState);
       setLiveMessage('Categoria validada e preço atualizado.');
-      goTo(2);
+      unlockAndGoTo(2);
     });
   }
 
   async function handlePersonalNext() {
-    const validation = registrationSchema.safeParse({
-      full_name: form.full_name,
-      cpf: form.cpf,
-      birth_date: form.birth_date,
-      gender: form.gender,
-      phone: form.phone,
-      email: form.email,
-      city: form.city,
-      shirt_type: '',
-      shirt_size: '',
-      has_shirt_item: false,
-      ticket_category_id: form.category_id,
-      payment_method: form.payment_method,
-      coupon_code: form.coupon_code,
-      notes: '',
-    });
-
     const nextErrors: string[] = [];
-    if (!validation.success) {
-      for (const issue of validation.error.issues) {
-        if (!nextErrors.includes(issue.message)) {
-          nextErrors.push(issue.message);
-        }
-      }
-    }
-    if (!form.lgpd) nextErrors.push('Você precisa aceitar o consentimento de dados para continuar.');
+    if (!form.full_name.trim()) nextErrors.push('Informe o nome completo.');
+    if (removeCpfMask(form.cpf).length !== 11) nextErrors.push('CPF inválido.');
+    if (!form.birth_date.trim()) nextErrors.push('Informe a data de nascimento.');
+    if (!form.gender.trim()) nextErrors.push('Informe o gênero.');
+    if (form.phone.replace(/\D/g, '').length < 10) nextErrors.push('Telefone é obrigatório.');
+    if (!form.city.trim()) nextErrors.push('Cidade é obrigatória.');
+    if (needsPrivacyConsent && !form.lgpd) nextErrors.push('Você precisa aceitar o consentimento de dados para continuar.');
     if (!form.category_id) nextErrors.push('Selecione uma categoria antes de avançar.');
 
     if (nextErrors.length > 0) {
@@ -486,66 +486,33 @@ export function RegistrationWizard({
       return;
     }
 
-    if (!isLoggedIn) {
-      const emailToCheck = form.email.trim();
-      if (!emailToCheck) {
-        setErrors(['E-mail obrigatorio.']);
-        return;
-      }
+    const profileSave = await saveCheckoutBuyerProfileAction({
+      full_name: form.full_name,
+      cpf: removeCpfMask(form.cpf),
+      birth_date: form.birth_date,
+      gender: form.gender,
+      phone: form.phone,
+      city: form.city,
+      accept_privacy: form.lgpd,
+      privacy_policy_version: 'v2026-07',
+    });
 
-      let knownAccount = accountExists;
-      if (knownAccount === null) {
-        const status = await getPublicAccountEmailStatusAction(emailToCheck);
-        if (!status.success) {
-          setErrors([status.message || 'Nao foi possivel validar o e-mail.']);
-          return;
-        }
-        knownAccount = Boolean(status.has_account);
-        setAccountExists(knownAccount);
-      }
-
-      if (knownAccount) {
-        if (!password) {
-          setErrors(['Esta conta ja existe. Informe a senha para entrar e continuar.']);
-          return;
-        }
-        const loginResult = await signInPublicAccountAction({ email: emailToCheck, password });
-        if (!loginResult.success || !loginResult.user_id) {
-          setErrors([loginResult.message || 'Nao foi possivel entrar na sua conta.']);
-          return;
-        }
-        setAuthUserId(loginResult.user_id);
-        setIsLoggedIn(true);
-        setAuthMessage('Conta autenticada com sucesso.');
-      } else {
-        if (!password || password.length < 8) {
-          setErrors(['A senha deve ter pelo menos 8 caracteres.']);
-          return;
-        }
-        if (password !== confirmPassword) {
-          setErrors(['A confirmacao de senha nao confere.']);
-          return;
-        }
-
-        const signUpResult = await signUpPublicAccountAction({
-          email: emailToCheck,
-          password,
-          confirmPassword,
-        });
-        if (!signUpResult.success) {
-          setErrors([signUpResult.message || 'Nao foi possivel criar sua conta.']);
-          return;
-        }
-
-        setAuthUserId(signUpResult.user_id);
-        setIsLoggedIn(true);
-        setAuthMessage(
-          signUpResult.email_confirmation_required
-            ? 'Conta criada. Confirme seu e-mail para concluir todos os acessos da conta.'
-            : 'Conta criada e autenticada com sucesso.',
-        );
-      }
+    if (!profileSave.success) {
+      setErrors([profileSave.message || 'Nao foi possivel salvar os dados do comprador.']);
+      return;
     }
+
+    setForm((prev) => ({
+      ...prev,
+      full_name: profileSave.profile.full_name || prev.full_name,
+      cpf: profileSave.profile.cpf ? formatCpf(profileSave.profile.cpf) : prev.cpf,
+      birth_date: profileSave.profile.birth_date ? formatISOToDateBR(profileSave.profile.birth_date) : prev.birth_date,
+      gender: profileSave.profile.gender || prev.gender,
+      phone: profileSave.profile.phone ? formatPhone(profileSave.profile.phone) : prev.phone,
+      city: profileSave.profile.city || prev.city,
+      email: profileSave.profile.email || prev.email,
+      lgpd: profileSave.profile.privacy_policy_accepted || prev.lgpd,
+    }));
 
     startTransition(async () => {
       const cpfCheck = await checkPublicCpfAction({ event_id: event.id, cpf: form.cpf });
@@ -567,8 +534,8 @@ export function RegistrationWizard({
       }
 
       setPricing(preview.pricing as PricingState);
-      setLiveMessage('Dados validados com sucesso.');
-      goTo(hasKitStep ? 3 : 4);
+      setLiveMessage('Seus dados foram carregados da sua conta e o valor foi recalculado.');
+      unlockAndGoTo(hasKitStep ? 3 : 4);
     });
   }
 
@@ -598,7 +565,7 @@ export function RegistrationWizard({
       shirt_size: shirtSize,
     }));
 
-    goTo(4);
+    unlockAndGoTo(4);
   }
 
   async function handleApplyCoupon() {
@@ -638,7 +605,7 @@ export function RegistrationWizard({
     setSubmitting(true);
     setErrors([]);
 
-    const requestId = `${event.id}:${form.category_id}:${removeCpfMask(form.cpf)}:${authUserId ?? 'anon'}`;
+    const requestId = `${event.id}:${form.category_id}:${removeCpfMask(form.cpf)}`;
 
     const payload = {
       event_id: event.id,
@@ -655,7 +622,6 @@ export function RegistrationWizard({
       payment_method: form.payment_method,
       coupon_code: form.coupon_code || undefined,
       notes: 'Portal público de inscrição',
-      user_id: authUserId || undefined,
       client_request_id: requestId,
     } as const;
 
@@ -683,7 +649,7 @@ export function RegistrationWizard({
     setLiveMessage('Inscrição criada.');
 
     if ((createdRegistration.final_amount ?? 0) <= 0) {
-      goTo(7);
+      unlockAndGoTo(7);
       sessionStorage.removeItem(storageKey);
       return;
     }
@@ -707,7 +673,7 @@ export function RegistrationWizard({
       );
     }
 
-    goTo(6);
+    unlockAndGoTo(6);
   }
 
   async function handleSimulatePaid() {
@@ -737,7 +703,7 @@ export function RegistrationWizard({
       );
       setLiveMessage('Pagamento confirmado.');
       sessionStorage.removeItem(storageKey);
-      goTo(7);
+      unlockAndGoTo(7);
     });
   }
 
@@ -747,32 +713,104 @@ export function RegistrationWizard({
   }
 
   const progress = (stepShown / totalSteps) * 100;
+  const visibleTotalSteps = hasKitStep ? 7 : 6;
+  const trail = hasKitStep
+    ? [
+        { id: 1, label: 'Evento' },
+        { id: 2, label: 'Dados' },
+        { id: 3, label: 'Categoria' },
+        { id: 4, label: 'Camiseta' },
+        { id: 5, label: 'Pagamento' },
+        { id: 6, label: 'Resumo' },
+        { id: 7, label: 'Concluído' },
+      ]
+    : [
+        { id: 1, label: 'Evento' },
+        { id: 2, label: 'Dados' },
+        { id: 4, label: 'Pagamento' },
+        { id: 5, label: 'Resumo' },
+        { id: 6, label: 'Concluído' },
+      ];
+
+  const summaryValues = {
+    event: event.name,
+    category: selectedCategory?.name || 'Não selecionado',
+    batch: pricing?.batch_name || 'Não selecionado',
+    gender: form.gender ? (form.gender === 'female' ? 'Feminino' : form.gender === 'male' ? 'Masculino' : form.gender) : 'Não selecionado',
+    shirt: hasShirtItem ? (shirtType || 'Não selecionado') : 'Não selecionado',
+    size: hasShirtItem ? (shirtSize || 'Não selecionado') : 'Não selecionado',
+    coupon: form.coupon_code || 'Não selecionado',
+    original: money(pricing?.base_amount || 0),
+    discount: money(pricing?.discount_amount || 0),
+    total: money(pricing?.final_amount || 0),
+  };
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
-      <div className="mx-auto w-full max-w-4xl">
+      <div className="mx-auto w-full max-w-6xl">
         <div className="mb-4 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={onBack}
-              disabled={!canBack()}
-              className="h-10 rounded-xl border border-slate-700 px-3 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Voltar
-            </button>
-            <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Passo {stepShown} de {totalSteps}</p>
-            <Link href="/inscricao" className="text-sm text-slate-300 underline-offset-2 hover:underline">
-              Trocar evento
-            </Link>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onBack}
+                disabled={!canBack()}
+                className="h-10 rounded-xl border border-slate-700 px-3 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                ← Voltar
+              </button>
+              <Link href="/" className="rounded-xl border border-emerald-500/30 px-3 py-2 text-xs uppercase tracking-[0.2em] text-emerald-200">
+                Militrin
+              </Link>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClickMinhaConta}
+                className="h-10 rounded-xl border border-slate-700 px-3 text-sm text-slate-200"
+              >
+                ← Minha conta
+              </button>
+              <Link href="/inscricao" className="h-10 rounded-xl border border-slate-700 px-3 text-sm leading-10 text-slate-200">
+                Voltar para eventos
+              </Link>
+            </div>
           </div>
+
           <h1 ref={topRef} tabIndex={-1} className="mt-4 text-2xl font-semibold outline-none sm:text-3xl">
             {event.name}
           </h1>
           <p className="mt-1 text-sm text-slate-300">{event.description || 'Preencha seus dados e finalize sua inscrição.'}</p>
+
+          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+            {trail.map((item) => {
+              const active = step === item.id;
+              const done = maxUnlockedStep > item.id;
+              const blocked = item.id > maxUnlockedStep;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={blocked}
+                  onClick={() => goTo(item.id)}
+                  className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition ${
+                    active
+                      ? 'border-emerald-400 bg-emerald-500/15 text-emerald-200'
+                      : done
+                        ? 'border-slate-600 text-slate-200 hover:border-slate-400'
+                        : 'border-slate-800 text-slate-500'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}>
             <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${progress}%` }} />
           </div>
+          <p className="mt-2 text-xs text-slate-400">Etapa {Math.min(stepShown, visibleTotalSteps)} de {visibleTotalSteps}</p>
         </div>
 
         <p aria-live="polite" className="sr-only">
@@ -784,8 +822,32 @@ export function RegistrationWizard({
             Este evento está com inscrições fechadas no momento.
           </section>
         ) : (
-          <section className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5 sm:p-6">
-            {errors.length > 0 && (
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <section className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5 sm:p-6">
+              <button
+                type="button"
+                onClick={() => setMobileSummaryOpen((prev) => !prev)}
+                className="mb-4 w-full rounded-2xl border border-slate-700 px-4 py-3 text-left text-sm text-slate-200 lg:hidden"
+              >
+                Resumo da compra {mobileSummaryOpen ? '▲' : '▼'}
+              </button>
+
+              {mobileSummaryOpen ? (
+                <div className="mb-4 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 lg:hidden">
+                  <p className="text-base font-semibold">{summaryValues.event}</p>
+                  <p className="mt-2">Categoria: {summaryValues.category}</p>
+                  <p>Lote: {summaryValues.batch}</p>
+                  <p>Gênero: {summaryValues.gender}</p>
+                  <p>Camiseta: {summaryValues.shirt}</p>
+                  <p>Tamanho: {summaryValues.size}</p>
+                  <p>Cupom: {summaryValues.coupon}</p>
+                  <p className="mt-3">Valor original: {summaryValues.original}</p>
+                  <p>Desconto: {summaryValues.discount}</p>
+                  <p className="text-emerald-300">Total: {summaryValues.total}</p>
+                </div>
+              ) : null}
+
+              {errors.length > 0 && (
               <div className="mb-5 rounded-2xl border border-rose-600/40 bg-rose-950/30 p-4 text-sm text-rose-100" role="alert">
                 <strong className="mb-2 block">Verifique os campos abaixo:</strong>
                 <ul className="list-disc space-y-1 pl-5">
@@ -794,7 +856,7 @@ export function RegistrationWizard({
                   ))}
                 </ul>
               </div>
-            )}
+              )}
 
             {step === 1 && (
               <div className="space-y-4">
@@ -855,159 +917,138 @@ export function RegistrationWizard({
             {step === 2 && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">2. Seus dados</h2>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1 sm:col-span-2">
-                    <span className="text-sm text-slate-200">Nome completo</span>
-                    <input
-                      value={form.full_name}
-                      onChange={(event_) => setField('full_name', event_.target.value)}
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    />
-                  </label>
-
-                  <label className="space-y-1">
-                    <span className="text-sm text-slate-200">CPF</span>
-                    <input
-                      value={form.cpf}
-                      onChange={(event_) => setField('cpf', formatCpf(event_.target.value))}
-                      inputMode="numeric"
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    />
-                  </label>
-
-                  <div className="space-y-1">
-                    <BirthDateInput
-                      name="birth_date"
-                      value={form.birth_date}
-                      onChange={(value) => setField('birth_date', value)}
-                      required
-                      error={errors.find((error) => error.toLowerCase().includes('data válida no formato dd/mm/aaaa'))}
-                      className="space-y-1"
-                      label="Nascimento"
-                    />
-                    {form.birth_date && (
-                      <span className="text-xs text-slate-400">Idade: {calculateAge(form.birth_date)} anos</span>
-                    )}
+                {buyerProfileComplete ? (
+                  <div className="rounded-2xl border border-emerald-600/40 bg-emerald-950/20 p-4 text-sm text-emerald-100">
+                    <p className="text-base font-semibold">Dados do comprador</p>
+                    <p className="mt-3">{form.full_name}</p>
+                    <p>CPF: {formatCpf(removeCpfMask(form.cpf)).replace(/(\d{3}\.\d{3}\.\d{3}-)(\d{2})$/, '***.***.***-$2')}</p>
+                    <p>Nascimento: {form.birth_date}</p>
+                    <p>{form.gender === 'female' ? 'Feminino' : form.gender === 'male' ? 'Masculino' : form.gender}</p>
+                    <p>{form.phone}</p>
+                    <p>{form.email}</p>
+                    <p>{form.city}</p>
+                    <p className="mt-2 text-emerald-200">Seus dados foram carregados da sua conta.</p>
                   </div>
-
-                  <label className="space-y-1">
-                    <span className="text-sm text-slate-200">Gênero</span>
-                    <select
-                      value={form.gender}
-                      onChange={(event_) => setField('gender', event_.target.value)}
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    >
-                      <option value="">Selecione</option>
-                      <option value="male">Masculino</option>
-                      <option value="female">Feminino</option>
-                    </select>
-                  </label>
-
-                  <label className="space-y-1">
-                    <span className="text-sm text-slate-200">Telefone</span>
-                    <input
-                      value={form.phone}
-                      onChange={(event_) => setField('phone', formatPhone(event_.target.value))}
-                      inputMode="numeric"
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    />
-                  </label>
-
-                  <label className="space-y-1">
-                    <span className="text-sm text-slate-200">E-mail</span>
-                    <input
-                      type="email"
-                      required
-                      value={form.email}
-                      onChange={(event_) => {
-                        setField('email', event_.target.value);
-                        setAccountExists(null);
-                      }}
-                      onBlur={() => void checkAccountByEmail(form.email)}
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    />
-                    {checkingEmail ? <span className="text-xs text-slate-400">Validando conta...</span> : null}
-                  </label>
-
-                  {!isLoggedIn && accountExists === true ? (
-                    <label className="space-y-1">
-                      <span className="text-sm text-slate-200">Senha da conta</span>
-                      <div className="flex gap-2">
-                        <input
-                          type={showPassword ? 'text' : 'password'}
-                          value={password}
-                          onChange={(event_) => setPassword(event_.target.value)}
-                          className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                        />
-                        <button type="button" onClick={() => setShowPassword((prev) => !prev)} className="rounded-xl border border-slate-700 px-3 text-xs text-slate-200">
-                          {showPassword ? 'Ocultar' : 'Mostrar'}
-                        </button>
-                      </div>
-                      <span className="text-xs text-amber-200">Conta existente detectada. Entre para continuar a compra.</span>
-                    </label>
-                  ) : null}
-
-                  {!isLoggedIn && accountExists === false ? (
-                    <>
-                      <label className="space-y-1">
-                        <span className="text-sm text-slate-200">Crie sua senha</span>
-                        <div className="flex gap-2">
+                ) : (
+                  <>
+                    <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                      Precisamos apenas completar algumas informações.
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {missingBuyerFields.includes('full_name') && (
+                        <label className="space-y-1 sm:col-span-2">
+                          <span className="text-sm text-slate-200">Nome completo</span>
                           <input
-                            type={showPassword ? 'text' : 'password'}
-                            value={password}
-                            onChange={(event_) => setPassword(event_.target.value)}
+                            value={form.full_name}
+                            onChange={(event_) => setField('full_name', event_.target.value)}
                             className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
                           />
-                          <button type="button" onClick={() => setShowPassword((prev) => !prev)} className="rounded-xl border border-slate-700 px-3 text-xs text-slate-200">
-                            {showPassword ? 'Ocultar' : 'Mostrar'}
-                          </button>
-                        </div>
-                        <span className="text-xs text-slate-400">Minimo de 8 caracteres.</span>
-                      </label>
+                        </label>
+                      )}
 
-                      <label className="space-y-1">
-                        <span className="text-sm text-slate-200">Confirmar senha</span>
-                        <div className="flex gap-2">
+                      {missingBuyerFields.includes('cpf') && (
+                        <label className="space-y-1">
+                          <span className="text-sm text-slate-200">CPF</span>
                           <input
-                            type={showConfirmPassword ? 'text' : 'password'}
-                            value={confirmPassword}
-                            onChange={(event_) => setConfirmPassword(event_.target.value)}
+                            value={form.cpf}
+                            onChange={(event_) => setField('cpf', formatCpf(event_.target.value))}
+                            inputMode="numeric"
+                            readOnly={cpfLocked}
+                            className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm read-only:cursor-not-allowed read-only:bg-slate-900/50"
+                          />
+                        </label>
+                      )}
+
+                      {missingBuyerFields.includes('birth_date') && (
+                        <div className="space-y-1">
+                          <BirthDateInput
+                            name="birth_date"
+                            value={form.birth_date}
+                            onChange={(value) => setField('birth_date', value)}
+                            required
+                            disabled={birthDateLocked}
+                            className="space-y-1"
+                            label="Nascimento"
+                          />
+                          {form.birth_date && (
+                            <span className="text-xs text-slate-400">Idade: {calculateAge(form.birth_date)} anos</span>
+                          )}
+                        </div>
+                      )}
+
+                      {missingBuyerFields.includes('gender') && (
+                        <label className="space-y-1">
+                          <span className="text-sm text-slate-200">Gênero</span>
+                          <select
+                            value={form.gender}
+                            onChange={(event_) => setField('gender', event_.target.value)}
+                            className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
+                          >
+                            <option value="">Selecione</option>
+                            <option value="male">Masculino</option>
+                            <option value="female">Feminino</option>
+                            <option value="other">Outro</option>
+                          </select>
+                        </label>
+                      )}
+
+                      {missingBuyerFields.includes('phone') && (
+                        <label className="space-y-1">
+                          <span className="text-sm text-slate-200">Telefone</span>
+                          <input
+                            value={form.phone}
+                            onChange={(event_) => setField('phone', formatPhone(event_.target.value))}
+                            inputMode="numeric"
                             className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
                           />
-                          <button type="button" onClick={() => setShowConfirmPassword((prev) => !prev)} className="rounded-xl border border-slate-700 px-3 text-xs text-slate-200">
-                            {showConfirmPassword ? 'Ocultar' : 'Mostrar'}
-                          </button>
-                        </div>
-                      </label>
-                    </>
-                  ) : null}
+                        </label>
+                      )}
 
-                  {isLoggedIn ? <p className="text-xs text-emerald-200 sm:col-span-2">Conta autenticada. Seus dados serao vinculados a esta compra.</p> : null}
-                  {authMessage ? <p className="text-xs text-slate-300 sm:col-span-2">{authMessage}</p> : null}
+                      {missingBuyerFields.includes('city') && (
+                        <label className="space-y-1 sm:col-span-2">
+                          <span className="text-sm text-slate-200">Cidade</span>
+                          <input
+                            value={form.city}
+                            onChange={(event_) => setField('city', event_.target.value)}
+                            className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </>
+                )}
 
-                  <label className="space-y-1 sm:col-span-2">
-                    <span className="text-sm text-slate-200">Cidade</span>
-                    <input
-                      value={form.city}
-                      onChange={(event_) => setField('city', event_.target.value)}
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    />
-                  </label>
-
-                </div>
-
-                <label className="mt-2 flex items-start gap-2 rounded-xl border border-slate-700 p-3 text-sm text-slate-300">
+                <label className="space-y-1">
+                  <span className="text-sm text-slate-200">E-mail</span>
                   <input
-                    type="checkbox"
-                    checked={form.lgpd}
-                    onChange={(event_) => setField('lgpd', event_.target.checked)}
-                    className="mt-1"
+                    type="email"
+                    readOnly
+                    value={form.email}
+                    className="h-11 w-full cursor-not-allowed rounded-xl border border-slate-700 bg-slate-900/50 px-3 text-sm text-slate-300"
                   />
-                  <span>Autorizo o uso dos meus dados para gestão da minha inscrição no evento.</span>
                 </label>
 
-                <div className="flex justify-end">
+                {needsPrivacyConsent ? (
+                  <label className="mt-2 flex items-start gap-2 rounded-xl border border-slate-700 p-3 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={form.lgpd}
+                      onChange={(event_) => setField('lgpd', event_.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>Autorizo o uso dos meus dados para gestão da minha inscrição no evento.</span>
+                  </label>
+                ) : (
+                  <p className="text-xs text-emerald-200">Consentimento de privacidade já registrado na sua conta.</p>
+                )}
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Link
+                    href={`/minha-conta/dados?next=${encodeURIComponent(`/inscricao/${event.slug}`)}`}
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-700 px-5 text-sm text-slate-200"
+                  >
+                    Atualizar meus dados
+                  </Link>
                   <button
                     type="button"
                     disabled={isPending}
@@ -1135,7 +1176,7 @@ export function RegistrationWizard({
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => goTo(5)}
+                    onClick={() => unlockAndGoTo(5)}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
                   >
                     Continuar
@@ -1282,7 +1323,7 @@ export function RegistrationWizard({
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => goTo(7)}
+                      onClick={() => unlockAndGoTo(7)}
                       className="h-11 rounded-2xl border border-slate-700 px-6 text-sm text-slate-200"
                     >
                       Ver resumo do pedido
@@ -1291,7 +1332,7 @@ export function RegistrationWizard({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => goTo(7)}
+                    onClick={() => unlockAndGoTo(7)}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
                   >
                     Ver confirmação
@@ -1406,8 +1447,54 @@ export function RegistrationWizard({
                 </div>
               </div>
             )}
-          </section>
+            </section>
+
+            <aside className="hidden lg:block">
+              <div className="sticky top-5 rounded-3xl border border-slate-800/80 bg-slate-900/75 p-4 text-sm text-slate-200">
+                <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Resumo da compra</p>
+                <p className="mt-3 text-base font-semibold text-white">{summaryValues.event}</p>
+                <div className="mt-3 space-y-1">
+                  <p>Categoria: {summaryValues.category}</p>
+                  <p>Lote: {summaryValues.batch}</p>
+                  <p>Gênero: {summaryValues.gender}</p>
+                  <p>Camiseta: {summaryValues.shirt}</p>
+                  <p>Tamanho: {summaryValues.size}</p>
+                  <p>Cupom: {summaryValues.coupon}</p>
+                </div>
+                <div className="mt-4 border-t border-slate-800 pt-3">
+                  <p>Valor original: {summaryValues.original}</p>
+                  <p>Desconto: {summaryValues.discount}</p>
+                  <p className="font-semibold text-emerald-300">Total: {summaryValues.total}</p>
+                </div>
+              </div>
+            </aside>
+          </div>
         )}
+
+        {showLeaveConfirm ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 text-slate-100">
+              <h3 className="text-lg font-semibold">Sair da compra?</h3>
+              <p className="mt-2 text-sm text-slate-300">Deseja sair da compra? Sua reserva ou alterações poderão ser perdidas.</p>
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLeaveConfirm(false)}
+                  className="h-10 rounded-xl border border-slate-700 px-4 text-sm text-slate-200"
+                >
+                  Continuar comprando
+                </button>
+                <button
+                  type="button"
+                  onClick={onConfirmLeaveWizard}
+                  className="h-10 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950"
+                >
+                  Sair da compra
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </main>
   );

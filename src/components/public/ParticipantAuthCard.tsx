@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Shirt, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { signInPublicAccountAction } from '@/app/inscricao/actions';
+import { resolvePostAuthDestination } from '@/lib/utils/safe-navigation';
 
 type ParticipantAuthCardProps = {
   title?: string;
@@ -23,6 +24,17 @@ export function ParticipantAuthCard({
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [nextFromQuery] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('next');
+  });
+
+  function getWizardPathFromStorage() {
+    if (typeof window === 'undefined') return null;
+    const saved = window.sessionStorage.getItem('militrin:last-wizard-next');
+    return saved?.trim() || null;
+  }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,7 +42,20 @@ export function ParticipantAuthCard({
     setLoading(true);
     setMessage(null);
 
-    const result = await signInPublicAccountAction({ email, password });
+    const nextPath = nextFromQuery;
+    const wizardPath = getWizardPathFromStorage();
+    const fallbackDestination = resolvePostAuthDestination({
+      nextPath,
+      wizardPath,
+      fallback: defaultNext,
+    });
+
+    const result = await signInPublicAccountAction({
+      email,
+      password,
+      next_path: nextPath,
+      wizard_path: wizardPath,
+    });
     setLoading(false);
 
     if (!result.success) {
@@ -38,10 +63,12 @@ export function ParticipantAuthCard({
       return;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const nextPath = params.get('next') || defaultNext;
-    router.push(nextPath);
+    router.push(result.redirect_to || fallbackDestination);
   }
+
+  const createAccountHref = nextFromQuery
+    ? `/criar-conta?next=${encodeURIComponent(nextFromQuery)}`
+    : '/criar-conta';
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
@@ -134,7 +161,7 @@ export function ParticipantAuthCard({
             <Link href="/esqueci-minha-senha" className="text-slate-300 transition hover:text-white">
               Esqueci minha senha
             </Link>
-            <Link href="/criar-conta" className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-4 font-semibold text-slate-950 transition hover:bg-emerald-300">
+            <Link href={createAccountHref} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-4 font-semibold text-slate-950 transition hover:bg-emerald-300">
               Criar minha conta
             </Link>
           </div>

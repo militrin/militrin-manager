@@ -4,6 +4,12 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 import { getLoyaltyLevel, getLoyaltyProgress, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
 import {
+  resolveParticipantAvatarUrl,
+  resolveParticipantFirstName,
+  resolveParticipantFullName,
+  resolveParticipantInitials,
+} from '@/lib/account/participant-identity';
+import {
   MilitrinAvatar,
   MilitrinBadge,
   MilitrinButton,
@@ -33,18 +39,65 @@ function formatMemberSince(value: string | null | undefined) {
   return Number.isNaN(year) ? new Date().getFullYear() : year;
 }
 
-function formatProgressMessage(remaining: number, nextLevelName: string | null, completed: boolean) {
+function earliestDate(values: Array<string | null | undefined>) {
+  const timestamps = values
+    .map((value) => (value ? new Date(value).getTime() : NaN))
+    .filter((value) => Number.isFinite(value));
+
+  if (!timestamps.length) return null;
+  return new Date(Math.min(...timestamps)).toISOString();
+}
+
+function getRegistrationStatus(event: { registration_open_at: string | null; registration_close_at: string | null }) {
+  const now = Date.now();
+  const openAt = event.registration_open_at ? new Date(event.registration_open_at).getTime() : null;
+  const closeAt = event.registration_close_at ? new Date(event.registration_close_at).getTime() : null;
+
+  if (openAt && openAt > now) return 'abre em breve';
+  if (closeAt && closeAt < now) return 'encerradas';
+  return 'abertas';
+}
+
+function findInitialPrice(rows: Array<Record<string, unknown>>) {
+  const candidates = rows
+    .map((row) => {
+      const possible = [row.initial_price, row.starting_price, row.final_amount, row.base_amount, row.price];
+      for (const value of possible) {
+        const amount = Number(value ?? NaN);
+        if (Number.isFinite(amount) && amount > 0) return amount;
+      }
+      return NaN;
+    })
+    .filter((value) => Number.isFinite(value));
+
+  if (!candidates.length) return null;
+  return Math.min(...candidates);
+}
+
+function formatProgressMessage(params: {
+  remaining: number;
+  nextLevelName: string | null;
+  completed: boolean;
+  confirmedParticipations: number;
+  currentLevelSlug: string;
+}) {
+  const { remaining, nextLevelName, completed, confirmedParticipations, currentLevelSlug } = params;
+
+  if (currentLevelSlug.toLowerCase() === 'novato' && confirmedParticipations === 0) {
+    return 'Registre sua primeira participação para começar sua evolução.';
+  }
+
   if (completed) {
-    return 'Voce alcancou o nivel maximo do Militrin.';
+    return 'Você alcançou o nível máximo do Militrin.';
   }
 
   if (!nextLevelName) {
-    return 'Seu proximo nivel sera exibido assim que houver uma nova faixa configurada.';
+    return 'Seu próximo nível será exibido assim que houver uma nova faixa configurada.';
   }
 
   return remaining === 1
-    ? `Falta 1 participacao confirmada para chegar ao ${nextLevelName}.`
-    : `Faltam ${remaining} participacoes confirmadas para chegar ao ${nextLevelName}.`;
+    ? `Falta 1 participação oficial para chegar ao ${nextLevelName}.`
+    : `Faltam ${remaining} participações oficiais para chegar ao ${nextLevelName}.`;
 }
 
 export default async function MinhaContaPage() {
@@ -57,7 +110,7 @@ export default async function MinhaContaPage() {
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     supabase
       .from('orders')
-      .select('id, order_number, status, final_amount, created_at, participant_id, participants(full_name), events(name), tickets(id, status, token), payments(payment_method, payment_status)')
+      .select('id, order_number, status, final_amount, created_at, confirmed_at, participant_id, participants(full_name), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), tickets(id, status, token), payments(payment_method, payment_status)')
       .eq('user_id', user?.id ?? '')
       .order('created_at', { ascending: false }),
     supabase
@@ -78,6 +131,7 @@ export default async function MinhaContaPage() {
   ]);
 
   const profile = (Array.isArray(profileResult.data) ? profileResult.data[0] : profileResult.data) as Record<string, unknown> | null;
+  const userMetadata = (user?.user_metadata as Record<string, unknown> | undefined) ?? null;
   const loyaltyLevels = sortLoyaltyLevels((tiersResult.data ?? []).map((level) => normalizeLoyaltyLevel(level as Record<string, unknown>)));
   const orders = ordersResult.data ?? [];
   const openEvents = (eventsResult.data ?? []).filter((event) => isEventOpen(event));
@@ -86,61 +140,99 @@ export default async function MinhaContaPage() {
   const currentLevel = getLoyaltyLevel(confirmedParticipations, loyaltyLevels);
   const progress = getLoyaltyProgress(confirmedParticipations, loyaltyLevels);
 
-  const greetingName = String(profile?.full_name ?? user?.email ?? 'Participante').split(' ')[0];
-  const displayName = String(profile?.full_name ?? user?.email ?? 'Participante');
-  const profilePhotoUrl = String((user?.user_metadata as Record<string, unknown> | undefined)?.avatar_url ?? '').trim();
-  const greetingInitials = displayName
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((chunk) => chunk[0]?.toUpperCase() ?? '')
-    .join('');
+  const displayName = resolveParticipantFullName({
+    profile,
+    userMetadata,
+    email: user?.email,
+  });
+  const greetingName = resolveParticipantFirstName(displayName);
+  const greetingInitials = resolveParticipantInitials(displayName);
+  const profilePhotoUrl = resolveParticipantAvatarUrl({
+    profile,
+    userMetadata,
+  });
 
   const nextEvent = openEvents[0] ?? null;
-  const latestActiveTicket = activeTickets[0] ?? null;
-  const memberSinceYear = formatMemberSince(String(profile?.created_at ?? user?.created_at ?? ''));
+  const confirmedOrders = orders.filter((order) => String(order.status ?? '') === 'confirmed');
+  const firstConfirmedParticipationDate = earliestDate(
+    confirmedOrders.map((order) => String(order.confirmed_at ?? order.created_at ?? '')),
+  );
+  const memberSinceYear = formatMemberSince(
+    earliestDate([firstConfirmedParticipationDate, String(profile?.created_at ?? ''), String(user?.created_at ?? '')]),
+  );
   const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
   const latestOrder = orders[0] ?? null;
+
+  const confirmedTicketOrder = confirmedOrders.find((order) => {
+    const ticketRows = Array.isArray(order.tickets) ? order.tickets : [];
+    return ticketRows.some((ticket) => String(ticket.status ?? '') === 'active');
+  }) ?? null;
+
+  const highlightedTicket = confirmedTicketOrder
+    ? (Array.isArray(confirmedTicketOrder.tickets) ? confirmedTicketOrder.tickets.find((ticket) => String(ticket.status ?? '') === 'active') : null)
+    : null;
+
+  const highlightedTicketEventName = (() => {
+    const eventObj = Array.isArray(confirmedTicketOrder?.events) ? confirmedTicketOrder?.events[0] : confirmedTicketOrder?.events;
+    return eventObj?.name ? String(eventObj.name) : 'Evento Militrin';
+  })();
+
+  let nextEventStartingPrice: string | null = null;
+  if (nextEvent?.id) {
+    const { data: categoriesData } = await supabase.rpc('get_event_ticket_categories', { p_event_id: nextEvent.id });
+    if (Array.isArray(categoriesData)) {
+      const lowestAmount = findInitialPrice(categoriesData as Array<Record<string, unknown>>);
+      if (lowestAmount !== null) {
+        nextEventStartingPrice = money(lowestAmount);
+      }
+    }
+  }
 
   return (
     <section className="space-y-5">
       <MilitrinSection
         eyebrow="Dashboard"
-        title={`Ola, ${greetingName}`}
-        description="Seu portal premium do participante Militrin."
+        title={`Olá, ${greetingName}!`}
+        description="Bem-vindo ao Portal do Participante Militrin."
         action={
-          latestActiveTicket ? (
-            <Link href={`/minha-conta/ingressos/${latestActiveTicket.id}`}>
+          highlightedTicket ? (
+            <Link href={`/minha-conta/ingressos/${highlightedTicket.id}`}>
               <MilitrinButton iconLeft={<QrCode size={15} />}>Ver QR Code</MilitrinButton>
             </Link>
           ) : null
         }
       >
         <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
-          <article className="rounded-[1.5rem] border border-white/10 bg-white/5 p-5 backdrop-blur">
-            <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Cartao de associado</p>
+          <article className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+            <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Cartão do participante</p>
             <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <MilitrinAvatar src={profilePhotoUrl || null} alt="Foto do participante" initials={greetingInitials} size="lg" />
-                <div>
-                  <p className="text-xl font-semibold text-white">{displayName}</p>
-                  <p className="text-sm text-slate-300">Membro desde {memberSinceYear}</p>
+              <div className="flex min-w-0 items-center gap-3">
+                <MilitrinAvatar src={profilePhotoUrl} alt={`Foto do participante ${displayName}`} initials={greetingInitials} size="lg" />
+                <div className="min-w-0">
+                  <p className="truncate text-xl font-semibold text-white" title={displayName} aria-label={displayName}>{displayName}</p>
+                  <p className="text-sm text-slate-300">Participante desde {memberSinceYear}</p>
                 </div>
               </div>
               <MilitrinBadge tone="success">{String(currentLevel.badge)}</MilitrinBadge>
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <MilitrinStat label="Categoria" value={String(currentLevel.name)} icon={<Medal size={14} />} />
-              <MilitrinStat label="Participacoes" value={confirmedParticipations} icon={<CalendarDays size={14} />} />
-              <MilitrinStat label="Nivel" value={String(currentLevel.badge)} icon={<Ticket size={14} />} />
+              <MilitrinStat label="Categoria atual" value={String(currentLevel.name)} icon={<Medal size={14} />} />
+              <MilitrinStat label="Participações oficiais" value={confirmedParticipations} icon={<CalendarDays size={14} />} />
+              <MilitrinStat label="Nível atual" value={String(currentLevel.badge)} icon={<Ticket size={14} />} />
             </div>
 
             <div className="mt-4">
               <MilitrinProgress
-                label="Progresso para proxima categoria"
+                label="Progresso para próxima categoria"
                 value={progress.progress}
-                helper={formatProgressMessage(progress.remaining, progress.next?.name ?? null, progress.completed)}
+                helper={formatProgressMessage({
+                  remaining: progress.remaining,
+                  nextLevelName: progress.next?.name ?? null,
+                  completed: progress.completed,
+                  confirmedParticipations,
+                  currentLevelSlug: currentLevel.slug,
+                })}
               />
             </div>
           </article>
@@ -149,27 +241,55 @@ export default async function MinhaContaPage() {
             name={nextEvent ? String(nextEvent.name) : 'Aguardando novo evento'}
             date={nextEvent?.starts_at ? formatDateBR(String(nextEvent.starts_at)) : 'Data a confirmar'}
             location={nextEvent?.location ? String(nextEvent.location) : 'Local a confirmar'}
-            registrationStatus={nextEvent ? 'inscricoes abertas' : 'em breve'}
+            registrationStatus={nextEvent ? getRegistrationStatus(nextEvent) : 'em breve'}
+            startingPrice={nextEventStartingPrice}
             action={
-              latestActiveTicket ? (
-                <Link href={`/minha-conta/ingressos/${latestActiveTicket.id}`}>
-                  <MilitrinButton variant="success" iconLeft={<QrCode size={15} />}>Ver QR Code</MilitrinButton>
-                </Link>
-              ) : (
+              nextEvent ? (
                 <Link href="/minha-conta/comprar">
                   <MilitrinButton iconLeft={<ShoppingBag size={15} />}>Comprar ingresso</MilitrinButton>
                 </Link>
-              )
+              ) : null
             }
           />
+        </div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <article className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Seu ingresso</p>
+            {highlightedTicket ? (
+              <div className="mt-3 space-y-3 text-sm text-slate-200">
+                <p className="truncate font-semibold text-white" title={highlightedTicketEventName}>{highlightedTicketEventName}</p>
+                <Link href={`/minha-conta/ingressos/${highlightedTicket.id}`}>
+                  <MilitrinButton variant="success" iconLeft={<QrCode size={15} />}>Abrir QR Code</MilitrinButton>
+                </Link>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-300">Nenhum ingresso ativo no momento.</p>
+            )}
+          </article>
+
+          <article className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Próximo evento</p>
+            {nextEvent ? (
+              <div className="mt-3 space-y-2 text-sm text-slate-200">
+                <p className="truncate font-semibold text-white" title={String(nextEvent.name)}>{String(nextEvent.name)}</p>
+                <p>{nextEvent.starts_at ? formatDateBR(String(nextEvent.starts_at)) : 'Data a confirmar'}</p>
+                <p className="truncate" title={String(nextEvent.location ?? 'Local a confirmar')}>{String(nextEvent.location ?? 'Local a confirmar')}</p>
+                <p className="text-slate-300">Inscrições: {getRegistrationStatus(nextEvent)}</p>
+                {nextEventStartingPrice ? <p className="text-emerald-200">Preço inicial: {nextEventStartingPrice}</p> : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-300">Nenhum evento com inscrições abertas no momento.</p>
+            )}
+          </article>
         </div>
       </MilitrinSection>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MilitrinStat label="Compras" value={orders.length} icon={<ShoppingBag size={14} />} className="border-slate-800 bg-slate-950/60" />
         <MilitrinStat label="Ingressos ativos" value={activeTickets.length} icon={<Ticket size={14} />} className="border-slate-800 bg-slate-950/60" />
-        <MilitrinStat label="Participacoes" value={confirmedParticipations} icon={<CalendarDays size={14} />} className="border-slate-800 bg-slate-950/60" />
-        <MilitrinStat label="Nivel atual" value={String(currentLevel.name)} icon={<Medal size={14} />} className="border-slate-800 bg-slate-950/60" />
+        <MilitrinStat label="Participações oficiais" value={confirmedParticipations} icon={<CalendarDays size={14} />} className="border-slate-800 bg-slate-950/60" />
+        <MilitrinStat label="Nível atual" value={String(currentLevel.name)} icon={<Medal size={14} />} className="border-slate-800 bg-slate-950/60" />
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -197,24 +317,24 @@ export default async function MinhaContaPage() {
         </article>
 
         <article className="rounded-[1.75rem] border border-slate-800 bg-slate-950/60 p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Resumo rapido</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Resumo rápido</p>
           {latestOrder ? (
             <div className="mt-3 space-y-2 text-sm text-slate-200">
-              <p>Ultimo pedido: {String(latestOrder.order_number ?? '-')}</p>
+              <p>Último pedido: {String(latestOrder.order_number ?? '-')}</p>
               <p>Status: {String(latestOrder.status ?? '-')}</p>
               <Link href={`/minha-conta/compras/${latestOrder.id}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
                 Ver detalhes
               </Link>
             </div>
           ) : (
-            <p className="mt-3 text-sm text-slate-300">Seu primeiro pedido aparecera aqui.</p>
+            <p className="mt-3 text-sm text-slate-300">Seu primeiro pedido aparecerá aqui.</p>
           )}
         </article>
       </section>
 
       {!orders.length ? (
         <MilitrinEmptyState
-          title="Voce ainda nao possui ingressos."
+          title="Você ainda não possui ingressos."
           description="Escolha um evento aberto e crie seu primeiro ingresso no portal."
           actionHref="/minha-conta/comprar"
           actionLabel="Comprar meu primeiro ingresso"

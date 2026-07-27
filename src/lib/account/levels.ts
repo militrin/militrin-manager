@@ -47,11 +47,12 @@ export function getLoyaltyProgress(confirmedParticipations: number, levels: Loya
   const current = getLoyaltyLevel(confirmedParticipations, levels);
   const next = getNextLoyaltyLevel(confirmedParticipations, levels);
   if (!next) {
+    const isLegend = current.slug.toLowerCase() === 'legend-militrin';
     return {
       current,
       next: null,
-      completed: true,
-      progress: 100,
+      completed: isLegend,
+      progress: isLegend ? 100 : 0,
       remaining: 0,
     };
   }

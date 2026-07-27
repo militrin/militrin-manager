@@ -22,11 +22,20 @@ export default function KitPickupPage() {
     cpf: string;
     phone: string;
     payment_status: string;
+    payment_method: string;
     registration_status: string;
     shirt_type: string;
     shirt_size: string;
+    category_name: string;
     event_name: string;
     event_kit_enabled: boolean;
+    ticket_status: string | null;
+    ticket_used_at: string | null;
+    last_checkin_at: string | null;
+    last_checkin_actor: string | null;
+    all_kit_delivered: boolean;
+    can_operate: boolean;
+    block_reason: string | null;
     kit_items: Array<{
       kit_item_id: string;
       item_name: string;
@@ -93,12 +102,13 @@ export default function KitPickupPage() {
       return;
     }
     setMessage(response.message ?? "Entrada confirmada.");
+    await searchParticipant();
   }
 
   const disabled = loading || !query.trim();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
@@ -119,21 +129,40 @@ export default function KitPickupPage() {
                     <p className="text-sm text-slate-400">#{result.registration_number ?? "—"} · {result.cpf}</p>
                   </div>
                   {result.event_kit_enabled ? (
-                    <button type="button" onClick={deliverKit} disabled={loading || result.payment_status !== "paid" || result.registration_status === "cancelled"} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">ENTREGAR KIT COMPLETO</button>
+                    <button
+                      type="button"
+                      onClick={deliverKit}
+                      disabled={loading || !result.can_operate || result.all_kit_delivered}
+                      className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60"
+                    >
+                      {result.all_kit_delivered ? "KIT JÁ ENTREGUE" : "ENTREGAR KIT COMPLETO"}
+                    </button>
                   ) : (
-                    <button type="button" onClick={checkinOnly} disabled={loading || result.payment_status !== "paid" || result.registration_status === "cancelled"} className="rounded-2xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-cyan-950 disabled:opacity-60">CONFIRMAR ENTRADA</button>
+                    <button type="button" onClick={checkinOnly} disabled={loading || !result.can_operate} className="rounded-2xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-cyan-950 disabled:opacity-60">CONFIRMAR ENTRADA</button>
                   )}
                 </div>
+                {result.block_reason ? (
+                  <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                    Operação bloqueada: {result.block_reason}
+                  </div>
+                ) : null}
                 <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
                   <div><p className="text-slate-400">Telefone</p><p>{result.phone}</p></div>
                   <div><p className="text-slate-400">Pagamento</p><p>{result.payment_status === "paid" ? "Confirmado" : "Pendente"}</p></div>
+                  <div><p className="text-slate-400">Método</p><p>{result.payment_method}</p></div>
+                  <div><p className="text-slate-400">Categoria</p><p>{result.category_name}</p></div>
                   <div><p className="text-slate-400">Camiseta</p><p>{result.shirt_type} · {result.shirt_size}</p></div>
                   <div><p className="text-slate-400">Evento</p><p>{result.event_name}</p></div>
+                  <div><p className="text-slate-400">Status do ingresso</p><p>{result.ticket_status ?? "Não emitido"}</p></div>
+                  <div><p className="text-slate-400">Check-in anterior</p><p>{result.last_checkin_at ? `${new Date(result.last_checkin_at).toLocaleString("pt-BR")}${result.last_checkin_actor ? ` • ${result.last_checkin_actor}` : ""}` : "Nenhum"}</p></div>
                 </div>
 
                 {result.event_kit_enabled ? (
                   <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-                    <p className="text-sm font-semibold text-slate-200">Itens do participante</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-200">Itens do participante</p>
+                      {result.all_kit_delivered ? <p className="text-xs text-emerald-200">Kit completo já entregue</p> : null}
+                    </div>
                     <div className="mt-3 space-y-2">
                       {result.kit_items.length === 0 ? (
                         <p className="text-sm text-slate-400">Nenhum item de kit vinculado.</p>
@@ -145,7 +174,7 @@ export default function KitPickupPage() {
                           <button
                             type="button"
                             onClick={() => void deliverItem(item.kit_item_id)}
-                            disabled={loading || item.status === "delivered"}
+                            disabled={loading || item.status === "delivered" || !result.can_operate}
                             className="rounded-lg border border-emerald-500/40 px-2 py-1 text-xs text-emerald-200 disabled:opacity-50"
                           >
                             Entregar item

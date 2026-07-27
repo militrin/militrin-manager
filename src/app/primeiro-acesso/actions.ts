@@ -2,6 +2,39 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { isValidCpf } from '@/lib/validation/registration';
+import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
+import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
+import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
+import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
+
+const missingFieldLabels: Record<string, string> = {
+  full_name: 'Nome completo',
+  cpf: 'CPF',
+  birth_date: 'Data de nascimento',
+  gender: 'Genero',
+  phone: 'Telefone',
+  email: 'E-mail',
+  city: 'Cidade',
+};
+
+function toFriendlyMissingFields(fields: string[]) {
+  return fields.map((field) => missingFieldLabels[field] ?? field);
+}
+
+function translateFirstAccessPersistError(rawMessage: string) {
+  const normalized = rawMessage.toLowerCase();
+
+  if (normalized.includes('could not find') && normalized.includes('customer_profiles')) {
+    return 'Nao foi possivel concluir seu cadastro por incompatibilidade temporaria do banco. Tente novamente.';
+  }
+
+  if (normalized.includes('duplicate key') || normalized.includes('unique constraint')) {
+    return 'Nao foi possivel concluir seu cadastro por conflito de dados. Tente novamente.';
+  }
+
+  return 'Nao foi possivel concluir seu cadastro. Tente novamente.';
+}
 
 function normalizeCpf(value: unknown) {
   const digits = String(value ?? '').replace(/\D/g, '');
@@ -39,6 +72,14 @@ export async function completeFirstAccessAction(formData: FormData) {
     return { success: false, message: 'Sessao expirada. Entre novamente.' };
   }
 
+  const privacyAcceptedRaw = formData.get('privacyAccepted');
+  const acceptedPrivacy = privacyAcceptedRaw === 'on' || privacyAcceptedRaw === 'true';
+
+  console.info('[first-access:submit]', {
+    userIdPresent: Boolean(user.id),
+    privacyReceived: acceptedPrivacy,
+  });
+
   const { data: profileData, error: profileError } = await supabase.rpc('get_customer_profile', {
     p_user_id: user.id,
   });
@@ -48,72 +89,97 @@ export async function completeFirstAccessAction(formData: FormData) {
   }
 
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
-  const cpf = normalizeCpf(profile?.cpf);
-
-  const newPassword = String(formData.get('new_password') ?? '').trim();
-  const confirmPassword = String(formData.get('confirm_password') ?? '').trim();
-
-  if (newPassword.length < 8) {
-    return { success: false, message: 'A nova senha precisa ter no minimo 8 caracteres.' };
-  }
-
-  if (newPassword !== confirmPassword) {
-    return { success: false, message: 'A confirmacao de senha nao confere.' };
-  }
-
-  if (cpf && newPassword === cpf) {
-    return { success: false, message: 'A senha nao pode ser igual ao CPF.' };
-  }
+  console.info('[first-access:profile-load]', {
+    userIdPresent: Boolean(user.id),
+    profileFound: Boolean(profile),
+  });
 
   const fullName = String(formData.get('full_name') ?? '').trim();
+  const cpf = normalizeCpf(formData.get('cpf'));
   const birthDate = normalizeDateInput(String(formData.get('birth_date') ?? ''));
   const gender = String(formData.get('gender') ?? '').trim();
   const phone = String(formData.get('phone') ?? '').replace(/\D/g, '');
   const city = String(formData.get('city') ?? '').trim();
-  const email = String(user.email ?? profile?.email ?? '').trim().toLowerCase();
+  const authEmail = String(user.email ?? '').trim().toLowerCase();
+  const nextPath = sanitizePostFirstAccessNextPath(String(formData.get('next_path') ?? ''), '/minha-conta');
 
-  if (!fullName || !birthDate || !gender || !phone || !city || !email) {
-    return { success: false, message: 'Preencha todos os dados obrigatorios para concluir o primeiro acesso.' };
+  if (!fullName || !cpf || !birthDate || !gender || phone.length < 10 || !city || !authEmail) {
+    return { success: false, message: 'Preencha todos os dados obrigatórios para concluir o primeiro acesso.' };
   }
 
-  const passwordUpdate = await supabase.auth.updateUser({ password: newPassword });
-  if (passwordUpdate.error) {
-    return { success: false, message: passwordUpdate.error.message };
+  if (!isValidCpf(cpf)) {
+    return { success: false, message: 'Informe um CPF válido.' };
   }
 
-  const profileUpdate = await supabase.rpc('upsert_customer_profile', {
-    p_user_id: user.id,
-    p_full_name: fullName,
-    p_cpf: cpf,
-    p_birth_date: birthDate,
-    p_gender: gender,
-    p_phone: phone,
-    p_email: email,
-    p_city: city,
-    p_loyalty_tier_id: profile?.loyalty_tier_id ? String(profile.loyalty_tier_id) : null,
-    p_loyalty_override: Boolean(profile?.loyalty_override),
-    p_loyalty_override_reason: profile?.loyalty_override_reason ? String(profile.loyalty_override_reason) : null,
-    p_show_in_participant_list: profile?.show_in_participant_list === undefined ? true : Boolean(profile.show_in_participant_list),
-    p_allow_friend_requests: profile?.allow_friend_requests === undefined ? true : Boolean(profile.allow_friend_requests),
-    p_profile_visibility: profile?.profile_visibility ? String(profile.profile_visibility) : 'participants',
+  const mustChangePassword = Boolean(profile?.must_change_password);
+  const newPassword = String(formData.get('new_password') ?? '').trim();
+  const confirmPassword = String(formData.get('confirm_password') ?? '').trim();
+
+  if (mustChangePassword) {
+    if (newPassword.length < 8) {
+      return { success: false, message: 'A nova senha precisa ter no mínimo 8 caracteres.' };
+    }
+
+    if (newPassword !== confirmPassword) {
+      return { success: false, message: 'A confirmação de senha não confere.' };
+    }
+
+    if (newPassword === cpf) {
+      return { success: false, message: 'A senha não pode ser igual ao CPF.' };
+    }
+
+    const passwordUpdate = await supabase.auth.updateUser({ password: newPassword });
+    if (passwordUpdate.error) {
+      return { success: false, message: 'Não foi possível atualizar a senha. Tente novamente.' };
+    }
+  }
+
+  const profileUpdate = await upsertCustomerProfileCompat(supabase, {
+    userId: user.id,
+    fullName,
+    cpf,
+    birthDate,
+    gender,
+    phone,
+    email: null,
+    city,
+    loyaltyTierId: profile?.loyalty_tier_id ? String(profile.loyalty_tier_id) : null,
+    loyaltyOverride: Boolean(profile?.loyalty_override),
+    loyaltyOverrideReason: profile?.loyalty_override_reason ? String(profile.loyalty_override_reason) : null,
+    showInParticipantList: profile?.show_in_participant_list === undefined ? true : Boolean(profile.show_in_participant_list),
+    allowFriendRequests: profile?.allow_friend_requests === undefined ? true : Boolean(profile.allow_friend_requests),
+    profileVisibility: profile?.profile_visibility ? String(profile.profile_visibility) : 'participants',
   });
 
   if (profileUpdate.error) {
-    return { success: false, message: profileUpdate.error.message };
+    console.error('[first-access:profile-upsert-error]', {
+      userIdPresent: Boolean(user.id),
+      mode: profileUpdate.mode,
+      error: profileUpdate.error.message,
+    });
+    return { success: false, message: translateFirstAccessPersistError(profileUpdate.error.message) };
   }
 
-  const accountUpdate = await supabase
-    .from('customer_profiles')
-    .update({
-      must_change_password: false,
-      must_complete_profile: false,
-      account_status: 'active',
-      activation_completed_at: new Date().toISOString(),
-    })
-    .eq('user_id', user.id);
+  const completedAt = new Date().toISOString();
+  const accountUpdate = await updateCustomerProfileCompat(supabase, user.id, {
+    must_change_password: false,
+    must_complete_profile: false,
+    account_status: 'active',
+    activation_completed_at: completedAt,
+  });
+
+  console.info('[first-access:account-update]', {
+    userIdPresent: Boolean(user.id),
+    updateExecuted: true,
+    appliedColumns: accountUpdate.appliedColumns,
+  });
 
   if (accountUpdate.error) {
-    return { success: false, message: accountUpdate.error.message };
+    console.error('[first-access:account-update-error]', {
+      userIdPresent: Boolean(user.id),
+      error: accountUpdate.error.message,
+    });
+    return { success: false, message: translateFirstAccessPersistError(accountUpdate.error.message) };
   }
 
   if (cpf) {
@@ -128,7 +194,36 @@ export async function completeFirstAccessAction(formData: FormData) {
     p_user_id: user.id,
   });
 
+  const completionStatus = await getProfileCompletionStatus(user.id, authEmail);
+  console.info('[first-access:completion-after-save]', {
+    userIdPresent: Boolean(user.id),
+    profileFound: completionStatus.exists,
+    missingFields: completionStatus.missingFields,
+    isComplete: completionStatus.isComplete,
+  });
+
+  if (completionStatus.error) {
+    console.error('[first-access:completion-check-error]', {
+      userIdPresent: Boolean(user.id),
+      error: completionStatus.error,
+    });
+    return { success: false, message: 'Nao foi possivel concluir seu cadastro.' };
+  }
+
+  if (!completionStatus.isComplete) {
+    const pendingFields = toFriendlyMissingFields(completionStatus.missingFields);
+    const pendingText = pendingFields.length ? ` Campos pendentes: ${pendingFields.join(', ')}.` : '';
+    return {
+      success: false,
+      message: `Nao foi possivel concluir seu cadastro.${pendingText}`,
+    };
+  }
+
   revalidatePath('/minha-conta');
 
-  return { success: true, message: 'Primeiro acesso concluido com sucesso.' };
+  return {
+    success: true,
+    message: 'Primeiro acesso concluído com sucesso.',
+    redirect_to: nextPath,
+  };
 }

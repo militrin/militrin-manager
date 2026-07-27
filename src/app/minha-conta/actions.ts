@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getEmailProvider } from '@/lib/email/fake-provider';
 import { generatePublicPixAction, simulatePublicPaymentAction } from '@/app/inscricao/actions';
 import { formatDateBR, toISODateFromBR } from '@/lib/utils/date';
+import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 
 const emailProvider = getEmailProvider();
 
@@ -41,21 +42,21 @@ export async function updateMyProfileAction(formData: FormData) {
   const profileCpf = String(profile?.cpf ?? '').replace(/\D/g, '') || null;
   const photoUrl = String(formData.get('photo_url') ?? '').trim() || null;
 
-  const { error } = await supabase.rpc('upsert_customer_profile', {
-    p_user_id: user.id,
-    p_full_name: String(formData.get('full_name') ?? '').trim() || null,
-    p_cpf: profileCpf,
-    p_birth_date: birthDate,
-    p_gender: String(formData.get('gender') ?? '').trim() || null,
-    p_phone: String(formData.get('phone') ?? '').replace(/\D/g, '') || null,
-    p_email: emailValue,
-    p_city: String(formData.get('city') ?? '').trim() || null,
-    p_loyalty_tier_id: profile?.loyalty_tier_id ? String(profile.loyalty_tier_id) : null,
-    p_loyalty_override: Boolean(profile?.loyalty_override),
-    p_loyalty_override_reason: profile?.loyalty_override_reason ? String(profile.loyalty_override_reason) : null,
-    p_show_in_participant_list: formData.get('show_in_participant_list') === 'on',
-    p_allow_friend_requests: formData.get('allow_friend_requests') === 'on',
-    p_profile_visibility: String(formData.get('profile_visibility') ?? profile?.profile_visibility ?? 'participants'),
+  const { error } = await upsertCustomerProfileCompat(supabase, {
+    userId: user.id,
+    fullName: String(formData.get('full_name') ?? '').trim() || null,
+    cpf: profileCpf,
+    birthDate,
+    gender: String(formData.get('gender') ?? '').trim() || null,
+    phone: String(formData.get('phone') ?? '').replace(/\D/g, '') || null,
+    email: emailValue,
+    city: String(formData.get('city') ?? '').trim() || null,
+    loyaltyTierId: profile?.loyalty_tier_id ? String(profile.loyalty_tier_id) : null,
+    loyaltyOverride: Boolean(profile?.loyalty_override),
+    loyaltyOverrideReason: profile?.loyalty_override_reason ? String(profile.loyalty_override_reason) : null,
+    showInParticipantList: formData.get('show_in_participant_list') === 'on',
+    allowFriendRequests: formData.get('allow_friend_requests') === 'on',
+    profileVisibility: String(formData.get('profile_visibility') ?? profile?.profile_visibility ?? 'participants'),
   });
 
   if (error) return { success: false, message: error.message };

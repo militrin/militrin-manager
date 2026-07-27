@@ -1,20 +1,26 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requestEmailChangeAction, updateMyProfileAction, updatePasswordAction } from '@/app/minha-conta/actions';
+import { redirect } from 'next/navigation';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
 import { formatISOToDateBR } from '@/lib/utils/date';
 import { MilitrinAvatar, MilitrinButton, MilitrinSection } from '@/components/militrin';
+import {
+  resolveParticipantAvatarUrl,
+  resolveParticipantFullName,
+  resolveParticipantInitials,
+} from '@/lib/account/participant-identity';
+import { sanitizeInternalNextPath } from '@/lib/utils/safe-navigation';
 
-function initialsFromName(name: string) {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((chunk) => chunk[0]?.toUpperCase() ?? '')
-    .join('');
-}
-
-export default async function DadosPage() {
+export default async function DadosPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const supabase = await createServerSupabaseClient();
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const nextParamRaw = resolvedSearchParams?.next;
+  const nextParam = Array.isArray(nextParamRaw) ? nextParamRaw[0] : nextParamRaw;
+  const safeNext = sanitizeInternalNextPath(nextParam ?? null, '/minha-conta');
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -22,12 +28,19 @@ export default async function DadosPage() {
   const { data: profileData } = await supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null });
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const birthDate = formatISOToDateBR(String(profile?.birth_date ?? ''));
-  const photoUrl = String((user?.user_metadata as Record<string, unknown> | undefined)?.avatar_url ?? '').trim();
-  const displayName = String(profile?.full_name ?? user?.email ?? 'Participante');
+  const userMetadata = (user?.user_metadata as Record<string, unknown> | undefined) ?? null;
+  const photoUrl = resolveParticipantAvatarUrl({ profile, userMetadata });
+  const displayName = resolveParticipantFullName({
+    profile,
+    userMetadata,
+    email: user?.email,
+  });
 
   async function saveProfileAction(formData: FormData) {
     'use server';
+    const nextPath = sanitizeInternalNextPath(String(formData.get('next_path') ?? ''), '/minha-conta');
     await updateMyProfileAction(formData);
+    redirect(nextPath);
   }
 
   async function changeEmailAction(formData: FormData) {
@@ -48,14 +61,15 @@ export default async function DadosPage() {
         description="Atualize dados publicos e preferencias de privacidade com seguranca."
       >
         <div className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-          <MilitrinAvatar src={photoUrl || null} alt="Foto do participante" initials={initialsFromName(displayName)} />
+          <MilitrinAvatar src={photoUrl} alt={`Foto do participante ${displayName}`} initials={resolveParticipantInitials(displayName)} />
           <div>
             <p className="text-sm text-slate-300">Perfil ativo</p>
-            <p className="text-lg font-semibold text-white">{displayName}</p>
+            <p className="text-lg font-semibold text-white" title={displayName}>{displayName}</p>
           </div>
         </div>
 
         <form action={saveProfileAction} className="grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="next_path" value={safeNext} />
           <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-slate-300">Nome completo</span>
             <input name="full_name" defaultValue={String(profile?.full_name ?? '')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
@@ -91,7 +105,7 @@ export default async function DadosPage() {
 
           <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-slate-300">Foto de perfil (URL)</span>
-            <input name="photo_url" type="url" placeholder="https://..." defaultValue={photoUrl} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+            <input name="photo_url" type="url" placeholder="https://..." defaultValue={photoUrl ?? ''} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
           </label>
 
           <label className="space-y-1 sm:col-span-2">

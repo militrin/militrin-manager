@@ -1,6 +1,8 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
+import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -14,6 +16,31 @@ type CategoryRow = {
   sort_order: number;
   available_slots: number | null;
 };
+
+type InitialBuyer = {
+  full_name: string;
+  cpf: string;
+  birth_date: string;
+  gender: string;
+  phone: string;
+  email: string;
+  city: string;
+  privacy_policy_accepted: boolean;
+  privacy_policy_accepted_at: string | null;
+  missing_fields: string[];
+  locked: {
+    cpf: boolean;
+    birth_date: boolean;
+  };
+};
+
+function textValue(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function digitsValue(value: unknown) {
+  return textValue(value).replace(/\D/g, '');
+}
 
 function eventIsOpen(event: { registration_enabled: boolean; registration_open_at: string | null; registration_close_at: string | null }) {
   if (!event.registration_enabled) return false;
@@ -34,10 +61,87 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     redirect(`/entrar?next=/inscricao/${eventSlug}`);
   }
 
-  const flags = await getFirstAccessFlags(user.id);
-  if (flags.mustChangePassword || flags.mustCompleteProfile) {
-    redirect('/primeiro-acesso');
+  const profileStatus = await getProfileCompletionStatus(user.id, user.email ?? null);
+
+  if (profileStatus.error) {
+    return (
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+        <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h1 className="text-2xl font-semibold text-white">Não foi possível carregar seu perfil</h1>
+          <p className="mt-2 text-sm text-slate-300">Tente novamente para continuar sua compra.</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href={`/inscricao/${eventSlug}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
+              Tentar novamente
+            </Link>
+            <Link href="/minha-conta" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
+              Voltar para Minha conta
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
   }
+
+  const profile = profileStatus.profile;
+  const metadata = (user.user_metadata as Record<string, unknown> | undefined) ?? null;
+
+  const fullNameProfile = textValue(profile?.full_name);
+  const fullNameMetadata = textValue(metadata?.full_name ?? metadata?.name);
+
+  const cpfProfile = digitsValue(profile?.cpf);
+  const cpfMetadata = digitsValue(metadata?.cpf);
+
+  const birthProfile = textValue(profile?.birth_date);
+  const birthMetadata = textValue(metadata?.birth_date);
+
+  const genderProfile = textValue(profile?.gender);
+  const genderMetadata = textValue(metadata?.gender);
+
+  const phoneProfile = digitsValue(profile?.phone);
+  const phoneMetadata = digitsValue(metadata?.phone);
+
+  const cityProfile = textValue(profile?.city);
+  const cityMetadata = textValue(metadata?.city);
+
+  const email = String(user.email ?? '').trim().toLowerCase();
+
+  const initialBuyer: InitialBuyer = {
+    full_name: fullNameProfile || fullNameMetadata,
+    cpf: cpfProfile || cpfMetadata,
+    birth_date: birthProfile || birthMetadata,
+    gender: genderProfile || genderMetadata,
+    phone: phoneProfile || phoneMetadata,
+    email,
+    city: cityProfile || cityMetadata,
+    privacy_policy_accepted: Boolean(profile?.privacy_policy_accepted),
+    privacy_policy_accepted_at: profile?.privacy_policy_accepted_at ? String(profile.privacy_policy_accepted_at) : null,
+    missing_fields: [],
+    locked: {
+      cpf: Boolean(cpfProfile),
+      birth_date: Boolean(birthProfile),
+    },
+  };
+
+  initialBuyer.missing_fields = profileStatus.missingFields;
+
+  const tooIncompleteForCheckout = profileStatus.missingFields.includes('full_name')
+    || profileStatus.missingFields.includes('cpf')
+    || profileStatus.missingFields.includes('birth_date')
+    || profileStatus.missingFields.includes('gender')
+    || profileStatus.mustChangePassword
+    || profileStatus.mustCompleteProfile;
+
+  if (tooIncompleteForCheckout) {
+    const nextPath = sanitizePostFirstAccessNextPath(`/inscricao/${eventSlug}`, '/minha-conta');
+    redirect(`/primeiro-acesso?next=${encodeURIComponent(nextPath)}`);
+  }
+
+  console.info('[profile-completion:checkout]', {
+    userId: user.id,
+    profileExists: profileStatus.exists,
+    missingFields: profileStatus.missingFields,
+    isComplete: profileStatus.isComplete,
+  });
 
   const { data: event, error: eventError } = await supabase
     .from('events')
@@ -166,6 +270,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       benefitsByCategory={benefitsByCategory}
       kitItems={kitItems}
       inventory={inventory}
+      initialBuyer={initialBuyer}
     />
   );
 }

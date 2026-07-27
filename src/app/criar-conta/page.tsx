@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
 import { formatCpf, formatPhone } from '@/lib/validation/registration';
-import { getPublicSessionAction, signUpPublicAccountAction } from '@/app/inscricao/actions';
+import { signUpPublicAccountAction } from '@/app/inscricao/actions';
+import { resolvePostAuthDestination } from '@/lib/utils/safe-navigation';
 
 export default function CriarContaPage() {
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function CriarContaPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
   const [cooldownTick, setCooldownTick] = useState(() => Date.now());
 
@@ -35,15 +37,12 @@ export default function CriarContaPage() {
   }, [cooldownUntil]);
 
   const cooldownSeconds = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - cooldownTick) / 1000)) : 0;
-  const canSubmit = !isSubmitting && cooldownSeconds === 0;
+  const canSubmit = !isSubmitting && !isRedirecting && cooldownSeconds === 0;
 
-  async function verifySessionAndRedirect() {
-    const session = await getPublicSessionAction();
-    if (session.success && session.authenticated) {
-      router.push('/minha-conta');
-      return true;
-    }
-    return false;
+  function getWizardPathFromStorage() {
+    if (typeof window === 'undefined') return null;
+    const saved = window.sessionStorage.getItem('militrin:last-wizard-next');
+    return saved?.trim() || null;
   }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -56,8 +55,18 @@ export default function CriarContaPage() {
     submitLockRef.current = true;
     setIsSubmitting(true);
     setMessage(null);
+    let keepLocked = false;
 
     try {
+      const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+      const nextPath = params?.get('next') ?? null;
+      const wizardPath = getWizardPathFromStorage();
+      const fallbackDestination = resolvePostAuthDestination({
+        nextPath,
+        wizardPath,
+        fallback: '/minha-conta',
+      });
+
       const result = await signUpPublicAccountAction({
         full_name: fullName,
         cpf,
@@ -70,6 +79,8 @@ export default function CriarContaPage() {
         confirmPassword,
         acceptPrivacy,
         require_profile_fields: true,
+        next_path: nextPath,
+        wizard_path: wizardPath,
       });
 
       if (!result.success) {
@@ -77,11 +88,6 @@ export default function CriarContaPage() {
           setCooldownTick(Date.now());
           setCooldownUntil(Date.now() + 60_000);
           setMessage(result.message || 'Muitas solicitações de e-mail foram realizadas em pouco tempo.');
-          return;
-        }
-
-        const sessionRecovered = await verifySessionAndRedirect();
-        if (sessionRecovered) {
           return;
         }
 
@@ -94,25 +100,29 @@ export default function CriarContaPage() {
         return;
       }
 
+      if (result.authenticated) {
+        setMessage(
+          result.profile_creation_failed
+            ? 'Sua conta foi criada, mas precisamos concluir seus dados.'
+            : 'Conta criada com sucesso. Entrando...',
+        );
+        setIsRedirecting(true);
+        keepLocked = true;
+        router.push(result.redirect_to || fallbackDestination);
+        return;
+      }
+
       if (result.email_confirmation_required) {
         setMessage('Conta criada. Verifique seu e-mail para confirmar o acesso.');
         return;
       }
 
-      const sessionRecovered = await verifySessionAndRedirect();
-      if (sessionRecovered) {
-        return;
-      }
-
-      if (result.authenticated) {
-        router.push('/minha-conta');
-        return;
-      }
-
-      setMessage('Conta criada. Faça login para continuar.');
+      setMessage('Conta criada. Verifique seu e-mail para confirmar o acesso.');
     } finally {
-      submitLockRef.current = false;
-      setIsSubmitting(false);
+      if (!keepLocked) {
+        submitLockRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   }
 

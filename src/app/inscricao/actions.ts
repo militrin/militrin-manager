@@ -6,6 +6,10 @@ import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { formatDateBR } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
+import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
+import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
+import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
+import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
 
 type PricingPreview = {
   batch_id: string;
@@ -35,7 +39,6 @@ type RegistrationCreateInput = {
   payment_method: 'pix' | 'credit_card';
   coupon_code?: string;
   notes?: string;
-  user_id?: string;
   client_request_id?: string;
 };
 
@@ -47,6 +50,9 @@ type SignupActionResult =
       email_confirmation_required: boolean;
       authenticated: boolean;
       profile_warning?: string;
+      first_access_required?: boolean;
+      redirect_to?: string;
+      profile_creation_failed?: boolean;
     }
   | {
       success: false;
@@ -71,6 +77,12 @@ function normalizeBirthDateInput(value: string | null | undefined) {
     return normalized;
   }
   return null;
+}
+
+function isoToDateBR(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-');
+  return `${day}/${month}/${year}`;
 }
 
 function translateAuthErrorMessage(message: string) {
@@ -138,6 +150,32 @@ function accountOrdersUrl() {
   return `${appBaseUrl()}/minha-conta/compras`;
 }
 
+function firstAccessRouteWithNext(nextPath: string) {
+  const safeNext = sanitizePostFirstAccessNextPath(nextPath, '/minha-conta');
+  return `/primeiro-acesso?next=${encodeURIComponent(safeNext)}`;
+}
+
+async function resolvePostAuthPath(params: {
+  userId: string;
+  nextPath?: string | null;
+  wizardPath?: string | null;
+}) {
+  const destination = resolvePostAuthDestination({
+    nextPath: params.nextPath,
+    wizardPath: params.wizardPath,
+    fallback: '/minha-conta',
+  });
+
+  const status = await getProfileCompletionStatus(params.userId);
+  const firstAccessRequired = status.error ? false : !status.isComplete;
+
+  return {
+    destination,
+    firstAccessRequired,
+    redirectTo: firstAccessRequired ? firstAccessRouteWithNext(destination) : destination,
+  };
+}
+
 async function upsertCustomerProfileForUser(params: {
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>;
   userId: string;
@@ -150,21 +188,21 @@ async function upsertCustomerProfileForUser(params: {
   city?: string | null;
   loyaltyTierId?: string | null;
 }) {
-  const { error } = await params.supabase.rpc('upsert_customer_profile', {
-    p_user_id: params.userId,
-    p_full_name: params.fullName,
-    p_cpf: params.cpf ?? null,
-    p_birth_date: params.birthDate ?? null,
-    p_gender: params.gender ?? null,
-    p_phone: params.phone ?? null,
-    p_email: params.email,
-    p_city: params.city ?? null,
-    p_loyalty_tier_id: params.loyaltyTierId ?? null,
-    p_loyalty_override: false,
-    p_loyalty_override_reason: null,
-    p_show_in_participant_list: true,
-    p_allow_friend_requests: true,
-    p_profile_visibility: 'participants',
+  const { error } = await upsertCustomerProfileCompat(params.supabase, {
+    userId: params.userId,
+    fullName: params.fullName,
+    cpf: params.cpf ?? null,
+    birthDate: params.birthDate ?? null,
+    gender: params.gender ?? null,
+    phone: params.phone ?? null,
+    email: params.email,
+    city: params.city ?? null,
+    loyaltyTierId: params.loyaltyTierId ?? null,
+    loyaltyOverride: false,
+    loyaltyOverrideReason: null,
+    showInParticipantList: true,
+    allowFriendRequests: true,
+    profileVisibility: 'participants',
   });
 
   if (error) {
@@ -207,7 +245,6 @@ async function ensureCustomerProfileForSignedUser(params: {
   const fullName = String(
     profile?.full_name
     ?? params.fallback?.full_name
-    ?? params.email.split('@')[0]
     ?? 'Participante',
   ).trim();
 
@@ -464,7 +501,7 @@ export async function getPublicSessionAction() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { success: true, authenticated: false };
+    return { success: true, authenticated: false, first_access_required: false, redirect_to: null as string | null };
   }
 
   const ensuredProfile = await ensureCustomerProfileForSignedUser({
@@ -482,7 +519,18 @@ export async function getPublicSessionAction() {
   });
 
   if (!ensuredProfile.success) {
-    return { success: false, message: ensuredProfile.message };
+    return {
+      success: true,
+      authenticated: true,
+      first_access_required: true,
+      redirect_to: '/primeiro-acesso',
+      user: {
+        id: user.id,
+        email: user.email ?? null,
+      },
+      profile: null,
+      profile_warning: 'Sua conta foi criada, mas precisamos concluir seus dados.',
+    };
   }
 
   const { data: profileData, error: profileError } = await supabase.rpc('get_customer_profile', {
@@ -493,10 +541,17 @@ export async function getPublicSessionAction() {
   }
 
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+  const postAuth = await resolvePostAuthPath({
+    userId: user.id,
+    nextPath: null,
+    wizardPath: null,
+  });
 
   return {
     success: true,
     authenticated: true,
+    first_access_required: postAuth.firstAccessRequired,
+    redirect_to: postAuth.redirectTo,
     user: {
       id: user.id,
       email: user.email ?? null,
@@ -536,7 +591,12 @@ export async function getPublicAccountEmailStatusAction(email: string) {
   return { success: true, has_account: Boolean(row?.has_account) };
 }
 
-export async function signInPublicAccountAction(input: { email: string; password: string }) {
+export async function signInPublicAccountAction(input: {
+  email: string;
+  password: string;
+  next_path?: string | null;
+  wizard_path?: string | null;
+}) {
   const supabase = await createServerSupabaseClient();
   const normalized = normalizeEmail(input.email);
   if (!normalized || !input.password) {
@@ -568,8 +628,22 @@ export async function signInPublicAccountAction(input: { email: string; password
       },
     });
 
+    const postAuth = await resolvePostAuthPath({
+      userId: data.user.id,
+      nextPath: input.next_path,
+      wizardPath: input.wizard_path,
+    });
+
     if (!ensuredProfile.success) {
-      return { success: false, code: 'profile_error', message: ensuredProfile.message };
+      return {
+        success: true,
+        user_id: data.user.id,
+        email: data.user.email ?? normalized,
+        profile_warning: 'Sua conta foi criada, mas precisamos concluir seus dados.',
+        first_access_required: true,
+        redirect_to: firstAccessRouteWithNext(postAuth.destination),
+        profile_creation_failed: true,
+      };
     }
 
     return {
@@ -577,6 +651,8 @@ export async function signInPublicAccountAction(input: { email: string; password
       user_id: data.user.id,
       email: data.user.email ?? normalized,
       profile_warning: ensuredProfile.warning ?? null,
+      first_access_required: postAuth.firstAccessRequired,
+      redirect_to: postAuth.redirectTo,
     };
   } catch {
     return { success: false, code: 'connection', message: 'Erro de conexão.' };
@@ -595,6 +671,8 @@ export async function signUpPublicAccountAction(input: {
   confirmPassword: string;
   acceptPrivacy?: boolean;
   require_profile_fields?: boolean;
+  next_path?: string | null;
+  wizard_path?: string | null;
 }): Promise<SignupActionResult> {
   const supabase = await createServerSupabaseClient();
   const normalized = normalizeEmail(input.email);
@@ -657,6 +735,9 @@ export async function signUpPublicAccountAction(input: {
 
   const emailConfirmationRequired = !data.session;
   let profileWarning: string | undefined;
+  let profileCreationFailed = false;
+  let firstAccessRequired = false;
+  let redirectTo: string | undefined;
 
   if (data.session) {
     const ensuredProfile = await ensureCustomerProfileForSignedUser({
@@ -674,12 +755,31 @@ export async function signUpPublicAccountAction(input: {
     });
 
     if (!ensuredProfile.success) {
-      return { success: false, code: 'profile_error', message: ensuredProfile.message };
+      profileCreationFailed = true;
+      profileWarning = 'Sua conta foi criada, mas precisamos concluir seus dados.';
     }
 
-    if (ensuredProfile.warning) {
+    if (ensuredProfile.success && ensuredProfile.warning) {
       profileWarning = ensuredProfile.warning;
     }
+
+    if (input.acceptPrivacy) {
+      const acceptedAt = new Date().toISOString();
+      await updateCustomerProfileCompat(supabase, data.user.id, {
+        privacy_policy_accepted: true,
+        privacy_policy_accepted_at: acceptedAt,
+        privacy_accepted_at: acceptedAt,
+      });
+    }
+
+    const postAuth = await resolvePostAuthPath({
+      userId: data.user.id,
+      nextPath: input.next_path,
+      wizardPath: input.wizard_path,
+    });
+
+    firstAccessRequired = profileCreationFailed ? true : postAuth.firstAccessRequired;
+    redirectTo = profileCreationFailed ? firstAccessRouteWithNext(postAuth.destination) : postAuth.redirectTo;
   }
 
   if (emailConfirmationRequired) {
@@ -700,6 +800,9 @@ export async function signUpPublicAccountAction(input: {
     email_confirmation_required: emailConfirmationRequired,
     authenticated: Boolean(data.session),
     profile_warning: profileWarning,
+    first_access_required: firstAccessRequired,
+    redirect_to: redirectTo,
+    profile_creation_failed: profileCreationFailed,
   };
 }
 
@@ -805,6 +908,154 @@ export async function checkPublicCpfAction(payload: { event_id: string; cpf: str
   return { success: true };
 }
 
+export async function saveCheckoutBuyerProfileAction(input: {
+  full_name?: string;
+  cpf?: string;
+  birth_date?: string;
+  gender?: string;
+  phone?: string;
+  city?: string;
+  accept_privacy?: boolean;
+  privacy_policy_version?: string | null;
+}) {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.id) {
+    return { success: false as const, message: 'Sessao expirada. Entre novamente.' };
+  }
+
+  const { data: profileData, error: profileError } = await supabase.rpc('get_customer_profile', {
+    p_user_id: user.id,
+  });
+  if (profileError) {
+    return { success: false as const, message: profileError.message };
+  }
+
+  const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+  const userMetadata = (user.user_metadata as Record<string, unknown> | undefined) ?? null;
+
+  const existingFullName = String(profile?.full_name ?? '').trim();
+  const incomingFullName = String(input.full_name ?? '').trim();
+  const metadataFullName = String(userMetadata?.full_name ?? userMetadata?.name ?? '').trim();
+
+  const existingCpf = String(profile?.cpf ?? '').replace(/\D/g, '');
+  const incomingCpf = String(input.cpf ?? '').replace(/\D/g, '');
+  const metadataCpf = String(userMetadata?.cpf ?? '').replace(/\D/g, '');
+
+  const existingBirth = normalizeBirthDateInput(String(profile?.birth_date ?? ''));
+  const incomingBirth = normalizeBirthDateInput(String(input.birth_date ?? ''));
+  const metadataBirth = normalizeBirthDateInput(String(userMetadata?.birth_date ?? ''));
+
+  const existingGender = String(profile?.gender ?? '').trim();
+  const incomingGender = String(input.gender ?? '').trim();
+  const metadataGender = String(userMetadata?.gender ?? '').trim();
+
+  const existingPhone = String(profile?.phone ?? '').replace(/\D/g, '');
+  const incomingPhone = String(input.phone ?? '').replace(/\D/g, '');
+  const metadataPhone = String(userMetadata?.phone ?? '').replace(/\D/g, '');
+
+  const existingCity = String(profile?.city ?? '').trim();
+  const incomingCity = String(input.city ?? '').trim();
+  const metadataCity = String(userMetadata?.city ?? '').trim();
+
+  const email = normalizeEmail(user.email ?? String(profile?.email ?? ''));
+  if (!email) {
+    return { success: false as const, message: 'Conta sem e-mail válido.' };
+  }
+
+  const fullName = existingFullName || incomingFullName || metadataFullName;
+  const cpf = existingCpf || incomingCpf || metadataCpf;
+  const birthDate = existingBirth || incomingBirth || metadataBirth;
+  const gender = existingGender || incomingGender || metadataGender;
+  const phone = existingPhone || incomingPhone || metadataPhone;
+  const city = existingCity || incomingCity || metadataCity;
+
+  if (cpf && !isValidCpf(cpf)) {
+    return { success: false as const, message: 'CPF inválido.' };
+  }
+  if (birthDate) {
+    const birthDateBR = isoToDateBR(birthDate);
+    if (!birthDateBR) {
+      return { success: false as const, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
+    }
+    if (calculateAge(birthDateBR) < 18) {
+      return { success: false as const, message: 'A inscricao exige idade minima de 18 anos.' };
+    }
+  }
+
+  try {
+    await upsertCustomerProfileForUser({
+      supabase,
+      userId: user.id,
+      fullName: fullName || 'Participante',
+      cpf: cpf || null,
+      birthDate: birthDate || null,
+      gender: gender || null,
+      phone: phone || null,
+      email,
+      city: city || null,
+      loyaltyTierId: profile?.loyalty_tier_id ? String(profile.loyalty_tier_id) : null,
+    });
+  } catch (error) {
+    return {
+      success: false as const,
+      message: error instanceof Error ? error.message : 'Nao foi possivel atualizar o perfil do comprador.',
+    };
+  }
+
+  const currentPrivacyAccepted = Boolean(profile?.privacy_policy_accepted);
+  const shouldAcceptPrivacy = currentPrivacyAccepted || Boolean(input.accept_privacy);
+  if (shouldAcceptPrivacy && !currentPrivacyAccepted) {
+    const nowIso = new Date().toISOString();
+    const { error: privacyError } = await updateCustomerProfileCompat(supabase, user.id, {
+      privacy_policy_accepted: true,
+      privacy_policy_accepted_at: nowIso,
+      privacy_accepted_at: nowIso,
+    });
+
+    if (privacyError) {
+      return { success: false as const, message: privacyError.message };
+    }
+
+    const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+    await supabase.auth.updateUser({
+      data: {
+        ...metadata,
+        privacy_policy_version: input.privacy_policy_version ?? 'current',
+        privacy_policy_accepted_at: nowIso,
+      },
+    });
+  }
+
+  const missingFields = [
+    !fullName ? 'full_name' : null,
+    !cpf ? 'cpf' : null,
+    !birthDate ? 'birth_date' : null,
+    !gender ? 'gender' : null,
+    phone.length < 10 ? 'phone' : null,
+    !city ? 'city' : null,
+    !shouldAcceptPrivacy ? 'privacy_policy' : null,
+  ].filter(Boolean) as string[];
+
+  return {
+    success: true as const,
+    profile: {
+      full_name: fullName,
+      cpf,
+      birth_date: birthDate,
+      gender,
+      phone,
+      email,
+      city,
+      privacy_policy_accepted: shouldAcceptPrivacy,
+      missing_fields: missingFields,
+    },
+  };
+}
+
 export async function createPublicRegistrationAction(input: RegistrationCreateInput) {
   const supabase = await createServerSupabaseClient();
   console.log('[wizard-diagnostic:create]', {
@@ -817,13 +1068,11 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
   const normalizedEmail = normalizeEmail(input.email);
   if (!normalizedEmail) return { success: false, message: 'E-mail obrigatorio.' };
 
-  let userId = input.user_id ?? null;
-  if (!userId) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    userId = user?.id ?? null;
-  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const userId = user?.id ?? null;
   if (!userId) {
     return { success: false, message: 'Entre na sua conta para continuar a inscricao.' };
   }
@@ -892,32 +1141,45 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     };
   }
 
-  const { error: profileError } = await supabase.rpc('upsert_customer_profile', {
+  const { data: profileData } = await supabase.rpc('get_customer_profile', {
     p_user_id: userId,
-    p_full_name: input.full_name.trim(),
-    p_cpf: cpf,
-    p_birth_date: birthDateIso,
-    p_gender: input.gender || null,
-    p_phone: input.phone.replace(/\D/g, ''),
-    p_email: normalizedEmail,
-    p_city: input.city?.trim() || null,
-    p_loyalty_tier_id: null,
-    p_loyalty_override: false,
-    p_loyalty_override_reason: null,
-    p_show_in_participant_list: true,
-    p_allow_friend_requests: true,
-    p_profile_visibility: 'participants',
+  });
+  const currentProfile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+
+  const mergedFullName = String(currentProfile?.full_name ?? '').trim() || input.full_name.trim() || String(user?.user_metadata?.full_name ?? '').trim() || 'Participante';
+  const mergedCpf = String(currentProfile?.cpf ?? '').replace(/\D/g, '') || cpf;
+  const mergedBirthDate = normalizeBirthDateInput(String(currentProfile?.birth_date ?? '')) || birthDateIso;
+  const mergedGender = String(currentProfile?.gender ?? '').trim() || input.gender || null;
+  const mergedPhone = String(currentProfile?.phone ?? '').replace(/\D/g, '') || input.phone.replace(/\D/g, '');
+  const mergedCity = String(currentProfile?.city ?? '').trim() || input.city?.trim() || null;
+  const mergedEmail = normalizeEmail(user?.email ?? input.email);
+
+  const { error: profileError } = await upsertCustomerProfileCompat(supabase, {
+    userId,
+    fullName: mergedFullName,
+    cpf: mergedCpf,
+    birthDate: mergedBirthDate,
+    gender: mergedGender,
+    phone: mergedPhone,
+    email: mergedEmail,
+    city: mergedCity,
+    loyaltyTierId: null,
+    loyaltyOverride: false,
+    loyaltyOverrideReason: null,
+    showInParticipantList: true,
+    allowFriendRequests: true,
+    profileVisibility: 'participants',
   });
   if (profileError) return { success: false, message: profileError.message };
 
   const { data, error } = await supabase.rpc('create_registration', {
-    p_full_name: input.full_name.trim(),
+    p_full_name: mergedFullName,
     p_cpf: cpf,
     p_birth_date: birthDateIso,
-    p_gender: input.gender,
-    p_phone: input.phone.replace(/\D/g, ''),
-    p_email: normalizedEmail,
-    p_city: input.city?.trim() || null,
+    p_gender: mergedGender,
+    p_phone: mergedPhone,
+    p_email: mergedEmail,
+    p_city: mergedCity,
     p_shirt_type: input.shirt_type?.trim() || null,
     p_shirt_size: input.shirt_size?.trim() || null,
     p_registration_status: 'pending',

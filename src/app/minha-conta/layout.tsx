@@ -2,16 +2,23 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
+import {
+  resolveParticipantAvatarUrl,
+  resolveParticipantFirstName,
+  resolveParticipantFullName,
+  resolveParticipantInitials,
+} from '@/lib/account/participant-identity';
 import { signOutAccountAction } from '@/app/minha-conta/actions';
+import { MilitrinAvatar } from '@/components/militrin';
 import { ArrowRight, CircleUserRound, Coins, History, Images, LayoutDashboard, LogOut, Star, Ticket, UsersRound, Trophy } from 'lucide-react';
 
 const navigation = [
-  { href: '/minha-conta', label: 'Inicio', icon: LayoutDashboard },
+  { href: '/minha-conta', label: 'Início', icon: LayoutDashboard },
   { href: '/minha-conta/ingressos', label: 'Meus ingressos', icon: Ticket },
   { href: '/minha-conta/compras', label: 'Minhas compras', icon: Coins },
   { href: '/fotos', label: 'Fotos', icon: Images },
   { href: '/minha-conta/nivel', label: 'Minha categoria', icon: Star },
-  { href: '/minha-conta/historico', label: 'Historico', icon: History },
+  { href: '/minha-conta/historico', label: 'Histórico', icon: History },
   { href: '/minha-conta/dados', label: 'Meu perfil', icon: CircleUserRound },
 ];
 
@@ -30,10 +37,26 @@ export default async function MinhaContaLayout({ children }: { children: React.R
     redirect('/entrar?next=/minha-conta');
   }
 
-  const flags = await getFirstAccessFlags(user.id);
+  const flags = await getFirstAccessFlags(user.id, user.email ?? null);
   if (flags.mustChangePassword || flags.mustCompleteProfile) {
-    redirect('/primeiro-acesso');
+    redirect('/primeiro-acesso?next=/minha-conta');
   }
+
+  const { data: profileData } = await supabase.rpc('get_customer_profile', { p_user_id: user.id });
+  const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+  const userMetadata = (user.user_metadata as Record<string, unknown> | undefined) ?? null;
+
+  const displayName = resolveParticipantFullName({
+    profile,
+    userMetadata,
+    email: user.email,
+  });
+  const firstName = resolveParticipantFirstName(displayName);
+  const initials = resolveParticipantInitials(displayName);
+  const avatarUrl = resolveParticipantAvatarUrl({
+    profile,
+    userMetadata,
+  });
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
@@ -50,8 +73,14 @@ export default async function MinhaContaLayout({ children }: { children: React.R
           </div>
 
           <div className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 text-sm text-slate-300">
-            <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Logado como</p>
-            <p className="mt-2 break-words text-slate-100">{user.email}</p>
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Olá, {firstName}</p>
+            <div className="mt-2 flex min-w-0 items-center gap-3">
+              <MilitrinAvatar src={avatarUrl} alt={`Foto do participante ${displayName}`} initials={initials} size="sm" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-100" title={displayName} aria-label={displayName}>{displayName}</p>
+                <p className="truncate text-xs text-slate-400" title={String(user.email ?? '')}>{String(user.email ?? '')}</p>
+              </div>
+            </div>
           </div>
 
           <nav className="mt-4 grid gap-2 text-sm" aria-label="Navegacao principal do participante">
@@ -111,7 +140,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
           <li>
             <Link href="/minha-conta" className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-slate-200">
               <LayoutDashboard size={15} />
-              Inicio
+              Início
             </Link>
           </li>
           <li>

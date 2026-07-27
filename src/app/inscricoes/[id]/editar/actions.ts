@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { assertPermission } from "@/lib/admin/permissions";
 
 export async function updateParticipantWithStock(payload: {
   id: string;
@@ -17,6 +18,8 @@ export async function updateParticipantWithStock(payload: {
   payment_method: string | null;
   payment_status: string;
 }) {
+  await assertPermission("participants.edit_basic");
+
   const supabase = await createServerSupabaseClient();
   const { data: participant, error: participantError } = await supabase.from("participants").select("id, shirt_type, shirt_size, event_id").eq("id", payload.id).single();
   if (participantError || !participant) throw participantError ?? new Error("Participante não encontrado.");
@@ -27,13 +30,24 @@ export async function updateParticipantWithStock(payload: {
   const { data: nextStock, error: nextStockError } = await supabase.from("shirt_inventory").select("id, total_quantity, reserved_quantity, delivered_quantity").eq("event_id", participant.event_id).eq("shirt_type", payload.shirt_type).eq("shirt_size", payload.shirt_size).maybeSingle();
   if (nextStockError) throw nextStockError;
 
-  if (currentStock && currentStock.id !== nextStock?.id) {
-    const currentAvailable = currentStock.total_quantity - currentStock.reserved_quantity - currentStock.delivered_quantity;
-    if (currentAvailable <= 0) throw new Error("Não há estoque disponível para a camiseta anterior.");
-    await supabase.from("shirt_inventory").update({ reserved_quantity: currentStock.reserved_quantity - 1, updated_at: new Date().toISOString() }).eq("id", currentStock.id);
+  if (!nextStock) {
+    throw new Error("Estoque não configurado para o modelo/tamanho selecionado.");
   }
 
-  if (nextStock) {
+  const nextAvailable = Number(nextStock.total_quantity ?? 0) - Number(nextStock.reserved_quantity ?? 0) - Number(nextStock.delivered_quantity ?? 0);
+  const shirtChanged = currentStock?.id !== nextStock.id;
+  if (shirtChanged && nextAvailable <= 0) {
+    throw new Error("Não há estoque disponível para o novo modelo/tamanho de camiseta.");
+  }
+
+  if (currentStock && shirtChanged) {
+    await supabase
+      .from("shirt_inventory")
+      .update({ reserved_quantity: Math.max(0, Number(currentStock.reserved_quantity ?? 0) - 1), updated_at: new Date().toISOString() })
+      .eq("id", currentStock.id);
+  }
+
+  if (shirtChanged) {
     await supabase.from("shirt_inventory").update({ reserved_quantity: (nextStock.reserved_quantity ?? 0) + 1, updated_at: new Date().toISOString() }).eq("id", nextStock.id);
   }
 
