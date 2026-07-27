@@ -331,7 +331,7 @@ export function EventsManager({
                 {item.registration_enabled ? "Fechar inscrições" : "Abrir inscrições"}
               </button>
               <button type="button" onClick={() => archive(item)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">Arquivar</button>
-              <Link href={`/eventos/${item.id}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Detalhes</Link>
+              <Link href={`/painel/eventos/${item.id}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Detalhes</Link>
             </div>
           </div>
         ))}

@@ -24,7 +24,7 @@ async function getParticipants(page: number, search: string) {
   let query = supabase
     .from("participants")
     .select(
-      "id, registration_number, full_name, cpf, phone, city, shirt_type, shirt_size, registration_status, reservation_status, reservation_expires_at, created_at, event_id, base_amount, discount_amount, final_amount, registration_batches:batch_id(name, sequence_number), payments(payment_status, amount, payment_method, paid_at, created_at)",
+      "id, full_name, cpf, phone, city, shirt_type, shirt_size, registration_status, reservation_status, reservation_expires_at, created_at, event_id, base_amount, discount_amount, final_amount, registration_batches:batch_id(name, sequence_number), payments(payment_status, amount, payment_method, paid_at, created_at)",
       { count: "exact" },
     )
     .eq("event_id", activeEvent.id)
@@ -33,7 +33,7 @@ async function getParticipants(page: number, search: string) {
 
   if (search) {
     const term = search.trim();
-    query = query.or(`full_name.ilike.%${term}%,cpf.ilike.%${term}%,phone.ilike.%${term}%,registration_number.eq.${Number(term) || 0}`);
+    query = query.or(`full_name.ilike.%${term}%,cpf.ilike.%${term}%,phone.ilike.%${term}%`);
   }
 
   const { data, error, count } = await query;
@@ -49,7 +49,7 @@ async function getParticipants(page: number, search: string) {
 
     return {
       id: String(participant.id),
-      registration_number: participant.registration_number as number | null,
+      registration_number: null,
       full_name: String(participant.full_name),
       cpf: String(participant.cpf),
       phone: String(participant.phone),

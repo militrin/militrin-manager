@@ -204,6 +204,10 @@ export async function resendTicketEmailAction(orderId: string) {
 }
 
 export async function payOrderNowAction(orderId: string) {
+  if (process.env.NODE_ENV !== 'development') {
+    return { success: false, message: 'Pagamento simulado disponivel apenas em desenvolvimento.' };
+  }
+
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },

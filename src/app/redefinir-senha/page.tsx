@@ -25,7 +25,7 @@ export default function RedefinirSenhaPage() {
       return;
     }
 
-    router.push('/');
+    router.push('/entrar');
   }
 
   return (
@@ -40,7 +40,7 @@ export default function RedefinirSenhaPage() {
             {loading ? 'Salvando...' : 'Salvar nova senha'}
           </button>
         </form>
-        <Link href="/" className="mt-4 inline-block text-sm text-slate-300 hover:underline">Voltar para entrar</Link>
+        <Link href="/entrar" className="mt-4 inline-block text-sm text-slate-300 hover:underline">Voltar para entrar</Link>
       </div>
     </main>
   );

@@ -1,80 +1,40 @@
-import { Sidebar } from "@/components/dashboard/Sidebar";
-import { TopBar } from "@/components/dashboard/TopBar";
-import { SectionCard } from "@/components/dashboard/SectionCard";
-import { EmptyState } from "@/components/mvp/EmptyState";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { EventsManager } from "./ui";
-
-async function getEventsData() {
-  const supabase = await createServerSupabaseClient();
-
-  const [{ data: eventsData, error: eventsError }, { data: activeEventData, error: activeEventError }] = await Promise.all([
-    supabase.rpc("get_events_overview"),
-    supabase.from("events").select("id, name").eq("is_active", true).maybeSingle(),
-  ]);
-
-  if (eventsError) throw eventsError;
-  if (activeEventError) throw activeEventError;
-
-  const events = (eventsData ?? []).map((row: {
-    id: string;
-    name: string;
-    slug: string;
-    year: number | null;
-    description: string | null;
-    starts_at: string | null;
-    ends_at: string | null;
-    registration_open_at: string | null;
-    registration_close_at: string | null;
-    location: string | null;
-    registration_enabled: boolean;
-    kit_enabled: boolean;
-    is_active: boolean;
-    participants_count: number;
-    created_at: string;
-    updated_at: string;
-  }) => ({
-    id: String(row.id),
-    name: String(row.name),
-    slug: String(row.slug),
-    year: row.year === null || row.year === undefined ? null : Number(row.year),
-    description: row.description ? String(row.description) : null,
-    starts_at: row.starts_at ? String(row.starts_at) : null,
-    ends_at: row.ends_at ? String(row.ends_at) : null,
-    registration_open_at: row.registration_open_at ? String(row.registration_open_at) : null,
-    registration_close_at: row.registration_close_at ? String(row.registration_close_at) : null,
-    location: row.location ? String(row.location) : null,
-    registration_enabled: Boolean(row.registration_enabled),
-    kit_enabled: Boolean(row.kit_enabled),
-    is_active: Boolean(row.is_active),
-    participants_count: Number(row.participants_count ?? 0),
-    created_at: String(row.created_at),
-    updated_at: String(row.updated_at),
-  }));
-
-  return {
-    activeEvent: activeEventData?.id ? { id: String(activeEventData.id), name: String(activeEventData.name ?? "") } : null,
-    events,
-  };
-}
+import Link from 'next/link';
+import { formatDateBR } from '@/lib/utils/date';
+import { getPublicEvents, isEventOpen } from '@/lib/public/events';
 
 export default async function EventsPage() {
-  const { activeEvent, events } = await getEventsData();
+  const { events } = await getPublicEvents();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
-        <Sidebar />
-        <div className="flex-1 space-y-6">
-          <TopBar title="Eventos" subtitle="Gestão completa de eventos e configurações de kit" />
-          <SectionCard title="Administração de eventos" description="Crie eventos, controle inscrições e configure kits por evento.">
-            {events.length === 0 ? (
-              <EmptyState title="Nenhum evento cadastrado" description="Crie o primeiro evento para iniciar a gestão." />
-            ) : null}
-            <EventsManager events={events} activeEvent={activeEvent} />
-          </SectionCard>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-6xl space-y-4">
+        <div className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h1 className="text-3xl font-semibold text-white">Eventos Militrin</h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-300">Navegue pelos eventos, conheca categorias e beneficios, e siga para inscricao quando estiver pronto.</p>
         </div>
-      </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {events.length === 0 ? (
+            <p className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300">Nenhum evento publicado no momento.</p>
+          ) : (
+            events.map((event) => (
+              <article key={event.id} className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{event.year ?? 'Edicao especial'}</p>
+                <h2 className="mt-2 text-xl font-semibold text-white">{event.name}</h2>
+                <p className="mt-2 line-clamp-3 text-sm text-slate-300">{event.description ?? 'Mais detalhes em breve.'}</p>
+                <div className="mt-4 space-y-1 text-xs text-slate-400">
+                  <p>{event.startsAt ? formatDateBR(event.startsAt) : 'Data a confirmar'}</p>
+                  <p>{event.location ?? 'Local a confirmar'}</p>
+                  <p>{isEventOpen(event) ? 'Inscricoes abertas' : 'Inscricoes fechadas'}</p>
+                </div>
+                <Link href={`/eventos/${event.slug}`} className="mt-4 inline-flex h-10 items-center rounded-xl border border-emerald-500/40 px-4 text-sm font-medium text-emerald-200 transition hover:border-emerald-400 hover:text-emerald-100">
+                  Ver detalhes
+                </Link>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
     </main>
   );
 }

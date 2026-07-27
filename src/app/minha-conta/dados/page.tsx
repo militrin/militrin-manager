@@ -2,6 +2,16 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requestEmailChangeAction, updateMyProfileAction, updatePasswordAction } from '@/app/minha-conta/actions';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
 import { formatISOToDateBR } from '@/lib/utils/date';
+import { MilitrinAvatar, MilitrinButton, MilitrinSection } from '@/components/militrin';
+
+function initialsFromName(name: string) {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((chunk) => chunk[0]?.toUpperCase() ?? '')
+    .join('');
+}
 
 export default async function DadosPage() {
   const supabase = await createServerSupabaseClient();
@@ -13,6 +23,7 @@ export default async function DadosPage() {
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const birthDate = formatISOToDateBR(String(profile?.birth_date ?? ''));
   const photoUrl = String((user?.user_metadata as Record<string, unknown> | undefined)?.avatar_url ?? '').trim();
+  const displayName = String(profile?.full_name ?? user?.email ?? 'Participante');
 
   async function saveProfileAction(formData: FormData) {
     'use server';
@@ -30,13 +41,21 @@ export default async function DadosPage() {
   }
 
   return (
-    <section className="space-y-5">
-      <div className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
-        <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Seus dados</p>
-        <h2 className="mt-2 text-3xl font-semibold text-white">Perfil do participante</h2>
-        <p className="mt-2 max-w-2xl text-sm text-slate-300">Atualize seus dados públicos e preferências de privacidade. O e-mail é alterado por um fluxo seguro separado.</p>
+    <section className="space-y-4">
+      <MilitrinSection
+        eyebrow="Meu perfil"
+        title="Dados do participante"
+        description="Atualize dados publicos e preferencias de privacidade com seguranca."
+      >
+        <div className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <MilitrinAvatar src={photoUrl || null} alt="Foto do participante" initials={initialsFromName(displayName)} />
+          <div>
+            <p className="text-sm text-slate-300">Perfil ativo</p>
+            <p className="text-lg font-semibold text-white">{displayName}</p>
+          </div>
+        </div>
 
-        <form action={saveProfileAction} className="mt-6 grid gap-3 sm:grid-cols-2">
+        <form action={saveProfileAction} className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-slate-300">Nome completo</span>
             <input name="full_name" defaultValue={String(profile?.full_name ?? '')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
@@ -50,13 +69,13 @@ export default async function DadosPage() {
           <BirthDateInput name="birth_date" value={birthDate} onChange={() => undefined} required disabled label="Nascimento" className="space-y-1" />
 
           <label className="space-y-1">
-            <span className="text-sm text-slate-300">Gênero</span>
+            <span className="text-sm text-slate-300">Genero</span>
             <select name="gender" defaultValue={String(profile?.gender ?? '')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400">
               <option value="">Selecione</option>
               <option value="male">Masculino</option>
               <option value="female">Feminino</option>
               <option value="other">Outro</option>
-              <option value="prefer_not_to_say">Prefiro não informar</option>
+              <option value="prefer_not_to_say">Prefiro nao informar</option>
             </select>
           </label>
 
@@ -71,14 +90,8 @@ export default async function DadosPage() {
           </label>
 
           <label className="space-y-1 sm:col-span-2">
-            <span className="text-sm text-slate-300">Foto do perfil (URL)</span>
-            <input
-              name="photo_url"
-              type="url"
-              placeholder="https://..."
-              defaultValue={photoUrl}
-              className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400"
-            />
+            <span className="text-sm text-slate-300">Foto de perfil (URL)</span>
+            <input name="photo_url" type="url" placeholder="https://..." defaultValue={photoUrl} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
           </label>
 
           <label className="space-y-1 sm:col-span-2">
@@ -101,40 +114,26 @@ export default async function DadosPage() {
           </label>
 
           <div className="sm:col-span-2">
-            <button type="submit" className="h-11 rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
-              Salvar dados
-            </button>
+            <MilitrinButton type="submit">Salvar dados</MilitrinButton>
           </div>
         </form>
-      </div>
+      </MilitrinSection>
 
-      <div className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
-        <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Senha</p>
-        <h3 className="mt-2 text-2xl font-semibold text-white">Atualizar senha</h3>
-        <p className="mt-2 text-sm text-slate-300">Use pelo menos 8 caracteres e confirme para salvar.</p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <MilitrinSection eyebrow="Senha" title="Atualizar senha" description="Use pelo menos 8 caracteres para sua nova senha.">
+          <form action={changePasswordAction} className="grid gap-3">
+            <input name="new_password" type="password" minLength={8} required placeholder="Nova senha" className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+            <input name="confirm_password" type="password" minLength={8} required placeholder="Confirmar nova senha" className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+            <MilitrinButton type="submit" variant="success">Atualizar senha</MilitrinButton>
+          </form>
+        </MilitrinSection>
 
-        <form action={changePasswordAction} className="mt-5 grid gap-3 sm:grid-cols-2">
-          <input name="new_password" type="password" minLength={8} required placeholder="Nova senha" className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
-          <input name="confirm_password" type="password" minLength={8} required placeholder="Confirmar nova senha" className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
-          <div className="sm:col-span-2">
-            <button type="submit" className="h-11 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20">
-              Atualizar senha
-            </button>
-          </div>
-        </form>
-      </div>
-
-      <div className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
-        <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">E-mail</p>
-        <h3 className="mt-2 text-2xl font-semibold text-white">Trocar endereço de e-mail</h3>
-        <p className="mt-2 text-sm text-slate-300">A alteração ocorre pelo Supabase Auth. Só atualize o perfil depois que a confirmação for concluída.</p>
-
-        <form action={changeEmailAction} className="mt-5 flex flex-col gap-3 sm:flex-row">
-          <input name="email" type="email" required defaultValue={String(profile?.email ?? user?.email ?? '')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
-          <button type="submit" className="h-11 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20">
-            Enviar confirmação
-          </button>
-        </form>
+        <MilitrinSection eyebrow="E-mail" title="Trocar e-mail" description="A troca de e-mail usa fluxo seguro do Supabase Auth.">
+          <form action={changeEmailAction} className="space-y-3">
+            <input name="email" type="email" required defaultValue={String(profile?.email ?? user?.email ?? '')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+            <MilitrinButton type="submit" variant="secondary">Enviar confirmacao</MilitrinButton>
+          </form>
+        </MilitrinSection>
       </div>
     </section>
   );

@@ -29,16 +29,33 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname, search } = request.nextUrl;
+  const protectedPrefixes = [
+    '/minha-conta',
+    '/inscricao',
+    '/painel',
+    '/importacoes',
+    '/primeiro-acesso',
+    '/inscricoes',
+    '/retirada',
+    '/camisetas',
+    '/categorias',
+    '/lotes',
+    '/cupons',
+    '/financeiro',
+    '/configuracao',
+  ];
+  const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+
   const loginRedirect = request.nextUrl.clone();
-  loginRedirect.pathname = '/';
+  loginRedirect.pathname = '/entrar';
   loginRedirect.search = '';
 
-  if (pathname.startsWith('/minha-conta') && !user) {
+  if (requiresAuth && !user) {
     loginRedirect.searchParams.set('next', `${pathname}${search}`);
     return NextResponse.redirect(loginRedirect);
   }
 
-  if ((pathname === '/' || pathname === '/entrar') && user) {
+  if (pathname === '/entrar' && user) {
     const destination = request.nextUrl.searchParams.get('next') || '/minha-conta';
     return NextResponse.redirect(new URL(destination, request.url));
   }
@@ -47,5 +64,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/entrar', '/minha-conta/:path*'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

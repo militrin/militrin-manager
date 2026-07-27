@@ -3,6 +3,18 @@
 :root {
   --background: #020617;
   --foreground: #f8fafc;
+  --militrin-surface: rgba(15, 23, 42, 0.7);
+  --militrin-surface-strong: rgba(2, 6, 23, 0.78);
+  --militrin-card: rgba(2, 6, 23, 0.6);
+  --militrin-border: rgba(30, 41, 59, 0.85);
+  --militrin-shadow: 0 16px 44px rgba(0, 0, 0, 0.2);
+  --militrin-radius-lg: 2rem;
+  --militrin-radius-md: 1rem;
+  --militrin-focus: rgba(52, 211, 153, 0.8);
+  --militrin-success: #34d399;
+  --militrin-warning: #f59e0b;
+  --militrin-danger: #f43f5e;
+  --militrin-info: #38bdf8;
 }
 
 @theme inline {

@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { redirect } from 'next/navigation';
 import { RegistrationWizard } from './wizard';
 
@@ -30,7 +31,12 @@ export default async function EventRegistrationPage({ params }: { params: Promis
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect(`/?next=/inscricao/${eventSlug}`);
+    redirect(`/entrar?next=/inscricao/${eventSlug}`);
+  }
+
+  const flags = await getFirstAccessFlags(user.id);
+  if (flags.mustChangePassword || flags.mustCompleteProfile) {
+    redirect('/primeiro-acesso');
   }
 
   const { data: event, error: eventError } = await supabase

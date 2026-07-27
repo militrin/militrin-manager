@@ -181,6 +181,7 @@ export function RegistrationWizard({
   kitItems,
   inventory,
 }: WizardProps) {
+  const canSimulatePayment = process.env.NODE_ENV === 'development';
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [step, setStep] = useState(1);
@@ -1269,14 +1270,16 @@ export function RegistrationWizard({
 
                 {registration.payment.payment_status !== 'paid' ? (
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSimulatePaid}
-                      disabled={isPending}
-                      className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
-                    >
-                      {isPending ? 'Processando...' : 'Pagar agora'}
-                    </button>
+                    {canSimulatePayment ? (
+                      <button
+                        type="button"
+                        onClick={handleSimulatePaid}
+                        disabled={isPending}
+                        className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
+                      >
+                        {isPending ? 'Processando...' : 'Pagar agora (simulado dev)'}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => goTo(7)}
@@ -1352,14 +1355,16 @@ export function RegistrationWizard({
                   ) : (
                     <div className="mt-4 space-y-3">
                       <p>Pagamento pendente. O QR Code e o PDF serão liberados somente após confirmação.</p>
-                      <button
-                        type="button"
-                        onClick={handleSimulatePaid}
-                        disabled={isPending}
-                        className="h-10 rounded-xl bg-emerald-500 px-4 text-xs font-semibold text-emerald-950 disabled:opacity-50"
-                      >
-                        {isPending ? 'Processando...' : 'Pagar agora'}
-                      </button>
+                      {canSimulatePayment ? (
+                        <button
+                          type="button"
+                          onClick={handleSimulatePaid}
+                          disabled={isPending}
+                          className="h-10 rounded-xl bg-emerald-500 px-4 text-xs font-semibold text-emerald-950 disabled:opacity-50"
+                        >
+                          {isPending ? 'Processando...' : 'Pagar agora (simulado dev)'}
+                        </button>
+                      ) : null}
                     </div>
                   )}
 

@@ -91,10 +91,16 @@ function translateAuthErrorMessage(message: string) {
   if (normalized.includes('email rate limit exceeded')) {
     return 'Muitas solicitações de e-mail foram realizadas em pouco tempo. Aguarde alguns minutos e tente novamente.';
   }
+  if (normalized.includes('too many requests') && normalized.includes('email')) {
+    return 'Muitas solicitações de e-mail foram realizadas em pouco tempo. Aguarde alguns minutos e tente novamente.';
+  }
   if (normalized.includes('already registered')) {
     return 'E-mail já cadastrado.';
   }
   if (normalized.includes('invalid email')) {
+    return 'Informe um e-mail válido.';
+  }
+  if (normalized.includes('email address') && normalized.includes('is invalid')) {
     return 'Informe um e-mail válido.';
   }
   if (normalized.includes('weak password')) {
@@ -111,8 +117,10 @@ function translateAuthErrorCode(message: string) {
   if (normalized.includes('user not found')) return 'user_not_found';
   if (normalized.includes('email signups are disabled')) return 'email_signups_disabled';
   if (normalized.includes('email rate limit exceeded')) return 'rate_limit';
+  if (normalized.includes('too many requests') && normalized.includes('email')) return 'rate_limit';
   if (normalized.includes('already registered')) return 'already_registered';
   if (normalized.includes('invalid email')) return 'invalid_email';
+  if (normalized.includes('email address') && normalized.includes('is invalid')) return 'invalid_email';
   if (normalized.includes('weak password')) return 'weak_password';
 
   return 'unknown';
@@ -292,6 +300,18 @@ function buildRequestScopedNotes(notes: string | undefined, requestId: string | 
   const base = notes?.trim() || 'Portal publico de inscricao';
   if (!requestId?.trim()) return base;
   return `${base} [checkout:${requestId.trim()}]`;
+}
+
+function translateRegistrationErrorMessage(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('cpf ja cadastrado')) return 'Este CPF ja esta inscrito neste evento.';
+  if (normalized.includes('capacidade da categoria')) return 'Categoria esgotada para este evento.';
+  if (normalized.includes('estoque indisponivel')) return 'Camiseta sem estoque para o modelo/tamanho selecionado.';
+  if (normalized.includes('estoque nao encontrado')) return 'Camiseta indisponivel para o modelo/tamanho selecionado.';
+  if (normalized.includes('inscricoes fechadas')) return 'As inscricoes para este evento estao encerradas.';
+  if (normalized.includes('lotes esgotados') || normalized.includes('lote')) return 'Lote encerrado ou sem disponibilidade.';
+  if (normalized.includes('cupom')) return message;
+  return message;
 }
 
 async function getRegistrationSnapshotByParticipantId(
@@ -909,7 +929,9 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     p_ticket_category_id: input.ticket_category_id,
   });
 
-  if (error) return { success: false, message: error.message };
+  if (error) {
+    return { success: false, message: translateRegistrationErrorMessage(error.message) };
+  }
 
   const created = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
   if (!created?.participant_id) {
@@ -1039,6 +1061,10 @@ export async function generatePublicPixAction(participantId: string) {
 }
 
 export async function simulatePublicPaymentAction(participantId: string, method: 'pix' | 'credit_card') {
+  if (process.env.NODE_ENV !== 'development') {
+    return { success: false, message: 'A confirmacao simulada esta disponivel apenas em desenvolvimento.' };
+  }
+
   const supabase = await createServerSupabaseClient();
 
   const { data: currentData, error: currentError } = await supabase.rpc('get_participant_payment_details', {

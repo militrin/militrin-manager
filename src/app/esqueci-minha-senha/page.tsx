@@ -36,7 +36,7 @@ export default function EsqueciMinhaSenhaPage() {
             {loading ? 'Enviando...' : 'Enviar link de redefinicao'}
           </button>
         </form>
-        <Link href="/" className="mt-4 inline-block text-sm text-slate-300 hover:underline">Voltar para entrar</Link>
+        <Link href="/entrar" className="mt-4 inline-block text-sm text-slate-300 hover:underline">Voltar para entrar</Link>
       </div>
     </main>
   );

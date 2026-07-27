@@ -40,7 +40,8 @@ function parseTs(value?: string | null) {
 }
 
 async function revalidateEventsPages() {
-  revalidatePath("/eventos");
+  revalidatePath('/eventos');
+  revalidatePath('/painel/eventos');
   revalidatePath("/inscricoes/nova");
   revalidatePath("/retirada");
   revalidatePath("/");
@@ -223,7 +224,9 @@ export async function upsertKitItemAction(payload: z.infer<typeof kitItemSchema>
       p_sort_order: parsed.data.sort_order,
     });
     if (error) throw error;
-    revalidatePath(`/eventos/${parsed.data.event_id}`);
+    revalidatePath('/eventos');
+    revalidatePath('/painel/eventos');
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
     revalidatePath("/inscricoes/nova");
     return { success: true, message: "Item do kit salvo com sucesso." };
   } catch (error) {
@@ -239,7 +242,9 @@ export async function deleteKitItemAction(payload: { event_id: string; kit_item_
       p_kit_item_id: payload.kit_item_id,
     });
     if (error) throw error;
-    revalidatePath(`/eventos/${payload.event_id}`);
+    revalidatePath('/eventos');
+    revalidatePath('/painel/eventos');
+    revalidatePath(`/painel/eventos/${payload.event_id}`);
     revalidatePath("/inscricoes/nova");
     return { success: true, message: "Item removido." };
   } catch (error) {
@@ -264,7 +269,8 @@ export async function upsertKitVariantAction(payload: z.infer<typeof kitVariantS
       p_is_active: parsed.data.is_active,
     });
     if (error) throw error;
-    revalidatePath("/eventos");
+    revalidatePath('/eventos');
+    revalidatePath('/painel/eventos');
     revalidatePath("/inscricoes/nova");
     return { success: true, message: "Variação salva." };
   } catch (error) {
@@ -277,7 +283,8 @@ export async function deleteKitVariantAction(variantId: string) {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("delete_event_kit_item_variant", { p_variant_id: variantId });
     if (error) throw error;
-    revalidatePath("/eventos");
+    revalidatePath('/eventos');
+    revalidatePath('/painel/eventos');
     revalidatePath("/inscricoes/nova");
     return { success: true, message: "Variação removida." };
   } catch (error) {

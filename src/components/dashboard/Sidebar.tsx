@@ -4,6 +4,7 @@ import {
   ChevronRight,
   FileText,
   Gift,
+  Import,
   LayoutDashboard,
   Layers,
   PackageCheck,
@@ -15,9 +16,9 @@ import {
 } from "lucide-react";
 
 const navigation = [
-  { label: "Dashboard", icon: LayoutDashboard, active: true, href: "/" },
+  { label: "Dashboard", icon: LayoutDashboard, active: true, href: "/inscricoes" },
   { label: "Nova inscrição", icon: UserPlus, href: "/inscricoes/nova" },
-  { label: "Eventos", icon: Layers, href: "/eventos" },
+  { label: "Eventos", icon: Layers, href: "/painel/eventos" },
   { label: "Inscritos", icon: Users, href: "/inscricoes" },
   { label: "Retirada de kits", icon: PackageCheck, href: "/retirada" },
   { label: "Camisetas", icon: Shirt, href: "/camisetas" },
@@ -26,6 +27,7 @@ const navigation = [
   { label: "Cupons", icon: Gift, href: "/cupons" },
   { label: "Financeiro", icon: Wallet, href: "/financeiro" },
   { label: "Relatórios", icon: FileText, href: "/inscricoes" },
+  { label: "Importações", icon: Import, href: "/importacoes" },
   { label: "Configurações", icon: Settings, href: "/configuracao" },
 ];
 

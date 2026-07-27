@@ -1,93 +1,79 @@
-import { notFound } from "next/navigation";
-import { Sidebar } from "@/components/dashboard/Sidebar";
-import { TopBar } from "@/components/dashboard/TopBar";
-import { SectionCard } from "@/components/dashboard/SectionCard";
-import { EmptyState } from "@/components/mvp/EmptyState";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { EventKitManager } from "./ui";
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { formatDateBR } from '@/lib/utils/date';
+import type { PublicBenefit, PublicCategory, PublicKitItem } from '@/lib/public/events';
+import { getPublicEventDetails, isEventOpen } from '@/lib/public/events';
 
 type Params = Promise<{ id: string }>;
 
 export default async function EventDetailsPage({ params }: { params: Params }) {
   const { id } = await params;
-  const supabase = await createServerSupabaseClient();
+  const { event, categories, benefitsByCategory, kitItems } = await getPublicEventDetails(id);
 
-  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }] = await Promise.all([
-    supabase.from("events").select("id, name, slug, year, kit_enabled, registration_enabled, is_active").eq("id", id).maybeSingle(),
-    supabase.rpc("get_event_kit_items", { p_event_id: id }),
-  ]);
+  if (!event) {
+    notFound();
+  }
 
-  if (eventError) throw eventError;
-  if (kitError) throw kitError;
-  if (!eventData?.id) notFound();
-
-  const event = {
-    id: String(eventData.id),
-    name: String(eventData.name),
-    slug: String(eventData.slug),
-    year: eventData.year === null || eventData.year === undefined ? null : Number(eventData.year),
-    kit_enabled: Boolean(eventData.kit_enabled),
-    registration_enabled: Boolean(eventData.registration_enabled),
-    is_active: Boolean(eventData.is_active),
-  };
-
-  const items = (kitData ?? []).map((row: {
-    id: string;
-    event_id: string;
-    name: string;
-    slug: string;
-    description: string | null;
-    item_type: string;
-    quantity_per_participant: number;
-    requires_variant: boolean;
-    is_required: boolean;
-    is_active: boolean;
-    sort_order: number;
-    variants: Array<{
-      id: string;
-      name: string;
-      value: string;
-      sort_order: number;
-      is_active: boolean;
-    }> | null;
-  }) => ({
-    id: String(row.id),
-    event_id: String(row.event_id),
-    name: String(row.name),
-    slug: String(row.slug),
-    description: row.description ? String(row.description) : null,
-    item_type: String(row.item_type),
-    quantity_per_participant: Number(row.quantity_per_participant ?? 1),
-    requires_variant: Boolean(row.requires_variant),
-    is_required: Boolean(row.is_required),
-    is_active: Boolean(row.is_active),
-    sort_order: Number(row.sort_order ?? 0),
-    variants: Array.isArray(row.variants)
-      ? row.variants.map((variant) => ({
-          id: String(variant.id),
-          name: String(variant.name),
-          value: String(variant.value),
-          sort_order: Number(variant.sort_order ?? 0),
-          is_active: Boolean(variant.is_active),
-        }))
-      : [],
-  }));
+  const open = isEventOpen(event);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
-        <Sidebar />
-        <div className="flex-1 space-y-6">
-          <TopBar title={`Evento: ${event.name}`} subtitle="Configuração de kit por item" />
-          <SectionCard title="Kit do evento" description="Adicione e configure itens flexíveis do kit.">
-            {!event.kit_enabled ? (
-              <EmptyState title="Kit desabilitado" description="Ative 'Possui kit' no cadastro do evento para usar itens de kit." />
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-5xl space-y-4">
+        <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{event.year ?? 'Edicao especial'}</p>
+          <h1 className="mt-2 text-3xl font-semibold text-white">{event.name}</h1>
+          <p className="mt-3 text-sm text-slate-300">{event.description ?? 'Detalhes completos deste evento serao publicados em breve.'}</p>
+          <div className="mt-4 grid gap-2 text-sm text-slate-300 sm:grid-cols-3">
+            <p>{event.startsAt ? formatDateBR(event.startsAt) : 'Data a confirmar'}</p>
+            <p>{event.location ?? 'Local a confirmar'}</p>
+            <p>{open ? 'Inscricoes abertas' : 'Inscricoes fechadas'}</p>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link href={`/inscricao/${event.slug}`} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
+              Comprar ingresso
+            </Link>
+            <Link href="/eventos" className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-700 px-5 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:text-white">
+              Ver outros eventos
+            </Link>
+          </div>
+        </article>
+
+        <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h2 className="text-xl font-semibold text-white">Categorias</h2>
+          <div className="mt-4 space-y-3">
+            {categories.length === 0 ? (
+              <p className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400">Categorias ainda nao publicadas.</p>
             ) : (
-              <EventKitManager event={event} items={items} />
+              categories.map((category: PublicCategory) => (
+                <div key={category.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-sm font-semibold text-slate-100">{category.name}</p>
+                  <p className="mt-1 text-xs text-slate-400">{category.description ?? 'Sem descricao.'}</p>
+                  {category.availableSlots !== null ? <p className="mt-1 text-xs text-slate-400">Vagas disponiveis: {category.availableSlots}</p> : null}
+                  <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                    {(benefitsByCategory[category.id] ?? []).map((benefit: PublicBenefit) => (
+                      <li key={benefit.id}>• {benefit.name}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))
             )}
-          </SectionCard>
-        </div>
-      </div>
+          </div>
+        </article>
+
+        {kitItems.length > 0 ? (
+          <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+            <h2 className="text-xl font-semibold text-white">Kit do participante</h2>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {kitItems.map((item: PublicKitItem) => (
+                <div key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-300">
+                  <p className="font-medium text-slate-100">{item.name}</p>
+                  <p className="mt-1 text-xs text-slate-400">{item.description ?? 'Item sem descricao.'}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+        ) : null}
+      </section>
     </main>
   );
 }

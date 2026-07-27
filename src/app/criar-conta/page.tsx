@@ -210,7 +210,7 @@ export default function CriarContaPage() {
             </button>
 
             <div className="flex items-center justify-between text-sm">
-              <Link href="/" className="text-slate-300 transition hover:text-white">Já tenho conta</Link>
+              <Link href="/entrar" className="text-slate-300 transition hover:text-white">Já tenho conta</Link>
               <Link href="/esqueci-minha-senha" className="text-emerald-300 transition hover:text-emerald-200">Esqueci minha senha</Link>
             </div>
           </form>
