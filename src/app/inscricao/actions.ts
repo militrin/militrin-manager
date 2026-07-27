@@ -6,10 +6,9 @@ import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { formatDateBR } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
-import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
+import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
-import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
 
 type PricingPreview = {
   batch_id: string;
@@ -157,6 +156,7 @@ function firstAccessRouteWithNext(nextPath: string) {
 
 async function resolvePostAuthPath(params: {
   userId: string;
+  authEmail?: string | null;
   nextPath?: string | null;
   wizardPath?: string | null;
 }) {
@@ -166,13 +166,18 @@ async function resolvePostAuthPath(params: {
     fallback: '/minha-conta',
   });
 
-  const status = await getProfileCompletionStatus(params.userId);
-  const firstAccessRequired = status.error ? false : !status.isComplete;
+  const flags = await getFirstAccessFlags(params.userId, params.authEmail ?? null);
+  const isBlocked = flags.isBlocked;
+  const firstAccessRequired = !isBlocked && flags.firstAccessRequired;
+  const redirectTo = isBlocked
+    ? '/acesso-negado'
+    : (firstAccessRequired ? firstAccessRouteWithNext(destination) : destination);
 
   return {
     destination,
+    isBlocked,
     firstAccessRequired,
-    redirectTo: firstAccessRequired ? firstAccessRouteWithNext(destination) : destination,
+    redirectTo,
   };
 }
 
@@ -253,7 +258,7 @@ async function ensureCustomerProfileForSignedUser(params: {
   const gender = String(profile?.gender ?? params.fallback?.gender ?? '').trim() || null;
   const phone = String(profile?.phone ?? params.fallback?.phone ?? '').replace(/\D/g, '') || null;
   const city = String(profile?.city ?? params.fallback?.city ?? '').trim() || null;
-  const email = normalizeEmail(profile?.email ? String(profile.email) : params.email);
+  const email = normalizeEmail(params.email);
 
   if (!email) {
     return { success: false as const, message: 'Conta sem e-mail válido. Atualize o e-mail para continuar.' };
@@ -543,6 +548,7 @@ export async function getPublicSessionAction() {
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const postAuth = await resolvePostAuthPath({
     userId: user.id,
+    authEmail: user.email ?? null,
     nextPath: null,
     wizardPath: null,
   });
@@ -563,7 +569,7 @@ export async function getPublicSessionAction() {
           birth_date: profile.birth_date ? String(profile.birth_date) : '',
           gender: profile.gender ? String(profile.gender) : '',
           phone: profile.phone ? String(profile.phone) : '',
-          email: profile.email ? String(profile.email) : user.email ?? '',
+          email: user.email ?? '',
           city: profile.city ? String(profile.city) : '',
           loyalty_tier_id: profile.loyalty_tier_id ? String(profile.loyalty_tier_id) : null,
           loyalty_tier_name: profile.loyalty_tier_name ? String(profile.loyalty_tier_name) : null,
@@ -630,6 +636,7 @@ export async function signInPublicAccountAction(input: {
 
     const postAuth = await resolvePostAuthPath({
       userId: data.user.id,
+      authEmail: data.user.email ?? normalized,
       nextPath: input.next_path,
       wizardPath: input.wizard_path,
     });
@@ -765,15 +772,20 @@ export async function signUpPublicAccountAction(input: {
 
     if (input.acceptPrivacy) {
       const acceptedAt = new Date().toISOString();
-      await updateCustomerProfileCompat(supabase, data.user.id, {
-        privacy_policy_accepted: true,
-        privacy_policy_accepted_at: acceptedAt,
-        privacy_accepted_at: acceptedAt,
+      const metadata = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+      await supabase.auth.updateUser({
+        data: {
+          ...metadata,
+          privacy_policy_version: 'current',
+          privacy_policy_accepted: true,
+          privacy_policy_accepted_at: acceptedAt,
+        },
       });
     }
 
     const postAuth = await resolvePostAuthPath({
       userId: data.user.id,
+      authEmail: data.user.email ?? normalized,
       nextPath: input.next_path,
       wizardPath: input.wizard_path,
     });
@@ -961,7 +973,7 @@ export async function saveCheckoutBuyerProfileAction(input: {
   const incomingCity = String(input.city ?? '').trim();
   const metadataCity = String(userMetadata?.city ?? '').trim();
 
-  const email = normalizeEmail(user.email ?? String(profile?.email ?? ''));
+  const email = normalizeEmail(user.email ?? '');
   if (!email) {
     return { success: false as const, message: 'Conta sem e-mail válido.' };
   }
@@ -1006,25 +1018,17 @@ export async function saveCheckoutBuyerProfileAction(input: {
     };
   }
 
-  const currentPrivacyAccepted = Boolean(profile?.privacy_policy_accepted);
+  const currentPrivacyAccepted = typeof userMetadata?.privacy_policy_accepted_at === 'string'
+    || userMetadata?.privacy_policy_accepted === true;
   const shouldAcceptPrivacy = currentPrivacyAccepted || Boolean(input.accept_privacy);
   if (shouldAcceptPrivacy && !currentPrivacyAccepted) {
     const nowIso = new Date().toISOString();
-    const { error: privacyError } = await updateCustomerProfileCompat(supabase, user.id, {
-      privacy_policy_accepted: true,
-      privacy_policy_accepted_at: nowIso,
-      privacy_accepted_at: nowIso,
-    });
-
-    if (privacyError) {
-      return { success: false as const, message: privacyError.message };
-    }
-
     const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
     await supabase.auth.updateUser({
       data: {
         ...metadata,
         privacy_policy_version: input.privacy_policy_version ?? 'current',
+        privacy_policy_accepted: true,
         privacy_policy_accepted_at: nowIso,
       },
     });

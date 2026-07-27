@@ -38,7 +38,11 @@ export default async function MinhaContaLayout({ children }: { children: React.R
   }
 
   const flags = await getFirstAccessFlags(user.id, user.email ?? null);
-  if (flags.mustChangePassword || flags.mustCompleteProfile) {
+  if (flags.isBlocked) {
+    redirect('/acesso-negado');
+  }
+
+  if (flags.firstAccessRequired) {
     redirect('/primeiro-acesso?next=/minha-conta');
   }
 

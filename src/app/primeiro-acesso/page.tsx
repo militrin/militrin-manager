@@ -39,6 +39,10 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
     );
   }
 
+  if (status.profile?.account_status === 'blocked') {
+    redirect('/acesso-negado');
+  }
+
   if (status.isComplete) {
     redirect(safeNext);
   }

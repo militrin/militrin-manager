@@ -2,6 +2,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
+import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { RegistrationWizard } from './wizard';
 
@@ -62,6 +63,11 @@ export default async function EventRegistrationPage({ params }: { params: Promis
   }
 
   const profileStatus = await getProfileCompletionStatus(user.id, user.email ?? null);
+  const firstAccessFlags = await getFirstAccessFlags(user.id, user.email ?? null);
+
+  if (firstAccessFlags.isBlocked) {
+    redirect('/acesso-negado');
+  }
 
   if (profileStatus.error) {
     return (
@@ -84,6 +90,11 @@ export default async function EventRegistrationPage({ params }: { params: Promis
 
   const profile = profileStatus.profile;
   const metadata = (user.user_metadata as Record<string, unknown> | undefined) ?? null;
+  const metadataPrivacyAcceptedAt = typeof metadata?.privacy_policy_accepted_at === 'string'
+    ? metadata.privacy_policy_accepted_at
+    : null;
+  const metadataPrivacyAccepted = metadataPrivacyAcceptedAt !== null || metadata?.privacy_policy_accepted === true;
+
 
   const fullNameProfile = textValue(profile?.full_name);
   const fullNameMetadata = textValue(metadata?.full_name ?? metadata?.name);
@@ -113,8 +124,8 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     phone: phoneProfile || phoneMetadata,
     email,
     city: cityProfile || cityMetadata,
-    privacy_policy_accepted: Boolean(profile?.privacy_policy_accepted),
-    privacy_policy_accepted_at: profile?.privacy_policy_accepted_at ? String(profile.privacy_policy_accepted_at) : null,
+    privacy_policy_accepted: metadataPrivacyAccepted,
+    privacy_policy_accepted_at: metadataPrivacyAcceptedAt,
     missing_fields: [],
     locked: {
       cpf: Boolean(cpfProfile),
@@ -124,14 +135,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
 
   initialBuyer.missing_fields = profileStatus.missingFields;
 
-  const tooIncompleteForCheckout = profileStatus.missingFields.includes('full_name')
-    || profileStatus.missingFields.includes('cpf')
-    || profileStatus.missingFields.includes('birth_date')
-    || profileStatus.missingFields.includes('gender')
-    || profileStatus.mustChangePassword
-    || profileStatus.mustCompleteProfile;
-
-  if (tooIncompleteForCheckout) {
+  if (firstAccessFlags.firstAccessRequired) {
     const nextPath = sanitizePostFirstAccessNextPath(`/inscricao/${eventSlug}`, '/minha-conta');
     redirect(`/primeiro-acesso?next=${encodeURIComponent(nextPath)}`);
   }
