@@ -1,0 +1,341 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState, useTransition } from "react";
+import {
+  activateEventAction,
+  archiveEventAction,
+  createEventAction,
+  duplicateEventAction,
+  setEventRegistrationEnabledAction,
+  updateEventAction,
+} from "./actions";
+import { formatDateBR, toDatetimeLocalValue } from "@/lib/utils/date";
+
+type EventRow = {
+  id: string;
+  name: string;
+  slug: string;
+  year: number | null;
+  description: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  registration_open_at: string | null;
+  registration_close_at: string | null;
+  location: string | null;
+  registration_enabled: boolean;
+  kit_enabled: boolean;
+  is_active: boolean;
+  participants_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function toDatetimeLocal(value: string | null) {
+  return toDatetimeLocalValue(value);
+}
+
+export function EventsManager({
+  events,
+  activeEvent,
+}: {
+  events: EventRow[];
+  activeEvent: { id: string; name: string } | null;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [duplicateSourceId, setDuplicateSourceId] = useState<string>(events[0]?.id ?? "");
+  const [form, setForm] = useState({
+    name: "",
+    slug: "",
+    year: "",
+    description: "",
+    starts_at: "",
+    ends_at: "",
+    registration_open_at: "",
+    registration_close_at: "",
+    location: "",
+    is_active: false,
+    registration_enabled: false,
+    kit_enabled: false,
+  });
+  const [duplicateForm, setDuplicateForm] = useState({
+    target_name: "",
+    target_slug: "",
+    target_year: "",
+    copy_categories: true,
+    copy_kit_items: true,
+    copy_benefits: true,
+    copy_batches: true,
+    copy_batch_prices: true,
+    copy_inventory_structure: true,
+    copy_coupons: false,
+  });
+
+  const eventCountLabel = useMemo(() => {
+    if (events.length === 1) return "1 evento cadastrado";
+    return `${events.length} eventos cadastrados`;
+  }, [events.length]);
+
+  function resetForm() {
+    setEditingId(null);
+    setForm({
+      name: "",
+      slug: "",
+      year: "",
+      description: "",
+      starts_at: "",
+      ends_at: "",
+      registration_open_at: "",
+      registration_close_at: "",
+      location: "",
+      is_active: false,
+      registration_enabled: false,
+      kit_enabled: false,
+    });
+  }
+
+  function loadForEdit(item: EventRow) {
+    setEditingId(item.id);
+    setForm({
+      name: item.name,
+      slug: item.slug,
+      year: item.year === null ? "" : String(item.year),
+      description: item.description ?? "",
+      starts_at: toDatetimeLocal(item.starts_at),
+      ends_at: toDatetimeLocal(item.ends_at),
+      registration_open_at: toDatetimeLocal(item.registration_open_at),
+      registration_close_at: toDatetimeLocal(item.registration_close_at),
+      location: item.location ?? "",
+      is_active: item.is_active,
+      registration_enabled: item.registration_enabled,
+      kit_enabled: item.kit_enabled,
+    });
+  }
+
+  function submitForm() {
+    setMessage(null);
+    startTransition(async () => {
+      const payload = {
+        id: editingId ?? undefined,
+        name: form.name,
+        slug: form.slug || slugify(form.name),
+        year: form.year ? Number(form.year) : null,
+        description: form.description || null,
+        starts_at: form.starts_at || null,
+        ends_at: form.ends_at || null,
+        registration_open_at: form.registration_open_at || null,
+        registration_close_at: form.registration_close_at || null,
+        location: form.location || null,
+        is_active: form.is_active,
+        registration_enabled: form.registration_enabled,
+        kit_enabled: form.kit_enabled,
+      };
+
+      const result = editingId ? await updateEventAction(payload) : await createEventAction(payload);
+      setMessage({ type: result.success ? "success" : "error", text: result.message });
+      if (result.success) resetForm();
+    });
+  }
+
+  function activate(item: EventRow) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await activateEventAction(item.id);
+      setMessage({ type: result.success ? "success" : "error", text: result.message });
+    });
+  }
+
+  function toggleRegistration(item: EventRow) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await setEventRegistrationEnabledAction(item.id, !item.registration_enabled);
+      setMessage({ type: result.success ? "success" : "error", text: result.message });
+    });
+  }
+
+  function archive(item: EventRow) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await archiveEventAction(item.id);
+      setMessage({ type: result.success ? "success" : "error", text: result.message });
+    });
+  }
+
+  function duplicate() {
+    if (!duplicateSourceId) return;
+    setMessage(null);
+    startTransition(async () => {
+      const result = await duplicateEventAction({
+        source_event_id: duplicateSourceId,
+        target_name: duplicateForm.target_name,
+        target_slug: duplicateForm.target_slug || slugify(duplicateForm.target_name),
+        target_year: duplicateForm.target_year ? Number(duplicateForm.target_year) : null,
+        copy_categories: duplicateForm.copy_categories,
+        copy_kit_items: duplicateForm.copy_kit_items,
+        copy_benefits: duplicateForm.copy_benefits,
+        copy_batches: duplicateForm.copy_batches,
+        copy_batch_prices: duplicateForm.copy_batch_prices,
+        copy_inventory_structure: duplicateForm.copy_inventory_structure,
+        copy_coupons: duplicateForm.copy_coupons,
+      });
+      setMessage({ type: result.success ? "success" : "error", text: result.message });
+      if (result.success) {
+        setDuplicateForm((prev) => ({ ...prev, target_name: "", target_slug: "", target_year: "" }));
+      }
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+        <p className="text-sm text-slate-400">{eventCountLabel}</p>
+        <p className="text-sm text-slate-400">Evento ativo: <span className="text-slate-200">{activeEvent?.name ?? "Nenhum"}</span></p>
+
+        {message ? (
+          <div className={`mt-3 rounded-xl border px-3 py-2 text-sm ${message.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`}>
+            {message.text}
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Nome</span>
+            <input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value, slug: prev.slug || slugify(event.target.value) }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Slug</span>
+            <input value={form.slug} onChange={(event) => setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Ano</span>
+            <input value={form.year} onChange={(event) => setForm((prev) => ({ ...prev, year: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Local</span>
+            <input value={form.location} onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm md:col-span-2">
+            <span className="text-slate-300">Descrição</span>
+            <textarea value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} rows={3} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Início</span>
+            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.starts_at} onChange={(event) => setForm((prev) => ({ ...prev, starts_at: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Fim</span>
+            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.ends_at} onChange={(event) => setForm((prev) => ({ ...prev, ends_at: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Abertura das inscrições</span>
+            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.registration_open_at} onChange={(event) => setForm((prev) => ({ ...prev, registration_open_at: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Encerramento das inscrições</span>
+            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.registration_close_at} onChange={(event) => setForm((prev) => ({ ...prev, registration_close_at: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+        </div>
+
+        <div className="mt-3 grid gap-2 md:grid-cols-3 text-sm text-slate-300">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))} /> Evento ativo</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={form.registration_enabled} onChange={(event) => setForm((prev) => ({ ...prev, registration_enabled: event.target.checked }))} /> Inscrições habilitadas</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={form.kit_enabled} onChange={(event) => setForm((prev) => ({ ...prev, kit_enabled: event.target.checked }))} /> Possui kit</label>
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          <button type="button" onClick={submitForm} disabled={isPending} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">
+            {isPending ? "Salvando..." : editingId ? "Atualizar evento" : "Criar evento"}
+          </button>
+          {editingId ? <button type="button" onClick={resetForm} className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancelar</button> : null}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-slate-200">Duplicar configuração de evento</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Evento origem</span>
+            <select value={duplicateSourceId} onChange={(event) => setDuplicateSourceId(event.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+              {events.map((event) => <option key={event.id} value={event.id}>{event.name} ({event.year ?? "—"})</option>)}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Novo nome</span>
+            <input value={duplicateForm.target_name} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, target_name: event.target.value, target_slug: prev.target_slug || slugify(event.target.value) }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Novo slug</span>
+            <input value={duplicateForm.target_slug} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, target_slug: slugify(event.target.value) }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Novo ano</span>
+            <input value={duplicateForm.target_year} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, target_year: event.target.value }))} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+          </label>
+        </div>
+
+        <div className="mt-3 grid gap-2 md:grid-cols-3 text-sm text-slate-300">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_categories} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_categories: event.target.checked }))} /> Categorias</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_kit_items} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_kit_items: event.target.checked }))} /> Itens de kit</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_benefits} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_benefits: event.target.checked }))} /> Benefícios</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_batches} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_batches: event.target.checked }))} /> Lotes</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_batch_prices} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_batch_prices: event.target.checked }))} /> Preços por categoria</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_inventory_structure} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_inventory_structure: event.target.checked }))} /> Estrutura de estoque</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={duplicateForm.copy_coupons} onChange={(event) => setDuplicateForm((prev) => ({ ...prev, copy_coupons: event.target.checked }))} /> Copiar cupons</label>
+        </div>
+
+        <div className="mt-4">
+          <button type="button" onClick={duplicate} disabled={isPending} className="rounded-xl border border-emerald-500/40 px-4 py-2 text-sm font-semibold text-emerald-200 disabled:opacity-60">Duplicar configuração</button>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {events.map((item) => (
+          <div key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-base font-semibold text-slate-100">{item.name} {item.year ? `(${item.year})` : ""}</p>
+                <p className="text-xs text-slate-400">Slug: {item.slug}</p>
+                <p className="mt-1 text-sm text-slate-400">Período: {item.starts_at ? formatDateBR(item.starts_at) : "-"} até {item.ends_at ? formatDateBR(item.ends_at) : "-"}</p>
+                <p className="text-sm text-slate-400">Inscritos: {item.participants_count}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className={`rounded-full border px-3 py-1 ${item.registration_enabled ? "border-emerald-500/40 text-emerald-300" : "border-slate-700 text-slate-400"}`}>{item.registration_enabled ? "Inscrições abertas" : "Inscrições fechadas"}</span>
+                <span className={`rounded-full border px-3 py-1 ${item.kit_enabled ? "border-cyan-500/40 text-cyan-300" : "border-slate-700 text-slate-400"}`}>{item.kit_enabled ? "Kit ativo" : "Sem kit"}</span>
+                <span className={`rounded-full border px-3 py-1 ${item.is_active ? "border-amber-500/40 text-amber-300" : "border-slate-700 text-slate-400"}`}>{item.is_active ? "Evento ativo" : "Inativo"}</span>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={() => loadForEdit(item)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">Editar</button>
+              <button type="button" onClick={() => activate(item)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">Ativar</button>
+              <button type="button" onClick={() => toggleRegistration(item)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">
+                {item.registration_enabled ? "Fechar inscrições" : "Abrir inscrições"}
+              </button>
+              <button type="button" onClick={() => archive(item)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">Arquivar</button>
+              <Link href={`/eventos/${item.id}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Detalhes</Link>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

@@ -44,7 +44,11 @@ const adjustInventorySchema = z.object({
     .number()
     .int("A quantidade deve ser um inteiro.")
     .refine((value) => value !== 0, "A quantidade deve ser diferente de zero."),
-  notes: z.string().trim().max(300, "A observação deve ter no máximo 300 caracteres.").optional().or(z.literal("")),
+  notes: z
+    .string()
+    .trim()
+    .min(3, "O motivo do ajuste é obrigatório.")
+    .max(300, "A observação deve ter no máximo 300 caracteres."),
 });
 
 const historySchema = z.object({
@@ -130,7 +134,7 @@ export async function addInventoryQuantityAction(payload: {
 export async function adjustInventoryQuantityAction(payload: {
   inventory_id: string;
   quantity: number;
-  notes?: string;
+  notes: string;
 }): Promise<ActionResult> {
   const parsed = adjustInventorySchema.safeParse(payload);
   if (!parsed.success) {
@@ -141,7 +145,7 @@ export async function adjustInventoryQuantityAction(payload: {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("adjust_inventory_quantity", {
       p_inventory_id: parsed.data.inventory_id,
-      p_quantity: parsed.data.quantity,
+      p_quantity_delta: parsed.data.quantity,
       p_notes: sanitizeNotes(parsed.data.notes),
     });
 

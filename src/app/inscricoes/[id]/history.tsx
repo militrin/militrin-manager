@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { formatDateTimeBR } from "@/lib/utils/date";
 
 export function ParticipantHistory({ participantId }: { participantId: string }) {
   const [items, setItems] = useState<Array<{ action: string; created_at: string; details?: Record<string, unknown> }>>([]);
@@ -24,7 +25,7 @@ export function ParticipantHistory({ participantId }: { participantId: string })
         {items.map((item) => (
           <div key={`${item.action}-${item.created_at}`} className="flex items-center justify-between rounded-xl border border-slate-800/80 bg-slate-900/60 px-3 py-2 text-sm">
             <span className="text-slate-300">{item.action}</span>
-            <span className="text-slate-400">{new Date(item.created_at).toLocaleString("pt-BR")}</span>
+            <span className="text-slate-400">{formatDateTimeBR(item.created_at, " às ")}</span>
           </div>
         ))}
       </div>

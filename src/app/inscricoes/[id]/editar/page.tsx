@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
+import { BirthDateInput } from "@/components/forms/BirthDateInput";
 import { SHIRT_SIZES, SHIRT_TYPES } from "@/lib/constants/shirts";
 import { createClient } from "@/lib/supabase/client";
+import { formatISOToDateBR, isValidDateBR, parseDateBRToISO } from "@/lib/utils/date";
 import { updateParticipantWithStock } from "./actions";
 
 const paymentMethods = ["Pix", "Dinheiro", "Cartão", "Transferência"];
@@ -32,13 +34,17 @@ export default function EditParticipantPage({ params }: { params: Promise<{ id: 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [birthDate, setBirthDate] = useState("");
 
   useEffect(() => {
     async function load() {
       const { id } = await params;
       const supabase = createClient();
       const { data, error } = await supabase.from("participants").select("*").eq("id", id).single();
-      if (!error) setParticipant(data);
+      if (!error) {
+        setParticipant(data);
+        setBirthDate(formatISOToDateBR(data.birth_date));
+      }
       setLoading(false);
     }
     load();
@@ -51,11 +57,24 @@ export default function EditParticipantPage({ params }: { params: Promise<{ id: 
     setSaving(true);
     setMessage(null);
 
+    if (!isValidDateBR(birthDate)) {
+      setMessage("Informe uma data válida no formato dd/MM/aaaa.");
+      setSaving(false);
+      return;
+    }
+
+    const birthDateIso = parseDateBRToISO(birthDate);
+    if (!birthDateIso) {
+      setMessage("Informe uma data válida no formato dd/MM/aaaa.");
+      setSaving(false);
+      return;
+    }
+
     const payload = {
       full_name: form.get("full_name")?.toString() ?? "",
-      birth_date: form.get("birth_date")?.toString() ?? null,
+      birth_date: birthDateIso,
       phone: form.get("phone")?.toString() ?? "",
-      email: form.get("email")?.toString() ?? null,
+      email: form.get("email")?.toString().trim() ?? "",
       city: form.get("city")?.toString() ?? null,
       gender: form.get("gender")?.toString() ?? null,
       shirt_type: form.get("shirt_type")?.toString() ?? "",
@@ -65,6 +84,12 @@ export default function EditParticipantPage({ params }: { params: Promise<{ id: 
       payment_method: form.get("payment_method")?.toString() ?? null,
       payment_status: form.get("payment_status")?.toString() ?? "pending",
     };
+
+    if (!payload.email) {
+      setMessage("E-mail é obrigatório.");
+      setSaving(false);
+      return;
+    }
 
     try {
       await updateParticipantWithStock({
@@ -104,9 +129,9 @@ export default function EditParticipantPage({ params }: { params: Promise<{ id: 
               {message ? <div className="rounded-2xl bg-slate-950/70 p-3 text-sm text-slate-300">{message}</div> : null}
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Nome</span><input defaultValue={participant.full_name} name="full_name" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Data de nascimento</span><input type="date" defaultValue={participant.birth_date ?? ""} name="birth_date" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
+                <BirthDateInput name="birth_date" value={birthDate} onChange={setBirthDate} required error={message === "Informe uma data válida no formato dd/MM/aaaa." ? message : undefined} />
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Telefone</span><input defaultValue={participant.phone ?? ""} name="phone" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">E-mail</span><input defaultValue={participant.email ?? ""} name="email" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
+                <label className="space-y-2 text-sm"><span className="text-slate-300">E-mail</span><input type="email" required defaultValue={participant.email ?? ""} name="email" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Cidade</span><input defaultValue={participant.city ?? ""} name="city" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Sexo</span><input defaultValue={participant.gender ?? ""} name="gender" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Modelo</span><select defaultValue={participant.shirt_type ?? "Camiseta"} name="shirt_type" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3"><option value="">Selecione</option>{SHIRT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>

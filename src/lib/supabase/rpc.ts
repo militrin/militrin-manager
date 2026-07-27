@@ -14,13 +14,13 @@ export async function createRegistrationWithRpc(values: {
   birth_date: string;
   gender?: string | null;
   phone: string;
-  email?: string | null;
+  email: string;
   city?: string | null;
   shirt_type: string;
   shirt_size: string;
   payment_method: string;
-  amount: number;
   payment_status: string;
+  coupon_code?: string | null;
   notes?: string | null;
 }) {
   const supabase = createClient();
@@ -32,16 +32,16 @@ export async function createRegistrationWithRpc(values: {
     p_birth_date: values.birth_date,
     p_gender: values.gender ?? null,
     p_phone: values.phone,
-    p_email: values.email ?? null,
+    p_email: values.email,
     p_city: values.city ?? null,
     p_shirt_type: values.shirt_type,
     p_shirt_size: values.shirt_size,
     p_registration_status: values.payment_status === "paid" ? "confirmed" : "pending",
     p_notes: values.notes ?? null,
-    p_amount: values.amount,
     p_payment_method: values.payment_method,
     p_payment_status: values.payment_status,
     p_event_id: eventId,
+    p_coupon_code: values.coupon_code ?? null,
   });
 
   if (error) throw error;

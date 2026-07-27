@@ -7,10 +7,13 @@ import { EmptyState } from "@/components/mvp/EmptyState";
 import { Pagination } from "@/components/mvp/Pagination";
 import { ParticipantCard } from "@/components/mvp/ParticipantCard";
 import { ParticipantsSearchForm } from "./search-form";
+import { releaseExpiredReservationsAction } from "./actions";
 
 const PAGE_SIZE = 8;
 
 async function getParticipants(page: number, search: string) {
+  await releaseExpiredReservationsAction();
+
   const supabase = await createServerSupabaseClient();
   const { data: activeEvent } = await supabase.from("events").select("id").eq("is_active", true).maybeSingle();
   if (!activeEvent?.id) return { participants: [], count: 0, totalPages: 1 };
@@ -20,7 +23,10 @@ async function getParticipants(page: number, search: string) {
 
   let query = supabase
     .from("participants")
-    .select("id, registration_number, full_name, cpf, phone, city, shirt_type, shirt_size, amount, registration_status, payment_status, created_at, event_id", { count: "exact" })
+    .select(
+      "id, registration_number, full_name, cpf, phone, city, shirt_type, shirt_size, registration_status, reservation_status, reservation_expires_at, created_at, event_id, base_amount, discount_amount, final_amount, registration_batches:batch_id(name, sequence_number), payments(payment_status, amount, payment_method, paid_at, created_at)",
+      { count: "exact" },
+    )
     .eq("event_id", activeEvent.id)
     .order("created_at", { ascending: false })
     .range(from, to);
@@ -33,10 +39,36 @@ async function getParticipants(page: number, search: string) {
   const { data, error, count } = await query;
   if (error) throw error;
 
-  const participants = (data ?? []).map((participant) => ({
-    ...participant,
-    kit_status: "pending",
-  }));
+  const participants = (data ?? []).map((participant) => {
+    const payments = Array.isArray(participant.payments) ? participant.payments : [];
+    const latestPayment = payments
+      .slice()
+      .sort((a, b) => new Date(String(b.created_at ?? 0)).getTime() - new Date(String(a.created_at ?? 0)).getTime())[0] ?? null;
+
+    const batch = !Array.isArray(participant.registration_batches) ? participant.registration_batches : participant.registration_batches[0] ?? null;
+
+    return {
+      id: String(participant.id),
+      registration_number: participant.registration_number as number | null,
+      full_name: String(participant.full_name),
+      cpf: String(participant.cpf),
+      phone: String(participant.phone),
+      city: participant.city as string | null,
+      shirt_type: String(participant.shirt_type),
+      shirt_size: String(participant.shirt_size),
+      base_amount: Number(participant.base_amount ?? 0),
+      discount_amount: Number(participant.discount_amount ?? 0),
+      final_amount: Number(participant.final_amount ?? 0),
+      payment_status: String(latestPayment?.payment_status ?? "pending"),
+      registration_status: String(participant.registration_status ?? "pending"),
+      reservation_status: String(participant.reservation_status ?? "pending"),
+      reservation_expires_at: participant.reservation_expires_at as string | null,
+      batch_name: batch?.name ? String(batch.name) : "Sem lote",
+      batch_sequence_number: typeof batch?.sequence_number === "number" ? batch.sequence_number : null,
+      created_at: String(participant.created_at),
+      kit_status: "pending",
+    };
+  });
 
   return { participants, count: count ?? 0, totalPages: Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE)) };
 }
@@ -63,7 +95,7 @@ export default async function ParticipantsPage({ searchParams }: { searchParams:
             ) : (
               <div className="mt-6 grid gap-4">
                 {participants.map((participant) => (
-                  <ParticipantCard key={participant.id} participant={participant as { id: string; registration_number: number | null; full_name: string; cpf: string; phone: string; city: string | null; shirt_type: string; shirt_size: string; amount: number | null; registration_status: string; payment_status: string; kit_status: string; created_at: string; }} />
+                  <ParticipantCard key={participant.id} participant={participant} />
                 ))}
               </div>
             )}

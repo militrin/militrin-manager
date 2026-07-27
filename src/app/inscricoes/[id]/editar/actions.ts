@@ -7,7 +7,7 @@ export async function updateParticipantWithStock(payload: {
   full_name: string;
   birth_date: string | null;
   phone: string;
-  email: string | null;
+  email: string;
   city: string | null;
   gender: string | null;
   shirt_type: string;
@@ -41,7 +41,7 @@ export async function updateParticipantWithStock(payload: {
     full_name: payload.full_name,
     birth_date: payload.birth_date,
     phone: payload.phone,
-    email: payload.email,
+    email: payload.email.trim().toLowerCase(),
     city: payload.city,
     gender: payload.gender,
     shirt_type: payload.shirt_type,

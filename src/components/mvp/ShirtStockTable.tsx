@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   addInventoryQuantityAction,
@@ -8,10 +8,10 @@ import {
   getInventoryMovementsAction,
   type InventoryMovementItem,
 } from "@/app/camisetas/actions";
+import { formatDateTimeBR } from "@/lib/utils/date";
 
 type ShirtStockRow = {
   id: string;
-  event_name: string | null;
   shirt_type: string;
   shirt_size: string;
   total_quantity: number;
@@ -29,11 +29,11 @@ type PanelMode = "purchase" | "adjustment" | "history" | null;
 function formatMovementType(type: string) {
   switch (type) {
     case "purchase":
-      return "Compra";
+      return "Encomenda";
     case "adjustment":
       return "Ajuste";
     case "return":
-      return "Retorno";
+      return "Devolução";
     case "loss":
       return "Perda";
     default:
@@ -79,6 +79,10 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
 
     if (currentMode === "adjustment" && parsed === 0) {
       return { error: "Para ajuste, a quantidade deve ser diferente de zero." };
+    }
+
+    if (currentMode === "adjustment" && notes.trim().length < 3) {
+      return { error: "Informe o motivo do ajuste." };
     }
 
     return { value: parsed };
@@ -163,7 +167,6 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
         <table className="min-w-full divide-y divide-slate-800 text-sm">
           <thead className="bg-slate-950/70 text-left text-slate-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Evento</th>
               <th className="px-4 py-3 font-medium">Modelo</th>
               <th className="px-4 py-3 font-medium">Tamanho</th>
               <th className="px-4 py-3 font-medium">Total recebido</th>
@@ -176,7 +179,7 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
           <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
             {rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-center text-slate-400" colSpan={8}>
+                <td className="px-4 py-6 text-center text-slate-400" colSpan={7}>
                   Sem linhas de estoque no evento ativo.
                 </td>
               </tr>
@@ -186,9 +189,8 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
                 const isActiveRow = activeRowId === row.id;
 
                 return (
-                  <>
-                    <tr key={row.id}>
-                      <td className="px-4 py-3">{row.event_name ?? "-"}</td>
+                  <Fragment key={row.id}>
+                    <tr>
                       <td className="px-4 py-3">{row.shirt_type}</td>
                       <td className="px-4 py-3">{row.shirt_size}</td>
                       <td className="px-4 py-3">{row.total_quantity}</td>
@@ -226,8 +228,8 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
                     </tr>
 
                     {isActiveRow && panelMode === "history" ? (
-                      <tr key={`${row.id}-history`}>
-                        <td colSpan={8} className="bg-slate-950/40 px-4 py-4">
+                      <tr>
+                        <td colSpan={7} className="bg-slate-950/40 px-4 py-4">
                           <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
                             <p className="text-sm font-semibold text-slate-100">Histórico de movimentações</p>
                             <div className="mt-3 space-y-2">
@@ -239,7 +241,7 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
                                     key={item.id}
                                     className="grid gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-200 md:grid-cols-4"
                                   >
-                                    <span>{new Date(item.created_at).toLocaleString("pt-BR")}</span>
+                                    <span>{formatDateTimeBR(item.created_at, " às ")}</span>
                                     <span>{formatMovementType(item.movement_type)}</span>
                                     <span>{item.quantity > 0 ? `+${item.quantity}` : item.quantity}</span>
                                     <span className="text-slate-300">{item.notes ?? "-"}</span>
@@ -262,8 +264,8 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
                     ) : null}
 
                     {isActiveRow && panelMode !== "history" && panelMode !== null ? (
-                      <tr key={`${row.id}-${panelMode}`}>
-                        <td colSpan={8} className="bg-slate-950/40 px-4 py-4">
+                      <tr>
+                        <td colSpan={7} className="bg-slate-950/40 px-4 py-4">
                           <form onSubmit={handleSubmit} className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
                             <p className="text-sm font-semibold text-slate-100">
                               {panelMode === "purchase" ? "Adicionar encomenda" : "Ajustar estoque"}
@@ -284,13 +286,20 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
                               </label>
 
                               <label className="space-y-2 text-sm">
-                                <span className="text-slate-300">Observação (opcional)</span>
+                                <span className="text-slate-300">{panelMode === "purchase" ? "Observação (opcional)" : "Motivo"}</span>
+                                {panelMode === "adjustment" ? (
+                                  <span className="block text-xs text-slate-400">Motivo obrigatório para ajustes.</span>
+                                ) : null}
                                 <input
                                   type="text"
                                   value={notes}
                                   onChange={(event) => setNotes(event.target.value)}
                                   className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none"
-                                  placeholder="Primeira encomenda, Reposição julho, Lote fornecedor X"
+                                  placeholder={
+                                    panelMode === "purchase"
+                                      ? "Primeira encomenda, Segunda encomenda, Reposição de agosto"
+                                      : "+5 correção de contagem, -2 camisetas com defeito"
+                                  }
                                 />
                               </label>
                             </div>
@@ -315,7 +324,7 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
                         </td>
                       </tr>
                     ) : null}
-                  </>
+                  </Fragment>
                 );
               })
             )}

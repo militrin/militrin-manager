@@ -52,7 +52,6 @@ set search_path = public, pg_temp
 as $$
 declare
   v_event_id uuid;
-  v_actor text := coalesce(auth.role(), 'anon');
   v_item public.shirt_inventory%rowtype;
   v_new_total integer;
 begin
@@ -109,18 +108,15 @@ begin
   );
 
   insert into public.audit_logs (
-    actor,
     action,
     entity_type,
     entity_id,
-    event_id,
-    details
+    details,
+    event_id
   ) values (
-    v_actor,
     'inventory_quantity_added',
     'shirt_inventory',
     p_inventory_id,
-    v_event_id,
     jsonb_build_object(
       'movement_type', 'purchase',
       'quantity', p_quantity,
@@ -129,7 +125,8 @@ begin
       'new_total', v_new_total,
       'shirt_type', v_item.shirt_type,
       'shirt_size', v_item.shirt_size
-    )
+    ),
+    v_event_id
   );
 
   return true;
@@ -138,7 +135,7 @@ $$;
 
 create or replace function public.adjust_inventory_quantity(
   p_inventory_id uuid,
-  p_quantity integer,
+  p_quantity_delta integer,
   p_notes text default null
 )
 returns boolean
@@ -148,7 +145,6 @@ set search_path = public, pg_temp
 as $$
 declare
   v_event_id uuid;
-  v_actor text := coalesce(auth.role(), 'anon');
   v_item public.shirt_inventory%rowtype;
   v_new_total integer;
   v_min_total integer;
@@ -157,7 +153,7 @@ begin
     raise exception 'ID do item e obrigatorio.';
   end if;
 
-  if p_quantity is null or p_quantity = 0 then
+  if p_quantity_delta is null or p_quantity_delta = 0 then
     raise exception 'Quantidade de ajuste deve ser diferente de zero.';
   end if;
 
@@ -184,7 +180,7 @@ begin
     raise exception 'Apenas o estoque do evento ativo pode ser alterado.';
   end if;
 
-  v_new_total := v_item.total_quantity + p_quantity;
+  v_new_total := v_item.total_quantity + p_quantity_delta;
   v_min_total := v_item.reserved_quantity + v_item.delivered_quantity;
 
   if v_new_total < v_min_total then
@@ -211,26 +207,23 @@ begin
     v_event_id,
     p_inventory_id,
     'adjustment',
-    p_quantity,
+    p_quantity_delta,
     nullif(trim(p_notes), '')
   );
 
   insert into public.audit_logs (
-    actor,
     action,
     entity_type,
     entity_id,
-    event_id,
-    details
+    details,
+    event_id
   ) values (
-    v_actor,
     'inventory_quantity_adjusted',
     'shirt_inventory',
     p_inventory_id,
-    v_event_id,
     jsonb_build_object(
       'movement_type', 'adjustment',
-      'quantity', p_quantity,
+      'quantity', p_quantity_delta,
       'notes', nullif(trim(p_notes), ''),
       'previous_total', v_item.total_quantity,
       'new_total', v_new_total,
@@ -238,7 +231,8 @@ begin
       'delivered_quantity', v_item.delivered_quantity,
       'shirt_type', v_item.shirt_type,
       'shirt_size', v_item.shirt_size
-    )
+    ),
+    v_event_id
   );
 
   return true;
@@ -250,4 +244,40 @@ revoke all on function public.adjust_inventory_quantity(uuid, integer, text) fro
 revoke all on function public.delete_inventory_item(uuid) from public, authenticated, anon;
 
 grant execute on function public.add_inventory_quantity(uuid, integer, text) to anon;
+grant execute on function public.add_inventory_quantity(uuid, integer, text) to authenticated;
 grant execute on function public.adjust_inventory_quantity(uuid, integer, text) to anon;
+grant execute on function public.adjust_inventory_quantity(uuid, integer, text) to authenticated;
+
+create or replace function public.get_ordered_shirt_inventory(
+  p_event_id uuid
+)
+returns setof public.shirt_inventory
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  select si.*
+  from public.shirt_inventory si
+  where si.event_id = p_event_id
+  order by
+    case
+      when si.shirt_type = 'Camiseta' then 1
+      when si.shirt_type = 'Babylook' then 2
+      else 99
+    end,
+    case
+      when si.shirt_size = 'PP' then 1
+      when si.shirt_size = 'P' then 2
+      when si.shirt_size = 'M' then 3
+      when si.shirt_size = 'G' then 4
+      when si.shirt_size = 'GG' then 5
+      when si.shirt_size = 'EG' then 6
+      when si.shirt_size = 'EXG' then 7
+      when si.shirt_size = 'EXGG' then 8
+      else 99
+    end;
+$$;
+
+revoke all on function public.get_ordered_shirt_inventory(uuid) from public, authenticated, anon;
+grant execute on function public.get_ordered_shirt_inventory(uuid) to anon;
+grant execute on function public.get_ordered_shirt_inventory(uuid) to authenticated;

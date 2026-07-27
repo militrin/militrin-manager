@@ -5,7 +5,7 @@ export type Participant = {
   birth_date: string;
   gender?: string | null;
   phone: string;
-  email?: string | null;
+  email: string;
   city?: string | null;
   shirt_type: string;
   shirt_size: string;
@@ -47,7 +47,7 @@ export type RegistrationFormData = {
   shirt_type: string;
   shirt_size: string;
   payment_method: string;
-  amount: string;
   payment_status: string;
+  coupon_code: string;
   notes: string;
 };

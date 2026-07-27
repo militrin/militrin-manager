@@ -5,12 +5,13 @@ import { SectionCard } from "@/components/dashboard/SectionCard";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { StatusBadge } from "@/components/mvp/StatusBadge";
 import { ParticipantHistory } from "./history";
+import { PaymentPanel } from "./payment-panel";
 
 async function getParticipant(id: string) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("participants")
-    .select("id, registration_number, full_name, cpf, birth_date, gender, phone, email, city, shirt_type, shirt_size, amount, payment_status, registration_status, notes, created_at, payment_method, event_id")
+    .select("id, registration_number, full_name, cpf, birth_date, gender, phone, email, city, shirt_type, shirt_size, base_amount, discount_amount, final_amount, registration_status, notes, created_at, event_id, payments(payment_status, payment_method, pix_code, pix_qrcode, expires_at, paid_at, final_amount, created_at)")
     .eq("id", id)
     .single();
 
@@ -22,6 +23,12 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
   const { id } = await params;
 
   const participant = await getParticipant(id);
+  const latestPayment = Array.isArray(participant.payments)
+    ? participant.payments
+        .slice()
+        .sort((a, b) => new Date(String(b.created_at ?? 0)).getTime() - new Date(String(a.created_at ?? 0)).getTime())[0] ?? null
+    : null;
+
   return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
@@ -56,16 +63,29 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                 </div>
                 <div>
                   <p className="text-sm text-slate-400">Valor</p>
-                  <p>R$ {Number(participant.amount ?? 0).toFixed(2)}</p>
+                  <p>R$ {Number(participant.final_amount ?? 0).toFixed(2)}</p>
                 </div>
                 <div>
                   <p className="text-sm text-slate-400">Status</p>
                   <div className="mt-1 flex gap-2">
-                    <StatusBadge label={participant.payment_status === "paid" ? "Pago" : "Pendente"} tone={participant.payment_status === "paid" ? "emerald" : "amber"} />
+                    <StatusBadge label={latestPayment?.payment_status === "paid" ? "Pago" : "Pendente"} tone={latestPayment?.payment_status === "paid" ? "emerald" : "amber"} />
                     <StatusBadge label={participant.registration_status === "cancelled" ? "Cancelado" : "Ativo"} tone={participant.registration_status === "cancelled" ? "red" : "cyan"} />
                   </div>
                 </div>
               </div>
+
+              <PaymentPanel
+                payment={latestPayment ? {
+                  payment_status: String(latestPayment.payment_status ?? "pending"),
+                  payment_method: latestPayment.payment_method ? String(latestPayment.payment_method) : null,
+                  pix_code: latestPayment.pix_code ? String(latestPayment.pix_code) : null,
+                  pix_qrcode: latestPayment.pix_qrcode ? String(latestPayment.pix_qrcode) : null,
+                  expires_at: latestPayment.expires_at ? String(latestPayment.expires_at) : null,
+                  paid_at: latestPayment.paid_at ? String(latestPayment.paid_at) : null,
+                  final_amount: Number(latestPayment.final_amount ?? participant.final_amount ?? 0),
+                } : null}
+              />
+
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link href={`/inscricoes/${participant.id}/editar`} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950">Editar</Link>
                 <Link href="/inscricoes" className="rounded-2xl border border-slate-700 px-4 py-2 text-sm text-slate-300">Voltar à lista</Link>
