@@ -69,6 +69,7 @@ export default function CriarContaPage() {
         password,
         confirmPassword,
         acceptPrivacy,
+        require_profile_fields: true,
       });
 
       if (!result.success) {
@@ -86,11 +87,6 @@ export default function CriarContaPage() {
 
         if (result.code === 'already_registered') {
           setMessage('Esta conta já existe. Entre com seu e-mail e senha para continuar.');
-          return;
-        }
-
-        if (result.code === 'smtp_not_configured') {
-          setMessage(result.message || 'O ambiente de produção exige SMTP configurado para confirmações de e-mail.');
           return;
         }
 
@@ -139,19 +135,19 @@ export default function CriarContaPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-2 sm:col-span-2">
                 <span className="text-sm text-slate-300">Nome completo</span>
-                <input value={fullName} onChange={(event) => setFullName(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
+                <input required value={fullName} onChange={(event) => setFullName(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
               </label>
 
               <label className="space-y-2">
                 <span className="text-sm text-slate-300">CPF</span>
-                <input value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} inputMode="numeric" className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
+                <input required value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} inputMode="numeric" className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
               </label>
 
               <BirthDateInput name="birth_date" value={birthDate} onChange={setBirthDate} required label="Nascimento" />
 
               <label className="space-y-2">
                 <span className="text-sm text-slate-300">Gênero</span>
-                <select value={gender} onChange={(event) => setGender(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400">
+                <select required value={gender} onChange={(event) => setGender(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400">
                   <option value="">Selecione</option>
                   <option value="male">Masculino</option>
                   <option value="female">Feminino</option>
@@ -162,7 +158,7 @@ export default function CriarContaPage() {
 
               <label className="space-y-2">
                 <span className="text-sm text-slate-300">Telefone</span>
-                <input value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} inputMode="numeric" className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
+                <input required value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} inputMode="numeric" className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
               </label>
 
               <label className="space-y-2 sm:col-span-2">
@@ -172,7 +168,7 @@ export default function CriarContaPage() {
 
               <label className="space-y-2 sm:col-span-2">
                 <span className="text-sm text-slate-300">Cidade</span>
-                <input value={city} onChange={(event) => setCity(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
+                <input required value={city} onChange={(event) => setCity(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-slate-100 outline-none focus:border-emerald-400" />
               </label>
 
               <label className="space-y-2">
@@ -197,7 +193,7 @@ export default function CriarContaPage() {
             </div>
 
             <label className="flex items-start gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-300">
-              <input type="checkbox" checked={acceptPrivacy} onChange={(event) => setAcceptPrivacy(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-950" />
+              <input required type="checkbox" checked={acceptPrivacy} onChange={(event) => setAcceptPrivacy(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-950" />
               <span>Aceito a política de privacidade e o uso dos meus dados para gestão da inscrição.</span>
             </label>
 

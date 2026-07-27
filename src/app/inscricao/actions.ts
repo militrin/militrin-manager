@@ -45,6 +45,7 @@ type SignupActionResult =
       email: string;
       email_confirmation_required: boolean;
       authenticated: boolean;
+      profile_warning?: string;
     }
   | {
       success: false;
@@ -59,9 +60,33 @@ function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? '';
 }
 
+function normalizeBirthDateInput(value: string | null | undefined) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return null;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(normalized)) {
+    return toISODateFromBR(normalized);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
 function translateAuthErrorMessage(message: string) {
   const normalized = message.toLowerCase();
 
+  if (normalized.includes('invalid login credentials')) {
+    return 'E-mail ou senha inválidos.';
+  }
+  if (normalized.includes('email not confirmed') || normalized.includes('email confirmation')) {
+    return 'E-mail não confirmado. Verifique sua caixa de entrada antes de continuar.';
+  }
+  if (normalized.includes('user not found')) {
+    return 'Usuário não encontrado.';
+  }
+  if (normalized.includes('email signups are disabled')) {
+    return 'Cadastro por e-mail está desativado no momento.';
+  }
   if (normalized.includes('email rate limit exceeded')) {
     return 'Muitas solicitações de e-mail foram realizadas em pouco tempo. Aguarde alguns minutos e tente novamente.';
   }
@@ -74,35 +99,30 @@ function translateAuthErrorMessage(message: string) {
   if (normalized.includes('weak password')) {
     return 'A senha informada é muito fraca. Use outra combinação.';
   }
-  if (normalized.includes('email not confirmed') || normalized.includes('email confirmation')) {
-    return 'E-mail ainda não confirmado.';
-  }
-
   return message;
+}
+
+function translateAuthErrorCode(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes('invalid login credentials')) return 'invalid_credentials';
+  if (normalized.includes('email not confirmed') || normalized.includes('email confirmation')) return 'email_not_confirmed';
+  if (normalized.includes('user not found')) return 'user_not_found';
+  if (normalized.includes('email signups are disabled')) return 'email_signups_disabled';
+  if (normalized.includes('email rate limit exceeded')) return 'rate_limit';
+  if (normalized.includes('already registered')) return 'already_registered';
+  if (normalized.includes('invalid email')) return 'invalid_email';
+  if (normalized.includes('weak password')) return 'weak_password';
+
+  return 'unknown';
 }
 
 function appBaseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 }
 
-function appEnvironment() {
-  return (process.env.NEXT_PUBLIC_APP_ENV ?? 'development').toLowerCase();
-}
-
-function hasSmtpConfigured() {
-  const provider = (process.env.MILITRIN_EMAIL_PROVIDER ?? '').toLowerCase();
-  return provider === 'smtp' || provider === 'resend' || provider === 'sendgrid' || provider === 'ses';
-}
-
 function translateSignupCode(message: string) {
-  const normalized = message.toLowerCase();
-
-  if (normalized.includes('email rate limit exceeded')) return 'rate_limit';
-  if (normalized.includes('already registered')) return 'already_registered';
-  if (normalized.includes('invalid email')) return 'invalid_email';
-  if (normalized.includes('weak password')) return 'weak_password';
-  if (normalized.includes('email not confirmed') || normalized.includes('email confirmation')) return 'email_not_confirmed';
-  return 'unknown';
+  return translateAuthErrorCode(message);
 }
 
 function accountOrdersUrl() {
@@ -119,6 +139,7 @@ async function upsertCustomerProfileForUser(params: {
   phone?: string | null;
   email: string;
   city?: string | null;
+  loyaltyTierId?: string | null;
 }) {
   const { error } = await params.supabase.rpc('upsert_customer_profile', {
     p_user_id: params.userId,
@@ -129,7 +150,7 @@ async function upsertCustomerProfileForUser(params: {
     p_phone: params.phone ?? null,
     p_email: params.email,
     p_city: params.city ?? null,
-    p_loyalty_tier_id: null,
+    p_loyalty_tier_id: params.loyaltyTierId ?? null,
     p_loyalty_override: false,
     p_loyalty_override_reason: null,
     p_show_in_participant_list: true,
@@ -140,6 +161,99 @@ async function upsertCustomerProfileForUser(params: {
   if (error) {
     throw error;
   }
+}
+
+async function getNovatoTierId(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
+  const { data } = await supabase
+    .from('loyalty_tiers')
+    .select('id')
+    .eq('slug', 'novato')
+    .maybeSingle();
+
+  return data?.id ? String(data.id) : null;
+}
+
+async function ensureCustomerProfileForSignedUser(params: {
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>;
+  userId: string;
+  email: string;
+  fallback?: {
+    full_name?: string;
+    cpf?: string;
+    birth_date?: string;
+    gender?: string;
+    phone?: string;
+    city?: string;
+  };
+}) {
+  const { data: profileData, error: profileError } = await params.supabase.rpc('get_customer_profile', {
+    p_user_id: params.userId,
+  });
+  if (profileError) {
+    return { success: false as const, message: profileError.message };
+  }
+
+  const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+
+  const fullName = String(
+    profile?.full_name
+    ?? params.fallback?.full_name
+    ?? params.email.split('@')[0]
+    ?? 'Participante',
+  ).trim();
+
+  const cpf = String(profile?.cpf ?? params.fallback?.cpf ?? '').replace(/\D/g, '') || null;
+  const birthDate = normalizeBirthDateInput(String(profile?.birth_date ?? params.fallback?.birth_date ?? ''));
+  const gender = String(profile?.gender ?? params.fallback?.gender ?? '').trim() || null;
+  const phone = String(profile?.phone ?? params.fallback?.phone ?? '').replace(/\D/g, '') || null;
+  const city = String(profile?.city ?? params.fallback?.city ?? '').trim() || null;
+  const email = normalizeEmail(profile?.email ? String(profile.email) : params.email);
+
+  if (!email) {
+    return { success: false as const, message: 'Conta sem e-mail válido. Atualize o e-mail para continuar.' };
+  }
+
+  const missingRequiredFields = [
+    !cpf ? 'CPF' : null,
+    !birthDate ? 'nascimento' : null,
+    !gender ? 'gênero' : null,
+    !phone ? 'telefone' : null,
+    !city ? 'cidade' : null,
+  ].filter(Boolean) as string[];
+
+  try {
+    await upsertCustomerProfileForUser({
+      supabase: params.supabase,
+      userId: params.userId,
+      fullName,
+      cpf,
+      birthDate,
+      gender,
+      phone,
+      email,
+      city,
+      loyaltyTierId: profile?.loyalty_tier_id ? String(profile.loyalty_tier_id) : await getNovatoTierId(params.supabase),
+    });
+  } catch (error) {
+    return {
+      success: false as const,
+      message: error instanceof Error ? error.message : 'Não foi possível criar/atualizar o perfil do participante.',
+    };
+  }
+
+  if (missingRequiredFields.length > 0) {
+    console.warn('[auth-profile] Perfil incompleto para usuário autenticado', {
+      userId: params.userId,
+      missingRequiredFields,
+    });
+
+    return {
+      success: true as const,
+      warning: `Seu perfil foi iniciado, mas faltam dados obrigatórios: ${missingRequiredFields.join(', ')}. Complete em Meus dados.`,
+    };
+  }
+
+  return { success: true as const, warning: null };
 }
 
 function mapPayment(row: Record<string, unknown>) {
@@ -268,6 +382,24 @@ export async function getPublicSessionAction() {
     return { success: true, authenticated: false };
   }
 
+  const ensuredProfile = await ensureCustomerProfileForSignedUser({
+    supabase,
+    userId: user.id,
+    email: user.email ?? '',
+    fallback: {
+      full_name: typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : undefined,
+      cpf: typeof user.user_metadata?.cpf === 'string' ? user.user_metadata.cpf : undefined,
+      birth_date: typeof user.user_metadata?.birth_date === 'string' ? user.user_metadata.birth_date : undefined,
+      gender: typeof user.user_metadata?.gender === 'string' ? user.user_metadata.gender : undefined,
+      phone: typeof user.user_metadata?.phone === 'string' ? user.user_metadata.phone : undefined,
+      city: typeof user.user_metadata?.city === 'string' ? user.user_metadata.city : undefined,
+    },
+  });
+
+  if (!ensuredProfile.success) {
+    return { success: false, message: ensuredProfile.message };
+  }
+
   const { data: profileData, error: profileError } = await supabase.rpc('get_customer_profile', {
     p_user_id: user.id,
   });
@@ -323,20 +455,7 @@ export async function signInPublicAccountAction(input: { email: string; password
   const supabase = await createServerSupabaseClient();
   const normalized = normalizeEmail(input.email);
   if (!normalized || !input.password) {
-    return { success: false, message: 'E-mail e senha sao obrigatorios.' };
-  }
-
-  const { data: accountStatus, error: accountStatusError } = await supabase.rpc('get_public_account_email_status', {
-    p_email: normalized,
-  });
-
-  if (accountStatusError) {
-    return { success: false, code: 'connection', message: accountStatusError.message };
-  }
-
-  const accountExists = Boolean((Array.isArray(accountStatus) ? accountStatus[0] : accountStatus)?.has_account);
-  if (!accountExists) {
-    return { success: false, code: 'not_found', message: 'Conta inexistente.' };
+    return { success: false, message: 'E-mail e senha são obrigatórios.' };
   }
 
   try {
@@ -346,17 +465,34 @@ export async function signInPublicAccountAction(input: { email: string; password
     });
 
     if (error || !data.user) {
-      const errorMessage = translateAuthErrorMessage(error?.message ?? 'Nao foi possivel autenticar.');
-      if (errorMessage === 'E-mail ainda não confirmado.') {
-        return { success: false, code: 'unconfirmed', message: errorMessage };
-      }
-      if ((error?.message ?? '').toLowerCase().includes('invalid login credentials')) {
-        return { success: false, code: 'invalid', message: 'E-mail ou senha inválidos.' };
-      }
-      return { success: false, code: 'connection', message: errorMessage };
+      const raw = error?.message ?? 'Não foi possível autenticar.';
+      return { success: false, code: translateAuthErrorCode(raw), message: translateAuthErrorMessage(raw) };
     }
 
-    return { success: true, user_id: data.user.id, email: data.user.email ?? normalized };
+    const ensuredProfile = await ensureCustomerProfileForSignedUser({
+      supabase,
+      userId: data.user.id,
+      email: data.user.email ?? normalized,
+      fallback: {
+        full_name: typeof data.user.user_metadata?.full_name === 'string' ? data.user.user_metadata.full_name : undefined,
+        cpf: typeof data.user.user_metadata?.cpf === 'string' ? data.user.user_metadata.cpf : undefined,
+        birth_date: typeof data.user.user_metadata?.birth_date === 'string' ? data.user.user_metadata.birth_date : undefined,
+        gender: typeof data.user.user_metadata?.gender === 'string' ? data.user.user_metadata.gender : undefined,
+        phone: typeof data.user.user_metadata?.phone === 'string' ? data.user.user_metadata.phone : undefined,
+        city: typeof data.user.user_metadata?.city === 'string' ? data.user.user_metadata.city : undefined,
+      },
+    });
+
+    if (!ensuredProfile.success) {
+      return { success: false, code: 'profile_error', message: ensuredProfile.message };
+    }
+
+    return {
+      success: true,
+      user_id: data.user.id,
+      email: data.user.email ?? normalized,
+      profile_warning: ensuredProfile.warning ?? null,
+    };
   } catch {
     return { success: false, code: 'connection', message: 'Erro de conexão.' };
   }
@@ -373,18 +509,35 @@ export async function signUpPublicAccountAction(input: {
   password: string;
   confirmPassword: string;
   acceptPrivacy?: boolean;
+  require_profile_fields?: boolean;
 }): Promise<SignupActionResult> {
   const supabase = await createServerSupabaseClient();
   const normalized = normalizeEmail(input.email);
-  if (!normalized) return { success: false, message: 'E-mail obrigatorio.' };
+  if (!normalized) return { success: false, message: 'E-mail obrigatório.' };
   if (!input.password || input.password.length < 8) {
     return { success: false, message: 'A senha deve ter pelo menos 8 caracteres.' };
   }
   if (input.password !== input.confirmPassword) {
-    return { success: false, message: 'A confirmacao de senha nao confere.' };
+    return { success: false, message: 'A confirmação de senha não confere.' };
   }
   if (input.acceptPrivacy === false) {
     return { success: false, message: 'Você precisa aceitar a política de privacidade.' };
+  }
+
+  const requireProfileFields = Boolean(input.require_profile_fields);
+  const fullName = input.full_name?.trim() || '';
+  const cpfDigits = input.cpf ? removeCpfMask(input.cpf) : '';
+  const gender = input.gender?.trim() || '';
+  const phoneDigits = input.phone ? input.phone.replace(/\D/g, '') : '';
+  const city = input.city?.trim() || '';
+
+  if (requireProfileFields) {
+    if (!fullName) return { success: false, message: 'Nome completo é obrigatório.' };
+    if (!cpfDigits || !isValidCpf(cpfDigits)) return { success: false, message: 'CPF inválido.' };
+    if (!input.birth_date) return { success: false, message: 'Data de nascimento é obrigatória.' };
+    if (!gender) return { success: false, message: 'Gênero é obrigatório.' };
+    if (!phoneDigits) return { success: false, message: 'Telefone é obrigatório.' };
+    if (!city) return { success: false, message: 'Cidade é obrigatória.' };
   }
 
   const birthDateIso = input.birth_date ? toISODateFromBR(input.birth_date) : null;
@@ -395,57 +548,64 @@ export async function signUpPublicAccountAction(input: {
     return { success: false, message: 'A inscrição exige idade mínima de 18 anos.' };
   }
 
-  if (appEnvironment() === 'production' && !hasSmtpConfigured()) {
-    return {
-      success: false,
-      code: 'smtp_not_configured',
-      message: 'O ambiente de produção exige SMTP configurado para confirmações de e-mail.',
-    };
-  }
-
   const emailRedirectTo = `${appBaseUrl()}/`;
   const { data, error } = await supabase.auth.signUp({
     email: normalized,
     password: input.password,
-    options: { emailRedirectTo },
+    options: {
+      emailRedirectTo,
+      data: {
+        full_name: fullName || normalized.split('@')[0] || 'Participante',
+        cpf: cpfDigits || null,
+        birth_date: birthDateIso,
+        gender: gender || null,
+        phone: phoneDigits || null,
+        city: city || null,
+      },
+    },
   });
 
   if (error || !data.user) {
-    const errorMessage = translateAuthErrorMessage(error?.message ?? 'Nao foi possivel criar a conta.');
+    const errorMessage = translateAuthErrorMessage(error?.message ?? 'Não foi possível criar a conta.');
     return { success: false, code: translateSignupCode(error?.message ?? ''), message: errorMessage };
   }
 
-  const environment = appEnvironment();
-  const emailConfirmationRequired = environment === 'production' || !data.session;
+  const emailConfirmationRequired = !data.session;
+  let profileWarning: string | undefined;
 
-  if (environment === 'production' && data.session) {
-    await supabase.auth.signOut();
-  }
-
-  try {
-    await upsertCustomerProfileForUser({
+  if (data.session) {
+    const ensuredProfile = await ensureCustomerProfileForSignedUser({
       supabase,
       userId: data.user.id,
-      fullName: input.full_name?.trim() || normalized.split('@')[0] || 'Participante',
-      cpf: input.cpf ? removeCpfMask(input.cpf) : null,
-      birthDate: birthDateIso,
-      gender: input.gender?.trim() || null,
-      phone: input.phone ? input.phone.replace(/\D/g, '') : null,
-      email: normalized,
-      city: input.city?.trim() || null,
+      email: data.user.email ?? normalized,
+      fallback: {
+        full_name: fullName || normalized.split('@')[0] || 'Participante',
+        cpf: cpfDigits || undefined,
+        birth_date: birthDateIso || undefined,
+        gender: gender || undefined,
+        phone: phoneDigits || undefined,
+        city: city || undefined,
+      },
     });
-  } catch (profileError) {
-    const message = profileError instanceof Error ? profileError.message : 'Nao foi possivel salvar o perfil.';
-    return { success: false, message };
+
+    if (!ensuredProfile.success) {
+      return { success: false, code: 'profile_error', message: ensuredProfile.message };
+    }
+
+    if (ensuredProfile.warning) {
+      profileWarning = ensuredProfile.warning;
+    }
   }
 
-  try {
-    await emailProvider.sendAccountConfirmation({
-      to: normalized,
-      confirmationUrl: emailRedirectTo,
-    });
-  } catch (mailError) {
-    console.warn('Falha ao registrar envio de e-mail de confirmacao:', mailError);
+  if (emailConfirmationRequired) {
+    try {
+      await emailProvider.sendAccountConfirmation({
+        to: normalized,
+        confirmationUrl: emailRedirectTo,
+      });
+    } catch (mailError) {
+      console.warn('Falha ao registrar envio de e-mail de confirmação:', mailError);
+    }
   }
 
   return {
@@ -453,7 +613,8 @@ export async function signUpPublicAccountAction(input: {
     user_id: data.user.id,
     email: data.user.email ?? normalized,
     email_confirmation_required: emailConfirmationRequired,
-    authenticated: Boolean(data.session) && environment !== 'production',
+    authenticated: Boolean(data.session),
+    profile_warning: profileWarning,
   };
 }
 

@@ -32,6 +32,10 @@ function formatMemberSince(value: string | null | undefined) {
   return Number.isNaN(year) ? new Date().getFullYear() : year;
 }
 
+function money(value: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+}
+
 export default async function MinhaContaPage() {
   const supabase = await createServerSupabaseClient();
   const {
@@ -68,6 +72,12 @@ export default async function MinhaContaPage() {
   const openEvents = (eventsResult.data ?? []).filter((event) => isEventOpen(event));
   const activeTickets = (ticketsResult.data ?? []).filter((ticket) => String(ticket.status ?? '') === 'active');
   const confirmedParticipations = orders.filter((order) => order.status === 'confirmed').length;
+  const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
+  const latestConfirmedOrder = orders.find((order) => {
+    if (order.status !== 'confirmed') return false;
+    const ticket = Array.isArray(order.tickets) ? order.tickets[0] : order.tickets;
+    return Boolean(ticket?.id);
+  }) ?? null;
   const currentLevel = getLoyaltyLevel(confirmedParticipations, loyaltyLevels);
   const progress = getLoyaltyProgress(confirmedParticipations, loyaltyLevels);
 
@@ -208,6 +218,39 @@ export default async function MinhaContaPage() {
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Meu nível</p>
           <h3 className="mt-2 text-xl font-semibold text-white">Veja seu progresso na comunidade Militrin.</h3>
         </Link>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        <article className="rounded-[1.75rem] border border-slate-800 bg-slate-950/60 p-5">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Compra pendente</p>
+          {pendingOrder ? (
+            <div className="mt-3 space-y-2 text-sm text-slate-200">
+              <p>Pedido: {String(pendingOrder.order_number ?? '-')}</p>
+              <p>Valor: {money(Number(pendingOrder.final_amount ?? 0))}</p>
+              <p>Status: {String(pendingOrder.status)}</p>
+              <Link href={`/minha-conta/compras/${pendingOrder.id}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/20">
+                Ver compra pendente
+              </Link>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-300">Nenhuma compra pendente no momento.</p>
+          )}
+        </article>
+
+        <article className="rounded-[1.75rem] border border-slate-800 bg-slate-950/60 p-5">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ingresso confirmado mais recente</p>
+          {latestConfirmedOrder ? (
+            <div className="mt-3 space-y-2 text-sm text-slate-200">
+              <p>Evento: {String((Array.isArray(latestConfirmedOrder.events) ? latestConfirmedOrder.events[0] : latestConfirmedOrder.events)?.name ?? 'Evento')}</p>
+              <p>Pedido: {String(latestConfirmedOrder.order_number ?? '-')}</p>
+              <Link href={`/minha-conta/compras/${latestConfirmedOrder.id}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
+                Ver ingresso confirmado
+              </Link>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-300">Seu ingresso confirmado mais recente aparecerá aqui.</p>
+          )}
+        </article>
       </div>
 
       {!orders.length ? (

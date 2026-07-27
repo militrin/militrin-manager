@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -24,6 +25,13 @@ function eventIsOpen(event: { registration_enabled: boolean; registration_open_a
 export default async function EventRegistrationPage({ params }: { params: Promise<{ eventSlug: string }> }) {
   const { eventSlug } = await params;
   const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect(`/?next=/inscricao/${eventSlug}`);
+  }
 
   const { data: event, error: eventError } = await supabase
     .from('events')

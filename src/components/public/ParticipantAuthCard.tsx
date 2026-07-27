@@ -26,6 +26,7 @@ export function ParticipantAuthCard({
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading) return;
     setLoading(true);
     setMessage(null);
 
