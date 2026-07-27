@@ -1,7 +1,7 @@
 'use server';
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { FakePaymentProvider } from '@/lib/payments/fake-provider';
+import { getPaymentProvider } from '@/lib/payments/get-provider';
 import type { RegistrationFormValues } from '@/lib/validation/registration';
 import { removeCpfMask } from '@/lib/validation/registration';
 import { toISODateFromBR } from '@/lib/utils/date';
@@ -86,7 +86,7 @@ type ParticipantPaymentDetails = {
   updated_at: string;
 };
 
-const paymentProvider = new FakePaymentProvider();
+const paymentProvider = getPaymentProvider();
 
 export async function getRegistrationFormContextAction() {
   const supabase = await createServerSupabaseClient();

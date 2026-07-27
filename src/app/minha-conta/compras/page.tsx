@@ -39,7 +39,8 @@ export default async function MinhasComprasPage() {
             const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
             const category = participant?.ticket_categories;
             const categoryObj = Array.isArray(category) ? category[0] : category;
-            const ticket = Array.isArray(order.tickets) ? order.tickets[0] : order.tickets;
+            const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
+            const ticket = tickets[0] ?? null;
 
             return (
               <article key={order.id} className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
@@ -55,6 +56,7 @@ export default async function MinhasComprasPage() {
                   <p>Data: {formatDateBR(String(order.created_at))}</p>
                   <p>Participante: {participant?.full_name ? String(participant.full_name) : '-'}</p>
                   <p>Categoria: {categoryObj?.name ? String(categoryObj.name) : '-'}</p>
+                  <p>Ingressos no pedido: {tickets.length}</p>
                   <p>Valor: {money(Number(order.final_amount ?? 0))}</p>
                   <p>Pagamento: {payment?.payment_method ? String(payment.payment_method) : '-'}</p>
                   <p>Status pagamento: {payment?.payment_status ? String(payment.payment_status) : '-'}</p>
@@ -68,6 +70,11 @@ export default async function MinhasComprasPage() {
                   <Link href={`/minha-conta/compras/${order.id}`} className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-950">
                     Ver compra
                   </Link>
+                  {String(payment?.payment_status ?? 'pending') !== 'paid' ? (
+                    <Link href={`/minha-conta/compras/${order.id}`} className="rounded-xl border border-amber-500/40 px-3 py-2 text-xs text-amber-200">
+                      Pagar agora
+                    </Link>
+                  ) : null}
                   {ticket?.status === 'active' || ticket?.status === 'used' ? (
                     <Link href={`/minha-conta/ingressos/${ticket.id}`} className="rounded-xl border border-emerald-500/40 px-3 py-2 text-xs text-emerald-200">
                       Ver QR Code

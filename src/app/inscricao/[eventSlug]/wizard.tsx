@@ -17,6 +17,7 @@ import {
   signUpPublicAccountAction,
   simulatePublicPaymentAction,
 } from '@/app/inscricao/actions';
+import { TicketViewer } from '@/components/public/TicketViewer';
 import {
   calculateAge,
   formatCpf,
@@ -222,6 +223,7 @@ export function RegistrationWizard({
   const [courtesyMessage, setCourtesyMessage] = useState<string | null>(null);
   const [timeTick, setTimeTick] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
 
   const topRef = useRef<HTMLHeadingElement | null>(null);
 
@@ -630,9 +632,12 @@ export function RegistrationWizard({
   }
 
   async function handleCreateAndContinuePayment() {
-    if (submitting) return;
+    if (submitting || submitLockRef.current) return;
+    submitLockRef.current = true;
     setSubmitting(true);
     setErrors([]);
+
+    const requestId = `${event.id}:${form.category_id}:${removeCpfMask(form.cpf)}:${authUserId ?? 'anon'}`;
 
     const payload = {
       event_id: event.id,
@@ -650,28 +655,40 @@ export function RegistrationWizard({
       coupon_code: form.coupon_code || undefined,
       notes: 'Portal público de inscrição',
       user_id: authUserId || undefined,
+      client_request_id: requestId,
     } as const;
 
-    const result = await createPublicRegistrationAction(payload);
-    setSubmitting(false);
+    let result: Awaited<ReturnType<typeof createPublicRegistrationAction>>;
+    try {
+      result = await createPublicRegistrationAction(payload);
+    } finally {
+      setSubmitting(false);
+      submitLockRef.current = false;
+    }
 
     if (!result.success || !('registration' in result)) {
       setErrors([('message' in result && result.message) || 'Não foi possível criar sua inscrição.']);
       return;
     }
 
-    setRegistration(result.registration as RegistrationSnapshot);
+    const createdRegistration = result.registration;
+    if (!createdRegistration) {
+      setErrors(['Nao foi possivel carregar os dados do pedido criado.']);
+      return;
+    }
+
+    setRegistration(createdRegistration as RegistrationSnapshot);
     setCourtesyMessage(result.courtesy_message ?? null);
     setLiveMessage('Inscrição criada.');
 
-    if ((result.registration.final_amount ?? 0) <= 0) {
+    if ((createdRegistration.final_amount ?? 0) <= 0) {
       goTo(7);
       sessionStorage.removeItem(storageKey);
       return;
     }
 
     if (form.payment_method === 'pix') {
-      const pix = await generatePublicPixAction(result.registration.participant_id);
+      const pix = await generatePublicPixAction(createdRegistration.participant_id);
       if (!pix.success || !pix.payment) {
         setErrors([pix.message || 'Falha ao gerar PIX.']);
         return;
@@ -709,6 +726,11 @@ export function RegistrationWizard({
                 ...prev.payment,
                 ...paid.payment,
               },
+              order_id: paid.order_id ?? prev.order_id,
+              order_number: paid.order_number ?? prev.order_number,
+              reservation_status: paid.reservation_status ?? prev.reservation_status,
+              reservation_expires_at: paid.reservation_expires_at ?? prev.reservation_expires_at,
+              qr_token: paid.qr_token ?? prev.qr_token,
             }
           : prev,
       );
@@ -1069,7 +1091,7 @@ export function RegistrationWizard({
 
             {step === 4 && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">4. Cupom e pagamento</h2>
+                <h2 className="text-lg font-semibold">4. Cupom</h2>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="space-y-1 sm:col-span-2">
@@ -1092,17 +1114,10 @@ export function RegistrationWizard({
                     {couponFeedback && <span className="text-xs text-emerald-200">{couponFeedback}</span>}
                   </label>
 
-                  <label className="space-y-1">
-                    <span className="text-sm text-slate-200">Forma de pagamento</span>
-                    <select
-                      value={form.payment_method}
-                      onChange={(event_) => setField('payment_method', event_.target.value as FormState['payment_method'])}
-                      className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                    >
-                      <option value="pix">PIX</option>
-                      <option value="credit_card">Cartão de crédito</option>
-                    </select>
-                  </label>
+                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
+                    <p>Quantidade de ingressos: <strong>1</strong></p>
+                    <p className="text-xs text-slate-400">Nesta sprint, quantidade fixa em 1. Fluxo já preparado para evolução futura com itens de pedido.</p>
+                  </div>
 
                   <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
                     <p>Categoria: {selectedCategory?.name || '-'}</p>
@@ -1130,7 +1145,7 @@ export function RegistrationWizard({
 
             {step === 5 && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">5. Confirmacao</h2>
+                <h2 className="text-lg font-semibold">5. Resumo e pagamento</h2>
                 <div className="grid gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 sm:grid-cols-2">
                   <p>
                     <strong>Nome:</strong> {form.full_name}
@@ -1154,10 +1169,39 @@ export function RegistrationWizard({
                     <strong>Categoria:</strong> {selectedCategory?.name || '-'}
                   </p>
                   <p>
+                    <strong>Quantidade:</strong> 1
+                  </p>
+                  <p>
                     <strong>Lote:</strong> {pricing?.batch_name || '-'}
                   </p>
                   <p>
-                    <strong>Pagamento:</strong> {form.payment_method === 'credit_card' ? 'Cartao de credito' : 'PIX'}
+                    <strong>Cupom:</strong> {form.coupon_code || 'Sem cupom'}
+                  </p>
+                  <p>
+                    <strong>Preco:</strong> {money(pricing?.base_amount || 0)}
+                  </p>
+                  <p>
+                    <strong>Desconto:</strong> {money(pricing?.discount_amount || 0)}
+                  </p>
+                  {Number(pricing?.final_amount ?? 0) > 0 ? (
+                    <label className="space-y-1 sm:col-span-2">
+                      <span className="text-sm text-slate-200">Forma de pagamento</span>
+                      <select
+                        value={form.payment_method}
+                        onChange={(event_) => setField('payment_method', event_.target.value as FormState['payment_method'])}
+                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
+                      >
+                        <option value="pix">PIX</option>
+                        <option value="credit_card">Cartao</option>
+                      </select>
+                    </label>
+                  ) : (
+                    <p className="sm:col-span-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-100">
+                      Cupom de cortesia aplicado. Valor final zerado automaticamente.
+                    </p>
+                  )}
+                  <p>
+                    <strong>Pagamento:</strong> {Number(pricing?.final_amount ?? 0) <= 0 ? 'Nao necessario (cortesia)' : form.payment_method === 'credit_card' ? 'Cartao' : 'PIX'}
                   </p>
                   <p>
                     <strong>Total:</strong> {money(pricing?.final_amount || 0)}
@@ -1176,7 +1220,7 @@ export function RegistrationWizard({
                     disabled={submitting}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
                   >
-                    {submitting ? 'Criando inscricao...' : 'Continuar para pagamento'}
+                    {submitting ? 'Criando pedido...' : 'Criar pedido'}
                   </button>
                 </div>
               </div>
@@ -1184,7 +1228,7 @@ export function RegistrationWizard({
 
             {step === 6 && registration && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">6. Pagamento</h2>
+                <h2 className="text-lg font-semibold">6. Pagamento do pedido</h2>
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
                   <p>
@@ -1224,14 +1268,23 @@ export function RegistrationWizard({
                 )}
 
                 {registration.payment.payment_status !== 'paid' ? (
-                  <button
-                    type="button"
-                    onClick={handleSimulatePaid}
-                    disabled={isPending}
-                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
-                  >
-                    {isPending ? 'Confirmando...' : 'Já paguei (simular confirmação)'}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSimulatePaid}
+                      disabled={isPending}
+                      className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
+                    >
+                      {isPending ? 'Processando...' : 'Pagar agora'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => goTo(7)}
+                      className="h-11 rounded-2xl border border-slate-700 px-6 text-sm text-slate-200"
+                    >
+                      Ver resumo do pedido
+                    </button>
+                  </div>
                 ) : (
                   <button
                     type="button"
@@ -1246,7 +1299,7 @@ export function RegistrationWizard({
 
             {step === 7 && registration && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">7. Ingresso</h2>
+                <h2 className="text-lg font-semibold">7. Resumo final do pedido</h2>
                 <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4 text-sm text-emerald-100">
                   <p>
                     Inscrição registrada para <strong>{registration.participant_name}</strong>.
@@ -1272,13 +1325,44 @@ export function RegistrationWizard({
                 </div>
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
-                  {registration.qr_token ? (
-                    <p>
-                      Token do ingresso: <strong>{registration.qr_token}</strong>
-                    </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <p><strong>Evento:</strong> {event.name}</p>
+                    <p><strong>Categoria:</strong> {registration.category_name || '-'}</p>
+                    <p><strong>Lote:</strong> {registration.batch_name || '-'}</p>
+                    <p><strong>Camiseta:</strong> {registration.shirt_type || '-'} / {registration.shirt_size || '-'}</p>
+                    <p><strong>Valor original:</strong> {money(registration.payment.amount)}</p>
+                    <p><strong>Desconto:</strong> {money(registration.payment.discount_amount)}</p>
+                    <p><strong>Valor final:</strong> {money(registration.payment.final_amount)}</p>
+                    <p><strong>Status:</strong> {registration.payment.payment_status}</p>
+                  </div>
+
+                  {registration.payment.payment_status === 'paid' && registration.qr_token ? (
+                    <div className="mt-4 space-y-3">
+                      <p className="text-emerald-200">Pagamento confirmado. QR Code e PDF já estão disponíveis.</p>
+                      <TicketViewer
+                        eventName={event.name}
+                        participantName={registration.participant_name}
+                        status="active"
+                        categoryName={registration.category_name}
+                        eventDate={event.starts_at ? formatDateTimeBR(String(event.starts_at), ' às ') : null}
+                        eventLocation={event.location}
+                        token={registration.qr_token}
+                      />
+                    </div>
                   ) : (
-                    <p>Ingresso ainda nao emitido. Ele sera emitido quando o pagamento for confirmado.</p>
+                    <div className="mt-4 space-y-3">
+                      <p>Pagamento pendente. O QR Code e o PDF serão liberados somente após confirmação.</p>
+                      <button
+                        type="button"
+                        onClick={handleSimulatePaid}
+                        disabled={isPending}
+                        className="h-10 rounded-xl bg-emerald-500 px-4 text-xs font-semibold text-emerald-950 disabled:opacity-50"
+                      >
+                        {isPending ? 'Processando...' : 'Pagar agora'}
+                      </button>
+                    </div>
                   )}
+
                   {registration.kit_items.length > 0 ? (
                     <ul className="mt-2 list-disc space-y-1 pl-5">
                       {registration.kit_items.map((item) => (
@@ -1293,6 +1377,14 @@ export function RegistrationWizard({
                 </div>
 
                 <div className="flex flex-wrap gap-3">
+                  {registration.payment.payment_status === 'paid' ? (
+                    <Link
+                      href="/minha-conta/ingressos"
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-emerald-500/40 px-5 text-sm text-emerald-200"
+                    >
+                      Ver meus ingressos
+                    </Link>
+                  ) : null}
                   <Link
                     href={registration.order_id ? `/minha-conta/compras/${registration.order_id}` : '/minha-conta/compras'}
                     className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-500 px-5 text-sm font-semibold text-emerald-950"

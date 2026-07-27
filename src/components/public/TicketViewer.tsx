@@ -38,15 +38,43 @@ export function TicketViewer({ eventName, participantName, status, categoryName,
     }
   };
 
-  const downloadTicket = () => {
-    const content = `Ingresso Militrin\nEvento: ${eventName}\nStatus: ${status}\nToken: ${token}\n`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const href = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = `ingresso-${token}.txt`;
-    a.click();
-    URL.revokeObjectURL(href);
+  const downloadTicket = async () => {
+    const [{ jsPDF }] = await Promise.all([
+      import('jspdf'),
+    ]);
+
+    const response = await fetch(qrUrl);
+    const qrBlob = await response.blob();
+    const qrDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result ?? ''));
+      reader.onerror = () => reject(new Error('Falha ao gerar QR do ingresso.'));
+      reader.readAsDataURL(qrBlob);
+    });
+
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    doc.setFillColor(9, 16, 33);
+    doc.rect(0, 0, 595, 842, 'F');
+    doc.setTextColor(226, 232, 240);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text('Ingresso Militrin', 48, 60);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    doc.text(`Evento: ${eventName}`, 48, 94);
+    doc.text(`Participante: ${participantName || '-'}`, 48, 116);
+    doc.text(`Categoria: ${categoryName || '-'}`, 48, 138);
+    doc.text(`Status: ${status}`, 48, 160);
+    doc.text(`Data: ${eventDate || '-'}`, 48, 182);
+    doc.text(`Local: ${eventLocation || '-'}`, 48, 204);
+    doc.text(`Token: ${token}`, 48, 226);
+
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(48, 260, 300, 300, 12, 12, 'F');
+    doc.addImage(qrDataUrl, 'PNG', 66, 278, 264, 264);
+
+    doc.save(`ingresso-${token}.pdf`);
   };
 
   return (
@@ -55,7 +83,7 @@ export function TicketViewer({ eventName, participantName, status, categoryName,
         Mostrar ingresso
       </button>
       <button type="button" onClick={downloadTicket} className="ml-2 rounded-xl border border-slate-600 px-3 py-2 text-xs text-slate-200">
-        Baixar ingresso
+        Baixar ingresso PDF
       </button>
 
       {open ? (

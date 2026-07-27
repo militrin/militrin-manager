@@ -2,7 +2,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { calculateAge, isValidCpf, removeCpfMask } from '@/lib/validation/registration';
-import { FakePaymentProvider } from '@/lib/payments/fake-provider';
+import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { formatDateBR } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
@@ -36,6 +36,7 @@ type RegistrationCreateInput = {
   coupon_code?: string;
   notes?: string;
   user_id?: string;
+  client_request_id?: string;
 };
 
 type SignupActionResult =
@@ -53,7 +54,7 @@ type SignupActionResult =
       code?: string;
     };
 
-const paymentProvider = new FakePaymentProvider();
+const paymentProvider = getPaymentProvider();
 const emailProvider = getEmailProvider();
 
 function normalizeEmail(value: string | null | undefined) {
@@ -285,6 +286,70 @@ function relationName(value: unknown): string | null {
     return objectValue.name ? String(objectValue.name) : null;
   }
   return null;
+}
+
+function buildRequestScopedNotes(notes: string | undefined, requestId: string | undefined) {
+  const base = notes?.trim() || 'Portal publico de inscricao';
+  if (!requestId?.trim()) return base;
+  return `${base} [checkout:${requestId.trim()}]`;
+}
+
+async function getRegistrationSnapshotByParticipantId(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  participantId: string,
+  fallbackEventId: string,
+) {
+  const [{ data: paymentData, error: paymentError }, { data: participantData, error: participantError }, { data: kitData, error: kitError }, { data: ticket }, { data: order }] = await Promise.all([
+    supabase.rpc('get_participant_payment_details', { p_participant_id: participantId }),
+    supabase
+      .from('participants')
+      .select('id, event_id, full_name, registration_status, reservation_status, reservation_expires_at, shirt_type, shirt_size, email, ticket_categories(name), registration_batches(name)')
+      .eq('id', participantId)
+      .single(),
+    supabase.rpc('get_participant_kit_items', { p_participant_id: participantId }),
+    supabase.from('tickets').select('token').eq('participant_id', participantId).maybeSingle(),
+    supabase.from('orders').select('id, order_number, status').eq('participant_id', participantId).maybeSingle(),
+  ]);
+
+  if (paymentError) return { success: false as const, message: paymentError.message };
+  if (participantError) return { success: false as const, message: participantError.message };
+  if (kitError) return { success: false as const, message: kitError.message };
+
+  const paymentRow = (Array.isArray(paymentData) ? paymentData[0] : paymentData) as Record<string, unknown> | null;
+  if (!paymentRow) return { success: false as const, message: 'Pagamento nao encontrado apos criar inscricao.' };
+
+  return {
+    success: true as const,
+    snapshot: {
+      participant_id: participantId,
+      payment_id: String(paymentRow.payment_id ?? ''),
+      final_amount: Number(paymentRow.final_amount ?? 0),
+      payment_status: String(paymentRow.payment_status ?? 'pending'),
+      expires_at: paymentRow.expires_at ? String(paymentRow.expires_at) : null,
+      event_id: String(participantData.event_id ?? fallbackEventId),
+      event_name: paymentRow.event_name ? String(paymentRow.event_name) : null,
+      participant_name: String(participantData.full_name ?? ''),
+      category_name: relationName(participantData.ticket_categories),
+      batch_name: relationName(participantData.registration_batches),
+      reservation_status: String(participantData.reservation_status ?? 'pending'),
+      reservation_expires_at: participantData.reservation_expires_at ? String(participantData.reservation_expires_at) : null,
+      shirt_type: participantData.shirt_type ? String(participantData.shirt_type) : null,
+      shirt_size: participantData.shirt_size ? String(participantData.shirt_size) : null,
+      payment: mapPayment(paymentRow),
+      kit_items: (kitData ?? []).map((item: Record<string, unknown>) => ({
+        kit_item_id: String(item.kit_item_id ?? ''),
+        item_name: String(item.item_name ?? ''),
+        item_type: String(item.item_type ?? ''),
+        quantity: Number(item.quantity ?? 1),
+        status: String(item.status ?? 'reserved'),
+        delivered_at: item.delivered_at ? String(item.delivered_at) : null,
+        variant_data: item.variant_data ?? null,
+      })),
+      order_id: order?.id ? String(order.id) : null,
+      order_number: order?.order_number ? String(order.order_number) : null,
+      qr_token: ticket?.token ? String(ticket.token) : null,
+    },
+  };
 }
 
 async function syncOrderAndTicket(params: {
@@ -751,6 +816,62 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
   const age = calculateAge(input.birth_date);
   if (age < 18) return { success: false, message: 'A inscricao exige idade minima de 18 anos.' };
 
+  const { data: existingParticipant, error: existingParticipantError } = await supabase
+    .from('participants')
+    .select('id, user_id, email')
+    .eq('event_id', input.event_id)
+    .eq('cpf', cpf)
+    .maybeSingle();
+
+  if (existingParticipantError) {
+    return { success: false, message: existingParticipantError.message };
+  }
+
+  if (existingParticipant?.id) {
+    const participantUserId = existingParticipant.user_id ? String(existingParticipant.user_id) : null;
+    if (participantUserId && participantUserId !== userId) {
+      return { success: false, message: 'Este CPF ja esta inscrito neste evento.' };
+    }
+
+    if (!participantUserId) {
+      const { error: linkExistingError } = await supabase
+        .from('participants')
+        .update({ user_id: userId, email: normalizedEmail })
+        .eq('id', String(existingParticipant.id));
+      if (linkExistingError) {
+        return { success: false, message: linkExistingError.message };
+      }
+    }
+
+    const reusedParticipantId = String(existingParticipant.id);
+    const state = await getRegistrationSnapshotByParticipantId(supabase, reusedParticipantId, input.event_id);
+    if (!state.success) return state;
+
+    const isCourtesyOrZero = Number(state.snapshot.final_amount ?? 0) <= 0 || String(state.snapshot.payment_status ?? 'pending') === 'paid';
+    const orderResult = await syncOrderAndTicket({
+      participantId: reusedParticipantId,
+      userId,
+      shouldIssueTicket: isCourtesyOrZero,
+    });
+    if (!orderResult.success) {
+      return { success: false, message: orderResult.message };
+    }
+
+    console.info('[checkout] idempotent_reuse', {
+      userId,
+      participantId: reusedParticipantId,
+      orderId: state.snapshot.order_id,
+      orderNumber: state.snapshot.order_number,
+      paymentStatus: state.snapshot.payment_status,
+    });
+
+    return {
+      success: true,
+      courtesy_message: Number(state.snapshot.final_amount ?? 0) <= 0 ? 'Cortesia aplicada. Nenhum pagamento sera necessario.' : null,
+      registration: state.snapshot,
+    };
+  }
+
   const { error: profileError } = await supabase.rpc('upsert_customer_profile', {
     p_user_id: userId,
     p_full_name: input.full_name.trim(),
@@ -769,9 +890,6 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
   });
   if (profileError) return { success: false, message: profileError.message };
 
-  const duplicateCheck = await checkPublicCpfAction({ event_id: input.event_id, cpf });
-  if (!duplicateCheck.success) return duplicateCheck;
-
   const { data, error } = await supabase.rpc('create_registration', {
     p_full_name: input.full_name.trim(),
     p_cpf: cpf,
@@ -783,7 +901,7 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     p_shirt_type: input.shirt_type?.trim() || null,
     p_shirt_size: input.shirt_size?.trim() || null,
     p_registration_status: 'pending',
-    p_notes: input.notes?.trim() || null,
+    p_notes: buildRequestScopedNotes(input.notes, input.client_request_id),
     p_payment_method: input.payment_method,
     p_payment_status: 'pending',
     p_event_id: input.event_id,
@@ -800,30 +918,31 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
 
   const participantId = String(created.participant_id);
 
+  console.info('[checkout] reservation_created', {
+    userId,
+    participantId,
+    eventId: input.event_id,
+    ticketCategoryId: input.ticket_category_id,
+    requestId: input.client_request_id ?? null,
+  });
+
   const { error: participantLinkError } = await supabase
     .from('participants')
     .update({ user_id: userId, email: normalizedEmail })
     .eq('id', participantId);
   if (participantLinkError) return { success: false, message: participantLinkError.message };
 
-  const [{ data: paymentData, error: paymentError }, { data: participantData, error: participantError }, { data: kitData, error: kitError }] = await Promise.all([
-    supabase.rpc('get_participant_payment_details', { p_participant_id: participantId }),
-    supabase
-      .from('participants')
-      .select('id, event_id, full_name, registration_status, reservation_status, reservation_expires_at, shirt_type, shirt_size, email, ticket_categories(name), registration_batches(name)')
-      .eq('id', participantId)
-      .single(),
-    supabase.rpc('get_participant_kit_items', { p_participant_id: participantId }),
-  ]);
+  const state = await getRegistrationSnapshotByParticipantId(supabase, participantId, input.event_id);
+  if (!state.success) return state;
 
-  if (paymentError) return { success: false, message: paymentError.message };
-  if (participantError) return { success: false, message: participantError.message };
-  if (kitError) return { success: false, message: kitError.message };
+  console.info('[checkout] payment_created', {
+    participantId,
+    paymentId: state.snapshot.payment_id,
+    paymentStatus: state.snapshot.payment_status,
+    finalAmount: state.snapshot.final_amount,
+  });
 
-  const paymentRow = (Array.isArray(paymentData) ? paymentData[0] : paymentData) as Record<string, unknown> | null;
-  if (!paymentRow) return { success: false, message: 'Pagamento nao encontrado apos criar inscricao.' };
-
-  const isCourtesyOrZero = Number(paymentRow.final_amount ?? 0) <= 0 || String(paymentRow.payment_status ?? 'pending') === 'paid';
+  const isCourtesyOrZero = Number(state.snapshot.final_amount ?? 0) <= 0 || String(state.snapshot.payment_status ?? 'pending') === 'paid';
   const orderResult = await syncOrderAndTicket({
     participantId,
     userId,
@@ -833,17 +952,35 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     return { success: false, message: orderResult.message };
   }
 
-  const [{ data: ticket }, { data: order }] = await Promise.all([
-    supabase.from('tickets').select('token').eq('participant_id', participantId).maybeSingle(),
-    supabase.from('orders').select('id, order_number, status').eq('participant_id', participantId).maybeSingle(),
-  ]);
+  const refreshedState = await getRegistrationSnapshotByParticipantId(supabase, participantId, input.event_id);
+  if (!refreshedState.success) return refreshedState;
+
+  console.info('[checkout] order_created', {
+    participantId,
+    orderId: refreshedState.snapshot.order_id,
+    orderNumber: refreshedState.snapshot.order_number,
+    orderStatus: refreshedState.snapshot.payment_status === 'paid' ? 'confirmed' : 'pending',
+  });
+
+  if (refreshedState.snapshot.qr_token) {
+    console.info('[checkout] ticket_issued', {
+      participantId,
+      orderId: refreshedState.snapshot.order_id,
+      qrToken: refreshedState.snapshot.qr_token,
+    });
+    console.info('[checkout] qr_issued', {
+      participantId,
+      orderId: refreshedState.snapshot.order_id,
+      qrToken: refreshedState.snapshot.qr_token,
+    });
+  }
 
   try {
     await sendTransactionEmails({
       participantId,
-      paymentStatus: String(paymentRow.payment_status ?? 'pending'),
-      paymentMethod: paymentRow.payment_method ? String(paymentRow.payment_method) : null,
-      finalAmount: Number(paymentRow.final_amount ?? 0),
+      paymentStatus: String(refreshedState.snapshot.payment_status ?? 'pending'),
+      paymentMethod: refreshedState.snapshot.payment.payment_method ? String(refreshedState.snapshot.payment.payment_method) : null,
+      finalAmount: Number(refreshedState.snapshot.final_amount ?? 0),
       email: normalizedEmail,
       fullName: input.full_name,
     });
@@ -853,36 +990,8 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
 
   return {
     success: true,
-    courtesy_message: Number(paymentRow.final_amount ?? 0) <= 0 ? 'Cortesia aplicada. Nenhum pagamento sera necessario.' : null,
-    registration: {
-      participant_id: participantId,
-      payment_id: String(paymentRow.payment_id ?? ''),
-      final_amount: Number(paymentRow.final_amount ?? 0),
-      payment_status: String(paymentRow.payment_status ?? 'pending'),
-      expires_at: paymentRow.expires_at ? String(paymentRow.expires_at) : null,
-      event_id: String(participantData.event_id ?? input.event_id),
-      event_name: paymentRow.event_name ? String(paymentRow.event_name) : null,
-      participant_name: String(participantData.full_name ?? ''),
-      category_name: relationName(participantData.ticket_categories),
-      batch_name: relationName(participantData.registration_batches),
-      reservation_status: String(participantData.reservation_status ?? 'pending'),
-      reservation_expires_at: participantData.reservation_expires_at ? String(participantData.reservation_expires_at) : null,
-      shirt_type: participantData.shirt_type ? String(participantData.shirt_type) : null,
-      shirt_size: participantData.shirt_size ? String(participantData.shirt_size) : null,
-      payment: mapPayment(paymentRow),
-      kit_items: (kitData ?? []).map((item: Record<string, unknown>) => ({
-        kit_item_id: String(item.kit_item_id ?? ''),
-        item_name: String(item.item_name ?? ''),
-        item_type: String(item.item_type ?? ''),
-        quantity: Number(item.quantity ?? 1),
-        status: String(item.status ?? 'reserved'),
-        delivered_at: item.delivered_at ? String(item.delivered_at) : null,
-        variant_data: item.variant_data ?? null,
-      })),
-      order_id: order?.id ? String(order.id) : null,
-      order_number: order?.order_number ? String(order.order_number) : null,
-      qr_token: ticket?.token ? String(ticket.token) : null,
-    },
+    courtesy_message: Number(refreshedState.snapshot.final_amount ?? 0) <= 0 ? 'Cortesia aplicada. Nenhum pagamento sera necessario.' : null,
+    registration: refreshedState.snapshot,
   };
 }
 
@@ -899,6 +1008,12 @@ export async function generatePublicPixAction(participantId: string) {
   if (!details) return { success: false, message: 'Pagamento nao encontrado.' };
   if (Number(details.final_amount ?? 0) <= 0) {
     return { success: false, message: 'Pagamento nao necessario para esta inscricao.' };
+  }
+  if (String(details.payment_status ?? 'pending') === 'paid') {
+    return { success: true, payment: mapPayment(details) };
+  }
+  if (String(details.pix_code ?? '').trim()) {
+    return { success: true, payment: mapPayment(details) };
   }
 
   const payload = await paymentProvider.createPix({
@@ -925,6 +1040,30 @@ export async function generatePublicPixAction(participantId: string) {
 
 export async function simulatePublicPaymentAction(participantId: string, method: 'pix' | 'credit_card') {
   const supabase = await createServerSupabaseClient();
+
+  const { data: currentData, error: currentError } = await supabase.rpc('get_participant_payment_details', {
+    p_participant_id: participantId,
+  });
+  if (currentError) return { success: false, message: currentError.message };
+  const current = (Array.isArray(currentData) ? currentData[0] : currentData) as Record<string, unknown> | null;
+  if (!current) return { success: false, message: 'Pagamento nao encontrado.' };
+
+  if (String(current.payment_status ?? 'pending') === 'paid') {
+    const { data: ticket } = await supabase.from('tickets').select('token, status').eq('participant_id', participantId).maybeSingle();
+    const { data: order } = await supabase.from('orders').select('id, order_number, status').eq('participant_id', participantId).maybeSingle();
+    console.info('[checkout] duplicate_payment_blocked', { participantId, orderId: order?.id ?? null });
+    return {
+      success: true,
+      payment: mapPayment(current),
+      order_id: order?.id ? String(order.id) : null,
+      order_number: order?.order_number ? String(order.order_number) : null,
+      order_status: order?.status ? String(order.status) : null,
+      qr_token: ticket?.token ? String(ticket.token) : null,
+      ticket_status: ticket?.status ? String(ticket.status) : null,
+      reservation_status: null,
+      reservation_expires_at: null,
+    };
+  }
 
   await paymentProvider.confirmPayment({ participantId, method });
 
@@ -957,11 +1096,15 @@ export async function simulatePublicPaymentAction(participantId: string, method:
   });
   if (!orderResult.success) return { success: false, message: orderResult.message };
 
-  const { data: participant } = await supabase
-    .from('participants')
-    .select('email, full_name')
-    .eq('id', participantId)
-    .maybeSingle();
+  const [{ data: participant }, { data: ticket }, { data: order }] = await Promise.all([
+    supabase
+      .from('participants')
+      .select('email, full_name, reservation_status, reservation_expires_at')
+      .eq('id', participantId)
+      .maybeSingle(),
+    supabase.from('tickets').select('token, status').eq('participant_id', participantId).maybeSingle(),
+    supabase.from('orders').select('id, order_number, status').eq('participant_id', participantId).maybeSingle(),
+  ]);
 
   const participantEmail = normalizeEmail(participant?.email ? String(participant.email) : user.email ?? null);
   if (participantEmail) {
@@ -979,7 +1122,31 @@ export async function simulatePublicPaymentAction(participantId: string, method:
     }
   }
 
-  return { success: true, payment: mapPayment(row) };
+  console.info('[checkout] ticket_issued', {
+    participantId,
+    orderId: order?.id ?? null,
+    paymentMethod: method,
+    paymentStatus: String(row.payment_status ?? 'paid'),
+  });
+  if (ticket?.token) {
+    console.info('[checkout] qr_issued', {
+      participantId,
+      orderId: order?.id ?? null,
+      qrToken: String(ticket.token),
+    });
+  }
+
+  return {
+    success: true,
+    payment: mapPayment(row),
+    order_id: order?.id ? String(order.id) : null,
+    order_number: order?.order_number ? String(order.order_number) : null,
+    order_status: order?.status ? String(order.status) : null,
+    qr_token: ticket?.token ? String(ticket.token) : null,
+    ticket_status: ticket?.status ? String(ticket.status) : null,
+    reservation_status: participant?.reservation_status ? String(participant.reservation_status) : null,
+    reservation_expires_at: participant?.reservation_expires_at ? String(participant.reservation_expires_at) : null,
+  };
 }
 
 export async function getPublicRegistrationSnapshotAction(participantId: string) {

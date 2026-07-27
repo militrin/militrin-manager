@@ -23,13 +23,25 @@ export async function searchPickupParticipantAction(query: string) {
 
   const participantId = String(data.id);
   const eventId = String(data.event_id);
-  const { data: kitItemsData, error: kitItemsError } = await supabase.rpc("get_participant_kit_items", {
-    p_participant_id: participantId,
-  });
+  const [{ data: kitItemsData, error: kitItemsError }, { data: paymentData, error: paymentError }] = await Promise.all([
+    supabase.rpc("get_participant_kit_items", {
+      p_participant_id: participantId,
+    }),
+    supabase.rpc("get_participant_payment_details", {
+      p_participant_id: participantId,
+    }),
+  ]);
 
   if (kitItemsError) {
     return { success: false, message: kitItemsError.message };
   }
+
+  if (paymentError) {
+    return { success: false, message: paymentError.message };
+  }
+
+  const paymentRow = (Array.isArray(paymentData) ? paymentData[0] : paymentData) as Record<string, unknown> | null;
+  const paymentStatus = paymentRow?.payment_status ? String(paymentRow.payment_status) : String(data.payment_status ?? "pending");
 
   const kitItems = (kitItemsData ?? []).map((item: {
     kit_item_id: string;
@@ -60,7 +72,7 @@ export async function searchPickupParticipantAction(query: string) {
       registration_number: data.registration_number === null || data.registration_number === undefined ? null : Number(data.registration_number),
       cpf: String(data.cpf),
       phone: String(data.phone),
-      payment_status: String(data.payment_status ?? "pending"),
+      payment_status: paymentStatus,
       registration_status: String(data.registration_status ?? "pending"),
       shirt_type: String(data.shirt_type ?? ""),
       shirt_size: String(data.shirt_size ?? ""),

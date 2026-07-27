@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { resendTicketEmailAction } from '@/app/minha-conta/actions';
+import { payOrderNowAction, resendTicketEmailAction } from '@/app/minha-conta/actions';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import { PixCodeBox } from '@/components/public/PixCodeBox';
+import { buildLegacyOrderAggregate } from '@/lib/orders/aggregate';
 import { formatDateTimeBR } from '@/lib/utils/date';
 
 function money(value: number) {
@@ -19,7 +20,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
 
   const { data: order, error } = await supabase
     .from('orders')
-    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, participants(full_name, reservation_expires_at, ticket_categories(name), registration_batches(name)), events(name, location, starts_at), payments(id, payment_method, payment_status, pix_code, expires_at, paid_at), tickets(token, status)')
+    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, participants(id, full_name, reservation_expires_at, shirt_type, shirt_size, ticket_categories(name), registration_batches(name)), events(name, location, starts_at), payments(id, payment_method, payment_status, pix_code, expires_at, paid_at), tickets(participant_id, token, status)')
     .eq('id', orderId)
     .eq('user_id', user?.id ?? '')
     .maybeSingle();
@@ -30,7 +31,28 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const participant = Array.isArray(order.participants) ? order.participants[0] : order.participants;
   const eventObj = Array.isArray(order.events) ? order.events[0] : order.events;
   const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
-  const ticket = Array.isArray(order.tickets) ? order.tickets[0] : order.tickets;
+  const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
+  const aggregate = buildLegacyOrderAggregate({
+    orderId: String(order.id),
+    orderNumber: String(order.order_number),
+    status: String(order.status),
+    baseAmount: Number(order.base_amount ?? 0),
+    discountAmount: Number(order.discount_amount ?? 0),
+    finalAmount: Number(order.final_amount ?? 0),
+    participant,
+    tickets,
+  });
+
+  const { data: couponRedemption } = await supabase
+    .from('coupon_redemptions')
+    .select('discount_amount, coupons(code, coupon_type, discount_percent)')
+    .eq('participant_id', order.participant_id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const couponObj = Array.isArray(couponRedemption?.coupons) ? couponRedemption?.coupons[0] : couponRedemption?.coupons;
+  const couponCode = couponObj?.code ? String(couponObj.code) : null;
 
   const { data: kitItemsData } = await supabase.rpc('get_participant_kit_items', {
     p_participant_id: order.participant_id,
@@ -39,6 +61,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   async function resendAction() {
     'use server';
     await resendTicketEmailAction(orderId);
+  }
+
+  async function payNowAction() {
+    'use server';
+    await payOrderNowAction(orderId);
   }
 
   return (
@@ -59,8 +86,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
           const batchObj = Array.isArray(batch) ? batch[0] : batch;
           return batchObj?.name ? String(batchObj.name) : '-';
         })()}</p>
+        <p>Camiseta: {participant?.shirt_type ? String(participant.shirt_type) : '-'} / {participant?.shirt_size ? String(participant.shirt_size) : '-'}</p>
         <p>Valor original: {money(Number(order.base_amount ?? 0))}</p>
         <p>Desconto: {money(Number(order.discount_amount ?? 0))}</p>
+        <p>Cupom usado: {couponCode ?? 'Sem cupom'}</p>
+        <p>Desconto via cupom: {money(Number(couponRedemption?.discount_amount ?? 0))}</p>
         <p>Valor final: {money(Number(order.final_amount ?? 0))}</p>
         <p>Forma de pagamento: {payment?.payment_method ? String(payment.payment_method) : '-'}</p>
         <p>Status pagamento: {payment?.payment_status ? String(payment.payment_status) : '-'}</p>
@@ -91,25 +121,33 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
         <PixCodeBox code={String(payment.pix_code)} />
       ) : null}
 
-      {ticket?.token && order.status === 'confirmed' ? (
-        <TicketViewer
-          eventName={String(eventObj?.name ?? 'Evento')}
-          participantName={String(participant?.full_name ?? '')}
-          status={String(ticket.status ?? 'active')}
-          categoryName={(() => {
-            const category = participant?.ticket_categories;
-            const categoryObj = Array.isArray(category) ? category[0] : category;
-            return categoryObj?.name ? String(categoryObj.name) : null;
-          })()}
-          eventDate={eventObj?.starts_at ? formatDateTimeBR(String(eventObj.starts_at), ' as ') : null}
-          eventLocation={eventObj?.location ? String(eventObj.location) : null}
-          token={String(ticket.token)}
-        />
+      {String(order.status) === 'confirmed' && aggregate.items.some((item) => item.ticketToken) ? (
+        <div className="space-y-4">
+          {aggregate.items.filter((item) => item.ticketToken).map((item, index) => (
+            <div key={item.id} className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
+              <p className="mb-3 text-sm text-slate-300">Ingresso {index + 1}</p>
+              <TicketViewer
+                eventName={String(eventObj?.name ?? 'Evento')}
+                participantName={item.participantName ?? String(participant?.full_name ?? '')}
+                status={item.ticketStatus ?? 'active'}
+                categoryName={item.categoryName}
+                eventDate={eventObj?.starts_at ? formatDateTimeBR(String(eventObj.starts_at), ' as ') : null}
+                eventLocation={eventObj?.location ? String(eventObj.location) : null}
+                token={String(item.ticketToken)}
+              />
+            </div>
+          ))}
+        </div>
       ) : (
         <p className="text-sm text-slate-300">QR Code disponivel somente para compras confirmadas.</p>
       )}
 
       <div className="flex flex-wrap gap-2">
+        {String(payment?.payment_status ?? 'pending') !== 'paid' ? (
+          <form action={payNowAction}>
+            <button type="submit" className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-950">Pagar agora</button>
+          </form>
+        ) : null}
         <form action={resendAction}>
           <button type="submit" className="rounded-xl border border-emerald-500/40 px-3 py-2 text-xs text-emerald-200">Reenviar ingresso por e-mail</button>
         </form>

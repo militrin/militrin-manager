@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 import { getLoyaltyLevel, getLoyaltyProgress, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
@@ -82,6 +83,13 @@ export default async function MinhaContaPage() {
   const progress = getLoyaltyProgress(confirmedParticipations, loyaltyLevels);
 
   const greetingName = String(profile?.full_name ?? user?.email ?? 'Participante').split(' ')[0];
+  const profilePhotoUrl = String((user?.user_metadata as Record<string, unknown> | undefined)?.avatar_url ?? '').trim();
+  const greetingInitials = String(profile?.full_name ?? user?.email ?? 'Participante')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((chunk) => chunk[0]?.toUpperCase() ?? '')
+    .join('');
   const nextEvent = openEvents[0] ?? null;
   const profileComplete = Boolean(
     String(profile?.full_name ?? '').trim()
@@ -125,8 +133,25 @@ export default async function MinhaContaPage() {
                 <h2 className="text-4xl font-semibold text-white">Olá, {greetingName}</h2>
                 <p className="mt-2 text-sm text-slate-300">Seu acesso à comunidade Militrin começa aqui.</p>
               </div>
-              <div className={`flex h-20 w-20 shrink-0 items-center justify-center rounded-[1.75rem] border text-2xl font-semibold ${badgeClass}`}>
-                {String(currentLevel.badge).slice(0, 2)}
+              <div className="flex items-center gap-3">
+                <div className="relative h-20 w-20 overflow-hidden rounded-[1.75rem] border border-white/20 bg-slate-900">
+                  {profilePhotoUrl ? (
+                    <Image
+                      src={profilePhotoUrl}
+                      alt="Foto do participante"
+                      fill
+                      unoptimized
+                      className="object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-2xl font-semibold text-slate-300">
+                      {greetingInitials || 'MP'}
+                    </div>
+                  )}
+                </div>
+                <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border text-xl font-semibold ${badgeClass}`}>
+                  {String(currentLevel.badge).slice(0, 2)}
+                </div>
               </div>
             </div>
 

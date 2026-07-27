@@ -1,5 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { requestEmailChangeAction, updateMyProfileAction } from '@/app/minha-conta/actions';
+import { requestEmailChangeAction, updateMyProfileAction, updatePasswordAction } from '@/app/minha-conta/actions';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
 import { formatISOToDateBR } from '@/lib/utils/date';
 
@@ -12,6 +12,7 @@ export default async function DadosPage() {
   const { data: profileData } = await supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null });
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const birthDate = formatISOToDateBR(String(profile?.birth_date ?? ''));
+  const photoUrl = String((user?.user_metadata as Record<string, unknown> | undefined)?.avatar_url ?? '').trim();
 
   async function saveProfileAction(formData: FormData) {
     'use server';
@@ -21,6 +22,11 @@ export default async function DadosPage() {
   async function changeEmailAction(formData: FormData) {
     'use server';
     await requestEmailChangeAction(formData);
+  }
+
+  async function changePasswordAction(formData: FormData) {
+    'use server';
+    await updatePasswordAction(formData);
   }
 
   return (
@@ -38,7 +44,7 @@ export default async function DadosPage() {
 
           <label className="space-y-1">
             <span className="text-sm text-slate-300">CPF</span>
-            <input name="cpf" defaultValue={String(profile?.cpf ?? '')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+            <input name="cpf" defaultValue={String(profile?.cpf ?? '')} readOnly className="h-11 w-full cursor-not-allowed rounded-2xl border border-slate-700 bg-slate-900/50 px-4 text-sm text-slate-300 outline-none" />
           </label>
 
           <BirthDateInput name="birth_date" value={birthDate} onChange={() => undefined} required disabled label="Nascimento" className="space-y-1" />
@@ -65,6 +71,17 @@ export default async function DadosPage() {
           </label>
 
           <label className="space-y-1 sm:col-span-2">
+            <span className="text-sm text-slate-300">Foto do perfil (URL)</span>
+            <input
+              name="photo_url"
+              type="url"
+              placeholder="https://..."
+              defaultValue={photoUrl}
+              className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400"
+            />
+          </label>
+
+          <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-slate-300">Visibilidade do perfil</span>
             <select name="profile_visibility" defaultValue={String(profile?.profile_visibility ?? 'participants')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400">
               <option value="participants">Participantes</option>
@@ -86,6 +103,22 @@ export default async function DadosPage() {
           <div className="sm:col-span-2">
             <button type="submit" className="h-11 rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
               Salvar dados
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
+        <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Senha</p>
+        <h3 className="mt-2 text-2xl font-semibold text-white">Atualizar senha</h3>
+        <p className="mt-2 text-sm text-slate-300">Use pelo menos 8 caracteres e confirme para salvar.</p>
+
+        <form action={changePasswordAction} className="mt-5 grid gap-3 sm:grid-cols-2">
+          <input name="new_password" type="password" minLength={8} required placeholder="Nova senha" className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+          <input name="confirm_password" type="password" minLength={8} required placeholder="Confirmar nova senha" className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400" />
+          <div className="sm:col-span-2">
+            <button type="submit" className="h-11 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20">
+              Atualizar senha
             </button>
           </div>
         </form>

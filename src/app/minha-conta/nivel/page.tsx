@@ -1,6 +1,8 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getLoyaltyLevel, getLoyaltyProgress, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
 
+const LEVEL_GUIDE = ['Bronze', 'Prata', 'Ouro', 'Diamante', 'Legend Militrin'];
+
 export default async function NivelPage() {
   const supabase = await createServerSupabaseClient();
   const {
@@ -57,6 +59,24 @@ export default async function NivelPage() {
             </article>
           );
         })}
+      </div>
+
+      <div className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
+        <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Sistema de categoria</p>
+        <h3 className="mt-2 text-2xl font-semibold text-white">Bronze, Prata, Ouro, Diamante e Legend Militrin</h3>
+        <p className="mt-2 text-sm text-slate-300">A progressão oficial do portal segue sempre esta ordem.</p>
+
+        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {LEVEL_GUIDE.map((label) => {
+            const isCurrent = currentLevel.name.toLowerCase() === label.toLowerCase();
+            return (
+              <div key={label} className={`rounded-2xl border px-4 py-3 text-sm ${isCurrent ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-slate-800 bg-slate-950/60 text-slate-300'}`}>
+                <p className="font-medium">{label}</p>
+                <p className="mt-1 text-xs opacity-80">{isCurrent ? 'Nível atual' : 'Categoria disponível'}</p>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
