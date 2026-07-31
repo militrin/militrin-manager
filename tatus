@@ -1,8 +1,0 @@
-[33m1db030d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Adiciona estrutura de pedidos com múltiplos ingressos
-[33mcc94ed0[m[33m ([m[1;33mtag: [m[1;33mv0.8-portal-participante[m[33m)[m Continua desenvolvimento do Portal do Participante
-[33m71d6e76[m Implementa portal premium do participante
-[33md7142e4[m Documenta transferência oficial de ingressos
-[33maf5259a[m Finaliza autenticação e portal do participante
-[33m6b79817[m[33m ([m[1;31morigin/develop[m[33m)[m Implementa portal do participante, eventos e sistema de categorias
-[33m4ba785e[m Implementa controle de estoque com movimentações
-[33m8be2d35[m Initial commit
