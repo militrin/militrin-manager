@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { payOrderNowAction, resendTicketEmailAction } from '@/app/minha-conta/actions';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import { PixCodeBox } from '@/components/public/PixCodeBox';
+import { PaymentReceiptPdfButton } from '@/components/public/PaymentReceiptPdfButton';
 import { buildLegacyOrderAggregate } from '@/lib/orders/aggregate';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
@@ -18,8 +19,14 @@ function normalizeStatus(status: string | null | undefined) {
   return normalized;
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export default async function OrderDetailPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = await params;
+  if (!isUuid(orderId)) notFound();
+
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -27,18 +34,105 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
 
   const { data: order, error } = await supabase
     .from('orders')
-    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, participants(id, full_name, reservation_expires_at, shirt_type, shirt_size, ticket_categories(name), registration_batches(name)), events(name, location, starts_at), payments(id, payment_method, payment_status, pix_code, expires_at, paid_at), tickets(participant_id, token, status)')
+    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id')
     .eq('id', orderId)
     .eq('user_id', user?.id ?? '')
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error('[minha-conta/compras/[orderId]] erro ao carregar pedido', { orderId, error });
+    return (
+      <section className="rounded-2xl border border-rose-700/40 bg-rose-950/20 p-4 text-sm text-rose-100">
+        Nao foi possivel carregar os detalhes desta compra agora.
+      </section>
+    );
+  }
   if (!order) notFound();
 
-  const participant = Array.isArray(order.participants) ? order.participants[0] : order.participants;
-  const eventObj = Array.isArray(order.events) ? order.events[0] : order.events;
-  const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
-  const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
+  const participantId = order.participant_id ? String(order.participant_id) : null;
+  const eventId = order.event_id ? String(order.event_id) : null;
+
+  const [participantResult, eventResult, paymentResult, ticketsResult] = await Promise.all([
+    participantId
+      ? supabase
+          .from('participants')
+          .select('id, full_name, reservation_expires_at, shirt_type, shirt_size, ticket_category_id, batch_id')
+          .eq('id', participantId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    eventId
+      ? supabase
+          .from('events')
+          .select('id, name, location, starts_at')
+          .eq('id', eventId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase
+      .from('payments')
+      .select('id, payment_method, payment_status, pix_code, expires_at, paid_at, order_id, created_at')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('tickets')
+      .select('participant_id, token, status, order_id')
+      .eq('order_id', orderId),
+  ]);
+
+  if (participantResult.error || eventResult.error || paymentResult.error || ticketsResult.error) {
+    console.error('[minha-conta/compras/[orderId]] erro ao carregar dados relacionados', {
+      orderId,
+      participant: participantResult.error,
+      event: eventResult.error,
+      payment: paymentResult.error,
+      tickets: ticketsResult.error,
+    });
+    return (
+      <section className="rounded-2xl border border-rose-700/40 bg-rose-950/20 p-4 text-sm text-rose-100">
+        Nao foi possivel carregar os detalhes desta compra agora.
+      </section>
+    );
+  }
+
+  const participant = participantResult.data;
+  const eventObj = eventResult.data;
+  const payment = paymentResult.data;
+
+  const [categoryResult, batchResult] = await Promise.all([
+    participant?.ticket_category_id
+      ? supabase
+          .from('ticket_categories')
+          .select('id, name')
+          .eq('id', String(participant.ticket_category_id))
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    participant?.batch_id
+      ? supabase
+          .from('registration_batches')
+          .select('id, name')
+          .eq('id', String(participant.batch_id))
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+
+  if (categoryResult.error || batchResult.error) {
+    console.error('[minha-conta/compras/[orderId]] erro ao carregar categoria/lote', {
+      orderId,
+      category: categoryResult.error,
+      batch: batchResult.error,
+    });
+    return (
+      <section className="rounded-2xl border border-rose-700/40 bg-rose-950/20 p-4 text-sm text-rose-100">
+        Nao foi possivel carregar os detalhes desta compra agora.
+      </section>
+    );
+  }
+
+  const categoryObj = categoryResult.data;
+  const batchObj = batchResult.data;
+  const tickets = (ticketsResult.data ?? []) as Array<{ participant_id: string | null; token: string | null; status: string | null }>;
+
   const aggregate = buildLegacyOrderAggregate({
     orderId: String(order.id),
     orderNumber: String(order.order_number),
@@ -46,28 +140,41 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
     baseAmount: Number(order.base_amount ?? 0),
     discountAmount: Number(order.discount_amount ?? 0),
     finalAmount: Number(order.final_amount ?? 0),
-    participant,
+    participant: participant
+      ? {
+          ...participant,
+          ticket_categories: categoryObj,
+          registration_batches: batchObj,
+        }
+      : null,
     tickets,
   });
 
   const normalizedOrderStatus = normalizeStatus(String(order.status));
   const normalizedPaymentStatus = normalizeStatus(String(payment?.payment_status));
   const canShowTicket = normalizedOrderStatus === 'confirmed' && aggregate.items.some((item) => item.ticketToken);
+  const receiptItemsSummary = aggregate.items
+    .map((item) => `${item.participantName ?? 'Titular'}${item.categoryName ? ` • ${item.categoryName}` : ''}${item.ticketStatus ? ` • ${item.ticketStatus}` : ''}`)
+    .join('; ');
 
-  const { data: couponRedemption } = await supabase
-    .from('coupon_redemptions')
-    .select('discount_amount, coupons(code, coupon_type, discount_percent)')
-    .eq('participant_id', order.participant_id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: couponRedemption } = participantId
+    ? await supabase
+        .from('coupon_redemptions')
+        .select('discount_amount, coupons(code, coupon_type, discount_percent)')
+        .eq('participant_id', participantId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
 
   const couponObj = Array.isArray(couponRedemption?.coupons) ? couponRedemption?.coupons[0] : couponRedemption?.coupons;
   const couponCode = couponObj?.code ? String(couponObj.code) : null;
 
-  const { data: kitItemsData } = await supabase.rpc('get_participant_kit_items', {
-    p_participant_id: order.participant_id,
-  });
+  const { data: kitItemsData } = participantId
+    ? await supabase.rpc('get_participant_kit_items', {
+        p_participant_id: participantId,
+      })
+    : { data: [] };
 
   async function resendAction() {
     'use server';
@@ -102,16 +209,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <p>Participante: {participant?.full_name ? String(participant.full_name) : '-'}</p>
               <p>Evento: {eventObj?.name ? String(eventObj.name) : '-'}</p>
-              <p>Categoria: {(() => {
-                const category = participant?.ticket_categories;
-                const categoryObj = Array.isArray(category) ? category[0] : category;
-                return categoryObj?.name ? String(categoryObj.name) : '-';
-              })()}</p>
-              <p>Lote: {(() => {
-                const batch = participant?.registration_batches;
-                const batchObj = Array.isArray(batch) ? batch[0] : batch;
-                return batchObj?.name ? String(batchObj.name) : '-';
-              })()}</p>
+              <p>Categoria: {categoryObj?.name ? String(categoryObj.name) : '-'}</p>
+              <p>Lote: {batchObj?.name ? String(batchObj.name) : '-'}</p>
               <p>Camiseta: {participant?.shirt_type ? String(participant.shirt_type) : '-'} / {participant?.shirt_size ? String(participant.shirt_size) : '-'}</p>
               <p>Local: {eventObj?.location ? String(eventObj.location) : '-'}</p>
             </div>
@@ -182,6 +281,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       </MilitrinSection>
 
       <div className="flex flex-wrap gap-2">
+        <PaymentReceiptPdfButton
+          orderNumber={String(order.order_number)}
+          eventName={String(eventObj?.name ?? 'Evento')}
+          createdAt={order.created_at ? formatDateTimeBR(String(order.created_at), ' as ') : null}
+          paymentStatus={normalizedPaymentStatus}
+          paymentMethod={String(payment?.payment_method ?? '-')}
+          finalAmount={money(Number(order.final_amount ?? 0))}
+          itemsSummary={receiptItemsSummary}
+          className="rounded-2xl border border-slate-600 px-4 py-2 text-sm text-slate-100"
+        />
         {normalizedPaymentStatus === 'pending' ? (
           <form action={payNowAction}>
             <MilitrinButton type="submit">Continuar pagamento</MilitrinButton>

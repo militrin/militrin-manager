@@ -4,11 +4,35 @@ import { formatDateBR } from '@/lib/utils/date';
 import type { PublicBenefit, PublicCategory, PublicKitItem } from '@/lib/public/events';
 import { getPublicEventDetails, isEventOpen } from '@/lib/public/events';
 
-type Params = Promise<{ id: string }>;
+type Params = Promise<{ eventSlug: string }>;
 
 export default async function EventDetailsPage({ params }: { params: Params }) {
-  const { id } = await params;
-  const { event, categories, benefitsByCategory, kitItems } = await getPublicEventDetails(id);
+  const { eventSlug } = await params;
+  const { status, event, categories, benefitsByCategory, kitItems, queryError } = await getPublicEventDetails(eventSlug);
+
+  if (status === 'query_error') {
+    return (
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+        <section className="mx-auto w-full max-w-3xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h1 className="text-2xl font-semibold text-white">Falha ao carregar o evento</h1>
+          <p className="mt-2 text-sm text-slate-300">
+            Ocorreu um erro técnico ao consultar o evento por slug.
+          </p>
+          <p className="mt-2 text-xs text-slate-400">
+            slug: {eventSlug} | erro: {queryError?.code ?? 'sem-codigo'} - {queryError?.message ?? 'erro desconhecido'}
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href="/eventos" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
+              Voltar aos eventos
+            </Link>
+            <Link href="/" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
+              Ir para início
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (!event) {
     notFound();

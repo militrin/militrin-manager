@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
+import { getEventBySlug } from '@/lib/public/events';
+import { buildShirtInventoryVariants } from '@/lib/constants/shirts';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -147,25 +149,52 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     isComplete: profileStatus.isComplete,
   });
 
-  const { data: event, error: eventError } = await supabase
-    .from('events')
-    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, kit_enabled')
-    .eq('slug', eventSlug)
-    .maybeSingle();
+  const eventLookup = await getEventBySlug(eventSlug);
 
-  if (eventError) throw eventError;
-
-  if (!event?.id) {
+  if (eventLookup.status === 'query_error') {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-        <div className="mx-auto w-full max-w-3xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6 text-slate-200">
-          Evento não encontrado.
-        </div>
+        <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h1 className="text-2xl font-semibold text-white">Falha ao carregar a inscrição</h1>
+          <p className="mt-2 text-sm text-slate-300">Ocorreu um erro técnico ao consultar o evento por slug.</p>
+          <p className="mt-2 text-xs text-slate-400">
+            slug: {eventSlug} | erro: {eventLookup.error.code ?? 'sem-codigo'} - {eventLookup.error.message}
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href="/eventos" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
+              Voltar aos eventos
+            </Link>
+            <Link href="/minha-conta/comprar" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
+              Ver opções de compra
+            </Link>
+          </div>
+        </section>
       </main>
     );
   }
 
-  const [{ data: categoriesData, error: categoriesError }, { data: benefitsData, error: benefitsError }, { data: kitData, error: kitError }, { data: inventoryData, error: inventoryError }] = await Promise.all([
+  const event = eventLookup.status === 'found' ? eventLookup.event : null;
+
+  if (!event?.id) {
+    return (
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+        <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h1 className="text-2xl font-semibold text-white">Evento não encontrado</h1>
+          <p className="mt-2 text-sm text-slate-300">O link informado não corresponde a um evento disponível para inscrição.</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href="/eventos" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
+              Voltar aos eventos
+            </Link>
+            <Link href="/minha-conta/comprar" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
+              Ver opções de compra
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  const [{ data: categoriesData, error: categoriesError }, { data: benefitsData, error: benefitsError }, { data: kitData, error: kitError }, { data: inventoryData, error: inventoryError }, { data: paymentMethodsData, error: paymentMethodsError }] = await Promise.all([
     supabase.rpc('get_event_ticket_categories', { p_event_id: event.id }),
     supabase.from('ticket_category_benefits').select('id, ticket_category_id, name, description, sort_order').order('sort_order', { ascending: true }),
     supabase.rpc('get_event_kit_items', { p_event_id: event.id }),
@@ -173,12 +202,24 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       .from('shirt_inventory')
       .select('shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity')
       .eq('event_id', event.id),
+    supabase.rpc('get_event_payment_methods_setup', { p_event_id: event.id }),
   ]);
 
   if (categoriesError) throw categoriesError;
   if (benefitsError) throw benefitsError;
   if (kitError) throw kitError;
   if (inventoryError) throw inventoryError;
+  if (paymentMethodsError) throw paymentMethodsError;
+
+  const paymentMethodsRow = Array.isArray(paymentMethodsData)
+    ? (paymentMethodsData[0] as Record<string, unknown> | undefined)
+    : (paymentMethodsData as Record<string, unknown> | null);
+
+  const paymentMethods = {
+    pix_enabled: Boolean(paymentMethodsRow?.pix_enabled ?? true),
+    credit_card_single_enabled: Boolean(paymentMethodsRow?.credit_card_single_enabled ?? true),
+    credit_card_installments_enabled: Boolean(paymentMethodsRow?.credit_card_installments_enabled ?? true),
+  };
 
   const categories = (categoriesData ?? []).map((row: CategoryRow) => ({
     id: String(row.id),
@@ -223,11 +264,13 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       : [],
   }));
 
-  const inventory = (inventoryData ?? []).map((row) => ({
+  const inventory = buildShirtInventoryVariants((inventoryData ?? []).map((row) => ({
     shirt_type: String(row.shirt_type),
     shirt_size: String(row.shirt_size),
-    available_quantity: Number(row.total_quantity ?? 0) - Number(row.reserved_quantity ?? 0) - Number(row.delivered_quantity ?? 0),
-  }));
+    total_quantity: Number(row.total_quantity ?? 0),
+    reserved_quantity: Number(row.reserved_quantity ?? 0),
+    delivered_quantity: Number(row.delivered_quantity ?? 0),
+  })));
 
   const activeKitItems = kitItems.filter((item: { is_active: boolean }) => item.is_active);
   const shirtRequiredItem = activeKitItems.find((item: { item_type: string; is_required: boolean }) => item.item_type === 'shirt' && item.is_required);
@@ -267,7 +310,12 @@ export default async function EventRegistrationPage({ params }: { params: Promis
         registration_enabled: Boolean(event.registration_enabled),
         registration_open_at: event.registration_open_at ? String(event.registration_open_at) : null,
         registration_close_at: event.registration_close_at ? String(event.registration_close_at) : null,
+        shirt_order_deadline: event.shirt_order_deadline ? String(event.shirt_order_deadline) : null,
+        limit_shirt_selection_to_stock: Boolean(event.limit_shirt_selection_to_stock),
         kit_enabled: Boolean(event.kit_enabled),
+        payment_pix_enabled: paymentMethods.pix_enabled,
+        payment_credit_card_single_enabled: paymentMethods.credit_card_single_enabled,
+        payment_credit_card_installments_enabled: paymentMethods.credit_card_installments_enabled,
       }}
       isOpen={isOpen}
       categories={categories}

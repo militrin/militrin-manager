@@ -156,10 +156,16 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
   const checkins = ticketRows.filter((item) => String(item.status ?? '') === 'used').length;
 
   const inventoryReserved = inventoryRows.reduce((sum, item) => sum + Number(item.reserved_quantity ?? 0), 0);
+  const inventoryDelivered = inventoryRows.reduce((sum, item) => sum + Number(item.delivered_quantity ?? 0), 0);
+  const inventoryReceived = inventoryRows.reduce((sum, item) => sum + Number(item.total_quantity ?? 0), 0);
   const inventoryAvailable = inventoryRows.reduce(
     (sum, item) => sum + Math.max(0, Number(item.total_quantity ?? 0) - Number(item.reserved_quantity ?? 0) - Number(item.delivered_quantity ?? 0)),
     0,
   );
+  const inventoryNeedToOrder = inventoryRows.reduce((sum, item) => {
+    const deficit = Number(item.reserved_quantity ?? 0) + Number(item.delivered_quantity ?? 0) - Number(item.total_quantity ?? 0);
+    return sum + Math.max(0, deficit);
+  }, 0);
 
   const kitByParticipant = new Map<string, { total: number; delivered: number }>();
   for (const row of kitRows) {
@@ -204,7 +210,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
         <div className="flex-1 space-y-6">
           <AdminPageHeader
             title="Dashboard Administrativo"
-            subtitle="Central operacional premium do Militrin com dados reais do evento ativo."
+            subtitle={`Central operacional premium do Militrin com dados reais do evento selecionado: ${data.selectedEvent?.name ?? 'nenhum'}.`}
             actions={(
               <form action="/painel" className="flex items-center gap-2">
                 <select
@@ -236,8 +242,11 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
                     <AdminStatCard label="Cancelados" value={cancelled} />
                     <AdminStatCard label="Ingressos emitidos" value={issuedTickets} />
                     <AdminStatCard label="Check-ins realizados" value={checkins} />
-                    <AdminStatCard label="Estoque reservado" value={inventoryReserved} />
-                    <AdminStatCard label="Estoque disponível" value={inventoryAvailable} />
+                    <AdminStatCard label="Recebidas" value={inventoryReceived} />
+                    <AdminStatCard label="Reservadas" value={inventoryReserved} />
+                    <AdminStatCard label="Entregues" value={inventoryDelivered} />
+                    <AdminStatCard label="Disponíveis" value={inventoryAvailable} />
+                    <AdminStatCard label="Necessidade de encomenda" value={inventoryNeedToOrder} />
                     <AdminStatCard label="PIX" value={pixCount} />
                     <AdminStatCard label="Cartão" value={cardCount} />
                     <AdminStatCard label="Cortesias" value={courtesyCount} />

@@ -31,7 +31,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
 
   const { data: participant, error } = await supabase
     .from('participants')
-    .select('id, event_id, user_id, full_name, cpf, birth_date, gender, phone, email, city, shirt_type, shirt_size, registration_status, created_at, notes, base_amount, discount_amount, final_amount, payment_status, payment_method, ticket_categories(name), registration_batches(name), events(name, year)')
+    .select('id, event_id, user_id, full_name, cpf, birth_date, gender, phone, email, city, shirt_type, shirt_size, registration_status, created_at, notes, base_amount, discount_amount, final_amount, ticket_categories(name), registration_batches(name), events(name, year)')
     .eq('id', id)
     .maybeSingle();
 
@@ -242,8 +242,8 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                   <p><span className="text-slate-400">Valor original:</span> {money(Number(order?.base_amount ?? participant.base_amount ?? 0))}</p>
                   <p><span className="text-slate-400">Desconto:</span> {money(Number(order?.discount_amount ?? participant.discount_amount ?? 0))}</p>
                   <p><span className="text-slate-400">Valor final:</span> {money(Number(order?.final_amount ?? payment?.final_amount ?? participant.final_amount ?? 0))}</p>
-                  <p><span className="text-slate-400">Método:</span> {payment?.payment_method ? String(payment.payment_method) : participant.payment_method ?? '-'}</p>
-                  <p><span className="text-slate-400">Status pagamento:</span> <AdminStatusBadge status={mapStatus(String(payment?.payment_status ?? participant.payment_status ?? 'pending'))} /></p>
+                  <p><span className="text-slate-400">Método:</span> {payment?.payment_method ? String(payment.payment_method) : '-'}</p>
+                  <p><span className="text-slate-400">Status pagamento:</span> <AdminStatusBadge status={mapStatus(String(payment?.payment_status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Pagamento em:</span> {payment?.paid_at ? formatDateTimeBR(String(payment.paid_at), ' às ') : '-'}</p>
                 </div>
               ) : (

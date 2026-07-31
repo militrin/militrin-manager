@@ -32,6 +32,25 @@ type BenefitRow = {
   sort_order: number;
 };
 
+const CATEGORY_DESCRIPTION_SUGGESTIONS: Array<{ name: string; description: string }> = [
+  {
+    name: "Pista",
+    description: "Acesso à área principal do evento com estrutura padrão e experiência geral da festa.",
+  },
+  {
+    name: "VIP",
+    description: "Acesso à área VIP com localização privilegiada e benefícios exclusivos definidos pela organização.",
+  },
+  {
+    name: "Camarote",
+    description: "Acesso ao camarote com vista diferenciada, ambiente reservado e serviços especiais conforme o evento.",
+  },
+  {
+    name: "Open Bar",
+    description: "Acesso com serviço de open bar durante o período estipulado, conforme regras e itens disponíveis no evento.",
+  },
+];
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -39,6 +58,19 @@ function slugify(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+function normalizeName(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function findSuggestedDescription(categoryName: string) {
+  const normalized = normalizeName(categoryName);
+  return CATEGORY_DESCRIPTION_SUGGESTIONS.find((item) => normalizeName(item.name) === normalized) ?? null;
 }
 
 export function CategoriesManager({
@@ -72,6 +104,8 @@ export function CategoriesManager({
     }
     return map;
   }, [benefits]);
+
+  const suggestedDescription = useMemo(() => findSuggestedDescription(form.name), [form.name]);
 
   function resetForm() {
     setEditingId(null);
@@ -209,6 +243,22 @@ export function CategoriesManager({
               rows={3}
               className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
             />
+            {suggestedDescription ? (
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, description: suggestedDescription.description }))}
+                className="mt-2 rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200"
+              >
+                Usar descrição sugerida para {suggestedDescription.name}
+              </button>
+            ) : null}
+            <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/50 p-2 text-xs text-slate-400">
+              <p className="font-semibold text-slate-300">Sugestões de descrição:</p>
+              <p className="mt-1"><span className="text-slate-200">Pista:</span> Acesso à área principal do evento com estrutura padrão e experiência geral da festa.</p>
+              <p><span className="text-slate-200">VIP:</span> Acesso à área VIP com localização privilegiada e benefícios exclusivos definidos pela organização.</p>
+              <p><span className="text-slate-200">Camarote:</span> Acesso ao camarote com vista diferenciada, ambiente reservado e serviços especiais conforme o evento.</p>
+              <p><span className="text-slate-200">Open Bar:</span> Acesso com serviço de open bar durante o período estipulado, conforme regras e itens disponíveis no evento.</p>
+            </div>
           </label>
         </div>
 

@@ -3,6 +3,34 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
 
+export async function getRetiradaCapabilitiesAction() {
+  let canDeliverKit = false;
+  let canCheckin = false;
+
+  try {
+    await assertPermission("kits.deliver");
+    canDeliverKit = true;
+  } catch {
+    canDeliverKit = false;
+  }
+
+  try {
+    await assertPermission("checkin.scan");
+    canCheckin = true;
+  } catch {
+    canCheckin = false;
+  }
+
+  return {
+    success: true,
+    capabilities: {
+      canDeliverKit,
+      canCheckin,
+      canCombined: canDeliverKit && canCheckin,
+    },
+  };
+}
+
 export async function searchPickupParticipantAction(query: string) {
   await assertPermission("participants.view");
 
@@ -15,7 +43,7 @@ export async function searchPickupParticipantAction(query: string) {
 
   const { data, error } = await supabase
     .from("participants")
-    .select("id, event_id, full_name, registration_number, cpf, phone, payment_status, registration_status, shirt_type, shirt_size, events(name, kit_enabled), ticket_categories(name)")
+    .select("id, event_id, full_name, registration_number, cpf, phone, payment_status, registration_status, shirt_type, shirt_size, events(name, kit_enabled, allow_checkin_during_kit_delivery), ticket_categories(name)")
     .or(`full_name.ilike.%${q}%,cpf.ilike.%${q}%,phone.ilike.%${q}%,registration_number.eq.${Number(q) || 0}`)
     .limit(1)
     .maybeSingle();
@@ -99,7 +127,7 @@ export async function searchPickupParticipantAction(query: string) {
 
   const eventRelation = Array.isArray(data.events)
     ? data.events[0] ?? null
-    : (data.events as { name?: string | null; kit_enabled?: boolean | null } | null);
+    : (data.events as { name?: string | null; kit_enabled?: boolean | null; allow_checkin_during_kit_delivery?: boolean | null } | null);
   const categoryRelation = Array.isArray(data.ticket_categories)
     ? data.ticket_categories[0] ?? null
     : (data.ticket_categories as { name?: string | null } | null);
@@ -133,14 +161,50 @@ export async function searchPickupParticipantAction(query: string) {
       event_name: String(eventRelation?.name ?? "Evento"),
       event_kit_enabled: Boolean(eventRelation?.kit_enabled),
       ticket_status: ticketStatus,
+      ticket_id: ticketData?.id ? String(ticketData.id) : null,
       ticket_used_at: ticketUsedAt,
       last_checkin_at: checkinLogData?.created_at ? String(checkinLogData.created_at) : null,
       last_checkin_actor: checkinLogData?.actor ? String(checkinLogData.actor) : null,
       all_kit_delivered: allKitDelivered,
       can_operate: blockReason === null,
       block_reason: blockReason,
+      allow_checkin_during_kit_delivery: Boolean(eventRelation?.allow_checkin_during_kit_delivery),
       kit_items: kitItems,
     },
+  };
+}
+
+export async function deliverKitAndCheckinAction(payload: { ticket_id: string }) {
+  await assertPermission("kits.deliver");
+  await assertPermission("checkin.scan");
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("deliver_kit_and_checkin", {
+    p_ticket_id: payload.ticket_id,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { success?: boolean; message?: string; kit_delivered?: boolean; checkin_done?: boolean }
+    | null;
+
+  if (!row?.success) {
+    return {
+      success: false,
+      message: row?.message ?? "Nao foi possivel concluir operacao combinada.",
+      kit_delivered: Boolean(row?.kit_delivered),
+      checkin_done: Boolean(row?.checkin_done),
+    };
+  }
+
+  return {
+    success: true,
+    message: row.message ?? "Kit entregue e entrada confirmada.",
+    kit_delivered: Boolean(row.kit_delivered),
+    checkin_done: Boolean(row.checkin_done),
   };
 }
 

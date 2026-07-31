@@ -9,6 +9,7 @@ import { getEmailProvider } from '@/lib/email/fake-provider';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
+import { normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
 
 type PricingPreview = {
   batch_id: string;
@@ -23,6 +24,8 @@ type PricingPreview = {
   discount_percent: number;
 };
 
+type CheckoutPaymentMethod = 'pix' | 'credit_card_single' | 'credit_card_installments';
+
 type RegistrationCreateInput = {
   event_id: string;
   ticket_category_id: string;
@@ -35,10 +38,46 @@ type RegistrationCreateInput = {
   city?: string;
   shirt_type?: string;
   shirt_size?: string;
-  payment_method: 'pix' | 'credit_card';
+  payment_method: CheckoutPaymentMethod;
   coupon_code?: string;
   notes?: string;
   client_request_id?: string;
+};
+
+type MultiOrderItemInput = {
+  pricing_gender?: 'male' | 'female';
+  price_gender?: 'male' | 'female';
+  shirt_type?: string;
+  shirt_size?: string;
+  ownership_status?: 'unassigned' | 'assigned';
+  ownership_mode?: 'self' | 'unassigned' | 'named';
+  holder_full_name?: string;
+  holder_email?: string;
+  holder_phone?: string;
+};
+
+type MultiOrderCreateInput = {
+  event_id: string;
+  ticket_category_id: string;
+  quantity: number;
+  gender?: string;
+  shirt_type?: string;
+  shirt_size?: string;
+  payment_method: CheckoutPaymentMethod;
+  coupon_code?: string;
+  notes?: string;
+  client_request_id?: string;
+  assign_first_to_buyer?: boolean;
+  items?: MultiOrderItemInput[];
+  buyer: {
+    full_name: string;
+    cpf: string;
+    birth_date: string;
+    gender: string;
+    phone: string;
+    email: string;
+    city: string;
+  };
 };
 
 type SignupActionResult =
@@ -147,6 +186,59 @@ function translateSignupCode(message: string) {
 
 function accountOrdersUrl() {
   return `${appBaseUrl()}/minha-conta/compras`;
+}
+
+function normalizeCheckoutPaymentMethod(value: unknown): CheckoutPaymentMethod | null {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'pix') return 'pix';
+  if (normalized === 'credit_card_single') return 'credit_card_single';
+  if (normalized === 'credit_card_installments') return 'credit_card_installments';
+  if (normalized === 'credit_card') return 'credit_card_single';
+  return null;
+}
+
+function toDbPaymentMethod(value: CheckoutPaymentMethod): 'pix' | 'credit_card' {
+  return value === 'pix' ? 'pix' : 'credit_card';
+}
+
+async function getEventPaymentMethodsConfig(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  eventId: string,
+) {
+  const { data, error } = await supabase.rpc('get_event_payment_methods_setup', {
+    p_event_id: eventId,
+  });
+
+  if (error) {
+    return {
+      success: false as const,
+      message: error.message,
+    };
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  return {
+    success: true as const,
+    config: {
+      pix_enabled: Boolean(row?.pix_enabled ?? true),
+      credit_card_single_enabled: Boolean(row?.credit_card_single_enabled ?? true),
+      credit_card_installments_enabled: Boolean(row?.credit_card_installments_enabled ?? true),
+    },
+  };
+}
+
+function isMethodAllowedByConfig(
+  method: CheckoutPaymentMethod,
+  config: {
+    pix_enabled: boolean;
+    credit_card_single_enabled: boolean;
+    credit_card_installments_enabled: boolean;
+  },
+) {
+  if (method === 'pix') return config.pix_enabled;
+  if (method === 'credit_card_single') return config.credit_card_single_enabled;
+  if (method === 'credit_card_installments') return config.credit_card_installments_enabled;
+  return false;
 }
 
 function firstAccessRouteWithNext(nextPath: string) {
@@ -326,6 +418,91 @@ function mapPayment(row: Record<string, unknown>) {
   };
 }
 
+function mapOrderPayment(row: Record<string, unknown>) {
+  return {
+    payment_id: String(row.payment_id ?? ''),
+    order_id: String(row.order_id ?? ''),
+    event_id: String(row.event_id ?? ''),
+    amount: Number(row.amount ?? 0),
+    discount_amount: Number(row.discount_amount ?? 0),
+    final_amount: Number(row.final_amount ?? 0),
+    payment_method: row.payment_method ? String(row.payment_method) : null,
+    payment_status: String(row.payment_status ?? 'pending'),
+    pix_code: row.pix_code ? String(row.pix_code) : null,
+    pix_qrcode: row.pix_qrcode ? String(row.pix_qrcode) : null,
+    gateway_payment_id: row.gateway_payment_id ? String(row.gateway_payment_id) : null,
+    expires_at: row.expires_at ? String(row.expires_at) : null,
+    paid_at: row.paid_at ? String(row.paid_at) : null,
+  };
+}
+
+async function getOrderSnapshotByOrderId(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  orderId: string,
+) {
+  const { data, error } = await supabase.rpc('get_order_checkout_snapshot', {
+    p_order_id: orderId,
+  });
+
+  if (error) return { success: false as const, message: error.message };
+  const rows = (data ?? []) as Record<string, unknown>[];
+  if (rows.length === 0) {
+    return { success: false as const, message: 'Pedido nao encontrado.' };
+  }
+
+  const first = rows[0];
+  const items = rows.map((row, index) => ({
+    item_id: String(row.item_id ?? ''),
+    item_position: Number(row.item_position ?? index + 1),
+    item_status: String(row.item_status ?? 'reserved'),
+    ownership_status: String(row.ownership_status ?? 'unassigned'),
+    pricing_gender: row.pricing_gender ? String(row.pricing_gender) : null,
+    participant_id: row.participant_id ? String(row.participant_id) : null,
+    participant_name: row.participant_name ? String(row.participant_name) : null,
+    holder_full_name: row.holder_full_name ? String(row.holder_full_name) : null,
+    ticket_id: row.ticket_id ? String(row.ticket_id) : null,
+    ticket_status: row.ticket_status ? String(row.ticket_status) : null,
+    ticket_token: row.ticket_token ? String(row.ticket_token) : null,
+    shirt_type: row.shirt_type ? String(row.shirt_type) : null,
+    shirt_size: row.shirt_size ? String(row.shirt_size) : null,
+    category_name: row.category_name ? String(row.category_name) : null,
+    batch_name: row.batch_name ? String(row.batch_name) : null,
+    titular_display: row.participant_name
+      ? String(row.participant_name)
+      : (row.holder_full_name ? String(row.holder_full_name) : 'Titular ainda nao definido'),
+  }));
+
+  const firstTicket = items.find((item) => item.ticket_token) ?? items[0] ?? null;
+
+  return {
+    success: true as const,
+    snapshot: {
+      order_id: String(first.order_id ?? ''),
+      order_number: first.order_number ? String(first.order_number) : null,
+      order_status: String(first.order_status ?? 'pending'),
+      event_id: String(first.event_id ?? ''),
+      event_name: first.event_name ? String(first.event_name) : null,
+      payment: {
+        payment_id: String(first.payment_id ?? ''),
+        order_id: String(first.order_id ?? ''),
+        amount: Number(first.amount ?? 0),
+        discount_amount: Number(first.discount_amount ?? 0),
+        final_amount: Number(first.final_amount ?? 0),
+        payment_method: first.payment_method ? String(first.payment_method) : null,
+        payment_status: String(first.payment_status ?? 'pending'),
+        expires_at: first.expires_at ? String(first.expires_at) : null,
+        pix_code: first.pix_code ? String(first.pix_code) : null,
+        pix_qrcode: first.pix_qrcode ? String(first.pix_qrcode) : null,
+        gateway_payment_id: first.gateway_payment_id ? String(first.gateway_payment_id) : null,
+        paid_at: first.paid_at ? String(first.paid_at) : null,
+      },
+      items,
+      item_count: items.length,
+      qr_token: firstTicket?.ticket_token ?? null,
+    },
+  };
+}
+
 function relationName(value: unknown): string | null {
   if (Array.isArray(value)) {
     const first = value[0] as Record<string, unknown> | undefined;
@@ -344,10 +521,88 @@ function buildRequestScopedNotes(notes: string | undefined, requestId: string | 
   return `${base} [checkout:${requestId.trim()}]`;
 }
 
+function toTextParam(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return null;
+}
+
+function toRequiredTextParam(value: unknown, fallback = ''): string {
+  return toTextParam(value) ?? fallback;
+}
+
+type RpcMultiOrderItemPayload = {
+  pricing_gender: 'male' | 'female' | null;
+  shirt_type: string | null;
+  shirt_size: string | null;
+  ownership_status: 'assigned' | 'unassigned' | null;
+  ownership_mode: 'self' | 'unassigned' | 'named' | null;
+  holder_full_name: string | null;
+  holder_email: string | null;
+  holder_phone: string | null;
+};
+
+function normalizeMultiOrderItemsForRpc(items: MultiOrderItemInput[] | undefined): RpcMultiOrderItemPayload[] {
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item) => {
+    const pricingGender = item.pricing_gender ?? item.price_gender;
+    const normalizedGender = normalizePricingGenderInput(pricingGender);
+    const normalizedOwnershipStatus = item.ownership_status === 'assigned' || item.ownership_status === 'unassigned'
+      ? item.ownership_status
+      : null;
+    const normalizedOwnershipMode = item.ownership_mode === 'self' || item.ownership_mode === 'unassigned' || item.ownership_mode === 'named'
+      ? item.ownership_mode
+      : null;
+
+    return {
+      pricing_gender: normalizedGender,
+      shirt_type: toTextParam(item.shirt_type),
+      shirt_size: toTextParam(item.shirt_size),
+      ownership_status: normalizedOwnershipStatus,
+      ownership_mode: normalizedOwnershipMode,
+      holder_full_name: toTextParam(item.holder_full_name),
+      holder_email: toTextParam(item.holder_email),
+      holder_phone: toTextParam(item.holder_phone),
+    };
+  });
+}
+
+function summarizeInventoryAdjustments(items: RpcMultiOrderItemPayload[]) {
+  const totals = new Map<string, number>();
+
+  for (const item of items) {
+    const shirtType = toTextParam(item.shirt_type);
+    const shirtSize = toTextParam(item.shirt_size);
+    if (!shirtType || !shirtSize) continue;
+
+    const key = `${shirtType}::${shirtSize}`;
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+  }
+
+  return Array.from(totals.entries()).map(([key, requested_quantity]) => {
+    const [shirt_type, shirt_size] = key.split('::');
+    return { shirt_type, shirt_size, requested_quantity };
+  });
+}
+
+function maskCpfForLog(cpf: string) {
+  const normalized = cpf.replace(/\D/g, '');
+  if (normalized.length <= 3) return normalized;
+  return `${'*'.repeat(Math.max(0, normalized.length - 3))}${normalized.slice(-3)}`;
+}
+
 function translateRegistrationErrorMessage(message: string) {
   const normalized = message.toLowerCase();
   if (normalized.includes('cpf ja cadastrado')) return 'Este CPF ja esta inscrito neste evento.';
   if (normalized.includes('capacidade da categoria')) return 'Categoria esgotada para este evento.';
+  if (normalized.includes('estoque insuficiente')) return 'Nao ha unidades suficientes deste tamanho para todos os ingressos selecionados.';
   if (normalized.includes('estoque indisponivel')) return 'Camiseta sem estoque para o modelo/tamanho selecionado.';
   if (normalized.includes('estoque nao encontrado')) return 'Camiseta indisponivel para o modelo/tamanho selecionado.';
   if (normalized.includes('inscricoes fechadas')) return 'As inscricoes para este evento estao encerradas.';
@@ -900,22 +1155,11 @@ export async function getPublicPricingPreviewAction(payload: {
 }
 
 export async function checkPublicCpfAction(payload: { event_id: string; cpf: string }) {
-  const supabase = await createServerSupabaseClient();
   const cpf = removeCpfMask(payload.cpf);
 
   if (!isValidCpf(cpf)) {
     return { success: false, message: 'CPF invalido.' };
   }
-
-  const { data, error } = await supabase
-    .from('participants')
-    .select('id')
-    .eq('event_id', payload.event_id)
-    .eq('cpf', cpf)
-    .maybeSingle();
-
-  if (error) return { success: false, message: error.message };
-  if (data?.id) return { success: false, message: 'Este CPF ja esta inscrito neste evento.' };
 
   return { success: true };
 }
@@ -1062,12 +1306,25 @@ export async function saveCheckoutBuyerProfileAction(input: {
 
 export async function createPublicRegistrationAction(input: RegistrationCreateInput) {
   const supabase = await createServerSupabaseClient();
+  const normalizedPaymentMethod = normalizeCheckoutPaymentMethod(input.payment_method);
+  if (!normalizedPaymentMethod) {
+    return { success: false, message: 'Forma de pagamento invalida.' };
+  }
+
+  const paymentConfig = await getEventPaymentMethodsConfig(supabase, String(input.event_id));
+  if (!paymentConfig.success) {
+    return { success: false, message: paymentConfig.message };
+  }
+  if (!isMethodAllowedByConfig(normalizedPaymentMethod, paymentConfig.config)) {
+    return { success: false, message: 'A forma de pagamento selecionada nao esta habilitada para este evento.' };
+  }
+
   console.log('[wizard-diagnostic:create]', {
     event_id: input.event_id,
     ticket_category_id: input.ticket_category_id,
     shirtType: input.shirt_type ?? null,
     shirtSize: input.shirt_size ?? null,
-    payment_method: input.payment_method,
+    payment_method: normalizedPaymentMethod,
   });
   const normalizedEmail = normalizeEmail(input.email);
   if (!normalizedEmail) return { success: false, message: 'E-mail obrigatorio.' };
@@ -1103,7 +1360,7 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
   if (existingParticipant?.id) {
     const participantUserId = existingParticipant.user_id ? String(existingParticipant.user_id) : null;
     if (participantUserId && participantUserId !== userId) {
-      return { success: false, message: 'Este CPF ja esta inscrito neste evento.' };
+      return { success: false, message: 'Este CPF esta vinculado a outra conta para este evento.' };
     }
 
     if (!participantUserId) {
@@ -1115,34 +1372,6 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
         return { success: false, message: linkExistingError.message };
       }
     }
-
-    const reusedParticipantId = String(existingParticipant.id);
-    const state = await getRegistrationSnapshotByParticipantId(supabase, reusedParticipantId, input.event_id);
-    if (!state.success) return state;
-
-    const isCourtesyOrZero = Number(state.snapshot.final_amount ?? 0) <= 0 || String(state.snapshot.payment_status ?? 'pending') === 'paid';
-    const orderResult = await syncOrderAndTicket({
-      participantId: reusedParticipantId,
-      userId,
-      shouldIssueTicket: isCourtesyOrZero,
-    });
-    if (!orderResult.success) {
-      return { success: false, message: orderResult.message };
-    }
-
-    console.info('[checkout] idempotent_reuse', {
-      userId,
-      participantId: reusedParticipantId,
-      orderId: state.snapshot.order_id,
-      orderNumber: state.snapshot.order_number,
-      paymentStatus: state.snapshot.payment_status,
-    });
-
-    return {
-      success: true,
-      courtesy_message: Number(state.snapshot.final_amount ?? 0) <= 0 ? 'Cortesia aplicada. Nenhum pagamento sera necessario.' : null,
-      registration: state.snapshot,
-    };
   }
 
   const { data: profileData } = await supabase.rpc('get_customer_profile', {
@@ -1188,7 +1417,7 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     p_shirt_size: input.shirt_size?.trim() || null,
     p_registration_status: 'pending',
     p_notes: buildRequestScopedNotes(input.notes, input.client_request_id),
-    p_payment_method: input.payment_method,
+    p_payment_method: toDbPaymentMethod(normalizedPaymentMethod),
     p_payment_status: 'pending',
     p_event_id: input.event_id,
     p_coupon_code: input.coupon_code?.trim() || null,
@@ -1280,6 +1509,288 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     success: true,
     courtesy_message: Number(refreshedState.snapshot.final_amount ?? 0) <= 0 ? 'Cortesia aplicada. Nenhum pagamento sera necessario.' : null,
     registration: refreshedState.snapshot,
+  };
+}
+
+export async function createPublicMultiOrderAction(input: MultiOrderCreateInput) {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const userId = user?.id ?? null;
+  if (!userId) {
+    return { success: false as const, message: 'Entre na sua conta para continuar a inscricao.' };
+  }
+
+  const normalizedPaymentMethod = normalizeCheckoutPaymentMethod(input.payment_method);
+  if (!normalizedPaymentMethod) {
+    return { success: false as const, message: 'Forma de pagamento invalida.' };
+  }
+
+  const paymentConfig = await getEventPaymentMethodsConfig(supabase, String(input.event_id));
+  if (!paymentConfig.success) {
+    return { success: false as const, message: paymentConfig.message };
+  }
+  if (!isMethodAllowedByConfig(normalizedPaymentMethod, paymentConfig.config)) {
+    return { success: false as const, message: 'A forma de pagamento selecionada nao esta habilitada para este evento.' };
+  }
+
+  const normalizedEmail = normalizeEmail(user?.email ?? input.buyer.email);
+  const cpf = removeCpfMask(input.buyer.cpf);
+  const birthDateIso = toISODateFromBR(input.buyer.birth_date);
+
+  if (!isValidCpf(cpf)) return { success: false as const, message: 'CPF invalido.' };
+  if (!birthDateIso) return { success: false as const, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
+  if (calculateAge(input.buyer.birth_date) < 18) return { success: false as const, message: 'A inscricao exige idade minima de 18 anos.' };
+
+  const quantity = Math.max(1, Math.min(10, Number(input.quantity || 1)));
+  const rpcItemsBase = normalizeMultiOrderItemsForRpc(input.items);
+  const rpcItems = rpcItemsBase.map((item) => ({
+    ...item,
+    pricing_gender: resolvePricingGender({
+      itemGender: item.pricing_gender,
+      requestGender: input.gender,
+      buyerGender: input.buyer.gender,
+    }),
+  }));
+
+  const invalidPricingItemIndex = rpcItems.findIndex((item) => item.pricing_gender !== 'male' && item.pricing_gender !== 'female');
+  if (invalidPricingItemIndex >= 0) {
+    return {
+      success: false as const,
+      message: `Genero/preco invalido no ingresso ${invalidPricingItemIndex + 1}. Selecione Masculino ou Feminino.`,
+    };
+  }
+
+  const firstItem = rpcItems[0];
+  const fallbackGender = resolvePricingGender({
+    itemGender: firstItem?.pricing_gender,
+    requestGender: input.gender,
+    buyerGender: input.buyer.gender,
+  });
+  if (!fallbackGender) {
+    return {
+      success: false as const,
+      message: 'Genero/preco invalido para o primeiro ingresso. Selecione Masculino ou Feminino.',
+    };
+  }
+  const buyerFullName = toRequiredTextParam(input.buyer.full_name, 'Participante');
+  const buyerGender = toRequiredTextParam(input.buyer.gender, fallbackGender);
+  const buyerPhone = toRequiredTextParam(input.buyer.phone, '');
+  const buyerCity = toRequiredTextParam(input.buyer.city, '');
+  const couponCode = toTextParam(input.coupon_code);
+  const defaultShirtType = toTextParam(input.shirt_type);
+  const defaultShirtSize = toTextParam(input.shirt_size);
+  const requestId = toTextParam(input.client_request_id);
+  const notes = buildRequestScopedNotes(toTextParam(input.notes) ?? undefined, requestId ?? undefined);
+
+  let effectiveAssignFirstToBuyer = Boolean(input.assign_first_to_buyer ?? true);
+  if (effectiveAssignFirstToBuyer) {
+    const { data: existingParticipant, error: participantLookupError } = await supabase
+      .from('participants')
+      .select('id')
+      .eq('event_id', String(input.event_id))
+      .eq('user_id', userId)
+      .eq('cpf', cpf)
+      .limit(1)
+      .maybeSingle();
+
+    if (participantLookupError) {
+      // Safer fallback: avoid assigning automatically when lookup fails.
+      effectiveAssignFirstToBuyer = false;
+      console.warn('[checkout:create-order] participant lookup failed; disabling auto assignment', {
+        event_id: input.event_id,
+        user_id: userId,
+        code: participantLookupError.code,
+        message: participantLookupError.message,
+      });
+    } else if (existingParticipant?.id) {
+      const { count: existingTicketCount, error: ticketLookupError } = await supabase
+        .from('tickets')
+        .select('id', { count: 'exact', head: true })
+        .eq('event_id', String(input.event_id))
+        .eq('participant_id', existingParticipant.id);
+
+      if (ticketLookupError) {
+        // Safer fallback: avoid assigning automatically when lookup fails.
+        effectiveAssignFirstToBuyer = false;
+        console.warn('[checkout:create-order] ticket lookup failed; disabling auto assignment', {
+          event_id: input.event_id,
+          participant_id: existingParticipant.id,
+          code: ticketLookupError.code,
+          message: ticketLookupError.message,
+        });
+      } else if (Number(existingTicketCount ?? 0) > 0) {
+        // Repeat purchase for the same participant: keep the new item unassigned.
+        effectiveAssignFirstToBuyer = false;
+      }
+    }
+  }
+
+  const createOrderRpcPayload = {
+    p_event_id: String(input.event_id),
+    p_ticket_category_id: String(input.ticket_category_id),
+    p_gender: fallbackGender,
+    p_quantity: quantity,
+    p_payment_method: toDbPaymentMethod(normalizedPaymentMethod),
+    p_coupon_code: couponCode,
+    p_shirt_type: firstItem?.shirt_type ?? defaultShirtType,
+    p_shirt_size: firstItem?.shirt_size ?? defaultShirtSize,
+    p_buyer_full_name: buyerFullName,
+    p_buyer_cpf: cpf,
+    p_buyer_birth_date: birthDateIso,
+    p_buyer_gender: buyerGender,
+    p_buyer_phone: buyerPhone,
+    p_buyer_email: String(normalizedEmail),
+    p_buyer_city: buyerCity,
+    p_assign_first_to_buyer: effectiveAssignFirstToBuyer,
+    p_items: rpcItems,
+    p_limit_per_order: 10,
+    p_notes: notes,
+    p_client_request_id: requestId,
+  };
+
+  console.info('[checkout:create-order] pre-create', {
+    participant: {
+      full_name: buyerFullName,
+      cpf_masked: maskCpfForLog(cpf),
+      birth_date: birthDateIso,
+      gender: buyerGender,
+      phone: buyerPhone,
+      email: normalizedEmail,
+      city: buyerCity,
+    },
+    order: {
+      event_id: createOrderRpcPayload.p_event_id,
+      ticket_category_id: createOrderRpcPayload.p_ticket_category_id,
+      quantity,
+      payment_method: createOrderRpcPayload.p_payment_method,
+      payment_method_requested: normalizedPaymentMethod,
+      coupon_code: createOrderRpcPayload.p_coupon_code,
+      client_request_id: createOrderRpcPayload.p_client_request_id,
+      notes: createOrderRpcPayload.p_notes,
+    },
+    order_items: rpcItems,
+    reservations: {
+      expected_item_reservations: quantity,
+      assign_first_to_buyer: createOrderRpcPayload.p_assign_first_to_buyer,
+    },
+    inventory_adjustments: summarizeInventoryAdjustments(rpcItems),
+    rpc_payload: {
+      rpc_name: 'create_multi_ticket_order_checkout',
+      payload: createOrderRpcPayload,
+    },
+  });
+
+  const { data, error } = await supabase.rpc('create_multi_ticket_order_checkout', createOrderRpcPayload);
+
+  if (error) {
+    return { success: false as const, message: translateRegistrationErrorMessage(error.message) };
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row?.order_id) {
+    return { success: false as const, message: 'Nao foi possivel criar o pedido multi-ingressos.' };
+  }
+
+  console.info('[checkout:create-order] rpc-success', {
+    rpc_name: 'create_multi_ticket_order_checkout',
+    order_id: String(row.order_id),
+    payment_id: row.payment_id ? String(row.payment_id) : null,
+    item_count: Number(row.item_count ?? 0),
+  });
+
+  console.info('[checkout:create-order] rpc-payload', {
+    rpc_name: 'get_order_checkout_snapshot',
+    payload: {
+      p_order_id: String(row.order_id),
+    },
+  });
+
+  const snapshot = await getOrderSnapshotByOrderId(supabase, String(row.order_id));
+  if (!snapshot.success) return snapshot;
+
+  return {
+    success: true as const,
+    order: snapshot.snapshot,
+  };
+}
+
+export async function generatePublicOrderPixAction(orderId: string) {
+  const supabase = await createServerSupabaseClient();
+
+  const snapshotResult = await getOrderSnapshotByOrderId(supabase, orderId);
+  if (!snapshotResult.success) return snapshotResult;
+
+  const payment = snapshotResult.snapshot.payment;
+  if (payment.payment_status === 'paid') {
+    return { success: true as const, payment };
+  }
+
+  if (payment.final_amount <= 0) {
+    return { success: false as const, message: 'Pagamento nao necessario para este pedido.' };
+  }
+
+  if (payment.expires_at && payment.payment_method === 'pix') {
+    if (payment.pix_code) {
+      return {
+        success: true as const,
+        payment,
+      };
+    }
+  }
+
+  const payload = await paymentProvider.createPix({
+    participantId: orderId,
+    amount: payment.final_amount,
+    expiresInMinutes: 120,
+  });
+
+  const { data, error } = await supabase.rpc('start_order_payment_pix', {
+    p_order_id: orderId,
+    p_pix_code: payload.pixCode,
+    p_pix_qrcode: payload.pixQrCode,
+    p_gateway_payment_id: payload.gatewayPaymentId,
+    p_expires_at: payload.expiresAt,
+  });
+
+  if (error) return { success: false as const, message: error.message };
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row) return { success: false as const, message: 'Falha ao gerar PIX.' };
+
+  return {
+    success: true as const,
+    payment: mapOrderPayment(row),
+  };
+}
+
+export async function simulatePublicOrderPaymentAction(orderId: string, method: 'pix' | 'credit_card') {
+  if (process.env.NODE_ENV !== 'development') {
+    return { success: false as const, message: 'A confirmacao simulada esta disponivel apenas em desenvolvimento.' };
+  }
+
+  const supabase = await createServerSupabaseClient();
+
+  await paymentProvider.confirmPayment({
+    participantId: orderId,
+    method,
+  });
+
+  const { error } = await supabase.rpc('simulate_order_payment_paid', {
+    p_order_id: orderId,
+    p_payment_method: method,
+  });
+
+  if (error) return { success: false as const, message: error.message };
+
+  const snapshot = await getOrderSnapshotByOrderId(supabase, orderId);
+  if (!snapshot.success) return snapshot;
+
+  return {
+    success: true as const,
+    order: snapshot.snapshot,
   };
 }
 

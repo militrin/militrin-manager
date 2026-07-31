@@ -90,6 +90,7 @@ export async function createBatchAction(payload: BatchPayload): Promise<ActionRe
 
     revalidatePath("/lotes");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
 
     return { success: true, message: "Lote criado com sucesso." };
   } catch (error) {
@@ -120,6 +121,7 @@ export async function updateBatchAction(payload: BatchPayload): Promise<ActionRe
 
     revalidatePath("/lotes");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
 
     return { success: true, message: "Lote atualizado com sucesso." };
   } catch (error) {
@@ -139,6 +141,7 @@ export async function activateBatchAction(payload: { id: string; event_id: strin
 
     revalidatePath("/lotes");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${payload.event_id}`);
 
     return { success: true, message: "Lote ativado." };
   } catch (error) {
@@ -158,6 +161,7 @@ export async function deleteBatchAction(payload: { id: string; event_id: string 
 
     revalidatePath("/lotes");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${payload.event_id}`);
 
     return { success: true, message: "Lote removido." };
   } catch (error) {

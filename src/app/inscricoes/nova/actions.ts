@@ -328,21 +328,6 @@ export async function createRegistrationAction(values: RegistrationFormValues) {
 
   const couponCode = values.coupon_code?.trim() ?? '';
 
-  const { data: existingParticipant, error: existingError } = await supabase
-    .from('participants')
-    .select('id')
-    .eq('cpf', cpf)
-    .eq('event_id', activeEvent.id)
-    .maybeSingle();
-
-  if (existingError) {
-    return { success: false, message: existingError.message };
-  }
-
-  if (existingParticipant) {
-    return { success: false, message: 'Este CPF já está cadastrado para o evento ativo.' };
-  }
-
   try {
     const { data, error: createError } = await supabase.rpc('create_registration', {
       p_full_name: values.full_name.trim(),
@@ -393,10 +378,6 @@ export async function createRegistrationAction(values: RegistrationFormValues) {
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error ?? '');
     const normalized = rawMessage.toLowerCase();
-
-    if (normalized.includes('cpf ja cadastrado')) {
-      return { success: false, message: 'Este CPF já está cadastrado para o evento ativo.' };
-    }
 
     if (normalized.includes('estoque indisponivel') || normalized.includes('estoque nao encontrado')) {
       return { success: false, message: 'Este modelo/tamanho está sem estoque no momento.' };

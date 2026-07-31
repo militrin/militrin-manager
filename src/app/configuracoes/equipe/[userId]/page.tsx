@@ -64,7 +64,7 @@ export default async function TeamUserAccessPage({ params }: { params: Promise<{
           <AdminPageHeader
             title="Editar acesso da equipe"
             subtitle="Defina funcao base, status e overrides individuais"
-            actions={<Link href="/configuracoes/equipe" className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-200">Voltar para equipe</Link>}
+            actions={<Link href="/painel/configuracoes/equipe" className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-200">Voltar para equipe</Link>}
           />
 
           <AdminSection title="Usuario selecionado" description="Contexto do membro e status atual">

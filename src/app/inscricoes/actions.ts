@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getEmailProvider } from "@/lib/email/fake-provider";
 import { assertPermission } from "@/lib/admin/permissions";
+import { normalizeShirtSize, normalizeShirtType } from "@/lib/constants/shirts";
 
 const emailProvider = getEmailProvider();
 
@@ -88,7 +89,13 @@ export async function changeParticipantShirtAction(input: {
   await assertPermission("inventory.change_participant_shirt");
 
   const supabase = await createServerSupabaseClient();
-  const { participantId, shirtType, shirtSize } = input;
+  const { participantId } = input;
+  const shirtType = normalizeShirtType(input.shirtType);
+  const shirtSize = normalizeShirtSize(input.shirtSize);
+
+  if (!shirtType || !shirtSize) {
+    return { success: false, message: "Modelo/tamanho inválidos." };
+  }
 
   const { data: participant, error: participantError } = await supabase
     .from("participants")
@@ -99,8 +106,19 @@ export async function changeParticipantShirtAction(input: {
   if (participantError) return { success: false, message: participantError.message };
   if (!participant?.id) return { success: false, message: "Participante nao encontrado." };
 
-  const currentType = String(participant.shirt_type ?? "");
-  const currentSize = String(participant.shirt_size ?? "");
+  const { data: eventData, error: eventError } = await supabase
+    .from("events")
+    .select("id, limit_shirt_selection_to_stock")
+    .eq("id", participant.event_id)
+    .maybeSingle();
+
+  if (eventError) return { success: false, message: eventError.message };
+  if (!eventData?.id) return { success: false, message: "Evento vinculado ao participante nao encontrado." };
+
+  const enforcePhysicalStock = Boolean(eventData.limit_shirt_selection_to_stock);
+
+  const currentType = normalizeShirtType(String(participant.shirt_type ?? ""));
+  const currentSize = normalizeShirtSize(String(participant.shirt_size ?? ""));
   if (currentType === shirtType && currentSize === shirtSize) {
     return { success: true, message: "Camiseta ja esta neste modelo e tamanho." };
   }
@@ -125,7 +143,7 @@ export async function changeParticipantShirtAction(input: {
   if (!nextStock?.id) return { success: false, message: "Estoque nao configurado para o modelo/tamanho selecionado." };
 
   const available = Number(nextStock.total_quantity ?? 0) - Number(nextStock.reserved_quantity ?? 0) - Number(nextStock.delivered_quantity ?? 0);
-  if (available <= 0) {
+  if (enforcePhysicalStock && available <= 0) {
     return { success: false, message: "Sem estoque disponivel para o novo tamanho/modelo." };
   }
 

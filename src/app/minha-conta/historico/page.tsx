@@ -30,6 +30,13 @@ export default async function HistoricoPage() {
       .limit(15),
   ]);
 
+  const { data: participationHistoryResult } = await supabase
+    .from('participation_history')
+    .select('id, legacy_event_name, event_year, status, created_at')
+    .eq('user_id', user?.id ?? '')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
   const orderItems = (ordersResult.data ?? []).map((order) => {
     const createdAt = order.created_at ? new Date(String(order.created_at)).getTime() : 0;
     const eventObj = Array.isArray(order.events) ? order.events[0] : order.events;
@@ -58,7 +65,16 @@ export default async function HistoricoPage() {
     };
   });
 
-  const items: MilitrinTimelineItem[] = [...orderItems, ...ticketItems]
+  const historicalItems = (participationHistoryResult ?? []).map((item) => ({
+    sortTs: item.created_at ? new Date(String(item.created_at)).getTime() : 0,
+    id: `history-${item.id}`,
+    title: String(item.legacy_event_name ?? 'Histórico importado'),
+    subtitle: item.event_year ? `Ano interno: ${String(item.event_year)}` : 'Histórico importado',
+    date: item.created_at ? formatDateTimeBR(String(item.created_at), ' as ') : undefined,
+    status: normalizeStatus(String(item.status ?? 'confirmed')),
+  }));
+
+  const items: MilitrinTimelineItem[] = [...orderItems, ...ticketItems, ...historicalItems]
     .sort((a, b) => b.sortTs - a.sortTs)
     .slice(0, 20)
     .map((item) => ({

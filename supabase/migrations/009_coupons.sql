@@ -281,8 +281,6 @@ begin
 
   update public.participants
   set amount = v_final,
-      payment_method = case when v_coupon.coupon_type = 'courtesy' then 'courtesy' else payment_method end,
-      payment_status = case when v_coupon.coupon_type = 'courtesy' then 'paid' else 'pending' end,
       reservation_status = case when v_coupon.coupon_type = 'courtesy' then 'confirmed' else reservation_status end,
       reservation_expires_at = case when v_coupon.coupon_type = 'courtesy' then null else reservation_expires_at end,
       updated_at = now()

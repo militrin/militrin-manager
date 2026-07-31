@@ -1,18 +1,17 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
-import { SHIRT_SIZES, SHIRT_TYPES } from '@/lib/constants/shirts';
+import { SHIRT_TYPES, makeShirtInventoryKey, normalizeShirtSize, normalizeShirtType } from '@/lib/constants/shirts';
 import {
-  checkPublicCpfAction,
-  createPublicRegistrationAction,
-  generatePublicPixAction,
+  createPublicMultiOrderAction,
+  generatePublicOrderPixAction,
   getPublicPricingPreviewAction,
   saveCheckoutBuyerProfileAction,
-  simulatePublicPaymentAction,
+  simulatePublicOrderPaymentAction,
 } from '@/app/inscricao/actions';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
@@ -22,6 +21,7 @@ import {
   removeCpfMask,
 } from '@/lib/validation/registration';
 import { formatDateTimeBR, formatISOToDateBR } from '@/lib/utils/date';
+import { normalizePricingGenderInput, resolvePricingGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
 
 type EventData = {
   id: string;
@@ -34,8 +34,15 @@ type EventData = {
   registration_enabled: boolean;
   registration_open_at: string | null;
   registration_close_at: string | null;
+  shirt_order_deadline: string | null;
+  limit_shirt_selection_to_stock: boolean;
   kit_enabled: boolean;
+  payment_pix_enabled: boolean;
+  payment_credit_card_single_enabled: boolean;
+  payment_credit_card_installments_enabled: boolean;
 };
+
+type CheckoutPaymentMethod = 'pix' | 'credit_card_single' | 'credit_card_installments';
 
 type Category = {
   id: string;
@@ -67,6 +74,9 @@ type KitItem = {
 type InventoryRow = {
   shirt_type: string;
   shirt_size: string;
+  total_quantity: number;
+  reserved_quantity: number;
+  delivered_quantity: number;
   available_quantity: number;
 };
 
@@ -151,6 +161,63 @@ type RegistrationSnapshot = {
   qr_token: string | null;
   order_id: string | null;
   order_number: string | null;
+  item_count?: number;
+  items?: Array<{
+    item_id: string;
+    item_position: number;
+    item_status: string;
+    ownership_status: string;
+    participant_id: string | null;
+    participant_name: string | null;
+    holder_full_name: string | null;
+    ticket_id: string | null;
+    ticket_status: string | null;
+    ticket_token: string | null;
+    shirt_type: string | null;
+    shirt_size: string | null;
+    category_name: string | null;
+    batch_name: string | null;
+    titular_display: string;
+  }>;
+};
+
+type CheckoutItemConfig = {
+  clientId: string;
+  ownershipMode: 'self' | 'unassigned' | 'named';
+  holder_full_name: string;
+  holder_email: string;
+  holder_phone: string;
+  pricingGender: 'male' | 'female' | null;
+  shirtType: string;
+  shirtSize: string;
+  unitPrice: number;
+  discountAmount: number;
+  finalAmount: number;
+  validationErrors: string[];
+  visualStatus: 'complete' | 'missing' | 'out_of_stock' | 'price_updated';
+};
+
+type OrderSnapshotPayload = {
+  order_id: string;
+  order_number: string | null;
+  order_status: string;
+  event_id: string;
+  event_name: string | null;
+  payment: {
+    payment_id: string;
+    amount: number;
+    discount_amount: number;
+    final_amount: number;
+    payment_method: string | null;
+    payment_status: string;
+    pix_code?: string | null;
+    pix_qrcode?: string | null;
+    gateway_payment_id?: string | null;
+    expires_at: string | null;
+    paid_at?: string | null;
+  };
+  item_count: number;
+  items: NonNullable<RegistrationSnapshot['items']>;
 };
 
 type FormState = {
@@ -162,10 +229,11 @@ type FormState = {
   email: string;
   city: string;
   category_id: string;
-  payment_method: 'pix' | 'credit_card';
+  payment_method: CheckoutPaymentMethod;
   coupon_code: string;
   shirt_type: string;
   shirt_size: string;
+  quantity: number;
   lgpd: boolean;
 };
 
@@ -174,7 +242,30 @@ type KitSelectionsState = {
   shirtSize: string;
 };
 
-const STORAGE_VERSION = 'v2';
+const STORAGE_VERSION = 'v3';
+
+function paymentMethodLabel(method: CheckoutPaymentMethod) {
+  if (method === 'credit_card_single') return 'Credito a vista';
+  if (method === 'credit_card_installments') return 'Credito parcelado';
+  return 'PIX';
+}
+
+function sanitizePaymentMethod(method: string | null | undefined, event: EventData): CheckoutPaymentMethod {
+  const normalized = String(method ?? '').trim();
+
+  if (normalized === 'pix' && event.payment_pix_enabled) return 'pix';
+  if (normalized === 'credit_card_single' && event.payment_credit_card_single_enabled) return 'credit_card_single';
+  if (normalized === 'credit_card_installments' && event.payment_credit_card_installments_enabled) return 'credit_card_installments';
+  if (normalized === 'credit_card') {
+    if (event.payment_credit_card_single_enabled) return 'credit_card_single';
+    if (event.payment_credit_card_installments_enabled) return 'credit_card_installments';
+  }
+
+  if (event.payment_pix_enabled) return 'pix';
+  if (event.payment_credit_card_single_enabled) return 'credit_card_single';
+  if (event.payment_credit_card_installments_enabled) return 'credit_card_installments';
+  return 'pix';
+}
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -183,6 +274,32 @@ function money(value: number) {
 function deadlineText(value: string | null) {
   if (!value) return 'sem prazo';
   return formatDateTimeBR(value, ' às ');
+}
+
+function shirtAvailabilityText(availableStock: number, enforcePhysicalStock: boolean) {
+  if (!enforcePhysicalStock) return 'Disponivel para encomenda';
+  if (availableStock <= 0) return 'Esgotado';
+  if (availableStock === 1) return 'Resta apenas 1 unidade';
+  if (availableStock <= 5) return `Restam apenas ${availableStock} unidades`;
+  return 'Disponivel';
+}
+
+function createCheckoutItem(seed: number, defaultGender: 'male' | 'female' | null = null): CheckoutItemConfig {
+  return {
+    clientId: `item-${Date.now()}-${seed}-${Math.random().toString(36).slice(2, 8)}`,
+    ownershipMode: seed === 0 ? 'self' : 'unassigned',
+    holder_full_name: '',
+    holder_email: '',
+    holder_phone: '',
+    pricingGender: defaultGender,
+    shirtType: '',
+    shirtSize: '',
+    unitPrice: 0,
+    discountAmount: 0,
+    finalAmount: 0,
+    validationErrors: [],
+    visualStatus: 'missing',
+  };
 }
 
 export function RegistrationWizard({
@@ -210,10 +327,11 @@ export function RegistrationWizard({
     email: initialBuyer.email || '',
     city: initialBuyer.city || '',
     category_id: '',
-    payment_method: 'pix',
+    payment_method: sanitizePaymentMethod('pix', event),
     coupon_code: '',
     shirt_type: '',
     shirt_size: '',
+    quantity: 1,
     lgpd: Boolean(initialBuyer.privacy_policy_accepted),
   });
   const [pricing, setPricing] = useState<PricingState | null>(null);
@@ -232,6 +350,10 @@ export function RegistrationWizard({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
   const submitLockRef = useRef(false);
+  const [checkoutItems, setCheckoutItems] = useState<CheckoutItemConfig[]>([
+    createCheckoutItem(0, normalizePricingGenderInput(initialBuyer.gender)),
+  ]);
+  const [isRepricingItems, setIsRepricingItems] = useState(false);
 
   const topRef = useRef<HTMLHeadingElement | null>(null);
 
@@ -242,37 +364,60 @@ export function RegistrationWizard({
 
   const activeKitItems = useMemo(() => kitItems.filter((item) => item.is_active), [kitItems]);
 
+  const availablePaymentMethods = useMemo<CheckoutPaymentMethod[]>(() => {
+    const methods: CheckoutPaymentMethod[] = [];
+    if (event.payment_pix_enabled) methods.push('pix');
+    if (event.payment_credit_card_single_enabled) methods.push('credit_card_single');
+    if (event.payment_credit_card_installments_enabled) methods.push('credit_card_installments');
+    return methods.length > 0 ? methods : ['pix'];
+  }, [event.payment_pix_enabled, event.payment_credit_card_single_enabled, event.payment_credit_card_installments_enabled]);
+
   const activeShirtItems = useMemo(
     () => activeKitItems.filter((item) => item.item_type === 'shirt'),
     [activeKitItems],
   );
 
-  const hasShirtItem = activeShirtItems.length > 0;
   const hasRequiredShirt = activeShirtItems.some((item) => item.is_required);
   const hasKitStep = activeKitItems.length > 0;
+  const shouldShowItemConfiguration = hasKitStep || activeShirtItems.length > 0;
   const totalSteps = hasKitStep ? 7 : 6;
-
-  const availableInventory = useMemo(
-    () => inventory.filter((row) => Number(row.available_quantity) > 0),
-    [inventory],
-  );
-
-  const availableShirtTypes = useMemo(() => {
-    return SHIRT_TYPES.map((type) => {
-      const total = availableInventory
-        .filter((row) => row.shirt_type === type)
-        .reduce((acc, row) => acc + Number(row.available_quantity), 0);
-      return { type, total };
-    });
-  }, [availableInventory]);
 
   const sizeAvailability = useMemo(() => {
     const map = new Map<string, number>();
     for (const row of inventory) {
-      map.set(`${row.shirt_type}::${row.shirt_size}`, Number(row.available_quantity));
+      const key = makeShirtInventoryKey(row.shirt_type, row.shirt_size);
+      if (!key.startsWith('::')) {
+        map.set(key, Number(row.available_quantity));
+      }
     }
     return map;
   }, [inventory]);
+
+  const variantsByType = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const row of inventory) {
+      const normalizedType = normalizeShirtType(row.shirt_type);
+      const normalizedSize = normalizeShirtSize(row.shirt_size);
+      if (!normalizedType || !normalizedSize) continue;
+      const list = map.get(normalizedType) ?? [];
+      if (!list.includes(normalizedSize)) {
+        list.push(normalizedSize);
+      }
+      map.set(normalizedType, list);
+    }
+    return map;
+  }, [inventory]);
+
+  const availableShirtTypes = useMemo(() => {
+    return SHIRT_TYPES.filter((shirtType) => {
+      const variants = variantsByType.get(shirtType) ?? [];
+      return variants.length > 0;
+    });
+  }, [variantsByType]);
+
+  const enforcePhysicalStock = Boolean(event.limit_shirt_selection_to_stock);
+
+  const activeCheckoutItems = useMemo(() => checkoutItems.slice(0, form.quantity), [checkoutItems, form.quantity]);
 
   const storageKey = useMemo(() => `militrin:wizard:${event.id}:${STORAGE_VERSION}`, [event.id]);
 
@@ -280,6 +425,36 @@ export function RegistrationWizard({
     if (typeof window === 'undefined') return;
     window.sessionStorage.setItem('militrin:last-wizard-next', `/inscricao/${event.slug}`);
   }, [event.slug]);
+
+  const syncItemCount = useCallback((targetQuantity: number, seedItems?: CheckoutItemConfig[]) => {
+    setCheckoutItems((prev) => {
+      const target = Math.max(1, Math.min(10, Number(targetQuantity || 1)));
+      const source = seedItems && seedItems.length > 0 ? seedItems : prev;
+      const next = Array.from({ length: target }, (_, index) => {
+        const existing = source[index];
+        if (existing) return existing;
+        return createCheckoutItem(index, normalizePricingGenderInput(form.gender));
+      });
+
+      const meCount = next.filter((entry) => entry.ownershipMode === 'self').length;
+      if (meCount === 0 && next.length > 0) {
+        next[0] = { ...next[0], ownershipMode: 'self' };
+      }
+      if (meCount > 1) {
+        let kept = false;
+        for (let i = 0; i < next.length; i += 1) {
+          if (next[i].ownershipMode !== 'self') continue;
+          if (!kept) {
+            kept = true;
+            continue;
+          }
+          next[i] = { ...next[i], ownershipMode: 'unassigned' };
+        }
+      }
+
+      return next;
+    });
+  }, [form.gender]);
 
   useEffect(() => {
     const persisted = sessionStorage.getItem(storageKey);
@@ -292,25 +467,34 @@ export function RegistrationWizard({
         shirtType?: string;
         shirtSize?: string;
         kitSelections?: KitSelectionsState;
+        checkoutItems?: CheckoutItemConfig[];
         pricing: PricingState | null;
         registration: RegistrationSnapshot | null;
       };
       window.setTimeout(() => {
-        if (parsed.form) setForm(parsed.form);
+        if (parsed.form) {
+          const restoredQuantity = Math.max(1, Math.min(10, Number(parsed.form.quantity || 1)));
+          setForm({
+            ...parsed.form,
+            payment_method: sanitizePaymentMethod(parsed.form.payment_method, event),
+            quantity: restoredQuantity,
+          });
+          syncItemCount(restoredQuantity, parsed.checkoutItems);
+        }
         const restoredShirtType = parsed.shirtType ?? parsed.form?.shirt_type ?? '';
         const restoredShirtSize = parsed.shirtSize ?? parsed.form?.shirt_size ?? '';
         setShirtType(restoredShirtType);
         setShirtSize(restoredShirtSize);
         setKitSelections(parsed.kitSelections ?? { shirtType: restoredShirtType, shirtSize: restoredShirtSize });
-        if (parsed.step) setStep(Math.min(7, Math.max(1, parsed.step)));
-        if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(7, Math.max(1, parsed.maxUnlockedStep)));
+        if (parsed.step) setStep(Math.min(totalSteps, Math.max(1, parsed.step)));
+        if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(totalSteps, Math.max(1, parsed.maxUnlockedStep)));
         if (parsed.pricing) setPricing(parsed.pricing);
         if (parsed.registration) setRegistration(parsed.registration);
       }, 0);
     } catch {
       sessionStorage.removeItem(storageKey);
     }
-  }, [storageKey]);
+  }, [event, storageKey, syncItemCount, totalSteps]);
 
   useEffect(() => {
     sessionStorage.setItem(
@@ -322,11 +506,12 @@ export function RegistrationWizard({
         shirtType,
         shirtSize,
         kitSelections,
+        checkoutItems,
         pricing,
         registration,
       }),
     );
-  }, [form, shirtType, shirtSize, kitSelections, pricing, registration, step, maxUnlockedStep, storageKey]);
+  }, [form, shirtType, shirtSize, kitSelections, checkoutItems, pricing, registration, step, maxUnlockedStep, storageKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -338,6 +523,25 @@ export function RegistrationWizard({
   useEffect(() => {
     topRef.current?.focus();
   }, [step]);
+
+  function updateCheckoutItem(index: number, patch: Partial<CheckoutItemConfig>) {
+    setCheckoutItems((prev) => {
+      const next = [...prev];
+      const current = next[index] ?? createCheckoutItem(index, normalizePricingGenderInput(form.gender));
+      const merged = { ...current, ...patch } as CheckoutItemConfig;
+
+      if (merged.ownershipMode === 'self') {
+        for (let i = 0; i < next.length; i += 1) {
+          if (i !== index && next[i]?.ownershipMode === 'self') {
+            next[i] = { ...next[i], ownershipMode: 'unassigned' };
+          }
+        }
+      }
+
+      next[index] = merged;
+      return next;
+    });
+  }
 
   const countdownSeconds = (() => {
     if (!registration?.payment?.expires_at || registration.payment.payment_status !== 'pending') {
@@ -386,14 +590,14 @@ export function RegistrationWizard({
   const shouldConfirmLeave = hasActiveReservation || buyerDataDirty;
 
   function goTo(target: number) {
-    const next = Math.min(7, Math.max(1, target));
+    const next = Math.min(totalSteps, Math.max(1, target));
     if (next > maxUnlockedStep) return;
     setStep(next);
     setErrors([]);
   }
 
   function unlockAndGoTo(target: number) {
-    const normalized = Math.min(7, Math.max(1, target));
+    const normalized = Math.min(totalSteps, Math.max(1, target));
     setMaxUnlockedStep((prev) => Math.max(prev, normalized));
     setStep(normalized);
     setErrors([]);
@@ -428,17 +632,223 @@ export function RegistrationWizard({
 
   function setField<K extends keyof FormState>(field: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [field]: value }));
+
+    if (field === 'gender') {
+      const resolvedGender = normalizePricingGenderInput(value);
+      if (!resolvedGender) return;
+
+      setCheckoutItems((prev) => {
+        if (prev.length !== 1) return prev;
+        const first = prev[0];
+        if (!first || first.pricingGender === resolvedGender) return prev;
+        return [{ ...first, pricingGender: resolvedGender }];
+      });
+    }
   }
 
-  function setKitField(nextType: string, nextSize: string) {
-    setShirtType(nextType);
-    setShirtSize(nextSize);
-    setKitSelections({ shirtType: nextType, shirtSize: nextSize });
-    setForm((prev) => ({
-      ...prev,
-      shirt_type: nextType,
-      shirt_size: nextSize,
-    }));
+  function mapOrderToRegistration(order: OrderSnapshotPayload): RegistrationSnapshot {
+    const items = Array.isArray(order?.items) ? order.items : [];
+    const firstItem = items[0] ?? null;
+    const paid = order?.payment?.payment_status === 'paid';
+
+    return {
+      participant_id: firstItem?.participant_id || firstItem?.item_id || order.order_id,
+      payment_id: order?.payment?.payment_id || '',
+      final_amount: Number(order?.payment?.final_amount ?? 0),
+      payment_status: String(order?.payment?.payment_status ?? 'pending'),
+      expires_at: order?.payment?.expires_at || null,
+      event_id: String(order?.event_id ?? event.id),
+      event_name: order?.event_name || event.name,
+      participant_name: firstItem?.participant_name || form.full_name,
+      category_name: firstItem?.category_name || selectedCategory?.name || null,
+      batch_name: firstItem?.batch_name || pricing?.batch_name || null,
+      reservation_status: String(order?.order_status ?? 'pending'),
+      reservation_expires_at: order?.payment?.expires_at || null,
+      shirt_type: firstItem?.shirt_type || form.shirt_type || null,
+      shirt_size: firstItem?.shirt_size || form.shirt_size || null,
+      payment: {
+        payment_id: order?.payment?.payment_id || '',
+        participant_id: firstItem?.participant_id || firstItem?.item_id || order.order_id,
+        event_id: String(order?.event_id ?? event.id),
+        event_name: order?.event_name || event.name,
+        amount: Number(order?.payment?.amount ?? 0),
+        discount_amount: Number(order?.payment?.discount_amount ?? 0),
+        final_amount: Number(order?.payment?.final_amount ?? 0),
+        payment_method: order?.payment?.payment_method || form.payment_method,
+        payment_status: String(order?.payment?.payment_status ?? 'pending'),
+        pix_code: order?.payment?.pix_code || null,
+        pix_qrcode: order?.payment?.pix_qrcode || null,
+        gateway_payment_id: order?.payment?.gateway_payment_id || null,
+        expires_at: order?.payment?.expires_at || null,
+        paid_at: order?.payment?.paid_at || (paid ? new Date().toISOString() : null),
+      },
+      kit_items: [],
+      qr_token: firstItem?.ticket_token || null,
+      order_id: order.order_id,
+      order_number: order.order_number || null,
+      item_count: Number(order.item_count ?? items.length ?? 0),
+      items,
+    };
+  }
+
+  function getSizeOptionsForType(shirtTypeValue: string, itemIndex: number) {
+    const normalizedType = normalizeShirtType(shirtTypeValue);
+    if (!normalizedType) return [];
+    const baseOptions = variantsByType.get(normalizedType) ?? [];
+    return baseOptions.filter((size) => {
+      if (!enforcePhysicalStock) return true;
+      const key = makeShirtInventoryKey(normalizedType, size);
+      const physical = Number(sizeAvailability.get(key) ?? 0);
+      const demandFromOtherItems = activeCheckoutItems.reduce((count, checkoutItem, checkoutIndex) => {
+        if (checkoutIndex === itemIndex) return count;
+        if (normalizeShirtType(checkoutItem.shirtType) === normalizedType && normalizeShirtSize(checkoutItem.shirtSize) === size) {
+          return count + 1;
+        }
+        return count;
+      }, 0);
+
+      const available = physical - demandFromOtherItems;
+      const isCurrentSelection = normalizeShirtType(activeCheckoutItems[itemIndex]?.shirtType) === normalizedType
+        && normalizeShirtSize(activeCheckoutItems[itemIndex]?.shirtSize) === size;
+
+      return available > 0 || isCurrentSelection;
+    });
+  }
+
+  function getEffectiveStockForItemVariant(itemIndex: number, shirtTypeValue: string, shirtSizeValue: string) {
+    const key = makeShirtInventoryKey(shirtTypeValue, shirtSizeValue);
+    const physical = Number(sizeAvailability.get(key) ?? 0);
+    const normalizedType = normalizeShirtType(shirtTypeValue);
+    const normalizedSize = normalizeShirtSize(shirtSizeValue);
+    const demandFromOtherItems = activeCheckoutItems.reduce((count, checkoutItem, checkoutIndex) => {
+      if (checkoutIndex === itemIndex) return count;
+      if (normalizeShirtType(checkoutItem.shirtType) === normalizedType && normalizeShirtSize(checkoutItem.shirtSize) === normalizedSize) {
+        return count + 1;
+      }
+      return count;
+    }, 0);
+
+    return physical - demandFromOtherItems;
+  }
+
+  async function refreshItemPricingByCoupon(couponCode?: string, itemsOverride?: CheckoutItemConfig[]) {
+    const itemsToPrice = itemsOverride ?? checkoutItems;
+    if (!form.category_id || itemsToPrice.length === 0) return;
+
+    setIsRepricingItems(true);
+    try {
+      const pricingResults = await Promise.all(
+        itemsToPrice.map(async (item) => {
+          const resolvedGender = resolvePricingGender({
+            itemGender: item.pricingGender,
+            requestGender: form.gender,
+            buyerGender: form.gender,
+          });
+
+          const result = await getPublicPricingPreviewAction({
+            event_id: event.id,
+            ticket_category_id: form.category_id,
+            gender: resolvedGender ?? '',
+            coupon_code: couponCode?.trim() ? couponCode.trim() : undefined,
+          });
+          return { item, result };
+        }),
+      );
+
+      setCheckoutItems((prev) =>
+        prev.map((item, index) => {
+          const found = pricingResults[index];
+          if (!found || !found.result.success || !found.result.pricing) {
+            return {
+              ...item,
+              unitPrice: 0,
+              discountAmount: 0,
+              finalAmount: 0,
+              visualStatus: 'missing',
+            };
+          }
+          return {
+            ...item,
+            unitPrice: Number(found.result.pricing.base_amount ?? 0),
+            discountAmount: Number(found.result.pricing.discount_amount ?? 0),
+            finalAmount: Number(found.result.pricing.final_amount ?? 0),
+            visualStatus: 'price_updated',
+          };
+        }),
+      );
+
+      const firstValid = pricingResults.find((entry) => entry.result.success && entry.result.pricing);
+      if (firstValid?.result.pricing) {
+        setPricing(firstValid.result.pricing as PricingState);
+      }
+    } finally {
+      setIsRepricingItems(false);
+    }
+  }
+
+  function validateCheckoutItems() {
+    const visibleItems = checkoutItems.slice(0, form.quantity);
+    const allErrors: string[] = [];
+
+    const stockDemand = new Map<string, number>();
+    visibleItems.forEach((item) => {
+      if (!item.shirtType || !item.shirtSize) return;
+      const key = `${item.shirtType}::${item.shirtSize}`;
+      stockDemand.set(key, (stockDemand.get(key) ?? 0) + 1);
+    });
+
+    const outOfStockKeys = new Set<string>();
+    if (enforcePhysicalStock) {
+      stockDemand.forEach((requested, key) => {
+        const available = Number(sizeAvailability.get(key) ?? 0);
+        if (requested > available) {
+          outOfStockKeys.add(key);
+        }
+      });
+    }
+
+    setCheckoutItems((prev) =>
+      prev.map((item, index) => {
+        if (index >= form.quantity) return item;
+
+        const itemErrors: string[] = [];
+        if (shouldShowItemConfiguration && !item.pricingGender) itemErrors.push('Selecione genero.');
+        if (shouldShowItemConfiguration && item.ownershipMode === 'named' && !item.holder_full_name.trim()) itemErrors.push('Informe o titular.');
+        if (shouldShowItemConfiguration && hasRequiredShirt) {
+          if (!item.shirtType) itemErrors.push('Selecione modelo da camiseta.');
+          if (!item.shirtSize) itemErrors.push('Selecione tamanho da camiseta.');
+        }
+
+        const stockKey = `${item.shirtType}::${item.shirtSize}`;
+        if (item.shirtType && item.shirtSize && outOfStockKeys.has(stockKey)) {
+          itemErrors.push('Nao ha unidades suficientes deste tamanho para todos os ingressos selecionados.');
+        }
+
+        allErrors.push(...itemErrors.map((message) => `Ingresso ${index + 1}: ${message}`));
+
+        const resolvedGender = item.pricingGender ?? normalizePricingGenderInput(form.gender);
+
+        return {
+          ...item,
+          pricingGender: resolvedGender,
+          validationErrors: itemErrors,
+          visualStatus: itemErrors.length > 0
+            ? (itemErrors.some((msg) => msg.includes('estoque')) ? 'out_of_stock' : 'missing')
+            : 'complete',
+        };
+      }),
+    );
+
+    return allErrors;
+  }
+
+  function handleItemsNext() {
+    const itemErrors = validateCheckoutItems();
+    if (itemErrors.length > 0) {
+      setErrors(itemErrors);
+      return;
+    }
+    unlockAndGoTo(5);
   }
 
   async function handleCategoryNext() {
@@ -457,7 +867,7 @@ export function RegistrationWizard({
       const result = await getPublicPricingPreviewAction({
         event_id: event.id,
         ticket_category_id: form.category_id,
-        gender: form.gender || 'male',
+        gender: resolvePricingGender({ requestGender: form.gender, buyerGender: initialBuyer.gender }) ?? '',
         coupon_code: form.coupon_code || undefined,
       });
       if (!result.success || !result.pricing) {
@@ -465,6 +875,8 @@ export function RegistrationWizard({
         return;
       }
       setPricing(result.pricing as PricingState);
+      syncItemCount(form.quantity);
+      await refreshItemPricingByCoupon(form.coupon_code || undefined);
       setLiveMessage('Categoria validada e preço atualizado.');
       unlockAndGoTo(2);
     });
@@ -515,12 +927,6 @@ export function RegistrationWizard({
     }));
 
     startTransition(async () => {
-      const cpfCheck = await checkPublicCpfAction({ event_id: event.id, cpf: form.cpf });
-      if (!cpfCheck.success) {
-        setErrors([cpfCheck.message || 'CPF já utilizado neste evento.']);
-        return;
-      }
-
       const preview = await getPublicPricingPreviewAction({
         event_id: event.id,
         ticket_category_id: form.category_id,
@@ -534,37 +940,14 @@ export function RegistrationWizard({
       }
 
       setPricing(preview.pricing as PricingState);
+      syncItemCount(form.quantity);
+      await refreshItemPricingByCoupon(form.coupon_code || undefined);
       setLiveMessage('Seus dados foram carregados da sua conta e o valor foi recalculado.');
       unlockAndGoTo(hasKitStep ? 3 : 4);
     });
   }
 
   async function handleKitNext() {
-    const nextErrors: string[] = [];
-
-    if (hasRequiredShirt) {
-      if (!shirtType) nextErrors.push('Selecione o modelo da camiseta.');
-      if (!shirtSize) nextErrors.push('Selecione o tamanho da camiseta.');
-    }
-
-    if (shirtType && shirtSize) {
-      const available = Number(sizeAvailability.get(`${shirtType}::${shirtSize}`) ?? 0);
-      if (available <= 0) {
-        nextErrors.push('O tamanho selecionado esta sem estoque. Escolha outra opcao.');
-      }
-    }
-
-    if (nextErrors.length > 0) {
-      setErrors(nextErrors);
-      return;
-    }
-
-    setForm((prev) => ({
-      ...prev,
-      shirt_type: shirtType,
-      shirt_size: shirtSize,
-    }));
-
     unlockAndGoTo(4);
   }
 
@@ -576,27 +959,12 @@ export function RegistrationWizard({
 
     setCouponWorking(true);
     setCouponFeedback(null);
-    const result = await getPublicPricingPreviewAction({
-      event_id: event.id,
-      ticket_category_id: form.category_id,
-      gender: form.gender || 'male',
-      coupon_code: form.coupon_code || undefined,
-    });
-    setCouponWorking(false);
-
-    if (!result.success || !('pricing' in result)) {
-      setCouponFeedback(('message' in result && result.message) || 'Cupom inválido para esta inscrição.');
-      return;
+    try {
+      await refreshItemPricingByCoupon(form.coupon_code || undefined);
+      setCouponFeedback('Cupom aplicado com sucesso.');
+    } finally {
+      setCouponWorking(false);
     }
-
-    const priced = result.pricing as PricingState | undefined;
-    if (!priced) {
-      setCouponFeedback('Cupom inválido para esta inscrição.');
-      return;
-    }
-
-    setPricing(priced);
-    setCouponFeedback(priced.coupon_message || 'Cupom aplicado com sucesso.');
   }
 
   async function handleCreateAndContinuePayment() {
@@ -605,48 +973,131 @@ export function RegistrationWizard({
     setSubmitting(true);
     setErrors([]);
 
-    const requestId = `${event.id}:${form.category_id}:${removeCpfMask(form.cpf)}`;
+    const validationErrors = validateCheckoutItems();
+    const localItems = checkoutItems.slice(0, form.quantity);
+
+    if (validationErrors.length > 0) {
+      setSubmitting(false);
+      submitLockRef.current = false;
+      setErrors(validationErrors);
+      return;
+    }
+
+    const requestId = `${event.id}:${form.category_id}:${removeCpfMask(form.cpf)}:${form.quantity}:${Date.now()}`;
+
+    const resolvedRequestGender = resolvePricingGender({
+      itemGender: localItems[0]?.pricingGender,
+      requestGender: form.gender,
+      buyerGender: form.gender,
+    });
+
+    if (!resolvedRequestGender) {
+      setSubmitting(false);
+      submitLockRef.current = false;
+      setErrors(['Selecione Feminino ou Masculino para o primeiro ingresso antes de continuar.']);
+      return;
+    }
 
     const payload = {
       event_id: event.id,
       ticket_category_id: form.category_id,
-      full_name: form.full_name,
-      cpf: removeCpfMask(form.cpf),
-      birth_date: form.birth_date,
-      gender: form.gender,
-      phone: form.phone,
-      email: form.email,
-      city: form.city || undefined,
-      shirt_type: hasShirtItem ? shirtType || undefined : undefined,
-      shirt_size: hasShirtItem ? shirtSize || undefined : undefined,
+      quantity: form.quantity,
+      gender: resolvedRequestGender,
       payment_method: form.payment_method,
       coupon_code: form.coupon_code || undefined,
       notes: 'Portal público de inscrição',
       client_request_id: requestId,
+      assign_first_to_buyer: true,
+      items: localItems.map((item) => {
+        const ownershipStatus: 'assigned' | 'unassigned' = item.ownershipMode === 'self' ? 'assigned' : 'unassigned';
+        return {
+          pricing_gender: item.pricingGender ?? undefined,
+          shirt_type: item.shirtType || undefined,
+          shirt_size: item.shirtSize || undefined,
+          ownership_mode: item.ownershipMode,
+          ownership_status: ownershipStatus,
+          holder_full_name: item.ownershipMode === 'named' ? item.holder_full_name : undefined,
+          holder_email: item.ownershipMode === 'named' ? item.holder_email : undefined,
+          holder_phone: item.ownershipMode === 'named' ? item.holder_phone : undefined,
+        };
+      }),
+      buyer: {
+        full_name: form.full_name,
+        cpf: removeCpfMask(form.cpf),
+        birth_date: form.birth_date,
+        gender: form.gender,
+        phone: form.phone,
+        email: form.email,
+        city: form.city,
+      },
     } as const;
 
-    let result: Awaited<ReturnType<typeof createPublicRegistrationAction>>;
+    const inventoryAdjustments = payload.items.reduce<Record<string, number>>((acc, item) => {
+      const shirtType = typeof item.shirt_type === 'string' ? item.shirt_type.trim() : '';
+      const shirtSize = typeof item.shirt_size === 'string' ? item.shirt_size.trim() : '';
+      if (!shirtType || !shirtSize) return acc;
+      const key = `${shirtType}::${shirtSize}`;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    console.info('[checkout:create-order] server-action-payload', {
+      participant: {
+        full_name: payload.buyer.full_name,
+        cpf_masked: payload.buyer.cpf.replace(/\D/g, '').replace(/.(?=.{3})/g, '*'),
+        birth_date: payload.buyer.birth_date,
+        gender: payload.buyer.gender,
+        phone: payload.buyer.phone,
+        email: payload.buyer.email,
+        city: payload.buyer.city,
+      },
+      order: {
+        event_id: payload.event_id,
+        ticket_category_id: payload.ticket_category_id,
+        quantity: payload.quantity,
+        payment_method: payload.payment_method,
+        coupon_code: payload.coupon_code ?? null,
+        client_request_id: payload.client_request_id,
+        notes: payload.notes,
+      },
+      order_items: payload.items,
+      reservations: {
+        expected_item_reservations: payload.quantity,
+        assign_first_to_buyer: payload.assign_first_to_buyer,
+      },
+      inventory_adjustments: Object.entries(inventoryAdjustments).map(([key, requested_quantity]) => {
+        const [shirt_type, shirt_size] = key.split('::');
+        return { shirt_type, shirt_size, requested_quantity };
+      }),
+      server_action_payload: {
+        action_name: 'createPublicMultiOrderAction',
+        payload,
+      },
+    });
+
+    let result: Awaited<ReturnType<typeof createPublicMultiOrderAction>>;
     try {
-      result = await createPublicRegistrationAction(payload);
+      result = await createPublicMultiOrderAction(payload);
     } finally {
       setSubmitting(false);
       submitLockRef.current = false;
     }
 
-    if (!result.success || !('registration' in result)) {
+    if (!result.success || !('order' in result)) {
       setErrors([('message' in result && result.message) || 'Não foi possível criar sua inscrição.']);
       return;
     }
 
-    const createdRegistration = result.registration;
-    if (!createdRegistration) {
+    const createdOrder = result.order;
+    if (!createdOrder) {
       setErrors(['Nao foi possivel carregar os dados do pedido criado.']);
       return;
     }
 
-    setRegistration(createdRegistration as RegistrationSnapshot);
-    setCourtesyMessage(result.courtesy_message ?? null);
-    setLiveMessage('Inscrição criada.');
+    const createdRegistration = mapOrderToRegistration(createdOrder);
+    setRegistration(createdRegistration);
+    setCourtesyMessage(createdRegistration.payment.final_amount <= 0 ? 'Cortesia aplicada ao pedido.' : null);
+    setLiveMessage('Pedido criado.');
 
     if ((createdRegistration.final_amount ?? 0) <= 0) {
       unlockAndGoTo(7);
@@ -655,9 +1106,13 @@ export function RegistrationWizard({
     }
 
     if (form.payment_method === 'pix') {
-      const pix = await generatePublicPixAction(createdRegistration.participant_id);
-      if (!pix.success || !pix.payment) {
+      const pix = await generatePublicOrderPixAction(createdRegistration.order_id || '');
+      if (!pix.success) {
         setErrors([pix.message || 'Falha ao gerar PIX.']);
+        return;
+      }
+      if (!pix.payment) {
+        setErrors(['Falha ao gerar PIX.']);
         return;
       }
       setRegistration((prev) =>
@@ -679,28 +1134,13 @@ export function RegistrationWizard({
   async function handleSimulatePaid() {
     if (!registration) return;
     startTransition(async () => {
-      const method = (form.payment_method === 'credit_card' ? 'credit_card' : 'pix') as 'pix' | 'credit_card';
-      const paid = await simulatePublicPaymentAction(registration.participant_id, method);
-      if (!paid.success || !('payment' in paid)) {
+      const method = (form.payment_method === 'pix' ? 'pix' : 'credit_card') as 'pix' | 'credit_card';
+      const paid = await simulatePublicOrderPaymentAction(registration.order_id || '', method);
+      if (!paid.success || !('order' in paid)) {
         setErrors([('message' in paid && paid.message) || 'Não foi possível confirmar o pagamento.']);
         return;
       }
-      setRegistration((prev) =>
-        prev
-          ? {
-              ...prev,
-              payment: {
-                ...prev.payment,
-                ...paid.payment,
-              },
-              order_id: paid.order_id ?? prev.order_id,
-              order_number: paid.order_number ?? prev.order_number,
-              reservation_status: paid.reservation_status ?? prev.reservation_status,
-              reservation_expires_at: paid.reservation_expires_at ?? prev.reservation_expires_at,
-              qr_token: paid.qr_token ?? prev.qr_token,
-            }
-          : prev,
-      );
+      setRegistration(mapOrderToRegistration(paid.order));
       setLiveMessage('Pagamento confirmado.');
       sessionStorage.removeItem(storageKey);
       unlockAndGoTo(7);
@@ -732,21 +1172,31 @@ export function RegistrationWizard({
         { id: 6, label: 'Concluído' },
       ];
 
+  const itemTotals = sumCheckoutItemTotals(activeCheckoutItems);
+
+  const groupedShirts = Array.from(
+    activeCheckoutItems.reduce((map, item) => {
+      if (!item.shirtType || !item.shirtSize) return map;
+      const key = `${item.shirtType}::${item.shirtSize}`;
+      map.set(key, (map.get(key) ?? 0) + 1);
+      return map;
+    }, new Map<string, number>()),
+  );
+
   const summaryValues = {
     event: event.name,
     category: selectedCategory?.name || 'Não selecionado',
     batch: pricing?.batch_name || 'Não selecionado',
-    gender: form.gender ? (form.gender === 'female' ? 'Feminino' : form.gender === 'male' ? 'Masculino' : form.gender) : 'Não selecionado',
-    shirt: hasShirtItem ? (shirtType || 'Não selecionado') : 'Não selecionado',
-    size: hasShirtItem ? (shirtSize || 'Não selecionado') : 'Não selecionado',
+    quantity: form.quantity,
     coupon: form.coupon_code || 'Não selecionado',
-    original: money(pricing?.base_amount || 0),
-    discount: money(pricing?.discount_amount || 0),
-    total: money(pricing?.final_amount || 0),
+    original: money(itemTotals.original),
+    discount: money(itemTotals.discount),
+    total: money(itemTotals.total),
+    groupedShirts,
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.16),transparent_35%),linear-gradient(180deg,#020617,#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
       <div className="mx-auto w-full max-w-6xl">
         <div className="mb-4 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -836,10 +1286,11 @@ export function RegistrationWizard({
                 <div className="mb-4 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 lg:hidden">
                   <p className="text-base font-semibold">{summaryValues.event}</p>
                   <p className="mt-2">Categoria: {summaryValues.category}</p>
+                  <p>Ingressos: {summaryValues.quantity}</p>
                   <p>Lote: {summaryValues.batch}</p>
-                  <p>Gênero: {summaryValues.gender}</p>
-                  <p>Camiseta: {summaryValues.shirt}</p>
-                  <p>Tamanho: {summaryValues.size}</p>
+                  {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
+                    <p key={`m-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
+                  ))}
                   <p>Cupom: {summaryValues.coupon}</p>
                   <p className="mt-3">Valor original: {summaryValues.original}</p>
                   <p>Desconto: {summaryValues.discount}</p>
@@ -1077,47 +1528,9 @@ export function RegistrationWizard({
                   </ul>
                 </div>
 
-                {hasShirtItem ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="space-y-1">
-                      <span className="text-sm text-slate-200">Tipo</span>
-                      <select
-                        value={shirtType}
-                        onChange={(event_) => setKitField(event_.target.value, '')}
-                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                      >
-                        <option value="">{hasRequiredShirt ? 'Selecione' : 'Nao selecionar camiseta'}</option>
-                        {availableShirtTypes.map((item) => (
-                          <option key={item.type} value={item.type} disabled={item.total <= 0}>
-                            {item.type} {item.total > 0 ? `(${item.total} disponiveis)` : '(sem estoque)'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="space-y-1">
-                      <span className="text-sm text-slate-200">Tamanho</span>
-                      <select
-                        value={shirtSize}
-                        onChange={(event_) => setKitField(shirtType, event_.target.value)}
-                        disabled={!shirtType}
-                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm disabled:opacity-50"
-                      >
-                        <option value="">Selecione</option>
-                        {(shirtType ? SHIRT_SIZES[shirtType as keyof typeof SHIRT_SIZES] ?? [] : []).map((size) => {
-                          const available = Number(sizeAvailability.get(`${shirtType}::${size}`) ?? 0);
-                          return (
-                            <option key={size} value={size} disabled={available <= 0}>
-                              {size} {available > 0 ? `(${available} disponiveis)` : '(sem estoque)'}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </label>
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-300">Este evento possui kit sem camiseta. Revise os itens acima e continue.</p>
-                )}
+                <p className="text-sm text-slate-300">
+                  A configuracao de genero e camiseta sera feita individualmente para cada ingresso na proxima etapa.
+                </p>
 
                 <div className="flex justify-end">
                   <button
@@ -1157,29 +1570,239 @@ export function RegistrationWizard({
                   </label>
 
                   <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
-                    <p>Quantidade de ingressos: <strong>1</strong></p>
-                    <p className="text-xs text-slate-400">Nesta sprint, quantidade fixa em 1. Fluxo já preparado para evolução futura com itens de pedido.</p>
+                    <label className="space-y-1">
+                      <span className="text-sm text-slate-200">Quantidade de ingressos</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={form.quantity}
+                        onChange={(event_) => {
+                          const parsed = Number(event_.target.value || 1);
+                          const nextQuantity = Math.max(1, Math.min(10, parsed));
+                          if (nextQuantity < form.quantity) {
+                            const removed = checkoutItems.slice(nextQuantity);
+                            const hasFilled = removed.some((item) => {
+                              return (
+                                item.ownershipMode !== 'unassigned'
+                                || item.holder_full_name.trim().length > 0
+                                || item.shirtType.trim().length > 0
+                                || item.shirtSize.trim().length > 0
+                              );
+                            });
+                            if (hasFilled) {
+                              const confirmed = window.confirm('Reduzir a quantidade removera ingressos ja preenchidos. Deseja continuar?');
+                              if (!confirmed) return;
+                            }
+                          }
+                          setField('quantity', nextQuantity);
+                          syncItemCount(nextQuantity);
+                        }}
+                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
+                      />
+                    </label>
+                    <p className="mt-2 text-xs text-slate-400">Minimo 1 e maximo 10 por pedido.</p>
                   </div>
 
                   <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
                     <p>Categoria: {selectedCategory?.name || '-'}</p>
+                    <p>Quantidade: {form.quantity}</p>
                     <p>Lote: {pricing?.batch_name || '-'}</p>
-                    <p>Valor base: {money(pricing?.base_amount || 0)}</p>
-                    <p>Desconto: {money(pricing?.discount_amount || 0)}</p>
-                    <p className="mt-1 text-base font-semibold text-emerald-300">Total: {money(pricing?.final_amount || 0)}</p>
-                    {Number(pricing?.final_amount ?? 0) <= 0 ? (
+                    <p>Valor base: {summaryValues.original}</p>
+                    <p>Desconto: {summaryValues.discount}</p>
+                    <p className="mt-1 text-base font-semibold text-emerald-300">Total: {summaryValues.total}</p>
+                    {itemTotals.total <= 0 ? (
                       <p className="mt-2 text-xs text-emerald-200">Cortesia aplicada. Nenhum pagamento sera necessario.</p>
                     ) : null}
+                  </div>
+
+                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200 sm:col-span-2">
+                      {shouldShowItemConfiguration ? (
+                        <>
+                          <p className="font-medium text-slate-100">Configuracao individual dos ingressos</p>
+                          <p className="mt-1 text-xs text-slate-400">Cada ingresso precisa de genero e configuracao de kit proprios.</p>
+                          <p className="mt-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+                            {enforcePhysicalStock
+                              ? 'Estoque físico em vigor. Variantes com 5 ou menos unidades exibem alerta de baixa disponibilidade.'
+                              : `Livre para encomenda${event.shirt_order_deadline ? ` até ${deadlineText(event.shirt_order_deadline)}` : ''}. O saldo físico não limita a escolha enquanto esta configuração estiver desativada.`}
+                          </p>
+                          <div className="mt-3 space-y-3">
+                            {activeCheckoutItems.map((item, index) => (
+                        <div key={item.clientId} className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Ingresso {index + 1}</p>
+                          <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                            {item.visualStatus === 'complete' ? 'Completo' : item.visualStatus === 'out_of_stock' ? 'Sem estoque' : item.visualStatus === 'price_updated' ? 'Preco atualizado' : 'Faltam dados'}
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                            <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2">
+                              <input
+                                type="radio"
+                                name={`ownership-${index}`}
+                                checked={item.ownershipMode === 'unassigned'}
+                                onChange={() => updateCheckoutItem(index, { ownershipMode: 'unassigned' })}
+                              />
+                              <span>Definir depois</span>
+                            </label>
+                            <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2">
+                              <input
+                                type="radio"
+                                name={`ownership-${index}`}
+                                checked={item.ownershipMode === 'self'}
+                                onChange={() => updateCheckoutItem(index, { ownershipMode: 'self' })}
+                              />
+                              <span>Este ingresso e para mim</span>
+                            </label>
+                            <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2">
+                              <input
+                                type="radio"
+                                name={`ownership-${index}`}
+                                checked={item.ownershipMode === 'named'}
+                                onChange={() => updateCheckoutItem(index, { ownershipMode: 'named' })}
+                              />
+                              <span>Informar titular agora</span>
+                            </label>
+                          </div>
+
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <label className="space-y-1">
+                              <span className="text-xs text-slate-300">Genero</span>
+                              <select
+                                value={item.pricingGender ?? ''}
+                                onChange={async (event_) => {
+                                  const pricingGender = normalizePricingGenderInput(event_.target.value);
+                                  const nextItems = checkoutItems.map((entry, entryIndex) => (
+                                    entryIndex === index ? { ...entry, pricingGender } : entry
+                                  ));
+                                  setCheckoutItems(nextItems);
+                                  await refreshItemPricingByCoupon(form.coupon_code || undefined, nextItems);
+                                }}
+                                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
+                              >
+                                <option value="">Selecione</option>
+                                <option value="male">Masculino</option>
+                                <option value="female">Feminino</option>
+                              </select>
+                            </label>
+
+                            <label className="space-y-1">
+                              <span className="text-xs text-slate-300">Camiseta</span>
+                              <select
+                                value={item.shirtType}
+                                onChange={(event_) => updateCheckoutItem(index, { shirtType: event_.target.value, shirtSize: '' })}
+                                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
+                              >
+                                <option value="">Selecione</option>
+                                {availableShirtTypes.map((shirtTypeOption) => (
+                                  <option key={`${item.clientId}-${shirtTypeOption}`} value={shirtTypeOption}>
+                                    {shirtTypeOption}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="space-y-1">
+                              <span className="text-xs text-slate-300">Tamanho</span>
+                              <select
+                                value={item.shirtSize}
+                                onChange={(event_) => updateCheckoutItem(index, { shirtSize: event_.target.value })}
+                                disabled={!item.shirtType}
+                                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm disabled:opacity-50"
+                              >
+                                <option value="">Selecione</option>
+                                {getSizeOptionsForType(item.shirtType, index).map((size) => {
+                                  const effectiveStock = getEffectiveStockForItemVariant(index, item.shirtType, size);
+                                  const disabledOption = enforcePhysicalStock && effectiveStock <= 0;
+                                  return (
+                                    <option
+                                      key={`${item.clientId}-${item.shirtType}-${size}`}
+                                      value={size}
+                                      disabled={disabledOption}
+                                    >
+                                      {size} - {shirtAvailabilityText(effectiveStock, enforcePhysicalStock)}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </label>
+
+                            <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 sm:col-span-2">
+                              {item.shirtType && item.shirtSize
+                                ? shirtAvailabilityText(getEffectiveStockForItemVariant(index, item.shirtType, item.shirtSize), enforcePhysicalStock)
+                                : (!enforcePhysicalStock ? 'Disponivel para encomenda' : 'Selecione modelo e tamanho para ver disponibilidade')}
+                            </div>
+
+                            <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs">
+                              <p>{item.pricingGender === 'female' ? 'Feminino' : item.pricingGender === 'male' ? 'Masculino' : 'Nao definido'} - {money(item.finalAmount)}</p>
+                              <p className="text-slate-400">Base {money(item.unitPrice)} | Desc {money(item.discountAmount)}</p>
+                            </div>
+                          </div>
+
+                          {item.ownershipMode === 'named' ? (
+                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              <input
+                                value={item.holder_full_name}
+                                onChange={(event_) => updateCheckoutItem(index, { holder_full_name: event_.target.value })}
+                                placeholder="Nome do titular"
+                                className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
+                              />
+                              <input
+                                value={item.holder_email}
+                                onChange={(event_) => updateCheckoutItem(index, { holder_email: event_.target.value })}
+                                placeholder="E-mail (opcional)"
+                                className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
+                              />
+                            </div>
+                          ) : null}
+
+                          {item.validationErrors.length > 0 ? (
+                            <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-rose-200">
+                              {item.validationErrors.map((err) => (
+                                <li key={`${item.clientId}-${err}`}>{err}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+
+                          {index < activeCheckoutItems.length - 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCheckoutItems((prev) => prev.map((entry, entryIndex) => {
+                                  if (entryIndex <= index) return entry;
+                                  return {
+                                    ...entry,
+                                    pricingGender: item.pricingGender,
+                                    shirtType: item.shirtType,
+                                    shirtSize: item.shirtSize,
+                                  };
+                                }));
+                                void refreshItemPricingByCoupon(form.coupon_code || undefined);
+                              }}
+                              className="mt-3 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
+                            >
+                              Aplicar esta configuracao aos ingressos restantes
+                            </button>
+                          ) : null}
+                        </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-medium text-slate-100">Sem configuracao adicional para este evento</p>
+                        <p className="mt-1 text-xs text-slate-400">Voce pode continuar para o resumo e pagamento.</p>
+                      </>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => unlockAndGoTo(5)}
+                    onClick={handleItemsNext}
+                    disabled={isRepricingItems}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
                   >
-                    Continuar
+                    {isRepricingItems ? 'Atualizando...' : 'Continuar'}
                   </button>
                 </div>
               </div>
@@ -1199,7 +1822,7 @@ export function RegistrationWizard({
                     <strong>Nascimento:</strong> {form.birth_date}
                   </p>
                   <p>
-                    <strong>Gênero:</strong> {form.gender === 'female' ? 'Feminino' : 'Masculino'}
+                    <strong>Ingressos:</strong> {form.quantity}
                   </p>
                   <p>
                     <strong>Telefone:</strong> {form.phone}
@@ -1211,7 +1834,7 @@ export function RegistrationWizard({
                     <strong>Categoria:</strong> {selectedCategory?.name || '-'}
                   </p>
                   <p>
-                    <strong>Quantidade:</strong> 1
+                    <strong>Quantidade:</strong> {form.quantity}
                   </p>
                   <p>
                     <strong>Lote:</strong> {pricing?.batch_name || '-'}
@@ -1220,12 +1843,12 @@ export function RegistrationWizard({
                     <strong>Cupom:</strong> {form.coupon_code || 'Sem cupom'}
                   </p>
                   <p>
-                    <strong>Preco:</strong> {money(pricing?.base_amount || 0)}
+                    <strong>Preco:</strong> {summaryValues.original}
                   </p>
                   <p>
-                    <strong>Desconto:</strong> {money(pricing?.discount_amount || 0)}
+                    <strong>Desconto:</strong> {summaryValues.discount}
                   </p>
-                  {Number(pricing?.final_amount ?? 0) > 0 ? (
+                  {itemTotals.total > 0 ? (
                     <label className="space-y-1 sm:col-span-2">
                       <span className="text-sm text-slate-200">Forma de pagamento</span>
                       <select
@@ -1233,8 +1856,9 @@ export function RegistrationWizard({
                         onChange={(event_) => setField('payment_method', event_.target.value as FormState['payment_method'])}
                         className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
                       >
-                        <option value="pix">PIX</option>
-                        <option value="credit_card">Cartao</option>
+                        {availablePaymentMethods.map((method) => (
+                          <option key={method} value={method}>{paymentMethodLabel(method)}</option>
+                        ))}
                       </select>
                     </label>
                   ) : (
@@ -1243,16 +1867,19 @@ export function RegistrationWizard({
                     </p>
                   )}
                   <p>
-                    <strong>Pagamento:</strong> {Number(pricing?.final_amount ?? 0) <= 0 ? 'Nao necessario (cortesia)' : form.payment_method === 'credit_card' ? 'Cartao' : 'PIX'}
+                    <strong>Pagamento:</strong> {itemTotals.total <= 0 ? 'Nao necessario (cortesia)' : paymentMethodLabel(form.payment_method)}
                   </p>
                   <p>
-                    <strong>Total:</strong> {money(pricing?.final_amount || 0)}
+                    <strong>Total:</strong> {summaryValues.total}
                   </p>
-                  {hasShirtItem && (
-                    <p className="sm:col-span-2">
-                      <strong>Camiseta:</strong> {shirtType || '-'} / {shirtSize || '-'}
-                    </p>
-                  )}
+                  <div className="sm:col-span-2 space-y-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3">
+                    <p className="font-medium text-slate-100">Resumo item a item</p>
+                    {activeCheckoutItems.map((item, index) => (
+                      <p key={`resume-item-${item.clientId}`}>
+                        #{index + 1} - {item.shirtType || '-'} / {item.shirtSize || '-'} - {money(item.finalAmount)}
+                      </p>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="flex justify-end">
@@ -1274,7 +1901,10 @@ export function RegistrationWizard({
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
                   <p>
-                    Participante: <strong>{registration.participant_name}</strong>
+                    Comprador: <strong>{registration.participant_name}</strong>
+                  </p>
+                  <p>
+                    Itens no pedido: <strong>{registration.item_count ?? registration.items?.length ?? 1}</strong>
                   </p>
                   <p>
                     Valor: <strong className="text-emerald-300">{money(registration.payment.final_amount)}</strong>
@@ -1292,7 +1922,7 @@ export function RegistrationWizard({
                   )}
                 </div>
 
-                {form.payment_method === 'pix' && (
+                {(registration.payment.payment_method ?? form.payment_method) === 'pix' && (
                   <div className="space-y-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
                     <p className="font-medium">Use o código PIX abaixo:</p>
                     <textarea readOnly value={registration.payment.pix_code || ''} className="h-28 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs" />
@@ -1308,6 +1938,21 @@ export function RegistrationWizard({
                     )}
                   </div>
                 )}
+
+                {registration.items && registration.items.length > 0 ? (
+                  <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
+                    <p className="font-medium text-slate-100">Itens do pedido</p>
+                    <ul className="mt-2 space-y-2">
+                      {registration.items.map((item) => (
+                        <li key={item.item_id} className="rounded-lg border border-slate-700 px-3 py-2">
+                          <p>Ingresso {item.item_position} - {item.category_name || selectedCategory?.name || '-'}</p>
+                          <p>Titular: {item.titular_display}</p>
+                          <p>Status: {item.item_status}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
 
                 {registration.payment.payment_status !== 'paid' ? (
                   <div className="flex flex-wrap gap-2">
@@ -1332,10 +1977,17 @@ export function RegistrationWizard({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => unlockAndGoTo(7)}
+                    onClick={() => {
+                      const ticketId = registration.items?.find((item) => item.ticket_id)?.ticket_id;
+                      if (ticketId) {
+                        router.push(`/minha-conta/ingressos/${ticketId}`);
+                        return;
+                      }
+                      unlockAndGoTo(7);
+                    }}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
                   >
-                    Ver confirmação
+                    Ver ingresso
                   </button>
                 )}
               </div>
@@ -1346,7 +1998,7 @@ export function RegistrationWizard({
                 <h2 className="text-lg font-semibold">7. Resumo final do pedido</h2>
                 <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4 text-sm text-emerald-100">
                   <p>
-                    Inscrição registrada para <strong>{registration.participant_name}</strong>.
+                    Pedido registrado para <strong>{registration.participant_name}</strong>.
                   </p>
                   <p>
                     Status da inscrição: <strong>{registration.reservation_status}</strong>
@@ -1359,7 +2011,7 @@ export function RegistrationWizard({
                   </p>
                   {courtesyMessage ? <p>{courtesyMessage}</p> : null}
                   <p>
-                    Protocolo: <strong>{registration.participant_id}</strong>
+                    Protocolo: <strong>{registration.order_id || registration.participant_id}</strong>
                   </p>
                   {registration.order_number ? (
                     <p>
@@ -1372,6 +2024,7 @@ export function RegistrationWizard({
                   <div className="grid gap-2 sm:grid-cols-2">
                     <p><strong>Evento:</strong> {event.name}</p>
                     <p><strong>Categoria:</strong> {registration.category_name || '-'}</p>
+                    <p><strong>Quantidade:</strong> {registration.item_count ?? registration.items?.length ?? 1}</p>
                     <p><strong>Lote:</strong> {registration.batch_name || '-'}</p>
                     <p><strong>Camiseta:</strong> {registration.shirt_type || '-'} / {registration.shirt_size || '-'}</p>
                     <p><strong>Valor original:</strong> {money(registration.payment.amount)}</p>
@@ -1382,7 +2035,7 @@ export function RegistrationWizard({
 
                   {registration.payment.payment_status === 'paid' && registration.qr_token ? (
                     <div className="mt-4 space-y-3">
-                      <p className="text-emerald-200">Pagamento confirmado. QR Code e PDF já estão disponíveis.</p>
+                      <p className="text-emerald-200">Pagamento confirmado. O ingresso com titular definido ja possui QR Code e PDF.</p>
                       <TicketViewer
                         eventName={event.name}
                         participantName={registration.participant_name}
@@ -1408,6 +2061,19 @@ export function RegistrationWizard({
                       ) : null}
                     </div>
                   )}
+
+                  {registration.items && registration.items.length > 0 ? (
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-slate-100">Ingressos do pedido</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {registration.items.map((item) => (
+                          <li key={item.item_id}>
+                            Ingresso {item.item_position}: {item.titular_display} - {item.ticket_status || item.item_status}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
 
                   {registration.kit_items.length > 0 ? (
                     <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -1455,10 +2121,11 @@ export function RegistrationWizard({
                 <p className="mt-3 text-base font-semibold text-white">{summaryValues.event}</p>
                 <div className="mt-3 space-y-1">
                   <p>Categoria: {summaryValues.category}</p>
+                  <p>Quantidade: {summaryValues.quantity}</p>
                   <p>Lote: {summaryValues.batch}</p>
-                  <p>Gênero: {summaryValues.gender}</p>
-                  <p>Camiseta: {summaryValues.shirt}</p>
-                  <p>Tamanho: {summaryValues.size}</p>
+                  {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
+                    <p key={`d-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
+                  ))}
                   <p>Cupom: {summaryValues.coupon}</p>
                 </div>
                 <div className="mt-4 border-t border-slate-800 pt-3">

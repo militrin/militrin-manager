@@ -8,13 +8,15 @@ import { EventsManager } from "@/app/eventos/ui";
 async function getEventsData() {
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: eventsData, error: eventsError }, { data: activeEventData, error: activeEventError }] = await Promise.all([
+  const [{ data: eventsData, error: eventsError }, { data: activeEventData, error: activeEventError }, { data: highlightsData, error: highlightsError }] = await Promise.all([
     supabase.rpc("get_events_overview"),
     supabase.from("events").select("id, name").eq("is_active", true).maybeSingle(),
+    supabase.from('event_highlights').select('event_id, sort_order, is_active'),
   ]);
 
   if (eventsError) throw eventsError;
   if (activeEventError) throw activeEventError;
+  if (highlightsError) throw highlightsError;
 
   const events = (eventsData ?? []).map((row: {
     id: string;
@@ -55,11 +57,16 @@ async function getEventsData() {
   return {
     activeEvent: activeEventData?.id ? { id: String(activeEventData.id), name: String(activeEventData.name ?? "") } : null,
     events,
+    highlights: (highlightsData ?? []).map((row: { event_id: string; sort_order: number; is_active: boolean }) => ({
+      event_id: String(row.event_id),
+      sort_order: Number(row.sort_order ?? 0),
+      is_active: Boolean(row.is_active),
+    })),
   };
 }
 
 export default async function AdminEventsPage() {
-  const { activeEvent, events } = await getEventsData();
+  const { activeEvent, events, highlights } = await getEventsData();
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -71,7 +78,7 @@ export default async function AdminEventsPage() {
             {events.length === 0 ? (
               <EmptyState title="Nenhum evento cadastrado" description="Crie o primeiro evento para iniciar a gestão." />
             ) : null}
-            <EventsManager events={events} activeEvent={activeEvent} />
+            <EventsManager events={events} activeEvent={activeEvent} highlights={highlights} />
           </SectionCard>
         </div>
       </div>

@@ -21,7 +21,7 @@ export default async function MinhasComprasPage() {
 
   const { data: orders, error } = await supabase
     .from('orders')
-    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participants(full_name, reservation_expires_at, ticket_categories(name)), events(name), payments(payment_method, payment_status), tickets(id, token, status)')
+    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participants(full_name, reservation_expires_at, ticket_categories(name)), events(name), payments(payment_method, payment_status), tickets(id, token, status), order_items(id, item_position, status, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))')
     .eq('user_id', user?.id ?? '')
     .order('created_at', { ascending: false });
 
@@ -54,9 +54,29 @@ export default async function MinhasComprasPage() {
             const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
             const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
             const ticket = tickets[0] ?? null;
+            const orderItems = Array.isArray(order.order_items) ? order.order_items : (order.order_items ? [order.order_items] : []);
             const normalizedOrderStatus = normalizeOrderStatus(String(order.status ?? 'pending'));
             const normalizedPaymentStatus = normalizeOrderStatus(String(payment?.payment_status ?? 'pending'));
-            const showQr = normalizedOrderStatus === 'confirmed' && (ticket?.status === 'active' || ticket?.status === 'used');
+            const firstTicketFromItems = orderItems
+              .map((item) => {
+                const itemTicket = Array.isArray(item.tickets) ? item.tickets[0] : item.tickets;
+                return itemTicket ?? null;
+              })
+              .find((itemTicket) => itemTicket?.id) ?? null;
+            const activeTicket = firstTicketFromItems ?? ticket;
+            const showQr = normalizedOrderStatus === 'confirmed' && (activeTicket?.status === 'active' || activeTicket?.status === 'used');
+            const itemCount = orderItems.length > 0 ? orderItems.length : 1;
+            const itemSummary = orderItems.length > 0
+              ? orderItems
+                  .slice(0, 3)
+                  .map((item, idx) => {
+                    const itemParticipant = Array.isArray(item.participants) ? item.participants[0] : item.participants;
+                    const holder = itemParticipant?.full_name || item.holder_full_name || 'Titular ainda nao definido';
+                    const itemPosition = Number(item.item_position ?? idx + 1);
+                    return `#${itemPosition} ${holder} (${String(item.status ?? 'reserved')})`;
+                  })
+                  .join(' • ')
+              : participant?.full_name || 'Titular ainda nao definido';
 
             return (
               <MilitrinPurchaseCard
@@ -65,6 +85,8 @@ export default async function MinhasComprasPage() {
                 eventName={eventObj?.name ? String(eventObj.name) : 'Evento'}
                 date={formatDateBR(String(order.created_at))}
                 finalAmount={money(Number(order.final_amount ?? 0))}
+                quantity={itemCount}
+                subtitle={itemSummary}
                 paymentMethod={payment?.payment_method ? String(payment.payment_method) : '-'}
                 paymentStatus={normalizedPaymentStatus}
                 orderStatus={normalizedOrderStatus}
@@ -84,7 +106,7 @@ export default async function MinhasComprasPage() {
                       </Link>
                     ) : null}
                     {showQr ? (
-                      <Link href={`/minha-conta/ingressos/${ticket?.id}`}>
+                      <Link href={`/minha-conta/ingressos/${activeTicket?.id}`}>
                         <MilitrinButton size="sm" variant="success">Ver QR Code</MilitrinButton>
                       </Link>
                     ) : null}

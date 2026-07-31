@@ -43,6 +43,8 @@ type CategoryPriceForm = {
   female_price: string;
 };
 
+type PricingMode = "unisex" | "gendered";
+
 type FormState = {
   id?: string;
   name: string;
@@ -50,6 +52,7 @@ type FormState = {
   starts_at: string;
   ends_at: string;
   is_active: boolean;
+  pricing_mode: PricingMode;
   category_prices: CategoryPriceForm[];
 };
 
@@ -63,6 +66,7 @@ function initialForm(categories: CategoryRow[]): FormState {
     starts_at: "",
     ends_at: "",
     is_active: false,
+    pricing_mode: "unisex",
     category_prices: categories.map((category) => ({
       ticket_category_id: category.id,
       enabled: singleCategoryId ? category.id === singleCategoryId : category.slug === "open-bar",
@@ -85,6 +89,12 @@ function toDatetimeLocal(value: string | null) {
   const date = new Date(value);
   const tzOffset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+}
+
+function detectPricingMode(categoryPrices: Array<{ male_price: number; female_price: number }>): PricingMode {
+  if (categoryPrices.length === 0) return "unisex";
+  const hasDifference = categoryPrices.some((price) => Number(price.male_price) !== Number(price.female_price));
+  return hasDifference ? "gendered" : "unisex";
 }
 
 export function BatchesManager({
@@ -132,6 +142,15 @@ export function BatchesManager({
       starts_at: toDatetimeLocal(batch.starts_at),
       ends_at: toDatetimeLocal(batch.ends_at),
       is_active: batch.is_active,
+      pricing_mode: detectPricingMode(
+        categories.map((category) => {
+          const existing = byCategory.get(category.id);
+          return {
+            male_price: existing ? Number(existing.male_price) : Number(batch.male_price),
+            female_price: existing ? Number(existing.female_price) : Number(batch.female_price),
+          };
+        }),
+      ),
       category_prices: categories.map((category) => {
         const existing = byCategory.get(category.id);
         return {
@@ -159,9 +178,28 @@ export function BatchesManager({
         [field]: value,
       } as CategoryPriceForm;
 
+      if (prev.pricing_mode === "unisex" && field === "male_price") {
+        next[index].female_price = String(value);
+      }
+
       return {
         ...prev,
         category_prices: next,
+      };
+    });
+  }
+
+  function updatePricingMode(mode: PricingMode) {
+    setForm((prev) => {
+      if (mode === prev.pricing_mode) return prev;
+      const nextCategoryPrices = prev.category_prices.map((categoryPrice) => ({
+        ...categoryPrice,
+        female_price: mode === "unisex" ? categoryPrice.male_price : categoryPrice.female_price,
+      }));
+      return {
+        ...prev,
+        pricing_mode: mode,
+        category_prices: nextCategoryPrices,
       };
     });
   }
@@ -182,9 +220,11 @@ export function BatchesManager({
 
     for (const categoryPrice of enabled) {
       const male = Number(categoryPrice.male_price);
-      const female = Number(categoryPrice.female_price);
+      const female = form.pricing_mode === "unisex" ? male : Number(categoryPrice.female_price);
       if (Number.isNaN(male) || male < 0 || Number.isNaN(female) || female < 0) {
-        return "Toda categoria ativa precisa de preco masculino e feminino validos.";
+        return form.pricing_mode === "unisex"
+          ? "Toda categoria ativa precisa de preco unissex valido."
+          : "Toda categoria ativa precisa de preco masculino e feminino validos.";
       }
     }
 
@@ -209,12 +249,18 @@ export function BatchesManager({
         starts_at: form.starts_at || null,
         ends_at: form.ends_at || null,
         is_active: form.is_active,
-        category_prices: form.category_prices.map((categoryPrice) => ({
-          ticket_category_id: categoryPrice.ticket_category_id,
-          enabled: categoryPrice.enabled,
-          male_price: Number(categoryPrice.male_price || 0),
-          female_price: Number(categoryPrice.female_price || 0),
-        })),
+        category_prices: form.category_prices.map((categoryPrice) => {
+          const malePrice = Number(categoryPrice.male_price || 0);
+          const femalePrice = form.pricing_mode === "unisex"
+            ? malePrice
+            : Number(categoryPrice.female_price || 0);
+          return {
+            ticket_category_id: categoryPrice.ticket_category_id,
+            enabled: categoryPrice.enabled,
+            male_price: malePrice,
+            female_price: femalePrice,
+          };
+        }),
       };
 
       const result = form.id ? await updateBatchAction(payload) : await createBatchAction(payload);
@@ -303,6 +349,33 @@ export function BatchesManager({
         </label>
 
         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+          <p className="text-sm font-semibold text-slate-200">Modelo de precificacao</p>
+          <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-300">
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="pricing-mode"
+                checked={form.pricing_mode === "unisex"}
+                onChange={() => updatePricingMode("unisex")}
+              />
+              Unissex
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="pricing-mode"
+                checked={form.pricing_mode === "gendered"}
+                onChange={() => updatePricingMode("gendered")}
+              />
+              Masculino e Feminino
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-slate-400">
+            No modo Unissex, o mesmo valor e aplicado para todos os generos.
+          </p>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
           {isSingleActiveCategory ? (
             <p className="text-sm font-semibold text-slate-200">Precos</p>
           ) : (
@@ -327,9 +400,9 @@ export function BatchesManager({
                       </label>
                     ) : null}
                   </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className={`mt-3 grid gap-3 ${form.pricing_mode === "unisex" ? "md:grid-cols-1" : "md:grid-cols-2"}`}>
                     <label className="space-y-1 text-sm">
-                      <span className="text-slate-300">Preco masculino</span>
+                      <span className="text-slate-300">{form.pricing_mode === "unisex" ? "Preco unissex" : "Preco masculino"}</span>
                       <input
                         value={categoryPrice?.male_price ?? ""}
                         onChange={(event) => updateCategoryPrice(categoryIndex, "male_price", event.target.value)}
@@ -338,15 +411,17 @@ export function BatchesManager({
                       />
                     </label>
 
-                    <label className="space-y-1 text-sm">
-                      <span className="text-slate-300">Preco feminino</span>
-                      <input
-                        value={categoryPrice?.female_price ?? ""}
-                        onChange={(event) => updateCategoryPrice(categoryIndex, "female_price", event.target.value)}
-                        disabled={!isSingleActiveCategory && !(categoryPrice?.enabled ?? false)}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 disabled:opacity-60"
-                      />
-                    </label>
+                    {form.pricing_mode === "gendered" ? (
+                      <label className="space-y-1 text-sm">
+                        <span className="text-slate-300">Preco feminino</span>
+                        <input
+                          value={categoryPrice?.female_price ?? ""}
+                          onChange={(event) => updateCategoryPrice(categoryIndex, "female_price", event.target.value)}
+                          disabled={!isSingleActiveCategory && !(categoryPrice?.enabled ?? false)}
+                          className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 disabled:opacity-60"
+                        />
+                      </label>
+                    ) : null}
                   </div>
                 </div>
               );

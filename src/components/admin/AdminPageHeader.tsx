@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { PanelUserBadge } from '@/components/dashboard/PanelUserBadge';
 
 type AdminPageHeaderProps = {
   title: string;
@@ -14,7 +15,10 @@ export function AdminPageHeader({ title, subtitle, actions }: AdminPageHeaderPro
           <h1 className="text-2xl font-semibold text-white sm:text-3xl">{title}</h1>
           {subtitle ? <p className="mt-2 text-sm text-slate-300">{subtitle}</p> : null}
         </div>
-        {actions}
+        <div className="flex flex-wrap items-center gap-2">
+          {actions}
+          <PanelUserBadge />
+        </div>
       </div>
     </header>
   );

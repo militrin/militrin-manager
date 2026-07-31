@@ -10,6 +10,7 @@ import { inferColumnMapping, type CanonicalField } from '@/lib/imports/columns';
 import { parseSpreadsheetFile } from '@/lib/imports/parse-file';
 import {
   maskCpf,
+  removeAccents,
   normalizeCpf,
   normalizeEmail,
   normalizeForMatch,
@@ -75,6 +76,17 @@ function parseAmount(value: string | null | undefined) {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeHistoricalEventKey(value: string) {
+  return removeDuplicateSpaces(removeAccents(value).toLowerCase())
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function extractEventYearFromLabel(value: string) {
+  const match = value.match(/(19|20)\d{2}/);
+  return match ? Number(match[0]) : null;
 }
 
 function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<CanonicalField, string>>, fallbackYear: number | null) {
@@ -218,8 +230,10 @@ export async function parseImportFileAction(formData: FormData) {
   const importType = importTypeSchema.parse(importTypeRaw);
   const eventIdValue = String(formData.get('event_id') ?? '').trim();
   const eventId = eventIdValue || null;
-  const eventYearValue = String(formData.get('event_year') ?? '').trim();
-  const eventYear = eventYearValue ? Number(eventYearValue) : null;
+  const historicalEventName = removeDuplicateSpaces(String(formData.get('historical_event_name') ?? '').trim());
+  const historicalEventYearValue = String(formData.get('historical_event_year') ?? '').trim();
+  const historicalEventYear = historicalEventYearValue ? Number(historicalEventYearValue) : null;
+  const historicalEventKey = historicalEventName ? normalizeHistoricalEventKey(historicalEventName) : null;
   const mappingJson = String(formData.get('mapping_json') ?? '').trim();
 
   if (!(file instanceof File)) {
@@ -241,6 +255,10 @@ export async function parseImportFileAction(formData: FormData) {
       return { success: false as const, message: 'Arquivo vazio ou sem cabecalho valido.' };
     }
 
+    if (importType === 'historical_participations' && !historicalEventName) {
+      return { success: false as const, message: 'Informe o nome do evento histórico.' };
+    }
+
     const inferredMapping = inferColumnMapping(headers);
     const customMapping = mappingJson ? JSON.parse(mappingJson) as Partial<Record<CanonicalField, string>> : null;
     const mapping = customMapping && Object.keys(customMapping).length ? customMapping : inferredMapping;
@@ -250,14 +268,14 @@ export async function parseImportFileAction(formData: FormData) {
     const normalizedNames = new Set<string>();
 
     const normalizedRows = rows.map((rawRow) => {
-      const normalized = toCanonicalRow(rawRow, mapping, eventYear);
+      const normalized = toCanonicalRow(rawRow, mapping, historicalEventYear);
       if (normalized.cpf) cpfs.add(normalized.cpf);
       if (normalized.email) emails.add(normalized.email);
       if (normalized.normalized_name) normalizedNames.add(normalized.normalized_name);
       return normalized;
     });
 
-    const [{ data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }] = await Promise.all([
+    const [{ data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }, { data: existingHistoricalRows }] = await Promise.all([
       cpfs.size
         ? supabase
             .from('participants')
@@ -276,6 +294,13 @@ export async function parseImportFileAction(formData: FormData) {
             .select('id, full_name, cpf, email, event_id, user_id')
             .eq('event_id', eventId)
             .limit(5000)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      importType === 'historical_participations' && historicalEventKey
+        ? supabase
+            .from('participation_history')
+            .select('id, participant_id, user_id, cpf, email, normalized_name, historical_event_key')
+            .eq('historical_event_key', historicalEventKey)
+            .limit(10000)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
 
@@ -297,12 +322,27 @@ export async function parseImportFileAction(formData: FormData) {
       if (key) normalizedNameMap.set(key, participant);
     }
 
+    const historicalIdentitySet = new Set<string>();
+    for (const historicalRow of existingHistoricalRows ?? []) {
+      const rowCpf = normalizeCpf(String(historicalRow.cpf ?? ''));
+      const rowEmail = normalizeEmail(String(historicalRow.email ?? ''));
+      const rowName = normalizeForMatch(String(historicalRow.normalized_name ?? ''));
+      if (rowCpf) historicalIdentitySet.add(`cpf:${rowCpf}`);
+      if (rowEmail) historicalIdentitySet.add(`email:${rowEmail}`);
+      if (rowName) historicalIdentitySet.add(`name:${rowName}`);
+    }
+
     const batchInsert = await supabase
       .from('import_batches')
       .insert({
         file_name: file.name,
         import_type: importType,
         event_id: eventId,
+        historical_event_label: importType === 'historical_participations' ? historicalEventName : null,
+        historical_event_key: importType === 'historical_participations' ? historicalEventKey : null,
+        historical_event_year: importType === 'historical_participations'
+          ? (historicalEventYear ?? extractEventYearFromLabel(historicalEventName) ?? null)
+          : null,
         imported_by: user.id,
         total_rows: normalizedRows.length,
         status: 'processing',
@@ -319,6 +359,7 @@ export async function parseImportFileAction(formData: FormData) {
     let errorRows = 0;
     let duplicateRows = 0;
     let reviewRows = 0;
+    const seenHistoricalIdentityKeys = new Set<string>();
 
     const rowsToInsert = normalizedRows.map((row, index) => {
       let status = 'ready';
@@ -335,6 +376,25 @@ export async function parseImportFileAction(formData: FormData) {
       if (importType === 'current_event_registrations' && !eventId) {
         status = 'error';
         errorMessage = 'Selecione um evento para importar inscritos do evento atual.';
+      }
+
+      if (importType === 'historical_participations' && historicalEventKey && status !== 'error') {
+        const identityParts = [
+          row.cpf ? `cpf:${row.cpf}` : null,
+          row.email ? `email:${row.email}` : null,
+          row.normalized_name ? `name:${row.normalized_name}` : null,
+        ].filter(Boolean) as string[];
+
+        if (identityParts.length > 0) {
+          const compoundKey = `${historicalEventKey}::${identityParts.join('|')}`;
+          if (seenHistoricalIdentityKeys.has(compoundKey) || identityParts.some((part) => historicalIdentitySet.has(part))) {
+            status = 'duplicate';
+            resolution = 'pending';
+            errorMessage = 'Participacao historica duplicada para este evento.';
+          } else {
+            seenHistoricalIdentityKeys.add(compoundKey);
+          }
+        }
       }
 
       if (status !== 'error' && row.cpf && cpfMap.has(row.cpf)) {
@@ -544,7 +604,7 @@ export async function executeImportBatchAction(batchId: string) {
 
   const { data: batch, error: batchError } = await supabase
     .from('import_batches')
-    .select('id, import_type, event_id, total_rows')
+    .select('id, import_type, event_id, historical_event_label, historical_event_key, historical_event_year, total_rows')
     .eq('id', batchId)
     .single();
 
@@ -628,8 +688,9 @@ export async function executeImportBatchAction(batchId: string) {
             event_id: batch.event_id,
             user_id: linkedUserId,
             participant_id: matchedParticipantId,
-            legacy_event_name: String(normalized.event_name ?? '').trim() || null,
-            event_year: eventYear,
+            legacy_event_name: String(batch.historical_event_label ?? '').trim() || null,
+            historical_event_key: String(batch.historical_event_key ?? ''),
+            event_year: Number(batch.historical_event_year ?? normalized.event_year ?? new Date().getFullYear()),
             full_name: fullName,
             normalized_name: normalizeForMatch(fullName),
             cpf,

@@ -42,7 +42,8 @@ export function ImportacoesClient({ events }: { events: EventOption[] }) {
   const [file, setFile] = useState<File | null>(null);
   const [importType, setImportType] = useState<'historical_participations' | 'current_event_registrations'>('historical_participations');
   const [eventId, setEventId] = useState('');
-  const [eventYear, setEventYear] = useState(String(new Date().getFullYear()));
+  const [historicalEventName, setHistoricalEventName] = useState('MILITRIN 2025');
+  const [historicalEventYear, setHistoricalEventYear] = useState(String(new Date().getFullYear()));
   const [batchId, setBatchId] = useState<string | null>(null);
   const [rows, setRows] = useState<BatchRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -75,7 +76,8 @@ export function ImportacoesClient({ events }: { events: EventOption[] }) {
     formData.set('file', file);
     formData.set('import_type', importType);
     formData.set('event_id', eventId);
-    formData.set('event_year', eventYear);
+    formData.set('historical_event_name', historicalEventName);
+    formData.set('historical_event_year', historicalEventYear);
     if (customMapping) {
       formData.set('mapping_json', JSON.stringify(customMapping));
     }
@@ -185,20 +187,41 @@ export function ImportacoesClient({ events }: { events: EventOption[] }) {
             </select>
           </label>
 
-          <label className="space-y-1 text-sm text-slate-300">
-            <span>Evento</span>
-            <select value={eventId} onChange={(event) => setEventId(event.target.value)} className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3">
-              <option value="">Selecionar evento</option>
-              {events.map((event) => (
-                <option key={event.id} value={event.id}>{event.name} {event.year ? `(${event.year})` : ''}</option>
-              ))}
-            </select>
-          </label>
+          {importType === 'historical_participations' ? (
+            <>
+              <label className="space-y-1 text-sm text-slate-300 md:col-span-2 xl:col-span-2">
+                <span>Nome do evento histórico</span>
+                <input
+                  value={historicalEventName}
+                  onChange={(event) => setHistoricalEventName(event.target.value)}
+                  className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 uppercase"
+                  placeholder="MILITRIN 2025"
+                />
+              </label>
 
-          <label className="space-y-1 text-sm text-slate-300">
-            <span>Ano do evento</span>
-            <input value={eventYear} onChange={(event) => setEventYear(event.target.value)} className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
-          </label>
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>Ano interno</span>
+                <input value={historicalEventYear} onChange={(event) => setHistoricalEventYear(event.target.value)} className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>Evento</span>
+                <select value={eventId} onChange={(event) => setEventId(event.target.value)} className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3">
+                  <option value="">Selecionar evento</option>
+                  {events.map((event) => (
+                    <option key={event.id} value={event.id}>{event.name} {event.year ? `(${event.year})` : ''}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>Ano do evento</span>
+                <input value={historicalEventYear} onChange={(event) => setHistoricalEventYear(event.target.value)} className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
+              </label>
+            </>
+          )}
 
           <label className="space-y-1 text-sm text-slate-300">
             <span>Arquivo</span>
@@ -243,6 +266,15 @@ export function ImportacoesClient({ events }: { events: EventOption[] }) {
       {summary ? (
         <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
           <h2 className="text-xl font-semibold text-white">5) Prévia e validação</h2>
+          {importType === 'historical_participations' ? (
+            <div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-sm text-slate-200">
+              <p>Evento que será registrado: <strong>{historicalEventName}</strong></p>
+              <p className="mt-1">Participantes encontrados: <strong>{summary.totalRows}</strong></p>
+              {rows.slice(0, 3).length > 0 ? (
+                <p className="mt-1 text-slate-400">Exemplos: {rows.slice(0, 3).map((row) => row.full_name).join(', ')}</p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-5">
             <p>Linhas: {summary.totalRows}</p>
             <p>Prontas: {summary.readyRows}</p>
@@ -297,7 +329,7 @@ export function ImportacoesClient({ events }: { events: EventOption[] }) {
 
           <div className="mt-4 flex flex-wrap gap-3">
             <button type="button" onClick={executeImport} disabled={isPending || !batchId} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
-              {isPending ? 'Importando...' : `7) Confirmar importação (${readyCount} prontas)`}
+              {isPending ? 'Importando...' : `7) Confirmar importação de ${readyCount} participações`}
             </button>
             <button type="button" onClick={downloadErrors} disabled={isPending || !batchId} className="h-11 rounded-xl border border-slate-700 px-5 text-sm text-slate-200 disabled:opacity-60">
               Baixar CSV de erros

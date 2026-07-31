@@ -79,6 +79,8 @@ export async function saveTeamAccessAction(input: {
     ? data.removed_permissions.map((item: unknown) => String(item))
     : [];
 
+  revalidatePath('/painel/configuracoes/equipe');
+  revalidatePath(`/painel/configuracoes/equipe/${payload.targetUserId}`);
   revalidatePath('/configuracoes/equipe');
   revalidatePath(`/configuracoes/equipe/${payload.targetUserId}`);
 

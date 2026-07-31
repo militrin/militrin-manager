@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { CalendarDays, Medal, QrCode, ShoppingBag, Ticket, UserRound } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatDateBR } from '@/lib/utils/date';
+import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { getLoyaltyLevel, getLoyaltyProgress, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
 import {
   resolveParticipantAvatarUrl,
@@ -106,7 +106,7 @@ export default async function MinhaContaPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [profileResult, ordersResult, ticketsResult, eventsResult, tiersResult] = await Promise.all([
+  const [profileResult, ordersResult, ticketsResult, eventsResult, tiersResult, featuredEventsResult, kitDeliveriesResult] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     supabase
       .from('orders')
@@ -128,6 +128,8 @@ export default async function MinhaContaPage() {
       .select('id, slug, name, badge, min_confirmed_participations, sort_order')
       .order('min_confirmed_participations', { ascending: true })
       .order('sort_order', { ascending: true }),
+    supabase.rpc('get_featured_events_for_dashboard'),
+    supabase.rpc('get_upcoming_kit_deliveries', { p_limit: 4 }),
   ]);
 
   const profile = (Array.isArray(profileResult.data) ? profileResult.data[0] : profileResult.data) as Record<string, unknown> | null;
@@ -135,7 +137,49 @@ export default async function MinhaContaPage() {
   const loyaltyLevels = sortLoyaltyLevels((tiersResult.data ?? []).map((level) => normalizeLoyaltyLevel(level as Record<string, unknown>)));
   const orders = ordersResult.data ?? [];
   const openEvents = (eventsResult.data ?? []).filter((event) => isEventOpen(event));
-  const activeTickets = (ticketsResult.data ?? []).filter((ticket) => String(ticket.status ?? '') === 'active');
+  const featuredEvents = ((featuredEventsResult.data ?? []) as Array<{
+    event_id: string;
+    sort_order: number;
+    name: string;
+    slug: string;
+    starts_at: string | null;
+    ends_at: string | null;
+    location: string | null;
+    registration_enabled: boolean;
+    registration_open_at: string | null;
+    registration_close_at: string | null;
+  }>).map((event) => ({
+    id: String(event.event_id),
+    name: String(event.name ?? 'Evento'),
+    slug: String(event.slug ?? ''),
+    starts_at: event.starts_at ? String(event.starts_at) : null,
+    ends_at: event.ends_at ? String(event.ends_at) : null,
+    location: event.location ? String(event.location) : null,
+    registration_enabled: Boolean(event.registration_enabled),
+    registration_open_at: event.registration_open_at ? String(event.registration_open_at) : null,
+    registration_close_at: event.registration_close_at ? String(event.registration_close_at) : null,
+    sort_order: Number(event.sort_order ?? 0),
+  }));
+  const dashboardEvents = featuredEvents.length > 0 ? featuredEvents : openEvents;
+  const kitDeliveries = ((kitDeliveriesResult.data ?? []) as Array<{
+    id: string;
+    delivery_at: string;
+    city: string;
+    location: string;
+    sort_order: number;
+  }>).map((item) => ({
+    id: String(item.id),
+    delivery_at: String(item.delivery_at),
+    city: String(item.city ?? ''),
+    location: String(item.location ?? ''),
+    sort_order: Number(item.sort_order ?? 0),
+  }));
+  const allTickets = ticketsResult.data ?? [];
+  const activeTickets = allTickets.filter((ticket) => String(ticket.status ?? '') === 'active');
+  const highlightedTicket = allTickets.find((ticket) => {
+    const status = String(ticket.status ?? '').toLowerCase();
+    return status === 'active' || status === 'used';
+  }) ?? null;
   const confirmedParticipations = orders.filter((order) => order.status === 'confirmed').length;
   const currentLevel = getLoyaltyLevel(confirmedParticipations, loyaltyLevels);
   const progress = getLoyaltyProgress(confirmedParticipations, loyaltyLevels);
@@ -152,7 +196,6 @@ export default async function MinhaContaPage() {
     userMetadata,
   });
 
-  const nextEvent = openEvents[0] ?? null;
   const confirmedOrders = orders.filter((order) => String(order.status ?? '') === 'confirmed');
   const firstConfirmedParticipationDate = earliestDate(
     confirmedOrders.map((order) => String(order.confirmed_at ?? order.created_at ?? '')),
@@ -162,32 +205,34 @@ export default async function MinhaContaPage() {
   );
   const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
   const latestOrder = orders[0] ?? null;
-
-  const confirmedTicketOrder = confirmedOrders.find((order) => {
-    const ticketRows = Array.isArray(order.tickets) ? order.tickets : [];
-    return ticketRows.some((ticket) => String(ticket.status ?? '') === 'active');
-  }) ?? null;
-
-  const highlightedTicket = confirmedTicketOrder
-    ? (Array.isArray(confirmedTicketOrder.tickets) ? confirmedTicketOrder.tickets.find((ticket) => String(ticket.status ?? '') === 'active') : null)
+  const highlightedTicketOrder = highlightedTicket
+    ? orders.find((order) => String(order.id ?? '') === String(highlightedTicket.order_id ?? '')) ?? null
     : null;
 
   const highlightedTicketEventName = (() => {
-    const eventObj = Array.isArray(confirmedTicketOrder?.events) ? confirmedTicketOrder?.events[0] : confirmedTicketOrder?.events;
+    const eventObj = Array.isArray(highlightedTicketOrder?.events) ? highlightedTicketOrder?.events[0] : highlightedTicketOrder?.events;
     return eventObj?.name ? String(eventObj.name) : 'Evento Militrin';
   })();
 
-  let nextEventStartingPrice: string | null = null;
-  if (nextEvent?.id) {
-    const { data: categoriesData } = await supabase.rpc('get_event_ticket_categories', { p_event_id: nextEvent.id });
-    if (Array.isArray(categoriesData)) {
-      const lowestAmount = findInitialPrice(categoriesData as Array<Record<string, unknown>>);
-      if (lowestAmount !== null) {
-        nextEventStartingPrice = money(lowestAmount);
+  const cardEvents = await Promise.all(dashboardEvents.slice(0, 2).map(async (event) => {
+    let startingPrice: string | null = null;
+    if (event?.id) {
+      const { data: categoriesData } = await supabase.rpc('get_event_ticket_categories', { p_event_id: event.id });
+      if (Array.isArray(categoriesData)) {
+        const lowestAmount = findInitialPrice(categoriesData as Array<Record<string, unknown>>);
+        if (lowestAmount !== null) startingPrice = money(lowestAmount);
       }
     }
-  }
 
+    return {
+      id: String(event.id),
+      name: String(event.name),
+      date: event.starts_at ? formatDateBR(String(event.starts_at)) : 'Data a confirmar',
+      location: event.location ? String(event.location) : 'Local a confirmar',
+      registrationStatus: getRegistrationStatus(event),
+      startingPrice,
+    };
+  }));
   return (
     <section className="space-y-5">
       <MilitrinSection
@@ -238,18 +283,10 @@ export default async function MinhaContaPage() {
           </article>
 
           <MilitrinEventCard
-            name={nextEvent ? String(nextEvent.name) : 'Aguardando novo evento'}
-            date={nextEvent?.starts_at ? formatDateBR(String(nextEvent.starts_at)) : 'Data a confirmar'}
-            location={nextEvent?.location ? String(nextEvent.location) : 'Local a confirmar'}
-            registrationStatus={nextEvent ? getRegistrationStatus(nextEvent) : 'em breve'}
-            startingPrice={nextEventStartingPrice}
-            action={
-              nextEvent ? (
-                <Link href="/minha-conta/comprar">
-                  <MilitrinButton iconLeft={<ShoppingBag size={15} />}>Comprar ingresso</MilitrinButton>
-                </Link>
-              ) : null
-            }
+            events={cardEvents.map((event, index) => ({
+              ...event,
+              buyHref: dashboardEvents[index]?.slug ? `/inscricao/${dashboardEvents[index].slug}` : '/minha-conta/comprar',
+            }))}
           />
         </div>
 
@@ -263,23 +300,40 @@ export default async function MinhaContaPage() {
                   <MilitrinButton variant="success" iconLeft={<QrCode size={15} />}>Abrir QR Code</MilitrinButton>
                 </Link>
               </div>
+            ) : confirmedOrders.length > 0 ? (
+              <div className="mt-3 space-y-3 text-sm text-slate-200">
+                <p className="text-slate-300">Compra confirmada encontrada. O ingresso pode estar em processamento de emissão.</p>
+                <Link href={`/minha-conta/compras/${confirmedOrders[0].id}`}>
+                  <MilitrinButton variant="secondary" iconLeft={<Ticket size={15} />}>Acompanhar confirmação</MilitrinButton>
+                </Link>
+              </div>
             ) : (
               <p className="mt-3 text-sm text-slate-300">Nenhum ingresso ativo no momento.</p>
             )}
           </article>
 
           <article className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Próximo evento</p>
-            {nextEvent ? (
-              <div className="mt-3 space-y-2 text-sm text-slate-200">
-                <p className="truncate font-semibold text-white" title={String(nextEvent.name)}>{String(nextEvent.name)}</p>
-                <p>{nextEvent.starts_at ? formatDateBR(String(nextEvent.starts_at)) : 'Data a confirmar'}</p>
-                <p className="truncate" title={String(nextEvent.location ?? 'Local a confirmar')}>{String(nextEvent.location ?? 'Local a confirmar')}</p>
-                <p className="text-slate-300">Inscrições: {getRegistrationStatus(nextEvent)}</p>
-                {nextEventStartingPrice ? <p className="text-emerald-200">Preço inicial: {nextEventStartingPrice}</p> : null}
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Cronograma de entrega de kits</p>
+            {kitDeliveries.length > 0 ? (
+              <div className="mt-3 space-y-3 text-sm text-slate-200">
+                {kitDeliveries.map((item) => (
+                  <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+                    <p className="font-semibold text-white">{formatDateTimeBR(item.delivery_at, ' às ')}</p>
+                    <p>{item.city}</p>
+                    <p className="truncate" title={item.location}>{item.location}</p>
+                  </div>
+                ))}
+                <Link href="/minha-conta/entregas" className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
+                  Ver todas as entregas registradas!
+                </Link>
               </div>
             ) : (
-              <p className="mt-3 text-sm text-slate-300">Nenhum evento com inscrições abertas no momento.</p>
+              <div className="mt-3 space-y-3">
+                <p className="text-sm text-slate-300">Nenhuma entrega de kits programada no momento.</p>
+                <Link href="/minha-conta/entregas" className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
+                  Ver todas as entregas registradas!
+                </Link>
+              </div>
             )}
           </article>
         </div>

@@ -23,19 +23,21 @@ import { getSidebarPermissionMapAction } from "./sidebar-actions";
 
 const navigation = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/painel", permissionAny: ["dashboard.view"] },
-  { label: "Nova inscrição", icon: UserPlus, href: "/inscricoes/nova", permissionAny: ["participants.create"] },
   { label: "Eventos", icon: Layers, href: "/painel/eventos", permissionAny: ["events.view"] },
-  { label: "Inscritos", icon: Users, href: "/inscricoes", permissionAny: ["participants.view"] },
-  { label: "Retirada de kits", icon: PackageCheck, href: "/retirada", permissionAny: ["kits.view", "checkin.view"] },
-  { label: "Camisetas", icon: Shirt, href: "/camisetas", permissionAny: ["inventory.view"] },
-  { label: "Categorias", icon: Layers, href: "/categorias", permissionAny: ["categories.view"] },
-  { label: "Lotes", icon: Layers, href: "/lotes", permissionAny: ["batches.view"] },
-  { label: "Cupons", icon: Gift, href: "/cupons", permissionAny: ["coupons.view"] },
+  { label: "Participantes", icon: Users, href: "/inscricoes", permissionAny: ["participants.view"] },
+  { label: "Pedidos", icon: FileText, href: "/inscricoes", permissionAny: ["orders.view"] },
   { label: "Financeiro", icon: Wallet, href: "/financeiro", permissionAny: ["finance.view"] },
-  { label: "Relatórios", icon: FileText, href: "/inscricoes", permissionAny: ["reports.view"] },
+  { label: "Estoque", icon: Shirt, href: "/camisetas", permissionAny: ["inventory.view"] },
+  { label: "Entrega de kits", icon: PackageCheck, href: "/retirada", permissionAny: ["kits.view"] },
+  { label: "Cronograma de Entregas", icon: PackageCheck, href: "/painel/cronograma-entregas", permissionAny: ["kits.view"] },
+  { label: "Check-in", icon: PackageCheck, href: "/retirada", permissionAny: ["checkin.view"] },
+  { label: "Fotos", icon: Layers, href: "/fotos", permissionAny: ["photos.view_admin"] },
   { label: "Importações", icon: Import, href: "/importacoes", permissionAny: ["imports.view"] },
-  { label: "Equipe", icon: UserRoundCog, href: "/configuracoes/equipe", permissionAny: ["team.view"] },
+  { label: "Relatórios", icon: FileText, href: "/inscricoes", permissionAny: ["reports.view"] },
+  { label: "Cupons", icon: Gift, href: "/cupons", permissionAny: ["coupons.view"] },
+  { label: "Equipe", icon: UserRoundCog, href: "/painel/configuracoes/equipe", permissionAny: ["team.view"] },
   { label: "Configurações", icon: Settings, href: "/configuracao", permissionAny: ["settings.manage"] },
+  { label: "Nova inscrição", icon: UserPlus, href: "/inscricoes/nova", permissionAny: ["participants.create"] },
 ];
 
 export function Sidebar() {
@@ -107,9 +109,9 @@ export function Sidebar() {
       <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
         <div className="mb-2 flex items-center gap-2">
           <AlertTriangle size={16} />
-          <span className="font-semibold">Estoque baixo</span>
+          <span className="font-semibold">Navegação protegida</span>
         </div>
-        <p>Modelos Babylook PP e Camiseta EXGG precisam de reposição.</p>
+        <p>Os itens do menu são exibidos conforme suas permissões administrativas.</p>
       </div>
     </aside>
   );

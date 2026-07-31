@@ -469,7 +469,7 @@ export default function NewRegistrationPage() {
 
                   {payment?.pix_qrcode ? (
                     <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-slate-950/40 p-3">
-                      <p className="mb-2 text-xs text-emerald-200">QR Code PIX (fictício)</p>
+                      <p className="mb-2 text-xs text-emerald-200">QR Code PIX</p>
                       <Image
                         src={payment.pix_qrcode}
                         alt="QR Code PIX"

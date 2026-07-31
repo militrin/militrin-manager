@@ -79,8 +79,6 @@ begin
     shirt_size,
     registration_status,
     amount,
-    payment_method,
-    payment_status,
     notes
   ) values (
     v_event_id,
@@ -95,8 +93,6 @@ begin
     p_shirt_size,
     coalesce(p_registration_status, 'pending'),
     coalesce(p_amount, 0),
-    p_payment_method,
-    coalesce(p_payment_status, 'pending'),
     p_notes
   ) returning id into v_participant_id;
 

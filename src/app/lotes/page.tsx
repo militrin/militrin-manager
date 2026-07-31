@@ -4,6 +4,7 @@ import { SectionCard } from "@/components/dashboard/SectionCard";
 import { EmptyState } from "@/components/mvp/EmptyState";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { BatchesManager } from "./ui";
+import Link from "next/link";
 
 type BatchRow = {
   id: string;
@@ -108,7 +109,15 @@ export default async function BatchesPage() {
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
-          <TopBar title="Lotes" subtitle="Precificacao automatica por lote" />
+          <TopBar title="Lotes" subtitle="Centralizados dentro de Eventos" />
+          <SectionCard title="Fluxo atualizado" description="Agora lotes são configurados dentro de cada evento.">
+            <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+              <p>Para manter o processo sequencial, configure lotes na tela do evento.</p>
+              <Link href="/painel/eventos" className="mt-3 inline-flex rounded-lg border border-cyan-400/40 px-3 py-1.5 text-xs text-cyan-100">
+                Ir para Eventos
+              </Link>
+            </div>
+          </SectionCard>
           <SectionCard title="Gestao de lotes" description="Configure limites, precos e o lote ativo do evento.">
             {!activeEvent?.id ? (
               <EmptyState title="Nenhum evento ativo" description="Ative um evento para configurar lotes." />

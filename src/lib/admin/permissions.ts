@@ -13,13 +13,6 @@ export class PermissionDeniedError extends Error {
   }
 }
 
-function parseAllowlist(value: string | undefined) {
-  return String(value ?? '')
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-}
-
 export async function hasPermission(permissionCode: PermissionCode, userId?: string) {
   const supabase = await createServerSupabaseClient();
   const {
@@ -29,21 +22,13 @@ export async function hasPermission(permissionCode: PermissionCode, userId?: str
   const actorUserId = user?.id ?? null;
   if (!actorUserId) return false;
 
-  const userEmail = String(user?.email ?? '').trim().toLowerCase();
-  const adminAllowlist = parseAllowlist(process.env.ADMIN_ALLOWLIST_EMAILS);
-  const financeAllowlist = parseAllowlist(process.env.ADMIN_FINANCE_ALLOWLIST_EMAILS);
-  const fallbackIsAdmin = adminAllowlist.length === 0 || adminAllowlist.includes(userEmail);
-  const fallbackCanViewFinancial = fallbackIsAdmin && (financeAllowlist.length === 0 || financeAllowlist.includes(userEmail));
-
-  const fallbackResult = permissionCode === 'finance.view_amounts' ? fallbackCanViewFinancial : fallbackIsAdmin;
-
   if (userId && userId !== actorUserId) {
     const { data, error } = await supabase.rpc('user_has_permission', {
       p_user_id: userId,
       p_permission_code: permissionCode,
     });
 
-    if (error) return fallbackResult;
+    if (error) return false;
     return Boolean(data);
   }
 
@@ -51,7 +36,7 @@ export async function hasPermission(permissionCode: PermissionCode, userId?: str
     p_permission_code: permissionCode,
   });
 
-  if (error) return fallbackResult;
+  if (error) return false;
   return Boolean(data);
 }
 

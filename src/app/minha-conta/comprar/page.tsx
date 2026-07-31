@@ -31,11 +31,11 @@ export default async function ComprarPage() {
     <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
       <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Comprar</p>
       <h2 className="mt-2 text-3xl font-semibold text-white">Escolha um evento</h2>
-      <p className="mt-2 max-w-2xl text-sm text-slate-300">As inscrições abertas aparecem abaixo. Se houver apenas um evento disponível, o sistema segue direto para o wizard de inscrição.</p>
+      <p className="mt-2 max-w-2xl text-sm text-slate-300">As vendas abertas aparecem abaixo. Se houver apenas um evento disponível, o sistema segue direto para o wizard de inscrição.</p>
 
       {openEvents.length === 0 ? (
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-sm text-slate-300">
-          Nenhum evento com inscrições abertas no momento.
+          Nenhum evento com vendas abertas no momento.
         </div>
       ) : (
         <div className="mt-6 grid gap-4">
@@ -54,7 +54,7 @@ export default async function ComprarPage() {
                       {endsAt ? ` até ${endsAt}` : ''}
                     </p>
                     <p className="text-sm text-slate-400">{event.location ?? 'Local a confirmar'}</p>
-                    <p className="text-xs font-medium uppercase tracking-wide text-emerald-300">Inscrições abertas</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-emerald-300">Vendas abertas</p>
                   </div>
                   <Link href={`/inscricao/${event.slug}`} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
                     Continuar inscrição

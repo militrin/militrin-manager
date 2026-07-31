@@ -1008,25 +1008,7 @@ begin
   end if;
 
   if p_copy_inventory_structure then
-    insert into public.shirt_inventory (
-      event_id,
-      shirt_type,
-      shirt_size,
-      total_quantity,
-      reserved_quantity,
-      delivered_quantity
-    )
-    select
-      v_target_event_id,
-      si.shirt_type,
-      si.shirt_size,
-      0,
-      0,
-      0
-    from public.shirt_inventory si
-    where si.event_id = p_source_event_id
-    on conflict (event_id, shirt_type, shirt_size)
-    do nothing;
+    perform public.initialize_event_inventory(v_target_event_id, p_source_event_id);
   end if;
 
   if p_copy_coupons then

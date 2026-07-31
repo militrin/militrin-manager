@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import { SearchInput } from "@/components/mvp/SearchInput";
 import {
   checkinEntryAction,
+  deliverKitAndCheckinAction,
   deliverFullKitAction,
   deliverKitItemAction,
+  getRetiradaCapabilitiesAction,
   searchPickupParticipantAction,
 } from "./actions";
 
@@ -29,7 +31,9 @@ export default function KitPickupPage() {
     category_name: string;
     event_name: string;
     event_kit_enabled: boolean;
+    allow_checkin_during_kit_delivery: boolean;
     ticket_status: string | null;
+    ticket_id: string | null;
     ticket_used_at: string | null;
     last_checkin_at: string | null;
     last_checkin_actor: string | null;
@@ -47,6 +51,16 @@ export default function KitPickupPage() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState({ canDeliverKit: false, canCheckin: false, canCombined: false });
+
+  useEffect(() => {
+    void (async () => {
+      const response = await getRetiradaCapabilitiesAction();
+      if (response.success) {
+        setCapabilities(response.capabilities);
+      }
+    })();
+  }, []);
 
   async function searchParticipant() {
     setLoading(true);
@@ -105,6 +119,22 @@ export default function KitPickupPage() {
     await searchParticipant();
   }
 
+  async function deliverKitAndCheckin() {
+    if (!result?.ticket_id) {
+      setMessage("Nao foi possivel identificar o ticket para a operacao combinada.");
+      return;
+    }
+    setLoading(true);
+    const response = await deliverKitAndCheckinAction({ ticket_id: result.ticket_id });
+    setLoading(false);
+    if (!response.success) {
+      setMessage(response.message ?? "Nao foi possivel concluir a operacao combinada.");
+      return;
+    }
+    setMessage(response.message ?? "Kit entregue e entrada confirmada.");
+    await searchParticipant();
+  }
+
   const disabled = loading || !query.trim();
 
   return (
@@ -129,21 +159,49 @@ export default function KitPickupPage() {
                     <p className="text-sm text-slate-400">#{result.registration_number ?? "—"} · {result.cpf}</p>
                   </div>
                   {result.event_kit_enabled ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={deliverKit}
+                        disabled={loading || !result.can_operate || result.all_kit_delivered || !capabilities.canDeliverKit}
+                        className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60"
+                      >
+                        {result.all_kit_delivered ? "KIT JA ENTREGUE" : "ENTREGAR KIT COMPLETO"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={deliverKitAndCheckin}
+                        disabled={
+                          loading
+                          || !result.can_operate
+                          || !result.ticket_id
+                          || !result.allow_checkin_during_kit_delivery
+                          || !capabilities.canCombined
+                        }
+                        className="rounded-2xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-cyan-950 disabled:opacity-60"
+                      >
+                        ENTREGAR KIT + CHECK-IN
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={deliverKit}
-                      disabled={loading || !result.can_operate || result.all_kit_delivered}
-                      className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60"
+                      onClick={checkinOnly}
+                      disabled={loading || !result.can_operate || !capabilities.canCheckin}
+                      className="rounded-2xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-cyan-950 disabled:opacity-60"
                     >
-                      {result.all_kit_delivered ? "KIT JÁ ENTREGUE" : "ENTREGAR KIT COMPLETO"}
+                      CONFIRMAR ENTRADA
                     </button>
-                  ) : (
-                    <button type="button" onClick={checkinOnly} disabled={loading || !result.can_operate} className="rounded-2xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-cyan-950 disabled:opacity-60">CONFIRMAR ENTRADA</button>
                   )}
                 </div>
                 {result.block_reason ? (
                   <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
                     Operação bloqueada: {result.block_reason}
+                  </div>
+                ) : null}
+                {result.event_kit_enabled && !result.allow_checkin_during_kit_delivery ? (
+                  <div className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-100">
+                    Operacao combinada indisponivel: este evento nao permite check-in durante retirada de kit.
                   </div>
                 ) : null}
                 <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">

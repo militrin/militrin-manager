@@ -7,6 +7,8 @@ type MilitrinPurchaseCardProps = {
   eventName: string;
   date: string;
   finalAmount: string;
+  quantity?: number;
+  subtitle?: string | null;
   paymentMethod: string;
   paymentStatus: string;
   orderStatus: string;
@@ -19,6 +21,8 @@ export function MilitrinPurchaseCard({
   eventName,
   date,
   finalAmount,
+  quantity,
+  subtitle,
   paymentMethod,
   paymentStatus,
   orderStatus,
@@ -31,6 +35,8 @@ export function MilitrinPurchaseCard({
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Pedido {orderNumber}</p>
           <h3 className="mt-1 text-xl font-semibold text-white">{eventName}</h3>
+          {typeof quantity === 'number' ? <p className="mt-1 text-xs text-slate-300">{quantity} ingresso(s)</p> : null}
+          {subtitle ? <p className="mt-1 text-xs text-slate-400">{subtitle}</p> : null}
         </div>
         <MilitrinStatusBadge status={orderStatus} />
       </div>

@@ -7,6 +7,8 @@ import { getEmailProvider } from '@/lib/email/fake-provider';
 import { generatePublicPixAction, simulatePublicPaymentAction } from '@/app/inscricao/actions';
 import { formatDateBR, toISODateFromBR } from '@/lib/utils/date';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
+import { normalizeShirtSize as normalizeShirtSizeBase, normalizeShirtType } from '@/lib/constants/shirts';
+import { assertPermission } from '@/lib/admin/permissions';
 
 const emailProvider = getEmailProvider();
 
@@ -16,6 +18,306 @@ function appBaseUrl() {
 
 function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? '';
+}
+
+async function loadOwnedTicketContext(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, ticketId: string, userId: string) {
+  return supabase
+    .from('tickets')
+    .select(
+      'id, token, status, issued_at, used_at, ownership_status, participant_id, order_id, order_item_id, orders!inner(id, order_number, status, user_id, event_id, events(id, name, starts_at, shirt_order_deadline, limit_shirt_selection_to_stock)), order_items(id, item_position, status, ownership_status, holder_full_name, shirt_type, shirt_size, ticket_category_id, participant_id, notes, participants(id, full_name, email, shirt_type, shirt_size, ticket_category_id), ticket_categories(name))',
+    )
+    .eq('id', ticketId)
+    .eq('orders.user_id', userId)
+    .maybeSingle();
+}
+
+function getTicketOrder(ticket: Record<string, unknown> | null | undefined) {
+  const order = Array.isArray(ticket?.orders) ? ticket?.orders[0] : ticket?.orders;
+  return (order as Record<string, unknown> | null | undefined) ?? null;
+}
+
+function getTicketOrderItem(ticket: Record<string, unknown> | null | undefined) {
+  const orderItem = Array.isArray(ticket?.order_items) ? ticket?.order_items[0] : ticket?.order_items;
+  return (orderItem as Record<string, unknown> | null | undefined) ?? null;
+}
+
+export async function defineTicketHolderAction(formData: FormData) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user?.id) {
+    return { success: false, message: 'Sessao expirada. Entre novamente.' };
+  }
+
+  const ticketId = String(formData.get('ticket_id') ?? '').trim();
+  const participantId = String(formData.get('participant_id') ?? '').trim();
+
+  if (!ticketId || !participantId) {
+    return { success: false, message: 'Selecione um titular valido.' };
+  }
+
+  const { data: ticket, error } = await loadOwnedTicketContext(supabase, ticketId, user.id);
+  if (error) return { success: false, message: error.message };
+  if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
+
+  const orderItem = getTicketOrderItem(ticket as Record<string, unknown>);
+  const order = getTicketOrder(ticket as Record<string, unknown>);
+  const eventId = String(order?.event_id ?? '');
+
+  const { data: participant, error: participantError } = await supabase
+    .from('participants')
+    .select('id, full_name, user_id, event_id')
+    .eq('id', participantId)
+    .maybeSingle();
+
+  if (participantError) return { success: false, message: participantError.message };
+  if (!participant?.id) return { success: false, message: 'Participante nao encontrado.' };
+  if (String(participant.event_id ?? '') !== eventId) {
+    return { success: false, message: 'O titular precisa pertencer ao mesmo evento do ingresso.' };
+  }
+  if (String(participant.user_id ?? '') !== user.id) {
+    return { success: false, message: 'Voce so pode definir titular com um participante vinculado a sua conta.' };
+  }
+
+  const { error: assignError } = await supabase.rpc('assign_order_item_participant', {
+    p_order_item_id: String(orderItem?.id ?? ticket.order_item_id ?? ticket.id),
+    p_participant_id: participantId,
+  });
+
+  if (assignError) return { success: false, message: assignError.message };
+
+  await supabase
+    .from('order_items')
+    .update({ holder_full_name: String(participant.full_name ?? ''), updated_at: new Date().toISOString() })
+    .eq('id', String(orderItem?.id ?? ticket.order_item_id ?? ''));
+
+  revalidatePath('/minha-conta');
+  revalidatePath('/minha-conta/ingressos');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/minha-conta/compras/${String(order?.id ?? ticket.order_id ?? '')}`);
+
+  return { success: true, message: 'Titular definido com sucesso.' };
+}
+
+export async function transferTicketAction(formData: FormData) {
+  const result = await defineTicketHolderAction(formData);
+  if (!result.success) return result;
+  return { ...result, message: 'Ingresso transferido com sucesso.' };
+}
+
+export async function changeTicketShirtAction(formData: FormData) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user?.id) {
+    return { success: false, message: 'Sessao expirada. Entre novamente.' };
+  }
+
+  const ticketId = String(formData.get('ticket_id') ?? '').trim();
+  const shirtType = normalizeShirtType(String(formData.get('shirt_type') ?? ''));
+  const shirtSize = shirtType ? normalizeShirtSizeBase(String(formData.get('shirt_size') ?? '')) : '';
+
+  if (!ticketId || !shirtType || !shirtSize) {
+    return { success: false, message: 'Selecione modelo e tamanho validos.' };
+  }
+
+  const { data: ticket, error } = await loadOwnedTicketContext(supabase, ticketId, user.id);
+  if (error) return { success: false, message: error.message };
+  if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
+
+  const orderItem = getTicketOrderItem(ticket as Record<string, unknown>);
+  const order = getTicketOrder(ticket as Record<string, unknown>);
+  const participant = Array.isArray(orderItem?.participants) ? orderItem.participants[0] : orderItem?.participants;
+  const event = Array.isArray(order?.events) ? order.events[0] : order?.events;
+  const eventId = String(order?.event_id ?? '');
+  const enforcePhysicalStock = Boolean(event?.limit_shirt_selection_to_stock);
+  const currentType = normalizeShirtType(String(orderItem?.shirt_type ?? participant?.shirt_type ?? ''));
+  const currentSize = normalizeShirtSizeBase(String(orderItem?.shirt_size ?? participant?.shirt_size ?? ''));
+
+  const { data: currentStock, error: currentStockError } = await supabase
+    .from('shirt_inventory')
+    .select('id, total_quantity, reserved_quantity, delivered_quantity')
+    .eq('event_id', eventId)
+    .eq('shirt_type', currentType)
+    .eq('shirt_size', currentSize)
+    .maybeSingle();
+  if (currentStockError) return { success: false, message: currentStockError.message };
+
+  const { data: nextStock, error: nextStockError } = await supabase
+    .from('shirt_inventory')
+    .select('id, total_quantity, reserved_quantity, delivered_quantity')
+    .eq('event_id', eventId)
+    .eq('shirt_type', shirtType)
+    .eq('shirt_size', shirtSize)
+    .maybeSingle();
+  if (nextStockError) return { success: false, message: nextStockError.message };
+  if (!nextStock?.id) return { success: false, message: 'Estoque nao configurado para o novo modelo/tamanho.' };
+
+  if (currentType === shirtType && currentSize === shirtSize) {
+    return { success: true, message: 'Camiseta ja esta neste modelo e tamanho.' };
+  }
+
+  const available = Number(nextStock.total_quantity ?? 0) - Number(nextStock.reserved_quantity ?? 0) - Number(nextStock.delivered_quantity ?? 0);
+  if (enforcePhysicalStock && available <= 0) {
+    return { success: false, message: 'Nao ha estoque disponivel para alterar a camiseta com a limitação ativa.' };
+  }
+
+  if (currentStock?.id && currentStock.id !== nextStock.id) {
+    await supabase
+      .from('shirt_inventory')
+      .update({ reserved_quantity: Math.max(0, Number(currentStock.reserved_quantity ?? 0) - 1), updated_at: new Date().toISOString() })
+      .eq('id', currentStock.id);
+  }
+
+  await supabase
+    .from('shirt_inventory')
+    .update({ reserved_quantity: Number(nextStock.reserved_quantity ?? 0) + 1, updated_at: new Date().toISOString() })
+    .eq('id', nextStock.id);
+
+  if (participant?.id) {
+    await supabase
+      .from('participants')
+      .update({ shirt_type: shirtType, shirt_size: shirtSize, updated_at: new Date().toISOString() })
+      .eq('id', String(participant.id));
+  }
+
+  if (orderItem?.id) {
+    await supabase
+      .from('order_items')
+      .update({ shirt_type: shirtType, shirt_size: shirtSize, updated_at: new Date().toISOString() })
+      .eq('id', String(orderItem.id));
+  }
+
+  await supabase.from('audit_logs').insert({
+    actor: user.id,
+    action: 'ticket_shirt_changed',
+    entity_type: 'tickets',
+    entity_id: String(ticket.id),
+    event_id: eventId,
+    details: {
+      previous_type: currentType,
+      previous_size: currentSize,
+      next_type: shirtType,
+      next_size: shirtSize,
+      limit_shirt_selection_to_stock: enforcePhysicalStock,
+    },
+  });
+
+  revalidatePath('/minha-conta');
+  revalidatePath('/minha-conta/ingressos');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/minha-conta/compras/${String(order?.id ?? ticket.order_id ?? '')}`);
+
+  return {
+    success: true,
+    message: enforcePhysicalStock ? 'Camiseta alterada com estoque validado.' : 'Camiseta alterada com sucesso.',
+  };
+}
+
+export async function updateTicketCategoryAction(formData: FormData) {
+  await assertPermission('participants.edit_basic');
+
+  const supabase = await createServerSupabaseClient();
+  const ticketId = String(formData.get('ticket_id') ?? '').trim();
+  const ticketCategoryId = String(formData.get('ticket_category_id') ?? '').trim();
+
+  if (!ticketId || !ticketCategoryId) {
+    return { success: false, message: 'Selecione uma categoria valida.' };
+  }
+
+  const { data: ticket, error } = await supabase
+    .from('tickets')
+    .select('id, order_id, order_item_id, orders!inner(id, event_id), order_items(id, participant_id, ticket_category_id)')
+    .eq('id', ticketId)
+    .maybeSingle();
+
+  if (error) return { success: false, message: error.message };
+  if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
+
+  const order = Array.isArray(ticket.orders) ? ticket.orders[0] : ticket.orders;
+  const orderItem = Array.isArray(ticket.order_items) ? ticket.order_items[0] : ticket.order_items;
+  const eventId = String(order?.event_id ?? '');
+
+  const { data: allowedCategory } = await supabase
+    .from('ticket_categories')
+    .select('id')
+    .eq('id', ticketCategoryId)
+    .eq('event_id', eventId)
+    .maybeSingle();
+
+  if (!allowedCategory?.id) {
+    return { success: false, message: 'Categoria nao pertence ao evento do ingresso.' };
+  }
+
+  if (orderItem?.id) {
+    await supabase.from('order_items').update({ ticket_category_id: ticketCategoryId, updated_at: new Date().toISOString() }).eq('id', String(orderItem.id));
+  }
+
+  if (orderItem?.participant_id) {
+    await supabase.from('participants').update({ ticket_category_id: ticketCategoryId, updated_at: new Date().toISOString() }).eq('id', String(orderItem.participant_id));
+  }
+
+  await supabase.from('audit_logs').insert({
+    actor: 'admin',
+    action: 'ticket_category_changed',
+    entity_type: 'tickets',
+    entity_id: ticketId,
+    event_id: eventId,
+    details: { ticket_category_id: ticketCategoryId },
+  });
+
+  revalidatePath('/minha-conta');
+  revalidatePath('/minha-conta/ingressos');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+
+  return { success: true, message: 'Categoria atualizada com sucesso.' };
+}
+
+export async function updateTicketNotesAction(formData: FormData) {
+  await assertPermission('participants.edit_basic');
+
+  const supabase = await createServerSupabaseClient();
+  const ticketId = String(formData.get('ticket_id') ?? '').trim();
+  const notes = String(formData.get('notes') ?? '').trim();
+
+  if (!ticketId) {
+    return { success: false, message: 'Ingresso nao encontrado.' };
+  }
+
+  const { data: ticket, error } = await supabase
+    .from('tickets')
+    .select('id, order_id, orders!inner(id, event_id), order_items(id, participant_id)')
+    .eq('id', ticketId)
+    .maybeSingle();
+
+  if (error) return { success: false, message: error.message };
+  if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
+
+  const order = Array.isArray(ticket.orders) ? ticket.orders[0] : ticket.orders;
+  const orderItem = Array.isArray(ticket.order_items) ? ticket.order_items[0] : ticket.order_items;
+  const participantId = String(orderItem?.participant_id ?? '');
+
+  if (!participantId) {
+    return { success: false, message: 'Titular ainda nao definido. Defina o titular antes de registrar observacoes.' };
+  }
+
+  const { error: noteError } = await supabase.from('participants').update({ notes: notes || null, updated_at: new Date().toISOString() }).eq('id', participantId);
+  if (noteError) return { success: false, message: noteError.message };
+
+  await supabase.from('audit_logs').insert({
+    actor: 'admin',
+    action: 'ticket_notes_updated',
+    entity_type: 'participants',
+    entity_id: participantId,
+    event_id: String(order?.event_id ?? ''),
+    details: { notes: notes || null },
+  });
+
+  revalidatePath('/minha-conta');
+  revalidatePath('/minha-conta/ingressos');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+
+  return { success: true, message: 'Observacoes atualizadas com sucesso.' };
 }
 
 export async function signOutAccountAction() {

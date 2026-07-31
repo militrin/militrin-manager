@@ -11,7 +11,12 @@ import { createClient } from "@/lib/supabase/client";
 import { formatISOToDateBR, isValidDateBR, parseDateBRToISO } from "@/lib/utils/date";
 import { updateParticipantWithStock } from "./actions";
 
-const paymentMethods = ["Pix", "Dinheiro", "Cartão", "Transferência"];
+const paymentMethods = [
+  { value: "pix", label: "PIX" },
+  { value: "credit_card", label: "Cartão" },
+  { value: "cash", label: "Dinheiro" },
+  { value: "courtesy", label: "Cortesia" },
+] as const;
 const paymentStatuses = ["pending", "paid", "refunded"];
 
 export default function EditParticipantPage({ params }: { params: Promise<{ id: string }> }) {
@@ -40,10 +45,27 @@ export default function EditParticipantPage({ params }: { params: Promise<{ id: 
     async function load() {
       const { id } = await params;
       const supabase = createClient();
-      const { data, error } = await supabase.from("participants").select("*").eq("id", id).single();
+      const [{ data, error }, { data: payment, error: paymentError }] = await Promise.all([
+        supabase.from("participants").select("*").eq("id", id).single(),
+        supabase
+          .from("payments")
+          .select("payment_method, payment_status, final_amount, amount")
+          .eq("participant_id", id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
       if (!error) {
-        setParticipant(data);
+        setParticipant({
+          ...data,
+          amount: Number(payment?.final_amount ?? payment?.amount ?? data.amount ?? 0),
+          payment_method: payment?.payment_method ? String(payment.payment_method) : null,
+          payment_status: payment?.payment_status ? String(payment.payment_status) : "pending",
+        });
         setBirthDate(formatISOToDateBR(data.birth_date));
+      } else if (paymentError) {
+        setMessage(paymentError.message);
       }
       setLoading(false);
     }
@@ -137,7 +159,7 @@ export default function EditParticipantPage({ params }: { params: Promise<{ id: 
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Modelo</span><select defaultValue={participant.shirt_type ?? "Camiseta"} name="shirt_type" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3"><option value="">Selecione</option>{SHIRT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Tamanho</span><select defaultValue={participant.shirt_size ?? ""} name="shirt_size" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{SHIRT_SIZES[participant.shirt_type as keyof typeof SHIRT_SIZES]?.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Valor</span><input defaultValue={participant.amount ?? ""} name="amount" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Forma de pagamento</span><select defaultValue={participant.payment_method ?? ""} name="payment_method" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label>
+                <label className="space-y-2 text-sm"><span className="text-slate-300">Forma de pagamento</span><select defaultValue={participant.payment_method ?? "pix"} name="payment_method" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label>
                 <label className="space-y-2 text-sm"><span className="text-slate-300">Status do pagamento</span><select defaultValue={participant.payment_status ?? "pending"} name="payment_status" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{paymentStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
               </div>
               <label className="block space-y-2 text-sm"><span className="text-slate-300">Observações</span><textarea defaultValue={participant.notes ?? ""} name="notes" rows={4} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>

@@ -6,6 +6,8 @@ import {
   addInventoryQuantityAction,
   adjustInventoryQuantityAction,
   getInventoryMovementsAction,
+  resetEventShirtInventoryAction,
+  setEventShirtStockLimitAction,
   type InventoryMovementItem,
 } from "@/app/camisetas/actions";
 import { formatDateTimeBR } from "@/lib/utils/date";
@@ -22,6 +24,13 @@ type ShirtStockRow = {
 
 type ShirtStockTableProps = {
   rows: ShirtStockRow[];
+  eventId: string;
+  eventName: string;
+  shirtOrderDeadline: string | null;
+  limitShirtSelectionToStock: boolean;
+  canLimitSelection: boolean;
+  canResetInventory: boolean;
+  canClearHistory: boolean;
 };
 
 type PanelMode = "purchase" | "adjustment" | "history" | null;
@@ -41,9 +50,20 @@ function formatMovementType(type: string) {
   }
 }
 
-export function ShirtStockTable({ rows }: ShirtStockTableProps) {
+export function ShirtStockTable({
+  rows,
+  eventId,
+  eventName,
+  shirtOrderDeadline,
+  limitShirtSelectionToStock,
+  canLimitSelection,
+  canResetInventory,
+  canClearHistory,
+}: ShirtStockTableProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [isSavingLimit, startLimitTransition] = useTransition();
+  const [isResetPending, startResetTransition] = useTransition();
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [quantity, setQuantity] = useState<string>("");
@@ -51,6 +71,66 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [historyByRow, setHistoryByRow] = useState<Record<string, InventoryMovementItem[]>>({});
   const [historyLoadingRowId, setHistoryLoadingRowId] = useState<string | null>(null);
+  const [nowMs] = useState<number>(() => Date.now());
+  const [limitSelectionEnabled, setLimitSelectionEnabled] = useState<boolean>(limitShirtSelectionToStock);
+  const [resetMode, setResetMode] = useState<"simple" | "full" | null>(null);
+  const [resetReason, setResetReason] = useState<string>("");
+  const [confirmEventName, setConfirmEventName] = useState<string>("");
+
+  const deadlinePassed = (() => {
+    if (!shirtOrderDeadline) return false;
+    const ts = new Date(shirtOrderDeadline).getTime();
+    if (Number.isNaN(ts)) return false;
+    return nowMs > ts;
+  })();
+
+  function statusLabel() {
+    return limitSelectionEnabled ? "Limitada ao estoque físico" : "Livre para encomenda";
+  }
+
+  function closeResetModal() {
+    setResetMode(null);
+    setResetReason("");
+    setConfirmEventName("");
+  }
+
+  function toggleLimitSelection(nextValue: boolean) {
+    if (!canLimitSelection) return;
+
+    setFeedback(null);
+    startLimitTransition(async () => {
+      const result = await setEventShirtStockLimitAction({
+        event_id: eventId,
+        enabled: nextValue,
+      });
+
+      setFeedback({ type: result.success ? "success" : "error", message: result.message });
+      if (result.success) {
+        setLimitSelectionEnabled(nextValue);
+        router.refresh();
+      }
+    });
+  }
+
+  function confirmReset() {
+    if (!resetMode) return;
+
+    setFeedback(null);
+    startResetTransition(async () => {
+      const result = await resetEventShirtInventoryAction({
+        event_id: eventId,
+        clear_history: resetMode === "full",
+        reason: resetReason,
+        event_name_confirmation: confirmEventName,
+      });
+
+      setFeedback({ type: result.success ? "success" : "error", message: result.message });
+      if (result.success) {
+        closeResetModal();
+        router.refresh();
+      }
+    });
+  }
 
   function closePanel() {
     setActiveRowId(null);
@@ -90,7 +170,7 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
 
   async function loadHistory(rowId: string) {
     setHistoryLoadingRowId(rowId);
-    const result = await getInventoryMovementsAction({ inventory_id: rowId });
+    const result = await getInventoryMovementsAction({ inventory_id: rowId, event_id: eventId });
     setHistoryLoadingRowId(null);
 
     if (!result.success) {
@@ -130,6 +210,7 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
 
     startTransition(async () => {
       const payload = {
+        event_id: eventId,
         inventory_id: activeRowId,
         quantity: parsedQuantity.value,
         notes,
@@ -163,6 +244,94 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
         </div>
       ) : null}
 
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4">
+        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Evento: {eventName}</p>
+        <p className="mt-2 text-sm text-slate-300">
+          Status da escolha: <span className="font-semibold text-slate-100">{statusLabel()}</span>
+        </p>
+
+        <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-300">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={limitSelectionEnabled}
+              disabled={!canLimitSelection || isSavingLimit}
+              onChange={(event) => toggleLimitSelection(event.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Limitar escolha aos tamanhos disponíveis em estoque
+              <span className="mt-1 block text-xs text-slate-400">
+                Quando ativado, participantes só poderão escolher modelos e tamanhos com saldo disponível. Quando desativado, todas as variantes cadastradas permanecem disponíveis para encomenda.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {deadlinePassed && !limitSelectionEnabled ? (
+          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+            A data-limite para pedido de camiseta já passou e a limitação por estoque ainda está desligada.
+            {canLimitSelection ? (
+              <button
+                type="button"
+                onClick={() => toggleLimitSelection(true)}
+                disabled={isSavingLimit}
+                className="ml-3 rounded-lg border border-amber-400/50 px-3 py-1 text-xs text-amber-100 disabled:opacity-60"
+              >
+                Ativar limitação agora
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {(canLimitSelection || canResetInventory || canClearHistory) ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {canLimitSelection ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => toggleLimitSelection(true)}
+                  disabled={isSavingLimit || limitSelectionEnabled}
+                  className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-50"
+                >
+                  Ativar limitação
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleLimitSelection(false)}
+                  disabled={isSavingLimit || !limitSelectionEnabled}
+                  className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-50"
+                >
+                  Desativar limitação
+                </button>
+              </>
+            ) : null}
+
+            {canResetInventory ? (
+              <button
+                type="button"
+                onClick={() => setResetMode("simple")}
+                disabled={isResetPending}
+                className="rounded-xl border border-amber-600/60 px-3 py-1.5 text-xs text-amber-200 disabled:opacity-50"
+              >
+                Zerar estoque
+              </button>
+            ) : null}
+
+            {canClearHistory ? (
+              <button
+                type="button"
+                onClick={() => setResetMode("full")}
+                disabled={isResetPending}
+                className="rounded-xl border border-red-600/60 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50"
+              >
+                Zerar estoque e limpar histórico
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
       <div className="overflow-hidden rounded-2xl border border-slate-800/80">
         <table className="min-w-full divide-y divide-slate-800 text-sm">
           <thead className="bg-slate-950/70 text-left text-slate-400">
@@ -180,7 +349,7 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
             {rows.length === 0 ? (
               <tr>
                 <td className="px-4 py-6 text-center text-slate-400" colSpan={7}>
-                  Sem linhas de estoque no evento ativo.
+                  Sem linhas de estoque neste evento.
                 </td>
               </tr>
             ) : (
@@ -331,6 +500,68 @@ export function ShirtStockTable({ rows }: ShirtStockTableProps) {
           </tbody>
         </table>
       </div>
+
+      {resetMode ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/70 px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-5 text-slate-100">
+            <h3 className="text-lg font-semibold">Zerar estoque deste evento?</h3>
+            <p className="mt-2 text-sm text-slate-300">
+              Esta ação zerará todas as quantidades de camisetas e babylooks do evento selecionado e {resetMode === "full" ? "removerá o histórico de movimentações de estoque" : "preservará o histórico de movimentações"}. Pedidos, participantes, tickets e pagamentos não serão apagados.
+            </p>
+
+            {resetMode === "full" ? (
+              <p className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                Modo de risco: limpeza completa de histórico. Use somente para ambiente de teste/homologação.
+              </p>
+            ) : (
+              <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                Modo recomendado: apenas zerar quantidades operacionais e preservar histórico.
+              </p>
+            )}
+
+            <div className="mt-4 grid gap-3">
+              <label className="space-y-1 text-sm">
+                <span className="text-slate-300">Digite exatamente o nome do evento para confirmar</span>
+                <input
+                  value={confirmEventName}
+                  onChange={(event) => setConfirmEventName(event.target.value)}
+                  placeholder={eventName}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="space-y-1 text-sm">
+                <span className="text-slate-300">Motivo da ação</span>
+                <textarea
+                  value={resetReason}
+                  onChange={(event) => setResetReason(event.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+                  placeholder="Ex.: Reset de ambiente de homologação antes de novo ciclo de testes"
+                />
+              </label>
+            </div>
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeResetModal}
+                className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-300"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmReset}
+                disabled={isResetPending || confirmEventName.trim() !== eventName || resetReason.trim().length < 3}
+                className="rounded-xl bg-red-500 px-3 py-2 text-xs font-semibold text-red-950 disabled:opacity-50"
+              >
+                {isResetPending ? "Processando..." : "Confirmar zeragem"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

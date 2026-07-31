@@ -46,7 +46,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
           />
 
           <AdminSection title="Filtros" description="Busque por nome, e-mail, funcao ou status">
-            <form className="grid gap-3 md:grid-cols-[1fr_220px_180px_auto]" action="/configuracoes/equipe">
+            <form className="grid gap-3 md:grid-cols-[1fr_220px_180px_auto]" action="/painel/configuracoes/equipe">
               <input
                 type="text"
                 name="q"
@@ -101,7 +101,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
                             {row.last_access_at ? new Date(String(row.last_access_at)).toLocaleString('pt-BR') : '-'}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <Link href={`/configuracoes/equipe/${id}`} className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200">
+                            <Link href={`/painel/configuracoes/equipe/${id}`} className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200">
                               Editar acesso
                             </Link>
                           </td>
