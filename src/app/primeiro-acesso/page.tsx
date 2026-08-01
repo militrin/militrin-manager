@@ -57,13 +57,13 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
   const profileRow = status.profile;
 
   const initialValues = {
-    full_name: String(profileRow?.full_name ?? (user.user_metadata?.full_name as string | undefined) ?? ''),
-    cpf: String(profileRow?.cpf ?? (user.user_metadata?.cpf as string | undefined) ?? ''),
-    birth_date: String(profileRow?.birth_date ?? (user.user_metadata?.birth_date as string | undefined) ?? ''),
-    gender: String(profileRow?.gender ?? (user.user_metadata?.gender as string | undefined) ?? ''),
-    phone: String(profileRow?.phone ?? (user.user_metadata?.phone as string | undefined) ?? ''),
+    full_name: String(profileRow?.full_name ?? ''),
+    cpf: String(profileRow?.cpf ?? ''),
+    birth_date: String(profileRow?.birth_date ?? ''),
+    gender: String(profileRow?.gender ?? ''),
+    phone: String(profileRow?.phone ?? ''),
     email: String(user.email ?? ''),
-    city: String(profileRow?.city ?? (user.user_metadata?.city as string | undefined) ?? ''),
+    city: String(profileRow?.city ?? ''),
   };
 
   return (

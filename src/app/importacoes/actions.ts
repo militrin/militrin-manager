@@ -3,9 +3,6 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
-import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
-import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { inferColumnMapping, type CanonicalField } from '@/lib/imports/columns';
 import { parseSpreadsheetFile } from '@/lib/imports/parse-file';
 import {
@@ -67,6 +64,22 @@ function normalizePaymentMethod(value: string | null | undefined) {
   return null;
 }
 
+function normalizeImportedGender(value: string | null | undefined) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+
+  if (!normalized) return null;
+
+  if (["masculino", "male", "m"].includes(normalized)) {
+    return "male";
+  }
+
+  if (["feminino", "female", "f"].includes(normalized)) {
+    return "female";
+  }
+
+  return null;
+}
+
 function parseAmount(value: string | null | undefined) {
   const normalized = String(value ?? '')
     .trim()
@@ -76,6 +89,64 @@ function parseAmount(value: string | null | undefined) {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseImportedBirthDate(value: string | null | undefined) {
+  const raw = String(value ?? '').trim();
+
+  if (!raw) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const excelSerial = Number(raw);
+
+    if (
+      Number.isFinite(excelSerial) &&
+      excelSerial > 0 &&
+      excelSerial < 100000
+    ) {
+      const excelEpoch = Date.UTC(1899, 11, 30);
+      const milliseconds =
+        Math.floor(excelSerial) * 24 * 60 * 60 * 1000;
+
+      return new Date(excelEpoch + milliseconds)
+        .toISOString()
+        .slice(0, 10);
+    }
+  }
+
+  return parseBrDateToISO(raw);
+}
+
+
+function normalizeHeaderKey(value: string) {
+  return removeAccents(String(value ?? ''))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function getMappedCell(
+  rawRow: Record<string, string>,
+  mapping: Partial<Record<CanonicalField, string>>,
+  field: CanonicalField,
+) {
+  const mappedHeader = String(mapping[field] ?? '').trim();
+
+  if (mappedHeader && Object.prototype.hasOwnProperty.call(rawRow, mappedHeader)) {
+    return String(rawRow[mappedHeader] ?? '').trim();
+  }
+
+  const normalizedMappedHeader = normalizeHeaderKey(mappedHeader);
+  if (normalizedMappedHeader) {
+    const matchingHeader = Object.keys(rawRow).find(
+      (header) => normalizeHeaderKey(header) === normalizedMappedHeader,
+    );
+
+    if (matchingHeader) {
+      return String(rawRow[matchingHeader] ?? '').trim();
+    }
+  }
+
+  return '';
 }
 
 function normalizeHistoricalEventKey(value: string) {
@@ -90,7 +161,7 @@ function extractEventYearFromLabel(value: string) {
 }
 
 function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<CanonicalField, string>>, fallbackYear: number | null) {
-  const get = (field: CanonicalField) => String(rawRow[mapping[field] ?? ''] ?? '').trim();
+  const get = (field: CanonicalField) => getMappedCell(rawRow, mapping, field);
 
   const fullName = removeDuplicateSpaces(get('full_name'));
   const rawYear = get('event_year');
@@ -102,8 +173,8 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
     cpf: normalizeCpf(get('cpf')),
     email: normalizeEmail(get('email')),
     phone: normalizePhone(get('phone')),
-    birth_date: parseBrDateToISO(get('birth_date')),
-    gender: removeDuplicateSpaces(get('gender')) || null,
+    birth_date: parseImportedBirthDate(get('birth_date')),
+    gender: normalizeImportedGender(get('gender')),
     city: removeDuplicateSpaces(get('city')) || null,
     event_name: removeDuplicateSpaces(get('event_name')) || null,
     event_year: Number.isFinite(parsedYear ?? NaN) ? parsedYear : fallbackYear,
@@ -117,104 +188,6 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
   };
 
   return row;
-}
-
-async function maybeCreateOrInviteImportedAccount(params: {
-  email: string | null;
-  fullName: string;
-  cpf: string | null;
-  birthDate: string | null;
-  gender: string | null;
-  phone: string | null;
-  city: string | null;
-}) {
-  if (!params.email) {
-    return { userId: null as string | null, activationSent: false, pendingActivation: false };
-  }
-
-  const supabase = await createServerSupabaseClient();
-
-  const { data: existingProfileByEmail } = await supabase
-    .from('customer_profiles')
-    .select('user_id')
-    .ilike('email', params.email)
-    .maybeSingle();
-
-  if (existingProfileByEmail?.user_id) {
-    return { userId: String(existingProfileByEmail.user_id), activationSent: false, pendingActivation: false };
-  }
-
-  const allowDevCpfPassword = process.env.NODE_ENV !== 'production' && process.env.MILITRIN_IMPORT_DEV_CPF_PASSWORD === 'true';
-
-  let invitedUserId: string | null = null;
-  let activationSent = false;
-  if (allowDevCpfPassword && params.cpf) {
-    const admin = createServiceRoleSupabaseClient();
-    const { data, error } = await admin.auth.admin.createUser({
-      email: params.email,
-      password: params.cpf,
-      email_confirm: true,
-      user_metadata: {
-        full_name: params.fullName,
-        imported_account: true,
-      },
-    });
-
-    if (error && !/already|registered|exists/i.test(error.message)) {
-      throw error;
-    }
-
-    invitedUserId = data.user?.id ? String(data.user.id) : null;
-  } else {
-    const admin = createServiceRoleSupabaseClient();
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(params.email, {
-      data: {
-        full_name: params.fullName,
-        imported_account: true,
-      },
-    });
-
-    if (error && !/already|registered|exists/i.test(error.message)) {
-      throw error;
-    }
-
-    invitedUserId = data.user?.id ? String(data.user.id) : null;
-    activationSent = Boolean(invitedUserId);
-  }
-
-  if (!invitedUserId) {
-    return { userId: null as string | null, activationSent, pendingActivation: true };
-  }
-
-  await upsertCustomerProfileCompat(supabase, {
-    userId: invitedUserId,
-    fullName: params.fullName,
-    cpf: params.cpf,
-    birthDate: params.birthDate,
-    gender: params.gender,
-    phone: params.phone,
-    email: params.email,
-    city: params.city,
-    loyaltyTierId: null,
-    loyaltyOverride: false,
-    loyaltyOverrideReason: null,
-    showInParticipantList: true,
-    allowFriendRequests: true,
-    profileVisibility: 'participants',
-  });
-
-  await updateCustomerProfileCompat(supabase, invitedUserId, {
-    account_status: allowDevCpfPassword ? 'active' : 'pending_activation',
-    must_complete_profile: true,
-    must_change_password: allowDevCpfPassword,
-    imported_at: new Date().toISOString(),
-  });
-
-  return {
-    userId: invitedUserId,
-    activationSent,
-    pendingActivation: !allowDevCpfPassword,
-  };
 }
 
 function isRowReadyToImport(status: string, resolution: string) {
@@ -277,16 +250,32 @@ export async function parseImportFileAction(formData: FormData) {
 
     const [{ data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }, { data: existingHistoricalRows }] = await Promise.all([
       cpfs.size
-        ? supabase
-            .from('participants')
-            .select('id, full_name, cpf, email, event_id, user_id')
-            .in('cpf', Array.from(cpfs))
+        ? (() => {
+            let query = supabase
+              .from('participants')
+              .select('id, full_name, cpf, email, event_id, user_id')
+              .in('cpf', Array.from(cpfs));
+
+            if (importType === 'current_event_registrations' && eventId) {
+              query = query.eq('event_id', eventId);
+            }
+
+            return query;
+          })()
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       emails.size
-        ? supabase
-            .from('participants')
-            .select('id, full_name, cpf, email, event_id, user_id')
-            .in('email', Array.from(emails))
+        ? (() => {
+            let query = supabase
+              .from('participants')
+              .select('id, full_name, cpf, email, event_id, user_id')
+              .in('email', Array.from(emails));
+
+            if (importType === 'current_event_registrations' && eventId) {
+              query = query.eq('event_id', eventId);
+            }
+
+            return query;
+          })()
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       eventId
         ? supabase
@@ -371,6 +360,15 @@ export async function parseImportFileAction(formData: FormData) {
       if (!row.full_name) {
         status = 'error';
         errorMessage = 'Nome obrigatorio ausente.';
+      }
+
+      if (
+        importType === 'current_event_registrations'
+        && status !== 'error'
+        && !row.birth_date
+      ) {
+        status = 'error';
+        errorMessage = 'Data de nascimento ausente ou invalida.';
       }
 
       if (importType === 'current_event_registrations' && !eventId) {
@@ -651,7 +649,7 @@ export async function executeImportBatchAction(batchId: string) {
       const email = normalizeEmail(String(normalized.email ?? ''));
       const phone = normalizePhone(String(normalized.phone ?? ''));
       const birthDate = String(normalized.birth_date ?? '').trim() || null;
-      const gender = String(normalized.gender ?? '').trim() || null;
+      const gender = normalizeImportedGender(String(normalized.gender ?? ''));
       const city = String(normalized.city ?? '').trim() || null;
       const eventYear = Number(normalized.event_year ?? 0) || new Date().getFullYear();
       const registrationStatus = normalizeStatus(String(normalized.status ?? 'pending'));
@@ -663,6 +661,18 @@ export async function executeImportBatchAction(batchId: string) {
         await supabase
           .from('import_batch_rows')
           .update({ status: 'error', error_message: 'Nome obrigatorio ausente.' })
+          .eq('id', row.id);
+        errorRows += 1;
+        continue;
+      }
+
+      if (batch.import_type === 'current_event_registrations' && !birthDate) {
+        await supabase
+          .from('import_batch_rows')
+          .update({
+            status: 'error',
+            error_message: 'Data de nascimento ausente ou invalida.',
+          })
           .eq('id', row.id);
         errorRows += 1;
         continue;
@@ -746,7 +756,7 @@ export async function executeImportBatchAction(batchId: string) {
             p_full_name: fullName,
             p_cpf: cpf ?? `IMPORT${Date.now()}${row.row_number}`,
             p_birth_date: birthDate,
-            p_gender: gender ?? 'Masculino',
+            p_gender: gender,
             p_phone: phone ?? '00000000000',
             p_email: email ?? `${normalizeForMatch(fullName).replace(/\s+/g, '.')}@importacao.local`,
             p_city: city ?? 'Nao informado',
@@ -792,26 +802,11 @@ export async function executeImportBatchAction(batchId: string) {
           }
         }
 
-        let accountUserId: string | null = row.matched_user_id ? String(row.matched_user_id) : null;
-        if (!accountUserId && email) {
-          const inviteResult = await maybeCreateOrInviteImportedAccount({
-            email,
-            fullName,
-            cpf,
-            birthDate,
-            gender,
-            phone,
-            city,
-          });
-
-          if (inviteResult.userId) {
-            accountUserId = inviteResult.userId;
-            createdAccounts += 1;
-          }
-          if (inviteResult.activationSent) {
-            activationSent += 1;
-          }
-        }
+        // No MVP do importador administrativo, não criamos nem convidamos contas.
+        // O participante importado continua utilizável no painel, entrega de kits e check-in.
+        const accountUserId: string | null = row.matched_user_id
+          ? String(row.matched_user_id)
+          : null;
 
         if (accountUserId) {
           await supabase
@@ -867,14 +862,40 @@ export async function executeImportBatchAction(batchId: string) {
         .eq('id', row.id);
       skippedRows += 1;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha inesperada durante importacao.';
-      await supabase
-        .from('import_batch_rows')
-        .update({ status: 'error', error_message: message })
-        .eq('id', row.id);
-      errorRows += 1;
-    }
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error !== null
+        ? [
+            'message' in error ? String(error.message ?? '') : '',
+            'details' in error ? String(error.details ?? '') : '',
+            'hint' in error ? String(error.hint ?? '') : '',
+            'code' in error ? `Codigo: ${String(error.code ?? '')}` : '',
+          ]
+            .filter(Boolean)
+            .join(' | ')
+        : String(error);
+
+  console.error('[IMPORT ERROR]', {
+    batchId,
+    rowId: row.id,
+    rowNumber: row.row_number,
+    normalized,
+    error,
+    message,
+  });
+
+  await supabase
+    .from('import_batch_rows')
+    .update({
+      status: 'error',
+      error_message: message || 'Falha inesperada durante importacao.',
+    })
+    .eq('id', row.id);
+
+  errorRows += 1;
   }
+}
 
   await supabase
     .from('import_batches')

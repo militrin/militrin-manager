@@ -12,7 +12,7 @@ import {
   updateTicketCategoryAction,
   updateTicketNotesAction,
 } from '@/app/minha-conta/actions';
-import { deliverFullKitAction, deliverKitAndCheckinAction, checkinEntryAction } from '@/app/retirada/actions';
+import { deliverFullKitAction, deliverKitAndCheckinAction, checkinEntryAction } from '@/app/operacoes/actions';
 import { SHIRT_SIZES } from '@/lib/constants/shirts';
 
 function normalizeStatus(status: string | null | undefined) {
@@ -54,8 +54,8 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
   const canManageOperationalFlow = Boolean(permissions['kits.deliver'] || permissions['checkin.scan']);
 
   const ticketSelect =
-    'id, token, status, issued_at, used_at, ownership_status, participant_id, order_id, order_item_id, orders!inner(id, order_number, status, user_id, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, shirt_order_deadline), payments(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, ownership_status, holder_full_name, shirt_type, shirt_size, ticket_category_id, participant_id, notes, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name)), ticket_categories(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
-
+  'id, token, status, issued_at, used_at, participant_id, order_id, order_item_id, orders!inner(id, order_number, status, user_id, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, shirt_order_deadline), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
+  
   const ownedTicketQuery = await supabase
     .from('tickets')
     .select(ticketSelect)
@@ -77,7 +77,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
   const resolvedTicketId = String(ticket?.id ?? ticketId);
 
   if (ticketError) {
-    console.error('[minha-conta/ingressos/[ticketId]] erro ao carregar ticket', { ticketId, ticketError });
+    console.log(ticketError);
     return (
       <section className="rounded-2xl border border-rose-700/40 bg-rose-950/20 p-4 text-sm text-rose-100">
         Nao foi possivel carregar os detalhes deste ingresso agora.
@@ -258,7 +258,8 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
 
   async function submitDeliverKitAndCheckin() {
     'use server';
-    await deliverKitAndCheckinAction({ ticket_id: resolvedTicketId });
+    if (!participantId) return;
+    await deliverKitAndCheckinAction({ participant_id: participantId });
   }
 
   return (
