@@ -188,20 +188,20 @@ export async function changeTicketShirtAction(formData: FormData) {
       .eq('id', String(orderItem.id));
   }
 
-  await supabase.from('audit_logs').insert({
+await supabase.from('audit_logs').insert({
+  action: 'ticket_shirt_changed',
+  entity_type: 'tickets',
+  entity_id: String(ticket.id),
+  event_id: eventId,
+  details: {
     actor: user.id,
-    action: 'ticket_shirt_changed',
-    entity_type: 'tickets',
-    entity_id: String(ticket.id),
-    event_id: eventId,
-    details: {
-      previous_type: currentType,
-      previous_size: currentSize,
-      next_type: shirtType,
-      next_size: shirtSize,
-      limit_shirt_selection_to_stock: enforcePhysicalStock,
-    },
-  });
+    previous_type: currentType,
+    previous_size: currentSize,
+    next_type: shirtType,
+    next_size: shirtSize,
+    limit_shirt_selection_to_stock: enforcePhysicalStock,
+  },
+});
 
   revalidatePath('/minha-conta');
   revalidatePath('/minha-conta/ingressos');
@@ -257,14 +257,16 @@ export async function updateTicketCategoryAction(formData: FormData) {
     await supabase.from('participants').update({ ticket_category_id: ticketCategoryId, updated_at: new Date().toISOString() }).eq('id', String(orderItem.participant_id));
   }
 
-  await supabase.from('audit_logs').insert({
+await supabase.from('audit_logs').insert({
+  action: 'ticket_category_changed',
+  entity_type: 'tickets',
+  entity_id: ticketId,
+  event_id: eventId,
+  details: {
     actor: 'admin',
-    action: 'ticket_category_changed',
-    entity_type: 'tickets',
-    entity_id: ticketId,
-    event_id: eventId,
-    details: { ticket_category_id: ticketCategoryId },
-  });
+    ticket_category_id: ticketCategoryId,
+  },
+});
 
   revalidatePath('/minha-conta');
   revalidatePath('/minha-conta/ingressos');
@@ -305,13 +307,15 @@ export async function updateTicketNotesAction(formData: FormData) {
   if (noteError) return { success: false, message: noteError.message };
 
   await supabase.from('audit_logs').insert({
+  action: 'ticket_notes_updated',
+  entity_type: 'participants',
+  entity_id: participantId,
+  event_id: String(order?.event_id ?? ''),
+  details: {
     actor: 'admin',
-    action: 'ticket_notes_updated',
-    entity_type: 'participants',
-    entity_id: participantId,
-    event_id: String(order?.event_id ?? ''),
-    details: { notes: notes || null },
-  });
+    notes: notes || null,
+  },
+});
 
   revalidatePath('/minha-conta');
   revalidatePath('/minha-conta/ingressos');

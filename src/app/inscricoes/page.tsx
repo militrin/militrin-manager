@@ -60,13 +60,37 @@ async function getListData(params: Params) {
     return { events, selectedEvent: null, rows: [], page: 1, totalPages: 1, totalFiltered: 0 };
   }
 
-  const { data, error } = await supabase
-    .from('participants')
-    .select('id, full_name, cpf, email, phone, city, shirt_type, shirt_size, registration_status, payment_status, created_at, notes, ticket_categories(name), registration_batches(name), payments(id, payment_status, payment_method, created_at), orders(id, order_number, status), tickets(id, status, token, used_at)')
-    .eq('event_id', selectedEvent.id)
-    .order('created_at', { ascending: false })
-    .limit(500);
-
+ const { data, error } = await supabase
+  .from('participants')
+  .select(`
+    id,
+    full_name,
+    cpf,
+    email,
+    phone,
+    city,
+    shirt_type,
+    shirt_size,
+    registration_status,
+    created_at,
+    notes,
+    ticket_category_id,
+    batch_id,
+    payments(
+      id,
+      payment_status,
+      payment_method,
+      paid_at,
+      final_amount,
+      created_at
+    ),
+    ticket_categories(name),
+    registration_batches(name)
+  `)
+  .eq('event_id', selectedEvent.id)
+  .order('created_at', { ascending: false })
+  .limit(500);
+  
   if (error) throw error;
 
   const participantIds = (data ?? []).map((item) => String(item.id));
@@ -87,11 +111,16 @@ async function getListData(params: Params) {
   }
 
   const allRows = (data ?? []).map((item) => {
+    const relations = item as typeof item & {
+      payment_status?: unknown;
+      orders?: { id?: unknown; status?: unknown } | Array<{ id?: unknown; status?: unknown }> | null;
+      tickets?: { id?: unknown; status?: unknown; token?: unknown } | Array<{ id?: unknown; status?: unknown; token?: unknown }> | null;
+    };
     const payment = Array.isArray(item.payments)
       ? item.payments.slice().sort((a, b) => new Date(String(b.created_at ?? 0)).getTime() - new Date(String(a.created_at ?? 0)).getTime())[0]
       : item.payments;
-    const order = Array.isArray(item.orders) ? item.orders[0] : item.orders;
-    const ticket = Array.isArray(item.tickets) ? item.tickets[0] : item.tickets;
+    const order = Array.isArray(relations.orders) ? relations.orders[0] : relations.orders;
+    const ticket = Array.isArray(relations.tickets) ? relations.tickets[0] : relations.tickets;
     const category = Array.isArray(item.ticket_categories) ? item.ticket_categories[0] : item.ticket_categories;
     const batch = Array.isArray(item.registration_batches) ? item.registration_batches[0] : item.registration_batches;
     const kit = kitMap.get(String(item.id)) ?? { total: 0, delivered: 0 };
@@ -108,7 +137,7 @@ async function getListData(params: Params) {
       batch: batch?.name ? String(batch.name) : 'Sem lote',
       shirtType: String(item.shirt_type ?? ''),
       shirtSize: String(item.shirt_size ?? ''),
-      paymentStatus: normalizeStatus(payment?.payment_status ?? item.payment_status),
+      paymentStatus: normalizeStatus(payment?.payment_status ?? relations.payment_status),
       orderStatus: normalizeStatus(order?.status ?? item.registration_status),
       orderId: order?.id ? String(order.id) : null,
       ticketId: ticket?.id ? String(ticket.id) : null,
