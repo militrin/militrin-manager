@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readReconciledFile as readFile } from './helpers/read-reconciled-file.mjs';
 
 const sql=await readFile(new URL('../supabase/migrations/143_administrative_ticket_ownership.sql',import.meta.url),'utf8');
 

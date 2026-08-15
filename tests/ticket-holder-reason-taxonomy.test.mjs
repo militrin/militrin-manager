@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readReconciledFile as readFile } from './helpers/read-reconciled-file.mjs';
 import { buildAdminSetTicketHolderPayload } from '../src/lib/admin/ticket-holder-rpc.ts';
 import { sensitiveActionReasonLabel, validateSensitiveActionReason } from '../src/lib/admin/sensitive-action-reasons.ts';
 

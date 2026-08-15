@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readReconciledFile as readFile } from './helpers/read-reconciled-file.mjs';
 import { buyerOwnershipModes, shouldAssignBuyerToNewOrder } from '../src/lib/registrations/active-ticket-holder.ts';
 import { buildAdminSetTicketHolderPayload } from '../src/lib/admin/ticket-holder-rpc.ts';
 

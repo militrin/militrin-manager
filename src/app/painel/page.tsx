@@ -1,327 +1,113 @@
 import Link from 'next/link';
-import { Sidebar } from '@/components/dashboard/Sidebar';
 import {
-  AdminEmptyState,
-  AdminPageHeader,
-  AdminSection,
-  AdminStatCard,
-  AdminStatusBadge,
-} from '@/components/admin';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+  Banknote, Ban, Boxes, CheckCircle2, ClipboardList, Clock3, CreditCard,
+  FileSpreadsheet, Gift, PackageCheck, QrCode, ScanLine, Shirt, Ticket,
+  TriangleAlert, Truck, UserPlus, Users, WalletCards, Warehouse,
+} from 'lucide-react';
+import { Sidebar } from '@/components/dashboard/Sidebar';
+import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatCard, AdminStatusBadge } from '@/components/admin';
 import { getAdminAccessContext } from '@/lib/admin/access';
+import { hasPermission } from '@/lib/admin/permissions';
+import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from '@/lib/dashboard/admin-dashboard-data';
 import { DashboardEventSelector } from './dashboard-event-selector';
-
-type EventOption = { id: string; name: string; is_active: boolean };
-
-type ChartRow = { label: string; value: number };
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
 
-function groupCount(values: Array<string | null | undefined>, fallback = 'Nao informado') {
-  const map = new Map<string, number>();
-  for (const value of values) {
-    const key = String(value ?? '').trim() || fallback;
-    map.set(key, (map.get(key) ?? 0) + 1);
-  }
-  return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
-}
-
-function groupSum(entries: Array<{ label: string; value: number }>) {
-  const map = new Map<string, number>();
-  for (const entry of entries) {
-    map.set(entry.label, (map.get(entry.label) ?? 0) + entry.value);
-  }
-  return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
-}
-
-function BarChart({ rows, emptyLabel }: { rows: ChartRow[]; emptyLabel: string }) {
-  if (!rows.length) return <p className="text-sm text-slate-400">{emptyLabel}</p>;
-
-  const maxValue = Math.max(...rows.map((item) => item.value), 1);
-
-  return (
-    <div className="space-y-2">
-      {rows.map((item) => (
-        <div key={item.label} className="space-y-1">
-          <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
-            <span className="truncate">{item.label}</span>
-            <span>{item.value}</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-            <div className="h-full rounded-full bg-emerald-400" style={{ width: `${(item.value / maxValue) * 100}%` }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-async function getDashboardData(eventId?: string) {
-  const supabase = await createServerSupabaseClient();
-
-  const { data: eventsData, error: eventsError } = await supabase
-    .from('events')
-    .select('id, name, is_active')
-    .order('is_active', { ascending: false })
-    .order('starts_at', { ascending: false, nullsFirst: false });
-  if (eventsError) throw eventsError;
-
-  const events: EventOption[] = (eventsData ?? []).map((event) => ({
-    id: String(event.id),
-    name: String(event.name),
-    is_active: Boolean(event.is_active),
-  }));
-
-  if (events.length === 0) {
-    return {
-      events,
-      selectedEvent: null as EventOption | null,
-      participants: [] as Array<Record<string, unknown>>,
-      payments: [] as Array<Record<string, unknown>>,
-      tickets: [] as Array<Record<string, unknown>>,
-      inventory: [] as Array<Record<string, unknown>>,
-      kitRows: [] as Array<Record<string, unknown>>,
-    };
-  }
-
-  // Sem eventId ou eventId="all": agrega dados de todos os eventos.
-  const selectedEvent = eventId && eventId !== 'all' ? events.find((item) => item.id === eventId) ?? null : null;
-
-  let participantsQuery = supabase
-    .from('participants')
-    .select('id, full_name, city, gender, created_at, final_amount, registration_status, shirt_type, shirt_size, batch_id, registration_batches(name), ticket_categories(name), reservation_status');
-  let paymentsQuery = supabase
-    .from('payments')
-    .select('id, participant_id, final_amount, payment_status, payment_method, created_at');
-  let ticketsQuery = supabase
-    .from('tickets')
-    .select('id, status, used_at, participant_id');
-  let inventoryQuery = supabase
-    .from('shirt_inventory')
-    .select('id, shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity');
-  let kitRowsQuery = supabase
-    .from('participant_kit_items')
-    .select('ticket_id, status, tickets(participant_id)')
-    .not('ticket_id', 'is', null);
-
-  if (selectedEvent) {
-    participantsQuery = participantsQuery.eq('event_id', selectedEvent.id);
-    paymentsQuery = paymentsQuery.eq('event_id', selectedEvent.id);
-    ticketsQuery = ticketsQuery.eq('event_id', selectedEvent.id);
-    inventoryQuery = inventoryQuery.eq('event_id', selectedEvent.id);
-    kitRowsQuery = kitRowsQuery.eq('event_id', selectedEvent.id);
-  }
-
-  const [{ data: participants, error: participantsError }, { data: payments, error: paymentsError }, { data: tickets, error: ticketsError }, { data: inventory, error: inventoryError }, { data: kitRows, error: kitError }] = await Promise.all([
-    participantsQuery,
-    paymentsQuery,
-    ticketsQuery,
-    inventoryQuery,
-    kitRowsQuery,
-  ]);
-
-  if (participantsError) throw participantsError;
-  if (paymentsError) throw paymentsError;
-  if (ticketsError) throw ticketsError;
-  if (inventoryError) throw inventoryError;
-  if (kitError) throw kitError;
-
-  return {
-    events,
-    selectedEvent,
-    participants: participants ?? [],
-    payments: payments ?? [],
-    tickets: tickets ?? [],
-    inventory: inventory ?? [],
-    kitRows: kitRows ?? [],
-  };
-}
+type QuickAction = {
+  label: string;
+  href: string;
+  icon: typeof Ticket;
+  allowed: boolean;
+};
 
 export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
   const { eventId } = await searchParams;
-  const { canViewFinancial } = await getAdminAccessContext();
-  const data = await getDashboardData(eventId);
-
-  const participantRows = data.participants;
-  const paymentRows = data.payments;
-  const ticketRows = data.tickets;
-  const inventoryRows = data.inventory;
-  const kitRows = data.kitRows;
-
-  const totalParticipants = participantRows.length;
-  const confirmed = participantRows.filter((item) => String(item.registration_status ?? 'pending') === 'confirmed').length;
-  const pending = participantRows.filter((item) => String(item.registration_status ?? 'pending') === 'pending').length;
-  const cancelled = participantRows.filter((item) => String(item.registration_status ?? '') === 'cancelled').length;
-
-  const paidPayments = paymentRows.filter((item) => String(item.payment_status ?? '') === 'paid');
-  const pendingPayments = paymentRows.filter((item) => String(item.payment_status ?? 'pending') === 'pending');
-
-  const confirmedRevenue = paidPayments.reduce((sum, item) => sum + Number(item.final_amount ?? 0), 0);
-  const pendingRevenue = pendingPayments.reduce((sum, item) => sum + Number(item.final_amount ?? 0), 0);
-
-  const pixCount = paidPayments.filter((item) => String(item.payment_method ?? '').toLowerCase() === 'pix').length;
-  const cardCount = paidPayments.filter((item) => String(item.payment_method ?? '').toLowerCase() === 'credit_card').length;
-  const courtesyCount = paidPayments.filter((item) => String(item.payment_method ?? '').toLowerCase() === 'courtesy').length;
-
-  const issuedTickets = ticketRows.length;
-  const checkins = ticketRows.filter((item) => String(item.status ?? '') === 'used').length;
-
-  const inventoryReserved = inventoryRows.reduce((sum, item) => sum + Number(item.reserved_quantity ?? 0), 0);
-  const inventoryDelivered = inventoryRows.reduce((sum, item) => sum + Number(item.delivered_quantity ?? 0), 0);
-  const inventoryReceived = inventoryRows.reduce((sum, item) => sum + Number(item.total_quantity ?? 0), 0);
-  const inventoryAvailable = inventoryRows.reduce(
-    (sum, item) => sum + Math.max(0, Number(item.total_quantity ?? 0) - Number(item.reserved_quantity ?? 0) - Number(item.delivered_quantity ?? 0)),
-    0,
-  );
-  const inventoryNeedToOrder = inventoryRows.reduce((sum, item) => {
-    const deficit = Number(item.reserved_quantity ?? 0) + Number(item.delivered_quantity ?? 0) - Number(item.total_quantity ?? 0);
-    return sum + Math.max(0, deficit);
-  }, 0);
-
-  const kitByParticipant = new Map<string, { total: number; delivered: number }>();
-  for (const row of kitRows) {
-    const ticket = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
-    const key = String(ticket?.participant_id ?? '');
-    if (!key) continue;
-    const prev = kitByParticipant.get(key) ?? { total: 0, delivered: 0 };
-    kitByParticipant.set(key, {
-      total: prev.total + 1,
-      delivered: prev.delivered + (String(row.status ?? '') === 'delivered' ? 1 : 0),
-    });
-  }
-  const fullyDeliveredKits = [...kitByParticipant.values()].filter((item) => item.total > 0 && item.total === item.delivered).length;
-
-  const registrationsByDay = groupCount(participantRows.map((item) => String(item.created_at ?? '').slice(0, 10))).slice(0, 7).reverse();
-
-  const revenueByBatch = groupSum(
-    participantRows
-      .filter((item) => String(item.registration_status ?? '') === 'confirmed')
-      .map((item) => {
-        const batch = Array.isArray(item.registration_batches) ? item.registration_batches[0] : item.registration_batches;
-        return { label: batch?.name ? String(batch.name) : 'Sem lote', value: Number(item.final_amount ?? 0) };
-      }),
-  ).slice(0, 6);
-
-  const salesByCategory = groupCount(
-    participantRows.map((item) => {
-      const category = Array.isArray(item.ticket_categories) ? item.ticket_categories[0] : item.ticket_categories;
-      return category?.name ? String(category.name) : 'Sem categoria';
-    }),
-  ).slice(0, 6);
-
-  const genderSplit = groupCount(participantRows.map((item) => String(item.gender ?? 'nao informado'))).slice(0, 6);
-  const citySplit = groupCount(participantRows.map((item) => String(item.city ?? 'Nao informado'))).slice(0, 8);
-  const shirtSplit = groupCount(participantRows.map((item) => `${String(item.shirt_type ?? 'Sem modelo')} ${String(item.shirt_size ?? '')}`)).slice(0, 8);
-
-  const hasData = totalParticipants > 0 || paymentRows.length > 0 || ticketRows.length > 0;
+  const [{ canViewFinancial }, data, canIssue, canManageInventory, canOperateKits, canImport, canViewPeople, canViewFinance] = await Promise.all([
+    getAdminAccessContext(),
+    loadAdminDashboard(eventId),
+    hasPermission('participants.create'),
+    hasPermission('inventory.view'),
+    hasPermission('kits.view'),
+    hasPermission('imports.view'),
+    hasPermission('participants.view'),
+    hasPermission('finance.view'),
+  ]);
+  const selectedId = data.selectedEvent?.id ?? 'all';
+  const metric = (key: DashboardMetricKey) => data.metrics.get(key) ?? { key, label: key, value: 0, rows: [] };
+  const href = (key: DashboardMetricKey) => dashboardDetailHref(key, selectedId);
+  const shirtAttention = metric('shirt_coherence').value;
+  const eventQuery = selectedId === 'all' ? '' : `?eventId=${encodeURIComponent(selectedId)}`;
+  const quickActions: QuickAction[] = [
+    { label: 'Emitir ingresso', href: `/ingressos/emitir${eventQuery}`, icon: UserPlus, allowed: canIssue },
+    { label: 'Nova encomenda', href: `/camisetas${eventQuery}`, icon: Shirt, allowed: canManageInventory },
+    { label: 'Entrega de kits', href: `/operacoes${eventQuery}`, icon: PackageCheck, allowed: canOperateKits },
+    { label: 'Importar planilha', href: `/importacoes${eventQuery}`, icon: FileSpreadsheet, allowed: canImport },
+    { label: 'Ver público', href: `/painel/usuarios${eventQuery}`, icon: Users, allowed: canViewPeople },
+    { label: 'Ver receitas', href: `/financeiro${eventQuery}`, icon: WalletCards, allowed: canViewFinance },
+  ].filter((action) => action.allowed);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-3 py-4 text-slate-100 sm:px-5 lg:px-6">
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
         <Sidebar />
-        <div className="flex-1 space-y-6">
+        <div className="min-w-0 flex-1 space-y-4">
           <AdminPageHeader
+            compact
             title="Dashboard Administrativo"
-            subtitle={`Central operacional premium do Militrin com dados reais de: ${data.selectedEvent?.name ?? 'todos os eventos'}.`}
-            actions={<DashboardEventSelector events={data.events} selectedId={data.selectedEvent?.id ?? 'all'} />}
+            subtitle={`Visão operacional rastreável de ${data.selectedEvent?.name ?? 'todos os eventos'}. Cada indicador abre os registros que o compõem.`}
+            actions={<DashboardEventSelector events={data.events} selectedId={selectedId} />}
           />
 
-          {data.events.length === 0 ? (
-            <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." />
-          ) : (
-            <>
-              <AdminSection title="Inscrições" description={`Evento: ${data.selectedEvent?.name ?? 'todos os eventos'}`}>
-                {!hasData ? (
-                  <AdminEmptyState title="Sem dados para o evento" description="As métricas aparecem automaticamente quando houver inscrições, pagamentos e ingressos." />
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <AdminStatCard label="Total de inscritos" value={totalParticipants} />
-                    <AdminStatCard label="Confirmados" value={confirmed} tone="success" />
-                    <AdminStatCard label="Pendentes" value={pending} tone="warning" />
-                    <AdminStatCard label="Cancelados" value={cancelled} />
-                  </div>
-                )}
-              </AdminSection>
+          {!data.events.length ? <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." /> : <>
+            <AdminSection compact title="Pessoas e inscrições">
+              {!data.hasData ? <AdminEmptyState title="Sem dados no período" description="Os indicadores aparecerão quando houver inscrições, pagamentos ou ingressos." /> : <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+                <AdminStatCard compact label="Pessoas no evento" value={metric('people').value} href={href('people')} icon={Users} hint="Cadastros globais vinculados" />
+                <AdminStatCard compact label="Inscrições comerciais" value={metric('registrations').value} href={href('registrations')} icon={ClipboardList} hint="Itens de pedido no evento" />
+                <AdminStatCard compact label="Confirmadas" value={metric('confirmed').value} href={href('confirmed')} icon={CheckCircle2} tone="success" />
+                <AdminStatCard compact label="Pendentes" value={metric('pending').value} href={href('pending')} icon={Clock3} tone="warning" />
+                <AdminStatCard compact label="Canceladas" value={metric('cancelled').value} href={href('cancelled')} icon={Ban} />
+              </div>}
+            </AdminSection>
 
-              {hasData ? (
-                <AdminSection title="Ingressos e kits" description="Emissão, check-in e entrega de kit completo">
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <AdminStatCard label="Ingressos emitidos" value={issuedTickets} />
-                    <AdminStatCard label="Check-ins realizados" value={checkins} />
-                    <AdminStatCard label="Participantes com kit completo entregue" value={fullyDeliveredKits} />
-                  </div>
-                </AdminSection>
-              ) : null}
-
-              {hasData ? (
-                <AdminSection title="Estoque de camisetas" description="Quantidade de peças, não de participantes">
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                    <AdminStatCard label="Camisetas recebidas" value={inventoryReceived} />
-                    <AdminStatCard label="Camisetas reservadas" value={inventoryReserved} />
-                    <AdminStatCard label="Camisetas entregues" value={inventoryDelivered} />
-                    <AdminStatCard label="Camisetas disponíveis em estoque" value={inventoryAvailable} tone="success" />
-                    <AdminStatCard label="Faltam encomendar" value={inventoryNeedToOrder} tone={inventoryNeedToOrder > 0 ? 'warning' : undefined} />
-                  </div>
-                </AdminSection>
-              ) : null}
-
-              <AdminSection
-                title="Financeiro resumido"
-                description="Valores exibidos somente para acesso administrativo atual"
-                actions={canViewFinancial ? <AdminStatusBadge status="confirmed" /> : <AdminStatusBadge status="pending" />}
-              >
-                {canViewFinancial ? (
-                  <div className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <AdminStatCard label="Receita confirmada" value={money(confirmedRevenue)} tone="success" />
-                      <AdminStatCard label="Receita pendente" value={money(pendingRevenue)} tone="warning" />
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <AdminStatCard label="Pagamentos via PIX" value={pixCount} />
-                      <AdminStatCard label="Pagamentos via cartão" value={cardCount} />
-                      <AdminStatCard label="Cortesias" value={courtesyCount} />
-                    </div>
-                  </div>
-                ) : (
-                  <AdminEmptyState title="Acesso financeiro restrito" description="Seu perfil atual não possui visualização de valores monetários." />
-                )}
-              </AdminSection>
-
-              <div className="grid gap-4 xl:grid-cols-2">
-                <AdminSection title="Inscrições por dia" description="Últimos dias com atividade">
-                  <BarChart rows={registrationsByDay} emptyLabel="Sem dados de inscrições por dia." />
-                </AdminSection>
-
-                <AdminSection title="Receita por lote" description="Somente inscrições confirmadas">
-                  {canViewFinancial ? <BarChart rows={revenueByBatch} emptyLabel="Sem dados de receita por lote." /> : <p className="text-sm text-slate-400">Oculto por política de acesso.</p>}
-                </AdminSection>
-
-                <AdminSection title="Vendas por categoria" description="Distribuição de inscritos por categoria">
-                  <BarChart rows={salesByCategory} emptyLabel="Sem categorias com vendas." />
-                </AdminSection>
-
-                <AdminSection title="Masculino x feminino" description="Com base no gênero informado">
-                  <BarChart rows={genderSplit} emptyLabel="Sem dados de gênero." />
-                </AdminSection>
-
-                <AdminSection title="Participantes por cidade" description="Top cidades registradas">
-                  <BarChart rows={citySplit} emptyLabel="Sem dados de cidade." />
-                </AdminSection>
-
-                <AdminSection title="Camisetas por modelo e tamanho" description="Consumo de estoque por tipo e grade">
-                  <BarChart rows={shirtSplit} emptyLabel="Sem dados de camisetas." />
-                </AdminSection>
+            {data.hasData ? <AdminSection compact title="Ingressos e operação">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                <AdminStatCard compact label="Ingressos emitidos" value={metric('tickets').value} href={href('tickets')} icon={Ticket} />
+                <AdminStatCard compact label="Check-ins realizados" value={metric('checkins').value} href={href('checkins')} icon={ScanLine} tone="info" />
+                <AdminStatCard compact label="Kits completos entregues" value={metric('complete_kits').value} href={href('complete_kits')} icon={PackageCheck} tone="success" />
+                <div className="sm:col-span-2 xl:col-span-2">
+                  <AdminStatCard compact label={shirtAttention ? 'Consistência operacional' : 'Camisetas consistentes'} value={shirtAttention ? `${shirtAttention} com atenção` : 'Tudo certo'} hint={shirtAttention ? 'Ingressos ativos sem variante canônica de camiseta.' : 'Ingressos ativos possuem variant_id quando exigido.'} href={href('shirt_coherence')} actionLabel={shirtAttention ? 'Corrigir pendências' : 'Auditar vínculos'} icon={shirtAttention ? TriangleAlert : Shirt} tone={shirtAttention ? 'warning' : 'success'} />
+                </div>
               </div>
+            </AdminSection> : null}
 
-              <div className="flex justify-end">
-                <Link href="/cadastros" className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">
-                  Abrir lista avançada de participantes
-                </Link>
+            {data.hasData ? <AdminSection compact title="Estoque de camisetas">
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+                <AdminStatCard compact label="Recebidas" value={metric('shirts_received').value} href={href('shirts_received')} icon={Boxes} />
+                <AdminStatCard compact label="Reservadas" value={metric('shirts_reserved').value} href={href('shirts_reserved')} icon={Shirt} />
+                <AdminStatCard compact label="Entregues" value={metric('shirts_delivered').value} href={href('shirts_delivered')} icon={Truck} />
+                <AdminStatCard compact label="Disponíveis" value={metric('shirts_available').value} href={href('shirts_available')} icon={Warehouse} tone="success" />
+                <AdminStatCard compact label="Faltam encomendar" value={metric('shirts_deficit').value} href={href('shirts_deficit')} icon={TriangleAlert} tone={metric('shirts_deficit').value ? 'danger' : 'default'} />
               </div>
-            </>
-          )}
+              <p className="mt-2 text-[11px] leading-4 text-slate-400">Disponibilidade física = recebidas − entregues. Reservas representam demanda, não saída física.</p>
+            </AdminSection> : null}
+
+            <AdminSection compact title="Financeiro" actions={canViewFinancial ? <AdminStatusBadge status="confirmed" /> : <AdminStatusBadge status="pending" />}>
+              {canViewFinancial ? <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+                <AdminStatCard compact label="Receita confirmada" value={money(metric('revenue_confirmed').value)} href={href('revenue_confirmed')} icon={Banknote} tone="success" />
+                <AdminStatCard compact label="Receita pendente" value={money(metric('revenue_pending').value)} href={href('revenue_pending')} icon={Clock3} tone="warning" />
+                <AdminStatCard compact label="PIX" value={metric('pix').value} href={href('pix')} icon={QrCode} />
+                <AdminStatCard compact label="Cartão" value={metric('card').value} href={href('card')} icon={CreditCard} />
+                <AdminStatCard compact label="Cortesias" value={metric('courtesy').value} href={href('courtesy')} icon={Gift} />
+              </div> : <AdminEmptyState title="Acesso financeiro restrito" description="Seu perfil não possui permissão para visualizar valores monetários." />}
+            </AdminSection>
+
+            {quickActions.length ? <section aria-labelledby="quick-actions-title" className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/60 px-4 py-3">
+              <h2 id="quick-actions-title" className="mr-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ações rápidas</h2>
+              {quickActions.map(({ label, href: actionHref, icon: Icon }) => <Link key={label} href={actionHref} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950/60 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-emerald-400/60 hover:bg-emerald-500/10 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"><Icon className="size-3.5" aria-hidden />{label}</Link>)}
+            </section> : null}
+          </>}
         </div>
       </div>
     </main>

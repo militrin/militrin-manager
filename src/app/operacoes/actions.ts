@@ -360,7 +360,7 @@ function mapTicketRow(params: {
         ? String(participantCategory.id)
         : null;
 
-  const categoryName = String(orderItemCategory?.name ?? participantCategory?.name ?? "Sem categoria");
+  const categoryName = String(orderItemCategory?.name ?? participantCategory?.name ?? "Ingresso único");
 
   const orderId = row.order_id ? String(row.order_id) : null;
   const payment = orderId ? paymentByOrder.get(orderId) : undefined;
@@ -578,7 +578,7 @@ export async function getKitMaterializationPreviewAction(ticketId: string) {
     preview: {
       participantName: String(participantRow?.full_name ?? orderItem?.holder_full_name ?? "Titular não definido"),
       ticketLabel: String(ticket.token ?? ticket.id),
-      categoryName: String(category?.name ?? "Sem categoria"),
+      categoryName: String(category?.name ?? "Ingresso único"),
       items: (eventItems ?? []).map((item) => {
         const existing = linkMap.get(String(item.id));
         const missingShirtData = String(item.item_type) === "shirt" && (!shirtType || !shirtSize);
@@ -980,7 +980,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
       event_id: eventId,
       event_name: String(selectedEvent?.name ?? "Evento"),
       category_id: row.ticket_category_id ? String(row.ticket_category_id) : null,
-      category_name: String(ticketCategory?.name ?? "Sem categoria"),
+      category_name: String(ticketCategory?.name ?? "Ingresso único"),
       order_id: null,
       order_number: null,
       order_created_at: null,
@@ -1339,7 +1339,7 @@ async function buildTicketDetails(
         getRelation(orderItem?.participants as Record<string, unknown> | Array<Record<string, unknown>> | null)?.full_name
           ?? "Titular não definido",
       ),
-      category_name: String(category?.name ?? "Sem categoria"),
+      category_name: String(category?.name ?? "Ingresso único"),
       // LEGACY FALLBACK — do not use as canonical source: participant shirt fields are historical compatibility only.
       shirt_type: String(orderItem?.shirt_type ?? participant?.shirt_type ?? ""),
       shirt_size: String(orderItem?.shirt_size ?? participant?.shirt_size ?? ""),
@@ -1588,7 +1588,7 @@ export async function getOperationParticipantDetailsAction(participantId: string
     participant_id: participantId, participant_name: String(row.full_name ?? "Participante"), participant_email: String(row.email ?? ""), full_name: String(row.full_name ?? "Participante"),
     cpf: String(row.cpf ?? ""), phone: String(row.phone ?? ""), city: String(row.city ?? ""), gender: row.gender ? String(row.gender) : null, birth_date: row.birth_date ? String(row.birth_date) : null,
     registration_status: String(row.registration_status ?? "pending"), event_id: String(row.event_id), event_name: String(event?.name ?? "Evento"), category_id: row.ticket_category_id ? String(row.ticket_category_id) : null,
-    category_name: String(category?.name ?? "Sem categoria"), order_id: null, order_number: null, order_created_at: null, buyer_user_id: null, buyer_name: "", buyer_cpf: "", buyer_phone: "", buyer_email: "",
+    category_name: String(category?.name ?? "Ingresso único"), order_id: null, order_number: null, order_created_at: null, buyer_user_id: null, buyer_name: "", buyer_cpf: "", buyer_phone: "", buyer_email: "",
     buyer_type: importBatchIds.length ? "imported_holder" : "account", import_batch_id: importBatchIds[0] ?? null, payment_status: payment.paymentStatus, payment_method: payment.paymentMethod,
     shirt_type: String(row.shirt_type ?? ""), shirt_size: String(row.shirt_size ?? ""), kit_status: (legacyItems ?? []).length ? "pending" : "configuration_pending", checkin_status: "pending",
     wristband_id: null, wristband_code: null, wristband_status: null, can_operate: false, block_reason: "Esta inscrição não possui vínculo comprovável com um ingresso.", order_ticket_count: 0, order_ticket_position: 0,
@@ -1646,9 +1646,16 @@ export async function assignParticipantCategoryAndBatchAction(input: { participa
   if (!batchCount) return { success: false as const, message: "Lote inválido para este evento." };
   if (!priceCount) return { success: false as const, message: "Este lote não tem preço configurado para a categoria escolhida. Configure o preço em Lotes antes de atribuir." };
 
-  const { error } = await supabase.from("participants")
+  const { data: tickets, error: ticketLookupError } = await supabase.from("tickets")
+    .select("id,order_item_id").eq("participant_id", input.participantId).eq("event_id", input.eventId)
+    .neq("status", "cancelled").limit(2);
+  if (ticketLookupError) return { success: false as const, message: ticketLookupError.message };
+  if (tickets?.length !== 1 || !tickets[0].order_item_id) {
+    return { success: false as const, message: "Abra o ingresso especifico para atribuir categoria e lote." };
+  }
+  const { error } = await supabase.from("order_items")
     .update({ ticket_category_id: input.categoryId, batch_id: input.batchId, updated_at: new Date().toISOString() })
-    .eq("id", input.participantId).eq("event_id", input.eventId);
+    .eq("id", tickets[0].order_item_id).eq("event_id", input.eventId);
   if (error) return { success: false as const, message: error.message };
 
   revalidatePath("/operacoes");
@@ -1742,7 +1749,7 @@ export async function searchPickupParticipantAction(query: string) {
         event_id: String(row.event_id),
         status: String(row.status ?? "pending"),
         event_name: String(getRelation(row.events as Record<string, unknown> | Array<Record<string, unknown>> | null)?.name ?? "Evento"),
-        category_name: String(getRelation(getRelation(row.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null)?.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null)?.name ?? "Sem categoria"),
+        category_name: String(getRelation(getRelation(row.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null)?.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null)?.name ?? "Ingresso único"),
       })),
     };
   }

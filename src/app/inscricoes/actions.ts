@@ -17,9 +17,16 @@ export type ResolveParticipantDataIssuesInput = {
 
 export async function getParticipantIssueOptionsAction(participantId: string) {
   const supabase = await createServerSupabaseClient();
-  const { data: participant, error } = await supabase.from("participants").select("event_id,ticket_category_id,batch_id").eq("id", participantId).single();
+  const { data: participant, error } = await supabase.from("participants").select("event_id").eq("id", participantId).single();
   if (error || !participant?.event_id) return { success: false as const, message: error?.message ?? "Cadastro não encontrado." };
   const eventId = String(participant.event_id);
+  const { data: issueItems, error: issueItemError } = await supabase.from("participant_data_issues").select("order_item_id").eq("participant_id", participantId).eq("status", "open").not("order_item_id", "is", null);
+  if (issueItemError) return { success: false as const, message: issueItemError.message };
+  const issueOrderItemIds = [...new Set((issueItems ?? []).map((issue) => String(issue.order_item_id)))];
+  if (issueOrderItemIds.length > 1) return { success: false as const, message: "Existem pendencias de mais de um ingresso. Abra o ingresso que deseja corrigir." };
+  const { data: canonicalItem } = issueOrderItemIds.length
+    ? await supabase.from("order_items").select("ticket_category_id,batch_id").eq("id", issueOrderItemIds[0]).single()
+    : { data: null };
   const [categoriesResult, batchesResult, shirtsResult] = await Promise.all([
     supabase.from("ticket_categories").select("id,name").eq("event_id", eventId).eq("is_active", true).order("name"),
     supabase.from("registration_batches").select("id,name").eq("event_id", eventId).eq("is_active", true).order("starts_at"),
@@ -38,7 +45,7 @@ export async function getParticipantIssueOptionsAction(participantId: string) {
     const type = String(item.shirt_type ?? ""); const size = String(item.shirt_size ?? "");
     if (type && size) shirtMap.set(type, [...(shirtMap.get(type) ?? []), size]);
   }
-  return { success: true as const, currentCategoryId: participant.ticket_category_id ? String(participant.ticket_category_id) : "", currentBatchId: participant.batch_id ? String(participant.batch_id) : "", categories: categoriesResult.data ?? [], batches: batchesResult.data ?? [], prices: prices.data ?? [], shirts: Array.from(shirtMap, ([type, sizes]) => ({ type, sizes })) };
+  return { success: true as const, currentCategoryId: canonicalItem?.ticket_category_id ? String(canonicalItem.ticket_category_id) : "", currentBatchId: canonicalItem?.batch_id ? String(canonicalItem.batch_id) : "", categories: categoriesResult.data ?? [], batches: batchesResult.data ?? [], prices: prices.data ?? [], shirts: Array.from(shirtMap, ([type, sizes]) => ({ type, sizes })) };
 }
 export async function resolveMyParticipantDataIssuesAction(input: ResolveParticipantDataIssuesInput) {
   const supabase = await createServerSupabaseClient();
@@ -47,14 +54,17 @@ export async function resolveMyParticipantDataIssuesAction(input: ResolvePartici
   const { data: participant } = await supabase.from("participants").select("id").eq("id", input.participantId).eq("user_id", user.id).maybeSingle();
   if (!participant?.id) return { success: false as const, message: "Cadastro não vinculado a esta conta." };
   if (input.values.category || input.values.batch) return { success: false as const, message: "Categoria e lote dependem do organizador." };
-  const { data, error } = await supabase.rpc("resolve_participant_data_issues", {
-    p_participant_id: input.participantId, p_expected_issue_ids: input.expectedIssueIds, p_values: input.values,
+  const { data: issueContext } = await supabase.from("participant_data_issues").select("order_item_id").in("id", input.expectedIssueIds).eq("status", "open");
+  const issueOrderItemIds = [...new Set((issueContext ?? []).map((issue) => issue.order_item_id ? String(issue.order_item_id) : null).filter(Boolean))] as string[];
+  if (issueOrderItemIds.length !== 1) return { success: false as const, message: "Abra a pendencia no ingresso correto para continuar." };
+  const { data, error } = await supabase.rpc("resolve_ticket_data_issues", {
+    p_order_item_id: issueOrderItemIds[0], p_expected_issue_ids: input.expectedIssueIds, p_values: input.values,
   });
   if (error) return { success: false as const, message: error.message };
   const result = data as { success?: boolean; message?: string; remaining_issues?: Array<Record<string, unknown>> } | null;
   if (!result?.success) return { success: false as const, message: result?.message ?? "Não foi possível reavaliar o cadastro." };
-  const { data: finalization, error: finalizationError } = await supabase.rpc("finalize_imported_participant_after_issue_resolution", {
-    p_participant_id: input.participantId, p_resolved_fields: Object.keys(input.values),
+  const { data: finalization, error: finalizationError } = await supabase.rpc("finalize_imported_ticket_after_issue_resolution", {
+    p_order_item_id: issueOrderItemIds[0], p_resolved_fields: Object.keys(input.values),
   });
   if (finalizationError) return { success: false as const, message: finalizationError.message };
   const finalized = finalization as { finalization?: string; ticket_id?: string | null } | null;
@@ -78,31 +88,26 @@ export async function resolveParticipantDataIssuesAction(input: ResolveParticipa
   const batchId = rpcValues.batch || null;
   delete rpcValues.category;
   delete rpcValues.batch;
-  const { data: currentIssues, error: currentIssuesError } = await supabase.from("participant_data_issues").select("id").eq("participant_id", input.participantId).eq("status", "open");
+  const { data: currentIssues, error: currentIssuesError } = await supabase.from("participant_data_issues").select("id,order_item_id").eq("participant_id", input.participantId).eq("status", "open");
   if (currentIssuesError) return { success: false as const, message: currentIssuesError.message };
   const currentIds = (currentIssues ?? []).map((issue) => String(issue.id)).sort();
   const expectedIds = [...input.expectedIssueIds].sort();
   if (currentIds.length !== expectedIds.length || currentIds.some((id, index) => id !== expectedIds[index])) {
     return { success: false as const, conflict: true, message: "As pendências foram atualizadas por outro usuário. Recarregue e tente novamente." };
   }
+  const orderItemIds = [...new Set((currentIssues ?? []).map((issue) => issue.order_item_id ? String(issue.order_item_id) : null).filter(Boolean))] as string[];
+  if (orderItemIds.length !== 1) return { success: false as const, message: "Abra a pendencia no ingresso correto para continuar." };
+  const orderItemId = orderItemIds[0];
   if (categoryId && !(await supabase.from("ticket_categories").select("id", { count: "exact", head: true }).eq("id", categoryId).eq("event_id", participant.event_id)).count) {
     return { success: false as const, message: "Categoria inválida para este evento." };
   }
   if (batchId && !(await supabase.from("registration_batches").select("id", { count: "exact", head: true }).eq("id", batchId).eq("event_id", participant.event_id)).count) {
     return { success: false as const, message: "Lote inválido para este evento." };
   }
-  if (categoryId || batchId) {
-    const { error: optionError } = await supabase.from("participants").update({
-      ...(categoryId ? { ticket_category_id: categoryId } : {}),
-      ...(batchId ? { batch_id: batchId } : {}),
-      updated_at: new Date().toISOString(),
-    }).eq("id", input.participantId);
-    if (optionError) return { success: false as const, message: optionError.message };
-  }
-  const { data, error } = await supabase.rpc("resolve_participant_data_issues", {
-    p_participant_id: input.participantId,
+  const { data, error } = await supabase.rpc("resolve_ticket_data_issues", {
+    p_order_item_id: orderItemId,
     p_expected_issue_ids: input.expectedIssueIds,
-    p_values: rpcValues,
+    p_values: { ...rpcValues, ...(categoryId ? { category: categoryId } : {}), ...(batchId ? { batch: batchId } : {}) },
   });
 
   if (error) return { success: false as const, message: error.message };
@@ -127,8 +132,8 @@ export async function resolveParticipantDataIssuesAction(input: ResolveParticipa
 
   const resolvedFields = Object.keys(input.values);
   const { data: finalizationData, error: finalizationError } = await supabase.rpc(
-    "finalize_imported_participant_after_issue_resolution",
-    { p_participant_id: input.participantId, p_resolved_fields: resolvedFields },
+    "finalize_imported_ticket_after_issue_resolution",
+    { p_order_item_id: orderItemId, p_resolved_fields: resolvedFields },
   );
   if (finalizationError) return { success: false as const, message: finalizationError.message };
   const finalization = finalizationData as {
@@ -209,6 +214,12 @@ export async function confirmParticipantPaymentAction(participantId: string) {
 
   if (participantError) return { success: false, message: participantError.message };
   if (!participant?.id) return { success: false, message: "Participante nao encontrado." };
+  const { data: activeItems, error: activeItemError } = await supabase.from("order_items")
+    .select("id,order_id,orders!inner(import_batch_id,buyer_type)").eq("participant_id", participantId)
+    .eq("event_id", participant.event_id).not("status", "in", "(cancelled,expired,refunded)").limit(2);
+  if (activeItemError) return { success: false, message: activeItemError.message };
+  if (activeItems?.length !== 1) return { success: false, message: "Abra o ingresso correto para confirmar o pagamento." };
+  const activeItem = activeItems[0];
 
   const { data: payment, error: paymentError } = await supabase
     .from("payments")
@@ -238,8 +249,8 @@ export async function confirmParticipantPaymentAction(participantId: string) {
 
   if ((importedHistoryCount ?? 0) > 0) {
     const { data: importedResult, error: importedError } = await supabase.rpc(
-      "finalize_imported_participant_after_issue_resolution",
-      { p_participant_id: participantId, p_resolved_fields: [], p_force_confirm: true },
+      "finalize_imported_ticket_after_issue_resolution",
+      { p_order_item_id: activeItem.id, p_resolved_fields: [], p_force_confirm: true },
     );
     if (importedError) return { success: false, message: importedError.message };
     const finalized = importedResult as { ticket_id?: string | null } | null;
@@ -262,11 +273,6 @@ export async function confirmParticipantPaymentAction(participantId: string) {
     p_participant_id: participantId,
   });
   if (confirmError) return { success: false, message: confirmError.message };
-
-  await supabase
-    .from("participants")
-    .update({ registration_status: "confirmed" })
-    .eq("id", participantId);
 
   revalidatePath("/painel");
   revalidatePath("/inscricoes");

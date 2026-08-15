@@ -43,7 +43,7 @@ export default async function TicketsAdminPage({ searchParams }: { searchParams:
       const category = Array.isArray(item?.ticket_categories) ? item.ticket_categories[0] : item?.ticket_categories;
       const holderName = participant?.full_name ?? item?.holder_full_name ?? "Sem titular";
       return <Link href={`/ingressos/${ticket.id}`} key={ticket.id} className="block rounded-xl border border-slate-800 p-4 transition hover:border-emerald-500/40">
-        <p className="font-medium">{holderName}</p><p className="text-sm text-slate-400">{category?.name ?? "Sem categoria"} · {ticket.status}</p>
+        <p className="font-medium">{holderName}</p><p className="text-sm text-slate-400">{category?.name ?? "Ingresso único"} · {ticket.status}</p>
       </Link>;
     })}{!data?.length ? <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Nenhum ingresso encontrado.</p> : null}</div>
   </div></div></main>;

@@ -58,7 +58,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       orderItemContactId: orderItem?.registration_contact_id ? String(orderItem.registration_contact_id) : null,
       ownerUserId: link.ownerUserId, roles, roleLabel: contactTicketRoleLabel(roles),
       status: String(row.status ?? "pending"), issuedAt: row.issued_at ? String(row.issued_at) : null,
-      categoryName: String(category?.name ?? "Sem categoria"), batchName: String(batch?.name ?? "Sem lote"),
+      categoryName: String(category?.name ?? "Ingresso único"), batchName: String(batch?.name ?? "Sem lote"),
       holderName: row.participant_id || orderItem?.participant_id ? String(participant?.full_name ?? orderItem?.holder_full_name ?? "Titular não identificado") : "Titular não definido",
       shirt: [orderItem?.shirt_type, orderItem?.shirt_size].filter(Boolean).join(" · "),
       orderNumber: order?.order_number ? String(order.order_number) : null,

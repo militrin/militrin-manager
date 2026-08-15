@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readReconciledFile as readFile } from './helpers/read-reconciled-file.mjs';
 import {
   calculateAgeAtDate,
   hasTicketBlockingIssues,
@@ -878,7 +878,8 @@ test('resolvedor compartilhado usa controles fechados e valida dados pessoais', 
   assert.match(dialog, /Categoria do ingresso/);
   assert.match(dialog, /<span>Lote<\/span><select/);
   assert.match(dialog, /deduplicateIssues/);
-  assert.match(actions, /finalize_imported_participant_after_issue_resolution/);
+  assert.match(actions, /resolve_ticket_data_issues/);
+  assert.match(actions, /finalize_imported_ticket_after_issue_resolution/);
   assert.match(actions, /ticket_categories[\s\S]*registration_batches/);
   assert.match(cadastroList, /Abrir ficha/);
   assert.doesNotMatch(cadastroList, /overflow-x-auto|min-w-\[/);
@@ -901,8 +902,8 @@ test('resolução em massa confirma quantidade e reutiliza reavaliação/finaliz
   const actions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
   assert.match(component, /Aplicar .* a \$\{selected\.size\} cadastros/);
   assert.match(component, /Escolher registros individualmente/);
-  assert.match(actions, /reevaluate_participant_data_issues/);
-  assert.match(actions, /finalize_imported_participant_after_issue_resolution/);
+  assert.match(actions, /resolve_import_ticket_options/);
+  assert.match(actions, /finalize_imported_ticket_after_issue_resolution/);
   assert.doesNotMatch(actions, /insert\([^)]*(orders|order_items|tickets|payments)/);
 });
 
@@ -1093,7 +1094,8 @@ test('primeiro acesso carrega e resolve somente o participant indicado pelo conv
   assert.match(form, /Dado já informado/);
   assert.match(form, /Preenchimento necessário/);
   assert.match(action, /claim_participant_account_invite/);
-  assert.match(action, /resolve_participant_data_issues/);
+  assert.match(action, /resolve_ticket_data_issues/);
+  assert.match(action, /select\('order_item_id'\)/);
   assert.match(action, /inviteContext\.openIssueIds/);
   assert.doesNotMatch(action, /issueValues\.(category|batch)/);
 });
@@ -1132,7 +1134,7 @@ test('primeiro acesso D — pendencia admin permanece em conferencia', async () 
 test('primeiro acesso E — finaliza de forma idempotente e segue para ingressos', async () => {
   const action = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
   const cadastroActions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
-  assert.match(action, /claim_participant_account_invite[\s\S]*finalize_imported_participant_after_issue_resolution/);
+  assert.match(action, /claim_participant_account_invite[\s\S]*finalize_imported_ticket_after_issue_resolution/);
   assert.match(cadastroActions, /\/minha-conta\/ingressos/);
   assert.doesNotMatch(action, /from\('(orders|payments|order_items|tickets)'\)\.(insert|update)/);
 });
@@ -1417,7 +1419,7 @@ test('falha posterior ocorre depois da conclusao persistida e retry nao redefine
   const context = await readFile(new URL('../src/lib/account/participant-invite.ts', import.meta.url), 'utf8');
   const completionIndex = action.indexOf("password_setup_completed_at: new Date().toISOString()");
   const profileIndex = action.indexOf('const profileUpdate = await upsertCustomerProfileCompat');
-  const finalizationIndex = action.indexOf("finalize_imported_participant_after_issue_resolution");
+  const finalizationIndex = action.indexOf("finalize_imported_ticket_after_issue_resolution");
   assert.ok(completionIndex >= 0 && profileIndex > completionIndex && finalizationIndex > completionIndex);
   assert.match(context, /requiresPasswordSetup: Boolean\(invite\.requires_password_setup\) && !invite\.password_setup_completed_at/);
 });

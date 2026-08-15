@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { inferColumnMapping, type CanonicalField } from '@/lib/imports/columns';
 import { parseSpreadsheetFile } from '@/lib/imports/parse-file';
 import {
@@ -248,7 +249,7 @@ async function getCurrentEventImportRules(
   if (!eventId) return null;
 
   const [{ data: event }, { data: shirtItems }, { data: batches }, { data: categories }] = await Promise.all([
-    supabase.from('events').select('starts_at,limit_shirt_selection_to_stock').eq('id', eventId).maybeSingle(),
+    supabase.from('events').select('organization_id,starts_at,limit_shirt_selection_to_stock').eq('id', eventId).maybeSingle(),
     supabase.from('event_kit_items').select('id').eq('event_id', eventId).eq('item_type', 'shirt').eq('is_active', true).limit(1),
     supabase.from('registration_batches').select('id,name,sequence_number').eq('event_id', eventId).eq('is_active', true),
     supabase.from('ticket_categories').select('id,name').eq('event_id', eventId).eq('is_active', true),
@@ -261,6 +262,7 @@ async function getCurrentEventImportRules(
     .in('batch_id', batchIds) : { data: [] };
 
   return {
+    organizationId: event?.organization_id ? String(event.organization_id) : null,
     genderRequiredForPricing: false,
     eventStartsAt: event?.starts_at ? String(event.starts_at) : null,
     shirtRequiredBeforeCompletion: false,
@@ -306,6 +308,8 @@ export async function parseImportFileAction(formData: FormData) {
   if (!user?.id) {
     return { success: false as const, message: 'Sessao expirada. Entre novamente.' };
   }
+  const currentOrganization = (await getCurrentOrganizationContext()).organization;
+  if (!currentOrganization?.id) return { success: false as const, message: 'Selecione uma organizacao para importar.' };
 
   if (importType === 'current_event_registrations' && !eventId) {
     return { success: false as const, message: 'Selecione explicitamente o evento da importação.' };
@@ -363,20 +367,12 @@ export async function parseImportFileAction(formData: FormData) {
       ? await getCurrentEventImportRules(supabase, eventId)
       : null;
 
-    const [{ data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }, { data: existingHistoricalRows }] = await Promise.all([
-      cpfs.size
-        ? (() => {
-            let query = supabase
-              .from('participants')
-              .select('id, full_name, cpf, email, event_id, user_id')
-              .in('cpf', Array.from(cpfs));
-
-            if (importType === 'current_event_registrations' && eventId) {
-              query = query.eq('event_id', eventId);
-            }
-
-            return query;
-          })()
+    const [{ data: contactsByCpf }, { data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }, { data: existingHistoricalRows }] = await Promise.all([
+      importType === 'current_event_registrations' && cpfs.size && eventRules?.organizationId
+        ? supabase.from('registration_contacts').select('id,full_name,cpf,email').eq('organization_id', eventRules.organizationId).in('cpf', Array.from(cpfs))
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      importType === 'historical_participations' && cpfs.size
+        ? supabase.from('participants').select('id, full_name, cpf, email, event_id, user_id, registration_contact_id').in('cpf', Array.from(cpfs))
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       importType === 'historical_participations' && emails.size
         ? (() => {
@@ -405,6 +401,10 @@ export async function parseImportFileAction(formData: FormData) {
     ]);
 
     const cpfMap = new Map<string, Record<string, unknown>>();
+    for (const contact of contactsByCpf ?? []) {
+      const key = normalizeCpf(String(contact.cpf ?? ''));
+      if (key) cpfMap.set(key, contact);
+    }
     for (const participant of participantsByCpf ?? []) {
       const key = normalizeCpf(String(participant.cpf ?? ''));
       if (key) cpfMap.set(key, participant);
@@ -444,6 +444,7 @@ export async function parseImportFileAction(formData: FormData) {
           ? (historicalEventYear ?? extractEventYearFromLabel(historicalEventName) ?? null)
           : null,
         imported_by: user.id,
+        organization_id: currentOrganization.id,
         total_rows: normalizedRows.length,
         status: 'processing',
       })
@@ -466,6 +467,7 @@ export async function parseImportFileAction(formData: FormData) {
       let resolution = 'pending';
       let errorMessage: string | null = null;
       let matchedParticipantId: string | null = null;
+      let matchedRegistrationContactId: string | null = null;
       let matchedUserId: string | null = null;
       const dataIssues: ImportDataIssue[] = [];
 
@@ -586,7 +588,11 @@ export async function parseImportFileAction(formData: FormData) {
 
       if (status !== 'error' && row.cpf && cpfMap.has(row.cpf)) {
         const matched = cpfMap.get(row.cpf)!;
-        matchedParticipantId = String(matched.id ?? '');
+        if (importType === 'current_event_registrations') {
+          matchedRegistrationContactId = String(matched.id ?? '');
+        } else {
+          matchedParticipantId = String(matched.id ?? '');
+        }
         matchedUserId = importType === 'historical_participations' && matched.user_id ? String(matched.user_id) : null;
         if (importType === 'current_event_registrations') {
           resolution = 'link_existing';
@@ -609,7 +615,7 @@ export async function parseImportFileAction(formData: FormData) {
         errorMessage = 'Possivel correspondencia encontrada.';
       }
 
-      if (importType === 'current_event_registrations' && status === 'ready' && !matchedParticipantId) {
+      if (importType === 'current_event_registrations' && status === 'ready' && !matchedRegistrationContactId) {
         resolution = 'create_new';
       }
 
@@ -627,6 +633,7 @@ export async function parseImportFileAction(formData: FormData) {
         error_message: errorMessage,
         data_issues: dataIssues,
         matched_participant_id: matchedParticipantId,
+        registration_contact_id: matchedRegistrationContactId,
         matched_user_id: matchedUserId,
       };
     });
@@ -813,7 +820,7 @@ export async function executeImportBatchAction(
 
   const { data: batch, error: batchError } = await supabase
     .from('import_batches')
-    .select('id, import_type, event_id, historical_event_label, historical_event_key, historical_event_year, total_rows, imported_by')
+    .select('id, import_type, event_id, organization_id, historical_event_label, historical_event_key, historical_event_year, total_rows, imported_by')
     .eq('id', batchId)
     .single();
 
@@ -840,7 +847,7 @@ export async function executeImportBatchAction(
 
   const { data: rows, error: rowsError } = await supabase
     .from('import_batch_rows')
-    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id')
+    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id')
     .eq('import_batch_id', batchId)
     .order('row_number', { ascending: true });
 
@@ -898,6 +905,17 @@ export async function executeImportBatchAction(
         const matchedUserId = row.matched_user_id ? String(row.matched_user_id) : null;
 
         let linkedUserId: string | null = matchedUserId;
+        if (!batch.organization_id) throw new Error('Organizacao da importacao historica nao definida.');
+        const { data: resolvedContact, error: contactError } = await supabase.rpc('resolve_import_registration_contact', {
+          p_organization_id: String(batch.organization_id),
+          p_expected_registration_contact_id: row.registration_contact_id ? String(row.registration_contact_id) : null,
+          p_full_name: fullName, p_cpf: cpf, p_birth_date: birthDate, p_gender: gender,
+          p_phone: phone, p_email: email, p_city: city,
+        });
+        if (contactError) throw contactError;
+        const historicalContactId = (resolvedContact as Record<string, unknown> | null)?.registration_contact_id
+          ? String((resolvedContact as Record<string, unknown>).registration_contact_id) : null;
+        if (!historicalContactId) throw new Error('Falha ao resolver o cadastro da participacao historica.');
         if (!linkedUserId && cpf) {
           const { data: profileByCpf } = await supabase
             .from('customer_profiles')
@@ -913,6 +931,7 @@ export async function executeImportBatchAction(
             event_id: batch.event_id,
             user_id: linkedUserId,
             participant_id: matchedParticipantId,
+            registration_contact_id: historicalContactId,
             legacy_event_name: String(batch.historical_event_label ?? '').trim() || null,
             historical_event_key: String(batch.historical_event_key ?? ''),
             event_year: Number(batch.historical_event_year ?? normalized.event_year ?? new Date().getFullYear()),
@@ -938,7 +957,7 @@ export async function executeImportBatchAction(
 
         await supabase
           .from('import_batch_rows')
-          .update({ status: 'imported', error_message: null })
+          .update({ status: 'imported', error_message: null, registration_contact_id: historicalContactId })
           .eq('id', row.id);
 
         importedRows += 1;
@@ -952,10 +971,10 @@ export async function executeImportBatchAction(
         }
 
         const issues = Array.isArray(row.data_issues) ? row.data_issues as ImportDataIssue[] : [];
-        const { data: upserted, error: upsertError } = await supabase.rpc('upsert_current_event_import_participant', {
+        const { data: upserted, error: upsertError } = await supabase.rpc('import_current_event_contact_first', {
           p_import_batch_id: batchId,
           p_import_batch_row_id: String(row.id),
-          p_expected_participant_id: resolution === 'link_existing' && row.matched_participant_id ? String(row.matched_participant_id) : null,
+          p_expected_registration_contact_id: resolution === 'link_existing' && row.registration_contact_id ? String(row.registration_contact_id) : null,
           p_full_name: fullName,
           p_cpf: String(normalized.cpf_input ?? cpf ?? '').trim() || null,
           p_birth_date: birthDate,
@@ -968,12 +987,15 @@ export async function executeImportBatchAction(
           p_registration_batch_id: String(normalized.resolved_batch_id ?? '').trim() || null,
           p_ticket_category_id: String(normalized.resolved_category_id ?? '').trim() || null,
           p_payment_method: paymentMethod,
-          p_import_issues: issues.filter((issue) => issue.field_code === 'email' || issue.field_code === 'phone'),
+          p_import_issues: issues,
+          p_assign_holder: true,
         });
         if (upsertError) throw upsertError;
         const upsertResult = upserted as Record<string, unknown> | null;
         const participantId = upsertResult?.participant_id ? String(upsertResult.participant_id) : null;
-        const createdParticipant = upsertResult?.created === true;
+        const registrationContactId = upsertResult?.registration_contact_id ? String(upsertResult.registration_contact_id) : null;
+        const orderItemId = upsertResult?.order_item_id ? String(upsertResult.order_item_id) : null;
+        const createdParticipant = upsertResult?.created_participant_projection === true;
         const participantUserId = upsertResult?.user_id ? String(upsertResult.user_id) : null;
         const hasBlockingDataIssues = upsertResult?.has_issuance_blockers === true;
         if (createdParticipant) {
@@ -982,8 +1004,8 @@ export async function executeImportBatchAction(
           updatedRows += 1;
         }
 
-        if (!participantId) {
-          throw new Error('Falha ao obter participante importado.');
+        if (!participantId || !registrationContactId || !orderItemId) {
+          throw new Error('Falha ao criar o ingresso importado.');
         }
 
         const genderInference = normalized.gender_inference;
@@ -1007,14 +1029,6 @@ export async function executeImportBatchAction(
           }
         }
 
-        if (!hasBlockingDataIssues) {
-          const importedOrderResult = await supabase.rpc('create_imported_order_and_issue_ticket', {
-            p_participant_id: participantId,
-            p_import_batch_id: batchId,
-          });
-          if (importedOrderResult.error) throw importedOrderResult.error;
-        }
-
         // No MVP do importador administrativo, não criamos nem convidamos contas.
         // O participante importado continua utilizável no painel, entrega de kits e check-in.
         await ensureParticipationHistoryForCurrentParticipant({
@@ -1030,8 +1044,8 @@ export async function executeImportBatchAction(
 
         if (!hasBlockingDataIssues && persistedPaymentMode === 'confirm_all') {
           const { data: finalization, error: finalizationError } = await supabase.rpc(
-            'finalize_imported_participant_after_issue_resolution',
-            { p_participant_id: participantId, p_resolved_fields: [] },
+            'finalize_imported_ticket_after_issue_resolution',
+            { p_order_item_id: orderItemId, p_resolved_fields: [] },
           );
           if (finalizationError) throw finalizationError;
           if ((finalization as Record<string, unknown> | null)?.ticket_id) {
@@ -1042,7 +1056,7 @@ export async function executeImportBatchAction(
 
         await supabase
           .from('import_batch_rows')
-          .update({ status: 'imported', error_message: null, matched_participant_id: participantId })
+          .update({ status: 'imported', error_message: null, matched_participant_id: participantId, registration_contact_id: registrationContactId, order_item_id: orderItemId })
           .eq('id', row.id);
 
         importedRows += 1;

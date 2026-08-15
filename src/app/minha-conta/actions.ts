@@ -184,13 +184,6 @@ export async function requestTicketItemChangeAction(formData: FormData) {
     .update({ reserved_quantity: Number(nextStock.reserved_quantity ?? 0) + 1, updated_at: new Date().toISOString() })
     .eq('id', nextStock.id);
 
-  if (participant?.id) {
-    await supabase
-      .from('participants')
-      .update({ shirt_type: shirtType, shirt_size: shirtSize, updated_at: new Date().toISOString() })
-      .eq('id', String(participant.id));
-  }
-
   if (orderItem?.id) {
     await supabase
       .from('order_items')
@@ -369,7 +362,9 @@ export async function updateTicketNotesAction(formData: FormData) {
     return { success: false, message: 'Titular ainda nao definido. Defina o titular antes de registrar observacoes.' };
   }
 
-  const { error: noteError } = await supabase.from('participants').update({ notes: notes || null, updated_at: new Date().toISOString() }).eq('id', participantId);
+  const { error: noteError } = await supabase.rpc('update_participant_event_notes', {
+    p_participant_id: participantId, p_notes: notes || null,
+  });
   if (noteError) return { success: false, message: noteError.message };
 
   await supabase.from('audit_logs').insert({
@@ -432,6 +427,28 @@ export async function updateMyProfileAction(formData: FormData) {
   });
 
   if (error) return { success: false, message: error.message };
+
+  const { data: linkedParticipants, error: linkedError } = await supabase
+    .from('participants')
+    .select('id')
+    .eq('user_id', user.id);
+  if (linkedError) return { success: false, message: linkedError.message };
+  const personalValues = {
+    full_name: String(formData.get('full_name') ?? '').trim() || null,
+    cpf: profileCpf,
+    birth_date: birthDate,
+    gender: String(formData.get('gender') ?? '').trim() || null,
+    phone: String(formData.get('phone') ?? '').replace(/\D/g, '') || null,
+    email: emailValue,
+    city: String(formData.get('city') ?? '').trim() || null,
+  };
+  for (const participant of linkedParticipants ?? []) {
+    const { error: contactError } = await supabase.rpc('update_registration_contact_from_participant', {
+      p_participant_id: participant.id,
+      p_values: personalValues,
+    });
+    if (contactError) return { success: false, message: contactError.message };
+  }
 
   const currentMetadata = (user.user_metadata ?? {}) as Record<string, unknown>;
   const metadataUpdate = {

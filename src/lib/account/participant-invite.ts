@@ -54,8 +54,14 @@ export async function getParticipantInviteContext(inviteId: string, user: Authen
   const { data: invite, error } = await admin.from('participant_account_invites').select('*').eq('id', inviteId).maybeSingle();
   if (error || !invite) return emptyContext('not_found');
 
-  const { data: participant } = await admin.from('participants').select('id,event_id,user_id,full_name,cpf,birth_date,gender,phone,email,city').eq('id', invite.participant_id).maybeSingle();
+  const { data: participant } = await admin.from('participants')
+    .select('id,event_id,user_id,registration_contacts(full_name,cpf,birth_date,gender,phone,email,city)')
+    .eq('id', invite.participant_id).maybeSingle();
   if (!participant) return emptyContext('participant_not_found');
+  const registrationContact = Array.isArray(participant.registration_contacts)
+    ? participant.registration_contacts[0]
+    : participant.registration_contacts;
+  const canonicalParticipant = { ...participant, ...(registrationContact ?? {}) };
 
   const accessFailure = evaluateParticipantInviteAccess({
     inviteId,
@@ -74,7 +80,7 @@ export async function getParticipantInviteContext(inviteId: string, user: Authen
   const { data: issues } = await admin.from('participant_data_issues').select('id,field_code,resolution_scope').eq('participant_id', participant.id).eq('status', 'open');
   return {
     valid: true,
-    participant: participant as Record<string, unknown>,
+    participant: canonicalParticipant as Record<string, unknown>,
     userResolvableFields: [...new Set((issues ?? []).filter((issue) => issue.resolution_scope === 'user_resolvable').map((issue) => String(issue.field_code)))],
     openIssueIds: (issues ?? []).map((issue) => String(issue.id)),
     requiresPasswordSetup: Boolean(invite.requires_password_setup) && !invite.password_setup_completed_at,

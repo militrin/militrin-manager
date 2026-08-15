@@ -54,13 +54,15 @@ type MultiOrderItemInput = {
   ownership_status?: 'unassigned' | 'assigned';
   ownership_mode?: 'self' | 'unassigned' | 'named';
   holder_full_name?: string;
+  holder_registration_contact_id?: string;
+  holder_cpf?: string;
   holder_email?: string;
   holder_phone?: string;
 };
 
 type MultiOrderCreateInput = {
   event_id: string;
-  ticket_category_id: string;
+  ticket_category_id: string | null;
   quantity: number;
   gender?: string;
   shirt_type?: string;
@@ -555,6 +557,8 @@ type RpcMultiOrderItemPayload = {
   ownership_status: 'assigned' | 'unassigned' | null;
   ownership_mode: 'self' | 'unassigned' | 'named' | null;
   holder_full_name: string | null;
+  holder_registration_contact_id: string | null;
+  holder_cpf: string | null;
   holder_email: string | null;
   holder_phone: string | null;
 };
@@ -579,6 +583,8 @@ function normalizeMultiOrderItemsForRpc(items: MultiOrderItemInput[] | undefined
       ownership_status: normalizedOwnershipStatus,
       ownership_mode: normalizedOwnershipMode,
       holder_full_name: toTextParam(item.holder_full_name),
+      holder_registration_contact_id: toTextParam(item.holder_registration_contact_id),
+      holder_cpf: toTextParam(item.holder_cpf)?.replace(/\D/g, '') || null,
       holder_email: toTextParam(item.holder_email),
       holder_phone: toTextParam(item.holder_phone),
     };
@@ -1140,7 +1146,7 @@ export async function updatePublicPasswordAction(input: { password: string; conf
 
 export async function getPublicPricingPreviewAction(payload: {
   event_id: string;
-  ticket_category_id: string;
+  ticket_category_id: string | null;
   gender: string;
   coupon_code?: string;
 }) {
@@ -1149,7 +1155,7 @@ export async function getPublicPricingPreviewAction(payload: {
     p_gender: payload.gender,
     p_coupon_code: payload.coupon_code?.trim() ? payload.coupon_code.trim() : null,
     p_event_id: payload.event_id,
-    p_ticket_category_id: payload.ticket_category_id,
+    p_ticket_category_id: payload.ticket_category_id || null,
   });
 
   if (error) {
@@ -1388,10 +1394,9 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     }
 
     if (!participantUserId) {
-      const { error: linkExistingError } = await supabase
-        .from('participants')
-        .update({ user_id: userId, email: normalizedEmail })
-        .eq('id', String(existingParticipant.id));
+      const { error: linkExistingError } = await supabase.rpc('link_participant_account_projection', {
+        p_participant_id: String(existingParticipant.id),
+      });
       if (linkExistingError) {
         return { success: false, message: linkExistingError.message };
       }
@@ -1467,11 +1472,15 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     requestId: input.client_request_id ?? null,
   });
 
-  const { error: participantLinkError } = await supabase
-    .from('participants')
-    .update({ user_id: userId, email: normalizedEmail })
-    .eq('id', participantId);
+  const { error: participantLinkError } = await supabase.rpc('link_participant_account_projection', {
+    p_participant_id: participantId,
+  });
   if (participantLinkError) return { success: false, message: participantLinkError.message };
+  const contactUpdate = await supabase.rpc('update_registration_contact_from_participant', {
+    p_participant_id: participantId,
+    p_values: { email: normalizedEmail },
+  });
+  if (contactUpdate.error) return { success: false, message: contactUpdate.error.message };
 
   const state = await getRegistrationSnapshotByParticipantId(supabase, participantId, input.event_id);
   if (!state.success) return state;
@@ -1717,16 +1726,18 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
     const ownershipModes=buyerOwnershipModes(quantity,assignmentRequested,!effectiveAssignFirstToBuyer);
     rpcItems = rpcItems.map((item,index) => ownershipModes[index]==='self' ? {
       ...item, ownership_mode: 'self', ownership_status: 'assigned',
-      holder_full_name: null, holder_email: null, holder_phone: null,
+      holder_full_name: null, holder_registration_contact_id: null, holder_cpf: null, holder_email: null, holder_phone: null,
+    } : item.ownership_mode === 'named' ? {
+      ...item, ownership_mode: 'named', ownership_status: 'unassigned',
     } : {
       ...item, ownership_mode: 'unassigned', ownership_status: 'unassigned',
-      holder_full_name: null, holder_email: null, holder_phone: null,
+      holder_full_name: null, holder_registration_contact_id: null, holder_cpf: null, holder_email: null, holder_phone: null,
     });
   }
 
   const createOrderRpcPayload = {
     p_event_id: String(input.event_id),
-    p_ticket_category_id: String(input.ticket_category_id),
+    p_ticket_category_id: input.ticket_category_id ? String(input.ticket_category_id) : null,
     p_gender: fallbackGender,
     p_quantity: quantity,
     p_payment_method: toDbPaymentMethod(normalizedPaymentMethod),

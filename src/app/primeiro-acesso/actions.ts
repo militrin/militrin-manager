@@ -230,8 +230,12 @@ export async function completeFirstAccessAction(formData: FormData) {
     if (allowed.has('email')) issueValues.email = authEmail;
     if (allowed.has('city')) issueValues.city = city;
     if (participantId && inviteContext?.openIssueIds.length && Object.keys(issueValues).length) {
-      const resolution = await supabase.rpc('resolve_participant_data_issues', {
-        p_participant_id: participantId,
+      const { data: issueContext } = await supabase.from('participant_data_issues').select('order_item_id')
+        .in('id', inviteContext.openIssueIds).eq('status', 'open');
+      const orderItemIds = [...new Set((issueContext ?? []).map((issue) => issue.order_item_id ? String(issue.order_item_id) : null).filter(Boolean))] as string[];
+      if (orderItemIds.length !== 1) return { success: false, message: 'Abra a pendencia no ingresso correto para continuar.' };
+      const resolution = await supabase.rpc('resolve_ticket_data_issues', {
+        p_order_item_id: orderItemIds[0],
         p_expected_issue_ids: inviteContext.openIssueIds,
         p_values: issueValues,
       });
@@ -240,9 +244,13 @@ export async function completeFirstAccessAction(formData: FormData) {
         return { success: false, message: resolution.error?.message ?? resolutionData?.message ?? 'Não foi possível reavaliar as pendências do cadastro.' };
       }
     }
-    if (participantId) {
-      const finalization = await supabase.rpc('finalize_imported_participant_after_issue_resolution', {
-        p_participant_id: participantId,
+    if (participantId && inviteContext?.openIssueIds.length) {
+      const { data: issueContext } = await supabase.from('participant_data_issues').select('order_item_id')
+        .in('id', inviteContext.openIssueIds);
+      const orderItemIds = [...new Set((issueContext ?? []).map((issue) => issue.order_item_id ? String(issue.order_item_id) : null).filter(Boolean))] as string[];
+      if (orderItemIds.length !== 1) return { success: false, message: 'Abra a pendencia no ingresso correto para continuar.' };
+      const finalization = await supabase.rpc('finalize_imported_ticket_after_issue_resolution', {
+        p_order_item_id: orderItemIds[0],
         p_resolved_fields: Object.keys(issueValues),
       });
       if (finalization.error) return { success: false, message: finalization.error.message };
@@ -251,17 +259,15 @@ export async function completeFirstAccessAction(formData: FormData) {
 
   const { data: linkedParticipants } = await supabase
     .from('participants')
-    .select('id, gender')
+    .select('id')
     .eq('user_id', user.id);
 
   for (const participant of linkedParticipants ?? []) {
-    if (gender && !participant.gender) {
-      await supabase.from('participants').update({ gender, updated_at: new Date().toISOString() }).eq('id', participant.id);
-    }
-    await supabase.rpc('reevaluate_participant_data_issues', {
+    const contactUpdate = await supabase.rpc('update_registration_contact_from_participant', {
       p_participant_id: participant.id,
-      p_import_batch_id: null,
+      p_values: { full_name: fullName, cpf, birth_date: birthDate, gender, phone, email: authEmail, city },
     });
+    if (contactUpdate.error) return { success: false, message: contactUpdate.error.message };
   }
 
   await supabase.rpc('recalculate_customer_loyalty', {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readReconciledFile as readFile} from './helpers/read-reconciled-file.mjs';
 import {buildAdminTransferTicketOwnershipPayload} from '../src/lib/admin/ticket-owner-rpc.ts';
 import {contactTicketRoleLabel,rolesForContactTicket} from '../src/lib/registrations/contact-tickets.ts';
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readReconciledFile as readFile } from './helpers/read-reconciled-file.mjs';
 
 const migrationUrl = new URL('../supabase/migrations/136_atomic_shirt_stock_delivery.sql', import.meta.url);
 const actionsUrl = new URL('../src/app/operacoes/actions.ts', import.meta.url);

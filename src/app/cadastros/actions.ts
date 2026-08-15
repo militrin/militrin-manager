@@ -75,20 +75,18 @@ export async function bulkResolveImportCategoryBatchAction(input: { importBatchI
     supabase.from("registration_batch_prices").select("id", { count: "exact", head: true }).eq("batch_id", input.batchId).eq("ticket_category_id", input.categoryId),
   ]);
   if (!categoryCount || !batchCount || !priceCount) return { success: false as const, message: "Categoria/lote inválidos ou sem preço compatível." };
-  const { data: eligible, error } = await supabase.from("participant_data_issues").select("participant_id").eq("import_batch_id", input.importBatchId).eq("status", "open").in("field_code", ["category", "batch", "price"]).in("participant_id", participantIds);
+  const { data: eligible, error } = await supabase.from("participant_data_issues").select("participant_id,order_item_id").eq("import_batch_id", input.importBatchId).eq("status", "open").in("field_code", ["category", "batch", "price"]).in("participant_id", participantIds);
   if (error) return { success: false as const, message: error.message };
-  const eligibleIds = [...new Set((eligible ?? []).map((row) => String(row.participant_id)))];
+  const eligibleItems = [...new Map((eligible ?? []).filter((row) => row.order_item_id).map((row) => [String(row.order_item_id), String(row.participant_id)])).entries()];
   let applied = 0; let remaining = 0; let finalized = 0; const failures: string[] = [];
-  for (const participantId of eligibleIds) {
-    const updated = await supabase.from("participants").update({ ticket_category_id: input.categoryId, batch_id: input.batchId, updated_at: new Date().toISOString() }).eq("id", participantId).eq("event_id", batch.event_id);
+  for (const [orderItemId, participantId] of eligibleItems) {
+    const updated = await supabase.rpc("resolve_import_ticket_options", { p_order_item_id: orderItemId, p_ticket_category_id: input.categoryId, p_batch_id: input.batchId });
     if (updated.error) { failures.push(participantId); continue; }
-    const reevaluated = await supabase.rpc("reevaluate_participant_data_issues", { p_participant_id: participantId, p_import_batch_id: input.importBatchId });
-    if (reevaluated.error) { failures.push(participantId); continue; }
     applied += 1;
-    const { count } = await supabase.from("participant_data_issues").select("id", { count: "exact", head: true }).eq("participant_id", participantId).eq("status", "open").or("blocks_payment.eq.true,blocks_ticket_issuance.eq.true");
+    const { count } = await supabase.from("participant_data_issues").select("id", { count: "exact", head: true }).eq("order_item_id", orderItemId).eq("status", "open").or("blocks_payment.eq.true,blocks_ticket_issuance.eq.true");
     if (count) { remaining += 1; continue; }
     if (batch.payment_mode_original === "confirm_all") {
-      const result = await supabase.rpc("finalize_imported_participant_after_issue_resolution", { p_participant_id: participantId, p_resolved_fields: ["category", "batch"], p_force_confirm: true });
+      const result = await supabase.rpc("finalize_imported_ticket_after_issue_resolution", { p_order_item_id: orderItemId, p_resolved_fields: ["category", "batch"], p_force_confirm: true });
       if (result.error) failures.push(participantId); else finalized += 1;
     }
   }

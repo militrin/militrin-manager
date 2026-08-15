@@ -104,7 +104,7 @@ export function ExpandedTicketDetails({
           </div>
           <div>
             <p className="text-slate-500">Categoria</p>
-            <p>{detail.category_name || "Sem categoria"}</p>
+            <p>{detail.category_name || "Ingresso único"}</p>
           </div>
           <div>
             <p className="text-slate-500">Telefone</p>
@@ -254,7 +254,7 @@ export function ExpandedTicketDetails({
                     <p className="text-sm font-semibold">
                       Ingresso {index + 1} · {orderTicket.participant_name}
                     </p>
-                    <p className="text-xs text-slate-400">{orderTicket.category_name || "Sem categoria"}</p>
+                    <p className="text-xs text-slate-400">{orderTicket.category_name || "Ingresso único"}</p>
                   </div>
 
                   <Badge

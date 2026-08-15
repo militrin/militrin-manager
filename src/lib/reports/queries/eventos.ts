@@ -14,27 +14,23 @@ export async function eventosOcupacao(supabase: ReportSupabaseClient, ctx: Repor
   const resolved = await resolveRequiredEvent(supabase, ctx.eventId, ctx.organizationId);
   if ("error" in resolved) return reportError(resolved.error);
 
-  const { data: batches, error: batchesError } = await supabase.from("registration_batches").select("id,name,sequence_number").eq("event_id", resolved.event.id).order("sequence_number");
+  const { data: batches, error: batchesError } = await supabase.from("registration_batches").select("id,name,sequence_number,max_confirmed_registrations").eq("event_id", resolved.event.id).order("sequence_number");
   if (batchesError) return reportError(batchesError.message);
   const batchIds = (batches ?? []).map((batch) => String(batch.id));
 
-  const [{ data: prices, error: pricesError }, { data: participants, error: participantsError }, { data: paidPayments, error: paymentsError }] = await Promise.all([
+  const [{ data: prices, error: pricesError }, { data: orderItems, error: orderItemsError }] = await Promise.all([
     batchIds.length ? supabase.from("registration_batch_prices").select("batch_id,ticket_category_id,max_confirmed_registrations,ticket_categories(name)").in("batch_id", batchIds) : Promise.resolve({ data: [], error: null }),
-    supabase.from("participants").select("id,batch_id,ticket_category_id,registration_status,reservation_status").eq("event_id", resolved.event.id),
-    supabase.from("payments").select("participant_id").eq("event_id", resolved.event.id).eq("payment_status", "paid"),
+    supabase.from("order_items").select("id,batch_id,ticket_category_id,status,orders!inner(status)").eq("event_id", resolved.event.id),
   ]);
   if (pricesError) return reportError(pricesError.message);
-  if (participantsError) return reportError(participantsError.message);
-  if (paymentsError) return reportError(paymentsError.message);
+  if (orderItemsError) return reportError(orderItemsError.message);
 
-  const paidParticipantIds = new Set((paidPayments ?? []).map((payment) => String(payment.participant_id)));
   const confirmedByKey = new Map<string, number>();
-  for (const participant of participants ?? []) {
-    if (!participant.batch_id || !participant.ticket_category_id) continue;
-    if (String(participant.registration_status ?? "pending") === "cancelled") continue;
-    if (participant.reservation_status && participant.reservation_status !== "confirmed") continue;
-    if (!paidParticipantIds.has(String(participant.id))) continue;
-    const key = `${participant.batch_id}::${participant.ticket_category_id}`;
+  for (const item of orderItems ?? []) {
+    if (!item.batch_id || String(item.status ?? "pending") !== "confirmed") continue;
+    const order = Array.isArray(item.orders) ? item.orders[0] : item.orders;
+    if (String(order?.status ?? "pending") !== "confirmed") continue;
+    const key = `${item.batch_id}::${item.ticket_category_id ?? "__single__"}`;
     confirmedByKey.set(key, (confirmedByKey.get(key) ?? 0) + 1);
   }
 
@@ -52,6 +48,20 @@ export async function eventosOcupacao(supabase: ReportSupabaseClient, ctx: Repor
       ocupacao: limit != null ? pct(confirmed, Number(limit)) : "-",
     };
   });
+  const pricedBatchIds = new Set((prices ?? []).map((price) => String(price.batch_id)));
+  for (const batch of batches ?? []) {
+    const batchId = String(batch.id);
+    const confirmed = confirmedByKey.get(`${batchId}::__single__`) ?? 0;
+    if (pricedBatchIds.has(batchId) && confirmed === 0) continue;
+    const limit = batch.max_confirmed_registrations;
+    rows.push({
+      lote: String(batch.name ?? "-"),
+      categoria: "Ingresso único",
+      confirmadas: confirmed,
+      limite: limit != null ? String(limit) : "Sem limite",
+      ocupacao: limit != null ? pct(confirmed, Number(limit)) : "-",
+    });
+  }
 
   const totalConfirmed = Array.from(confirmedByKey.values()).reduce((sum, count) => sum + count, 0);
 
