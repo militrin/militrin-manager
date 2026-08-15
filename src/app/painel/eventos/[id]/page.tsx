@@ -8,6 +8,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { EventKitManager } from "@/app/eventos/[eventSlug]/ui";
 import { CategoriesManager } from "@/app/categorias/ui";
 import { BatchesManager } from "@/app/lotes/ui";
+import { getEventSingleTicketPriceStatusAction } from "@/app/eventos/actions";
+import { SingleTicketPriceManager } from "./single-ticket-price-manager";
 import { EventAddonsManager } from "./addons-manager";
 import { EventPaymentMethodsManager } from "./payment-methods-manager";
 import { ItemChangeRules } from "./item-change-rules";
@@ -157,6 +159,15 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     reserved_count: Number(row.reserved_count ?? 0),
     available_slots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
   }));
+
+  const activeCategoryCount = categories.filter((category: { is_active: boolean }) => category.is_active).length;
+  let singleTicketPriceStatus: { male_price: number | null; female_price: number | null; price_confirmed: boolean; registration_enabled: boolean } | null = null;
+  if (currentStep === 3 && activeCategoryCount === 0) {
+    const statusResult = await getEventSingleTicketPriceStatusAction(event.id);
+    singleTicketPriceStatus = statusResult.success
+      ? statusResult.status
+      : { male_price: null, female_price: null, price_confirmed: false, registration_enabled: event.registration_enabled };
+  }
 
   const categoryIds = categories.map((category: { id: string }) => category.id);
   const { data: benefitsData, error: benefitsError } = categoryIds.length > 0
@@ -336,9 +347,14 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
           ) : null}
 
           {currentStep === 3 ? (
-            <SectionCard title="Etapa 3: Lotes do evento" description="Crie e edite lotes com preço unissex ou por gênero e categorias ativas por lote.">
-              {categories.length === 0 ? (
-                <EmptyState title="Nenhuma categoria cadastrada" description="Crie ao menos uma categoria antes de configurar lotes." />
+            <SectionCard
+              title="Etapa 3: Lotes do evento"
+              description={activeCategoryCount === 0
+                ? "Este evento não tem categoria ativa: defina o preço do ingresso único."
+                : "Crie e edite lotes com preço unissex ou por gênero e categorias ativas por lote."}
+            >
+              {activeCategoryCount === 0 && singleTicketPriceStatus ? (
+                <SingleTicketPriceManager eventId={event.id} initialStatus={singleTicketPriceStatus} />
               ) : (
                 <BatchesManager eventId={event.id} batches={batches} categories={categories} />
               )}

@@ -434,6 +434,57 @@ export async function upsertEventPaymentMethodsAction(payload: z.infer<typeof ev
   }
 }
 
+const singleTicketPriceSchema = z.object({
+  event_id: z.string().uuid(),
+  male_price: z.number().min(0, 'Preço masculino inválido.'),
+  female_price: z.number().min(0, 'Preço feminino inválido.'),
+});
+
+export async function getEventSingleTicketPriceStatusAction(eventId: string) {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.rpc('get_event_single_ticket_price_status', { p_event_id: eventId });
+    if (error) throw error;
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+    return {
+      success: true as const,
+      status: {
+        active_category_count: Number(row?.active_category_count ?? 0),
+        male_price: row?.male_price === null || row?.male_price === undefined ? null : Number(row.male_price),
+        female_price: row?.female_price === null || row?.female_price === undefined ? null : Number(row.female_price),
+        price_confirmed: Boolean(row?.price_confirmed),
+        registration_enabled: Boolean(row?.registration_enabled),
+      },
+    };
+  } catch (error) {
+    return { success: false as const, message: resolveActionErrorMessage(error, 'Falha ao consultar o preço do ingresso único.') };
+  }
+}
+
+export async function setEventSingleTicketPriceAction(payload: z.infer<typeof singleTicketPriceSchema>) {
+  const parsed = singleTicketPriceSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos para o preço do ingresso.' };
+  }
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('set_event_single_ticket_price', {
+      p_event_id: parsed.data.event_id,
+      p_male_price: parsed.data.male_price,
+      p_female_price: parsed.data.female_price,
+    });
+
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath('/inscricao');
+    return { success: true, message: 'Preço configurado.' };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao salvar o preço do ingresso.') };
+  }
+}
+
 export async function upsertEventAddonsConfigAction(payload: {
   event_id: string;
   apply_to_all_batches: boolean;
