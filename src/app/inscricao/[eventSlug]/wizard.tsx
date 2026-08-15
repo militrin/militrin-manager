@@ -9,6 +9,7 @@ import { SHIRT_TYPES, makeShirtInventoryKey, normalizeShirtSize, normalizeShirtT
 import {
   createPublicMultiOrderAction,
   generatePublicOrderPixAction,
+  getPublicBuyerTicketHolderStatusAction,
   getPublicPricingPreviewAction,
   saveCheckoutBuyerProfileAction,
   simulatePublicOrderPaymentAction,
@@ -21,7 +22,15 @@ import {
   removeCpfMask,
 } from '@/lib/validation/registration';
 import { formatDateTimeBR, formatISOToDateBR } from '@/lib/utils/date';
-import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
+import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender, resolvePricingPhase, resolvePricingPreviewGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
+import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
+import {
+  applyPricingResultsByClientId,
+  computeSyncedItems,
+  createCheckoutItem,
+  type CheckoutItemConfig,
+  type CheckoutItemPricingResult,
+} from '@/lib/checkout/checkout-items';
 import { getStatusLabel } from '@/lib/status-labels';
 import { StoreCart } from '@/components/store/StoreCart';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
@@ -190,24 +199,6 @@ type RegistrationSnapshot = {
   }>;
 };
 
-type CheckoutItemConfig = {
-  clientId: string;
-  ownershipMode: 'self' | 'unassigned' | 'named';
-  holder_full_name: string;
-  holder_cpf: string;
-  holder_email: string;
-  holder_phone: string;
-  pricingGender: 'male' | 'female' | null;
-  shirtType: string;
-  shirtSize: string;
-  unitPrice: number;
-  discountAmount: number;
-  finalAmount: number;
-  validationErrors: string[];
-  visualStatus: 'complete' | 'missing' | 'out_of_stock' | 'price_updated' | 'pricing_error';
-  pricingError: string | null;
-};
-
 type OrderSnapshotPayload = {
   order_id: string;
   order_number: string | null;
@@ -303,26 +294,6 @@ function shirtAvailabilityText(availableStock: number, enforcePhysicalStock: boo
   return 'Disponivel';
 }
 
-function createCheckoutItem(seed: number, defaultGender: 'male' | 'female' | null = null): CheckoutItemConfig {
-  return {
-    clientId: `item-${Date.now()}-${seed}-${Math.random().toString(36).slice(2, 8)}`,
-    ownershipMode: seed === 0 ? 'self' : 'unassigned',
-    holder_full_name: '',
-    holder_cpf: '',
-    holder_email: '',
-    holder_phone: '',
-    pricingGender: defaultGender,
-    shirtType: '',
-    shirtSize: '',
-    unitPrice: 0,
-    discountAmount: 0,
-    finalAmount: 0,
-    validationErrors: [],
-    visualStatus: 'missing',
-    pricingError: null,
-  };
-}
-
 export function RegistrationWizard({
   event,
   isOpen,
@@ -362,6 +333,7 @@ export function RegistrationWizard({
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [couponFeedback, setCouponFeedback] = useState<string | null>(null);
   const [couponWorking, setCouponWorking] = useState(false);
+  const [couponPanelOpen, setCouponPanelOpen] = useState(false);
   const [registration, setRegistration] = useState<RegistrationSnapshot | null>(null);
   const [shirtType, setShirtType] = useState('');
   const [shirtSize, setShirtSize] = useState('');
@@ -378,7 +350,20 @@ export function RegistrationWizard({
   const [checkoutItems, setCheckoutItems] = useState<CheckoutItemConfig[]>([
     createCheckoutItem(0, normalizePricingGenderInput(initialBuyer.gender)),
   ]);
+  // Espelha checkoutItems sem entrar em nenhuma dependencia de effect/callback:
+  // syncItemCount precisa do valor mais recente para calcular o array
+  // sincronizado, mas nao pode ter sua identidade presa a checkoutItems (ver
+  // comentario em syncItemCount). Atualizado num effect (nao durante o render)
+  // porque mutar ref.current durante o render e proibido pelas regras de hooks.
+  const checkoutItemsRef = useRef(checkoutItems);
+  useEffect(() => {
+    checkoutItemsRef.current = checkoutItems;
+  }, [checkoutItems]);
   const [isRepricingItems, setIsRepricingItems] = useState(false);
+  // null = ainda nao verificado. So sabemos com certeza depois da checagem
+  // canonica no backend; ate la, "Este ingresso e para mim" fica bloqueado por
+  // seguranca (nunca assume disponibilidade sem checar).
+  const [buyerAlreadyHoldsActiveTicket, setBuyerAlreadyHoldsActiveTicket] = useState<boolean | null>(null);
 
   const topRef = useRef<HTMLHeadingElement | null>(null);
 
@@ -455,35 +440,50 @@ export function RegistrationWizard({
     window.sessionStorage.setItem('militrin:last-wizard-next', `/inscricao/${event.slug}`);
   }, [event.slug]);
 
-  const syncItemCount = useCallback((targetQuantity: number, seedItems?: CheckoutItemConfig[]) => {
-    setCheckoutItems((prev) => {
-      const target = Math.max(1, Math.min(10, Number(targetQuantity || 1)));
-      const source = seedItems && seedItems.length > 0 ? seedItems : prev;
-      const next = Array.from({ length: target }, (_, index) => {
-        const existing = source[index];
-        if (existing) return existing;
-        return createCheckoutItem(index, normalizePricingGenderInput(form.gender));
-      });
+  // Retorna o array sincronizado (nao so grava no estado): quem chama e precisa
+  // repassar o resultado ao pipeline de precificacao no mesmo instante (evitando
+  // ler checkoutItems por closure, que ainda estaria desatualizado ate o proximo
+  // render) usa o valor de retorno como itemsOverride.
+  //
+  // Le checkoutItemsRef (nao o state checkoutItems) de proposito: esta funcao e
+  // dependencia do effect de hidratacao do sessionStorage (linha ~511). Se
+  // checkoutItems entrasse nas deps deste useCallback, TODA vez que o preco
+  // fosse aplicado (setCheckoutItems dentro de refreshItemPricingByCoupon) essa
+  // funcao ganharia uma identidade nova, o que reacionava o effect de
+  // hidratacao -- que le o sessionStorage de UMA renderizacao atras (o
+  // proprio effect de persistencia, que escreve o snapshot atual, roda DEPOIS
+  // dele na mesma leva de effects) e reaplica esse snapshot desatualizado,
+  // apagando o preco/erro que acabara de chegar. Essa era a causa raiz real do
+  // checkout travando em "Calculando preço..." indefinidamente: nao faltava a
+  // resposta do RPC, ela chegava e era silenciosamente sobrescrita por este
+  // loop de re-hidratacao a cada render.
+  const syncItemCount = useCallback((targetQuantity: number, seedItems?: CheckoutItemConfig[]): CheckoutItemConfig[] => {
+    const source = seedItems && seedItems.length > 0 ? seedItems : checkoutItemsRef.current;
+    const next = computeSyncedItems(targetQuantity, source, normalizePricingGenderInput(form.gender), buyerAlreadyHoldsActiveTicket === false);
+    setCheckoutItems(next);
+    return next;
+  }, [form.gender, buyerAlreadyHoldsActiveTicket]);
 
-      const meCount = next.filter((entry) => entry.ownershipMode === 'self').length;
-      if (meCount === 0 && next.length > 0) {
-        next[0] = { ...next[0], ownershipMode: 'self' };
+  // Verifica, o quanto antes, se o comprador autenticado ja e titular de outro
+  // ingresso ativo neste evento -- decide canonicamente (backend) se "Este
+  // ingresso e para mim" pode aparecer disponivel, em vez de assumir que sim.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await getPublicBuyerTicketHolderStatusAction(event.id);
+      if (cancelled) return;
+      const alreadyHolds = result.success ? result.alreadyHoldsActiveTicket : true;
+      setBuyerAlreadyHoldsActiveTicket(alreadyHolds);
+      if (alreadyHolds) {
+        setCheckoutItems((prev) => prev.map((item) => (
+          item.ownershipMode === 'self' ? { ...item, ownershipMode: 'unassigned' } : item
+        )));
       }
-      if (meCount > 1) {
-        let kept = false;
-        for (let i = 0; i < next.length; i += 1) {
-          if (next[i].ownershipMode !== 'self') continue;
-          if (!kept) {
-            kept = true;
-            continue;
-          }
-          next[i] = { ...next[i], ownershipMode: 'unassigned' };
-        }
-      }
-
-      return next;
-    });
-  }, [form.gender]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event.id]);
 
   useEffect(() => {
     const persisted = sessionStorage.getItem(storageKey);
@@ -597,6 +597,28 @@ export function RegistrationWizard({
   const effectiveCategoryId = selectedCategory?.id ?? null;
   const categoryChoiceReady = !categorySelectionRequired || Boolean(effectiveCategoryId);
   const ticketTypeLabel = selectedCategory?.name || 'Ingresso único';
+
+  // O RPC de preview exige genero valido mesmo quando o preco da categoria
+  // nao varia por genero. hasResolvableGender reflete o genero JA conhecido
+  // (perfil do comprador ou item ja configurado); genderIndependentPriceAvailable
+  // reflete o caso em que a pergunta nem importa (male_price === female_price,
+  // dado ja exposto na propria lista de categorias antes de qualquer selecao).
+  // canAttemptPricing so fica false quando nenhuma das duas se aplica -- nesse
+  // caso a Etapa 1 nao pode mostrar preco ainda (pending_input legitimo: falta
+  // uma escolha do comprador), e tentar o RPC so produziria um erro previsivel
+  // ("Genero invalido...") por uma informacao que sera coletada mais adiante.
+  const hasResolvableGender = checkoutItems.some((item) => Boolean(resolvePricingGender({
+    itemGender: item.pricingGender,
+    requestGender: form.gender,
+    buyerGender: form.gender,
+  })));
+  const genderIndependentPriceAvailable = Boolean(
+    selectedCategory
+    && selectedCategory.current_male_price != null
+    && selectedCategory.current_female_price != null
+    && Number(selectedCategory.current_male_price) === Number(selectedCategory.current_female_price),
+  );
+  const canAttemptPricing = categoryChoiceReady && (hasResolvableGender || genderIndependentPriceAvailable);
 
   const stepShown = step;
 
@@ -772,17 +794,27 @@ export function RegistrationWizard({
 
   async function refreshItemPricingByCoupon(couponCode?: string, itemsOverride?: CheckoutItemConfig[]) {
     const itemsToPrice = itemsOverride ?? checkoutItems;
-    if (!categoryChoiceReady || itemsToPrice.length === 0) return;
+    if (!canAttemptPricing || itemsToPrice.length === 0) return;
 
     setIsRepricingItems(true);
     try {
       const pricingResults = await Promise.all(
         itemsToPrice.map(async (item) => {
-          const resolvedGender = resolvePricingGender({
-            itemGender: item.pricingGender,
-            requestGender: form.gender,
-            buyerGender: form.gender,
-          });
+          // resolvePricingPreviewGender (nao resolvePricingGender puro): quando o
+          // preco da categoria nao varia por genero, usa 'male' so para satisfazer
+          // o contrato do RPC (que sempre exige um token valido) sem esperar o
+          // comprador declarar o genero real -- ver doc da funcao. O genero
+          // efetivamente declarado pelo comprador (item.pricingGender/form.gender)
+          // nunca e alterado por isso; a validacao final do pedido continua exigindo
+          // o genero real via resolvePricingGender em handleCreateAndContinuePayment.
+          const resolvedGender = resolvePricingPreviewGender(
+            {
+              itemGender: item.pricingGender,
+              requestGender: form.gender,
+              buyerGender: form.gender,
+            },
+            { malePrice: selectedCategory?.current_male_price, femalePrice: selectedCategory?.current_female_price },
+          );
 
           const result = await getPublicPricingPreviewAction({
             event_id: event.id,
@@ -790,41 +822,60 @@ export function RegistrationWizard({
             gender: resolvedGender ?? '',
             coupon_code: couponCode?.trim() ? couponCode.trim() : undefined,
           });
-          return { item, result };
-        }),
-      );
 
-      setCheckoutItems((prev) =>
-        prev.map((item, index) => {
-          const found = pricingResults[index];
-          if (!found || !found.result.success || !found.result.pricing) {
-            // Uma falha no calculo de preco nunca pode virar R$ 0,00 silencioso:
-            // o item fica marcado com erro e bloqueia o avanco ate ser resolvido.
-            return {
-              ...item,
-              visualStatus: 'pricing_error',
-              pricingError: (found && 'message' in found.result && found.result.message) || 'Nao foi possivel calcular o preco deste ingresso.',
-            };
+          if (process.env.NODE_ENV !== 'production' && (!result.success || !('pricing' in result) || !result.pricing)) {
+            console.error('[refreshItemPricingByCoupon] item sem preco', {
+              clientId: item.clientId,
+              code: 'code' in result ? result.code : null,
+              message: 'message' in result ? result.message : null,
+            });
           }
-          return {
-            ...item,
-            unitPrice: Number(found.result.pricing.base_amount ?? 0),
-            discountAmount: Number(found.result.pricing.discount_amount ?? 0),
-            finalAmount: Number(found.result.pricing.final_amount ?? 0),
-            visualStatus: 'price_updated',
-            pricingError: null,
-          };
+
+          return { clientId: item.clientId, result: result as CheckoutItemPricingResult };
         }),
       );
 
-      const firstValid = pricingResults.find((entry) => entry.result.success && entry.result.pricing);
-      if (firstValid?.result.pricing) {
-        setPricing(firstValid.result.pricing as PricingState);
+      // Casar por clientId, nunca por indice posicional: itemsToPrice e o
+      // checkoutItems mais recente podem divergir em tamanho/ordem se outro
+      // evento (mudanca de quantidade, edicao de item) correu entre o disparo
+      // e a resposta. Por indice, um item novo herdaria o resultado de outro
+      // ou ficaria sem par e cairia num erro artificial (nunca fabricado pelo
+      // backend) -- foi exatamente essa desalinhamento que zerava o 2o ingresso.
+      const resultsByClientId = new Map(pricingResults.map((entry) => [entry.clientId, entry.result]));
+
+      setCheckoutItems((prev) => applyPricingResultsByClientId(prev, resultsByClientId));
+
+      const firstValidResult = pricingResults.map((entry) => entry.result).find((result) => result.success);
+      if (firstValidResult && firstValidResult.success) {
+        setPricing(firstValidResult.pricing as PricingState);
       }
     } finally {
       setIsRepricingItems(false);
     }
   }
+
+  // Assim que a opcao de ingresso estiver resolvida (0 categorias: imediato;
+  // 1 categoria: auto-selecionada; 2+: apos a escolha) E for possivel calcular
+  // o preco (genero ja conhecido OU preco da categoria nao varia por genero),
+  // busca o preco canonico do backend para a Etapa 1 exibir valor real em vez
+  // de R$ 0,00 provisorio. Se canAttemptPricing ainda for false neste momento
+  // (preco realmente depende de um genero que so sera declarado mais adiante),
+  // nao tenta -- outros pontos ja disparam o fetch assim que o genero for
+  // resolvido (o seletor de genero por item na propria Etapa 1, quando exibido,
+  // e handlePersonalNext ao avancar da Etapa 2). effectiveCategoryId/
+  // categoryChoiceReady ficam como deps (nao canAttemptPricing) de proposito:
+  // o objetivo e reagir a mudanca da opcao de ingresso, nao a cada tecla ou a
+  // cada resposta do proprio fetch -- isso duplicaria o fetch que os outros
+  // pontos ja disparam quando o genero se resolve.
+  useEffect(() => {
+    if (!categoryChoiceReady || !canAttemptPricing) return;
+    const couponCode = form.coupon_code || undefined;
+    const timer = window.setTimeout(() => {
+      void refreshItemPricingByCoupon(couponCode);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveCategoryId, categoryChoiceReady]);
 
   function validateCheckoutItems() {
     const visibleItems = checkoutItems.slice(0, form.quantity);
@@ -890,23 +941,12 @@ export function RegistrationWizard({
   function selectCategory(categoryId: string) {
     setField('category_id', categoryId);
     setErrors([]);
-
-    startTransition(async () => {
-      const result = await getPublicPricingPreviewAction({
-        event_id: event.id,
-        ticket_category_id: categoryId,
-        gender: resolvePricingGender({ requestGender: form.gender, buyerGender: initialBuyer.gender }) ?? '',
-        coupon_code: form.coupon_code || undefined,
-      });
-      if (!result.success || !result.pricing) {
-        setErrors([result.message || 'Falha ao calcular o valor.']);
-        return;
-      }
-      setPricing(result.pricing as PricingState);
-      syncItemCount(form.quantity);
-      await refreshItemPricingByCoupon(form.coupon_code || undefined);
-      setLiveMessage('Categoria validada e preço atualizado.');
-    });
+    // Nunca deixar o preco da categoria anterior visivel enquanto recalcula:
+    // o effect de bootstrap de precificacao reage a mudanca de effectiveCategoryId
+    // e busca o preco da categoria nova assim que ela for resolvida.
+    setPricing(null);
+    syncItemCount(form.quantity);
+    setLiveMessage('Categoria selecionada. Calculando preço...');
   }
 
   function handleChooseTicketNext() {
@@ -987,8 +1027,8 @@ export function RegistrationWizard({
       }
 
       setPricing(preview.pricing as PricingState);
-      syncItemCount(form.quantity);
-      await refreshItemPricingByCoupon(form.coupon_code || undefined);
+      const syncedItems = syncItemCount(form.quantity);
+      await refreshItemPricingByCoupon(form.coupon_code || undefined, syncedItems);
       setLiveMessage('Seus dados foram carregados da sua conta e o valor foi recalculado.');
       unlockAndGoTo(3);
     });
@@ -1213,6 +1253,35 @@ export function RegistrationWizard({
   const itemTotals = sumCheckoutItemTotals(activeCheckoutItems);
   const hasPricedCheckoutItems = activeCheckoutItems.some((item) => item.visualStatus === 'price_updated' || item.visualStatus === 'complete');
   const hasPricingErrorItems = activeCheckoutItems.some((item) => item.visualStatus === 'pricing_error');
+  // 0 categorias elegiveis = evento realmente sem categoria: nunca existiu selecao
+  // de lote para o usuario fazer, entao o rotulo correto e "Ingresso único", nunca
+  // "Não selecionado". Enquanto o preco esta em transito (recalculando ou ainda nao
+  // buscado), a fase fica "loading" mesmo que sobrem valores antigos em checkoutItems,
+  // para nunca mostrar R$ 0,00 nem preco de outra categoria como se fosse definitivo.
+  const ticketPresentationMode = resolveTicketPresentationMode(activeCategories.length);
+  const isSingleTicketEvent = ticketPresentationMode === 'single';
+  // Com exatamente 1 categoria ativa, ela continua sendo a fonte canonica de
+  // preco no backend/order item, mas nao vale a pena expor como "escolha" ao
+  // comprador: mostramos so o lote resolvido, sem repetir o nome da categoria.
+  const shouldShowCategoryLabel = ticketPresentationMode === 'category_visible';
+  const pricingPhase = resolvePricingPhase({
+    canAttemptPricing,
+    isRepricingItems,
+    hasPricingErrorItems,
+    hasPricedCheckoutItems,
+  });
+  // Mensagem exibida enquanto pricingPhase === 'pending_input': depende do que
+  // falta -- escolher categoria (2+ categorias) ou informar genero (preco varia
+  // por genero e ele ainda nao e conhecido). Nunca reaproveita o texto de
+  // "Calculando preço...", que implica um fetch em andamento -- aqui nao ha
+  // nenhum.
+  const pendingInputMessage = !categoryChoiceReady
+    ? 'Selecione uma categoria para ver o preço.'
+    : 'Informe o gênero para calcularmos o preço deste ingresso.';
+  const firstPricingErrorMessage = activeCheckoutItems.find((item) => item.pricingError)?.pricingError ?? 'Não foi possível calcular o preço.';
+  const batchDisplayLabel = isSingleTicketEvent
+    ? 'Ingresso único'
+    : pricing?.batch_name || (pricingPhase === 'loading' ? 'Calculando...' : '-');
   const zeroPaymentSummaryReason = hasPricedCheckoutItems && !hasPricingErrorItems
     ? describeZeroPaymentReason({
         baseAmount: itemTotals.original,
@@ -1234,7 +1303,7 @@ export function RegistrationWizard({
   const summaryValues = {
     event: event.name,
     category: ticketTypeLabel,
-    batch: pricing?.batch_name || 'Não selecionado',
+    batch: batchDisplayLabel,
     quantity: form.quantity,
     coupon: form.coupon_code || 'Não selecionado',
     original: money(itemTotals.original),
@@ -1338,9 +1407,9 @@ export function RegistrationWizard({
               {mobileSummaryOpen ? (
                 <div className="mb-4 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 lg:hidden">
                   <p className="text-base font-semibold">{summaryValues.event}</p>
-                  <p className="mt-2">Categoria: {summaryValues.category}</p>
+                  {shouldShowCategoryLabel ? <p className="mt-2">Categoria: {summaryValues.category}</p> : null}
                   <p>Ingressos: {summaryValues.quantity}</p>
-                  <p>Lote: {summaryValues.batch}</p>
+                  <p>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {summaryValues.batch}</p>
                   {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
                     <p key={`m-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
                   ))}
@@ -1365,11 +1434,9 @@ export function RegistrationWizard({
             {step === 1 && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">1. Escolha seu ingresso</h2>
-                <p className="text-sm text-slate-300">
-                  {categorySelectionRequired
-                    ? 'Selecione o tipo de ingresso e configure os itens da compra.'
-                    : `${ticketTypeLabel} selecionado automaticamente. Configure os itens da compra.`}
-                </p>
+                {categorySelectionRequired ? (
+                  <p className="text-sm text-slate-300">Selecione o tipo de ingresso e configure os itens da compra.</p>
+                ) : null}
                 {categorySelectionRequired ? (
                   <div className="grid gap-3">
                     {activeCategories.map((category) => {
@@ -1564,45 +1631,16 @@ export function RegistrationWizard({
 
             {step === 1 && categoryChoiceReady && (
               <div className="space-y-4">
-                {hasKitStep ? (
-                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
-                    <p className="font-medium text-slate-100">Itens ativos do kit</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5">
-                      {activeKitItems.map((item) => (
-                        <li key={item.id}>
-                          {item.name} x{item.quantity_per_participant}
-                          {item.is_required ? ' (obrigatorio)' : ' (opcional)'}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="mt-2 text-xs text-slate-400">A configuração de gênero e camiseta é feita individualmente para cada ingresso abaixo.</p>
-                  </div>
-                ) : null}
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1 sm:col-span-2">
-                    <span className="text-sm text-slate-200">Cupom (opcional)</span>
-                    <div className="flex gap-2">
-                      <input
-                        value={form.coupon_code}
-                        onChange={(event_) => setField('coupon_code', event_.target.value.toUpperCase())}
-                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleApplyCoupon}
-                        disabled={couponWorking}
-                        className="rounded-xl border border-emerald-500 px-3 text-sm text-emerald-300 disabled:opacity-50"
-                      >
-                        {couponWorking ? '...' : 'Aplicar'}
-                      </button>
+                {/* Preco e lote em destaque: o comprador ve o que importa primeiro. */}
+                <div className="rounded-2xl border border-emerald-500/20 bg-slate-950 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      {shouldShowCategoryLabel ? <p className="text-xs uppercase tracking-wide text-slate-400">{ticketTypeLabel}</p> : null}
+                      <p className="text-lg font-semibold text-slate-100">{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {batchDisplayLabel}</p>
                     </div>
-                    {couponFeedback && <span className="text-xs text-emerald-200">{couponFeedback}</span>}
-                  </label>
 
-                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
-                    <label className="space-y-1">
-                      <span className="text-sm text-slate-200">Quantidade de ingressos</span>
+                    <label className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-sm text-slate-200">
+                      <span className="text-xs text-slate-400">Qtd.</span>
                       <input
                         type="number"
                         min={1}
@@ -1627,42 +1665,95 @@ export function RegistrationWizard({
                             }
                           }
                           setField('quantity', nextQuantity);
-                          syncItemCount(nextQuantity);
-                          await refreshItemPricingByCoupon(form.coupon_code || undefined);
+                          const syncedItems = syncItemCount(nextQuantity);
+                          await refreshItemPricingByCoupon(form.coupon_code || undefined, syncedItems);
                         }}
-                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
+                        className="h-8 w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm"
                       />
                     </label>
-                    <p className="mt-2 text-xs text-slate-400">Minimo 1 e maximo 10 por pedido.</p>
                   </div>
 
-                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
-                    <p>Tipo: {ticketTypeLabel}</p>
-                    <p>Quantidade: {form.quantity}</p>
-                    <p>Lote: {pricing?.batch_name || '-'}</p>
-                    <p>Valor base: {summaryValues.original}</p>
-                    <p>Desconto: {summaryValues.discount}</p>
-                    <p className="mt-1 text-base font-semibold text-emerald-300">Total: {summaryValues.total}</p>
-                    {zeroPaymentSummaryReason ? (
-                      <p className="mt-2 text-xs text-emerald-200">{zeroPaymentSummaryReason.message}</p>
-                    ) : null}
-                    {hasPricingErrorItems ? (
-                      <p className="mt-2 text-xs text-rose-300">Não foi possível calcular o preço de um ou mais ingressos. Corrija antes de continuar.</p>
-                    ) : null}
-                  </div>
+                  {pricingPhase === 'ready' ? (
+                    <div className="mt-3">
+                      <p className="text-3xl font-bold text-emerald-300">{summaryValues.total}</p>
+                      {itemTotals.discount > 0 ? (
+                        <p className="mt-1 text-xs text-slate-400">Valor base {summaryValues.original} · Desconto {summaryValues.discount}</p>
+                      ) : null}
+                      {zeroPaymentSummaryReason ? (
+                        <p className="mt-1 text-xs text-emerald-200">{zeroPaymentSummaryReason.message}</p>
+                      ) : null}
+                    </div>
+                  ) : pricingPhase === 'error' ? (
+                    <p className="mt-3 text-xs text-rose-300" role="alert">
+                      Não foi possível calcular o preço: {firstPricingErrorMessage} Corrija antes de continuar.
+                    </p>
+                  ) : pricingPhase === 'pending_input' ? (
+                    <p className="mt-3 text-xs text-slate-400">{pendingInputMessage}</p>
+                  ) : (
+                    <p className="mt-3 flex items-center gap-2 text-xs text-slate-400" aria-live="polite">
+                      <span className="h-3 w-3 animate-pulse rounded-full bg-slate-500" aria-hidden="true" />
+                      Calculando preço...
+                    </p>
+                  )}
 
-                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200 sm:col-span-2">
+                  <div className="mt-3 border-t border-slate-800 pt-3">
+                    {couponPanelOpen ? (
+                      <div className="space-y-1">
+                        <div className="flex gap-2">
+                          <input
+                            value={form.coupon_code}
+                            onChange={(event_) => setField('coupon_code', event_.target.value.toUpperCase())}
+                            placeholder="Código do cupom"
+                            className="h-9 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleApplyCoupon}
+                            disabled={couponWorking}
+                            className="rounded-xl border border-emerald-500 px-3 text-xs text-emerald-300 disabled:opacity-50"
+                          >
+                            {couponWorking ? '...' : 'Aplicar'}
+                          </button>
+                        </div>
+                        {couponFeedback && <span className="text-xs text-emerald-200">{couponFeedback}</span>}
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setCouponPanelOpen(true)} className="text-xs text-slate-400 underline underline-offset-2">
+                        Tem um cupom?
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {hasKitStep ? (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                    <p className="font-medium text-slate-200">Itens do kit</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {activeKitItems.map((item) => (
+                        <li key={item.id}>
+                          {item.name} x{item.quantity_per_participant}
+                          {item.is_required ? ' (obrigatório)' : ' (opcional)'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div>
                       {shouldShowItemConfiguration ? (
                         <>
-                          <p className="font-medium text-slate-100">Configuracao individual dos ingressos</p>
-                          <p className="mt-1 text-xs text-slate-400">Cada ingresso precisa de genero e configuracao de kit proprios.</p>
-                          <p className="mt-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+                          <p className="text-xs font-medium text-slate-300">Configuração individual dos ingressos</p>
+                          <p className="mt-1 text-[11px] text-slate-500">
                             {enforcePhysicalStock
                               ? 'Estoque físico em vigor. Variantes com 5 ou menos unidades exibem alerta de baixa disponibilidade.'
-                              : `Livre para encomenda${event.shirt_order_deadline ? ` até ${deadlineText(event.shirt_order_deadline)}` : ''}. O saldo físico não limita a escolha enquanto esta configuração estiver desativada.`}
+                              : `Livre para encomenda${event.shirt_order_deadline ? ` até ${deadlineText(event.shirt_order_deadline)}` : ''}.`}
                           </p>
-                          <div className="mt-3 space-y-3">
-                            {activeCheckoutItems.map((item, index) => (
+                          <div className="mt-2 space-y-2">
+                            {activeCheckoutItems.map((item, index) => {
+                        const anotherItemIsSelf = activeCheckoutItems.some((other, otherIndex) => otherIndex !== index && other.ownershipMode === 'self');
+                        const selfOwnershipBlocked = buyerAlreadyHoldsActiveTicket !== false;
+                        const selfOptionDisabled = item.ownershipMode !== 'self' && (selfOwnershipBlocked || anotherItemIsSelf);
+                        return (
                         <div key={item.clientId} className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
                           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Ingresso {index + 1}</p>
                           <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${item.visualStatus === 'pricing_error' ? 'border-rose-500/30 bg-rose-500/10 text-rose-100' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
@@ -1686,14 +1777,21 @@ export function RegistrationWizard({
                               />
                               <span>Definir depois</span>
                             </label>
-                            <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2">
+                            <label className={`flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2 ${selfOptionDisabled ? 'opacity-50' : ''}`}>
                               <input
                                 type="radio"
                                 name={`ownership-${index}`}
                                 checked={item.ownershipMode === 'self'}
+                                disabled={selfOptionDisabled}
                                 onChange={() => updateCheckoutItem(index, { ownershipMode: 'self' })}
                               />
-                              <span>Este ingresso e para mim</span>
+                              <span>
+                                {buyerAlreadyHoldsActiveTicket === true
+                                  ? 'Você já possui um ingresso neste evento.'
+                                  : anotherItemIsSelf
+                                    ? 'Já atribuído a outro ingresso'
+                                    : 'Este ingresso e para mim'}
+                              </span>
                             </label>
                             <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2">
                               <input
@@ -1775,8 +1873,19 @@ export function RegistrationWizard({
                             </div>
 
                             <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs">
-                              <p>{item.pricingGender === 'female' ? 'Feminino' : item.pricingGender === 'male' ? 'Masculino' : 'Nao definido'} - {money(item.finalAmount)}</p>
-                              <p className="text-slate-400">Base {money(item.unitPrice)} | Desc {money(item.discountAmount)}</p>
+                              <p>{item.pricingGender === 'female' ? 'Feminino' : item.pricingGender === 'male' ? 'Masculino' : 'Nao definido'}</p>
+                              {item.visualStatus === 'pricing_error' ? (
+                                <p className="text-rose-300">Preço indisponível — corrija para continuar.</p>
+                              ) : !item.pricingGender && !isRepricingItems ? (
+                                <p className="text-slate-400">Selecione o gênero para calcular o preço.</p>
+                              ) : isRepricingItems || (item.visualStatus !== 'price_updated' && item.visualStatus !== 'complete') ? (
+                                <p className="text-slate-400">Calculando preço...</p>
+                              ) : (
+                                <>
+                                  <p className="font-medium text-emerald-300">{money(item.finalAmount)}</p>
+                                  <p className="text-slate-400">Base {money(item.unitPrice)} | Desc {money(item.discountAmount)}</p>
+                                </>
+                              )}
                             </div>
                           </div>
 
@@ -1823,17 +1932,17 @@ export function RegistrationWizard({
                           {index < activeCheckoutItems.length - 1 ? (
                             <button
                               type="button"
-                              onClick={() => {
-                                setCheckoutItems((prev) => prev.map((entry, entryIndex) => {
-                                  if (entryIndex <= index) return entry;
-                                  return {
+                              onClick={async () => {
+                                const nextItems = checkoutItems.map((entry, entryIndex) => (
+                                  entryIndex <= index ? entry : {
                                     ...entry,
                                     pricingGender: item.pricingGender,
                                     shirtType: item.shirtType,
                                     shirtSize: item.shirtSize,
-                                  };
-                                }));
-                                void refreshItemPricingByCoupon(form.coupon_code || undefined);
+                                  }
+                                ));
+                                setCheckoutItems(nextItems);
+                                await refreshItemPricingByCoupon(form.coupon_code || undefined, nextItems);
                               }}
                               className="mt-3 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
                             >
@@ -1841,28 +1950,23 @@ export function RegistrationWizard({
                             </button>
                           ) : null}
                         </div>
-                          ))}
+                        );
+                          })}
                         </div>
                       </>
                     ) : (
-                      <>
-                        <p className="font-medium text-slate-100">Sem configuracao adicional para este evento</p>
-                        <p className="mt-1 text-xs text-slate-400">Voce pode continuar para o resumo e pagamento.</p>
-                      </>
+                      <p className="text-xs text-slate-500">Sem configuração adicional para este evento.</p>
                     )}
-                  </div>
                 </div>
 
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleChooseTicketNext}
-                    disabled={isPending || isRepricingItems}
-                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
-                  >
-                    {isPending || isRepricingItems ? 'Atualizando...' : 'Continuar'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleChooseTicketNext}
+                  disabled={isPending || pricingPhase === 'loading' || pricingPhase === 'error'}
+                  className="h-12 w-full rounded-2xl bg-emerald-500 text-base font-semibold text-emerald-950 shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                >
+                  {isPending || pricingPhase === 'loading' ? 'Calculando preço...' : pricingPhase === 'error' ? 'Corrija o preço para continuar' : 'Continuar'}
+                </button>
               </div>
             )}
 
@@ -1888,14 +1992,16 @@ export function RegistrationWizard({
                   <p>
                     <strong>Cidade:</strong> {form.city}
                   </p>
-                  <p>
-                    <strong>Tipo:</strong> {ticketTypeLabel}
-                  </p>
+                  {shouldShowCategoryLabel ? (
+                    <p>
+                      <strong>Tipo:</strong> {ticketTypeLabel}
+                    </p>
+                  ) : null}
                   <p>
                     <strong>Quantidade:</strong> {form.quantity}
                   </p>
                   <p>
-                    <strong>Lote:</strong> {pricing?.batch_name || '-'}
+                    <strong>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}:</strong> {batchDisplayLabel}
                   </p>
                   <p>
                     <strong>Cupom:</strong> {form.coupon_code || 'Sem cupom'}
@@ -2085,9 +2191,9 @@ export function RegistrationWizard({
                 <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
                   <div className="grid gap-2 sm:grid-cols-2">
                     <p><strong>Evento:</strong> {event.name}</p>
-                    <p><strong>Tipo:</strong> {registration.category_name || 'Ingresso único'}</p>
+                    {shouldShowCategoryLabel ? <p><strong>Tipo:</strong> {registration.category_name || 'Ingresso único'}</p> : null}
                     <p><strong>Quantidade:</strong> {registration.item_count ?? registration.items?.length ?? 1}</p>
-                    <p><strong>Lote:</strong> {registration.batch_name || '-'}</p>
+                    <p><strong>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}:</strong> {isSingleTicketEvent ? 'Ingresso único' : (registration.batch_name || '-')}</p>
                     <p><strong>Camiseta:</strong> {registration.shirt_type || '-'} / {registration.shirt_size || '-'}</p>
                     <p><strong>Valor original:</strong> {money(registration.payment.amount)}</p>
                     <p><strong>Desconto:</strong> {money(registration.payment.discount_amount)}</p>
@@ -2192,9 +2298,9 @@ export function RegistrationWizard({
                 <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Resumo da compra</p>
                 <p className="mt-3 text-base font-semibold text-white">{summaryValues.event}</p>
                 <div className="mt-3 space-y-1">
-                  <p>Categoria: {summaryValues.category}</p>
+                  {shouldShowCategoryLabel ? <p>Categoria: {summaryValues.category}</p> : null}
                   <p>Quantidade: {summaryValues.quantity}</p>
-                  <p>Lote: {summaryValues.batch}</p>
+                  <p>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {summaryValues.batch}</p>
                   {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
                     <p key={`d-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
                   ))}

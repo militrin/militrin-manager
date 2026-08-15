@@ -55,7 +55,7 @@ test('wizard nao infere mais cortesia apenas de final_amount/itemTotals <= 0', a
 test('falha ao calcular preco de um item nunca vira R$ 0,00 silencioso no wizard', async () => {
   const source = await readFile(wizardPath, 'utf8');
   assert.doesNotMatch(source, /unitPrice: 0,\s*\n\s*discountAmount: 0,\s*\n\s*finalAmount: 0,\s*\n\s*visualStatus: 'missing',/);
-  assert.match(source, /visualStatus: 'pricing_error'/);
+  assert.match(source, /visualStatus: item\.pricingError\s*\n\s*\? 'pricing_error'/);
   assert.match(source, /if \(item\.pricingError\) itemErrors\.push\(item\.pricingError\)/);
 });
 

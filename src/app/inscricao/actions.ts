@@ -624,6 +624,9 @@ function translateRegistrationErrorMessage(message: string) {
   if (normalized.includes('estoque nao encontrado')) return 'Camiseta indisponivel para o modelo/tamanho selecionado.';
   if (normalized.includes('inscricoes fechadas')) return 'As inscricoes para este evento estao encerradas.';
   if (normalized.includes('lotes esgotados') || normalized.includes('lote')) return 'Lote encerrado ou sem disponibilidade.';
+  if (normalized.includes('holder_already_has_ticket_for_event') || normalized.includes('ja e titular de outro ingresso')) {
+    return 'Você já possui um ingresso neste evento.';
+  }
   if (normalized.includes('cupom')) return message;
   return message;
 }
@@ -1159,12 +1162,24 @@ export async function getPublicPricingPreviewAction(payload: {
   });
 
   if (error) {
-    return { success: false, message: error.message };
+    // Mensagem/codigo originais do RPC ficam no log do servidor para diagnostico;
+    // o chamador decide a mensagem amigavel a partir de `message`, sem inventar preco.
+    console.error('[getPublicPricingPreviewAction] RPC get_registration_pricing_preview falhou', {
+      event_id: payload.event_id,
+      ticket_category_id: payload.ticket_category_id,
+      gender: payload.gender,
+      coupon_code: payload.coupon_code ?? null,
+      code: error.code ?? null,
+      message: error.message,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
+    });
+    return { success: false, message: error.message, code: error.code ?? null };
   }
 
   const preview = (Array.isArray(data) ? data[0] : data) as PricingPreview | null;
   if (!preview?.batch_id) {
-    return { success: false, message: 'Nao foi possivel calcular o preco.' };
+    return { success: false, message: 'Nao foi possivel calcular o preco.', code: null };
   }
 
   return {
@@ -1182,6 +1197,29 @@ export async function getPublicPricingPreviewAction(payload: {
       discount_percent: Number(preview.discount_percent ?? 0),
     },
   };
+}
+
+export async function getPublicBuyerTicketHolderStatusAction(eventId: string) {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: true as const, alreadyHoldsActiveTicket: false };
+  }
+
+  const { data, error } = await supabase.rpc('get_public_buyer_ticket_holder_status', {
+    p_event_id: eventId,
+  });
+
+  if (error) {
+    console.error('[getPublicBuyerTicketHolderStatusAction] RPC falhou', { event_id: eventId, message: error.message });
+    return { success: false as const, message: error.message };
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as { already_holds_active_ticket?: boolean } | null;
+  return { success: true as const, alreadyHoldsActiveTicket: Boolean(row?.already_holds_active_ticket) };
 }
 
 export async function checkPublicCpfAction(payload: { event_id: string; cpf: string }) {

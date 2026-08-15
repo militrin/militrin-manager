@@ -10,6 +10,10 @@ import { CategoriesManager } from "@/app/categorias/ui";
 import { BatchesManager } from "@/app/lotes/ui";
 import { getEventSingleTicketPriceStatusAction } from "@/app/eventos/actions";
 import { SingleTicketPriceManager } from "./single-ticket-price-manager";
+import { EventSummaryCard } from "./event-summary-card";
+import { BuyerPresentationPreview } from "./buyer-presentation-preview";
+import { EventHelpCard, EventResumeCard } from "./event-sidebar-cards";
+import { resolveTicketPresentationMode } from "@/lib/checkout/ticket-presentation";
 import { EventAddonsManager } from "./addons-manager";
 import { EventPaymentMethodsManager } from "./payment-methods-manager";
 import { ItemChangeRules } from "./item-change-rules";
@@ -48,7 +52,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   const etapaValue = Number(resolvedSearchParams?.etapa ?? "1");
   const currentStep = Number.isFinite(etapaValue) ? Math.min(8, Math.max(1, Math.trunc(etapaValue))) : 1;
 
-  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }] = await Promise.all([
+  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }, { count: ticketsCount, error: ticketsCountError }] = await Promise.all([
     supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer").eq("id", id).maybeSingle(),
     supabase.rpc("get_event_kit_items", { p_event_id: id }),
     supabase.rpc("get_event_ticket_categories", { p_event_id: id }),
@@ -57,6 +61,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     supabase.from("event_kit_items").select("id,name,requires_variant,allow_participant_change,track_variant_inventory").eq("event_id", id).order("sort_order"),
     supabase.from('kit_delivery_schedule').select('id,event_id,delivery_at,title,location,description,schedule_type,sort_order,is_active,is_visible_to_users').eq('event_id', id).order('delivery_at'),
     supabase.from('event_attractions').select('id,event_id,name,description,banner_url,is_active,sort_order').eq('event_id', id).order('sort_order'),
+    supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('event_id', id).neq('status', 'cancelled'),
   ]);
 
   if (eventError) throw eventError;
@@ -64,6 +69,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   if (categoriesError) throw categoriesError;
   if (addonsError) throw addonsError;
   if (paymentMethodsError) throw paymentMethodsError;
+  if (ticketsCountError) throw ticketsCountError;
   if (scheduleError) throw scheduleError;
   if (attractionsError) throw attractionsError;
   if (!eventData?.id) notFound();
@@ -145,6 +151,9 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     pending_count: number;
     reserved_count: number;
     available_slots: number | null;
+    current_batch_name: string | null;
+    current_male_price: number | null;
+    current_female_price: number | null;
   }) => ({
     id: String(row.id),
     event_id: String(row.event_id),
@@ -158,11 +167,21 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     pending_count: Number(row.pending_count ?? 0),
     reserved_count: Number(row.reserved_count ?? 0),
     available_slots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
+    current_batch_name: row.current_batch_name ? String(row.current_batch_name) : null,
+    current_male_price: row.current_male_price === null || row.current_male_price === undefined ? null : Number(row.current_male_price),
+    current_female_price: row.current_female_price === null || row.current_female_price === undefined ? null : Number(row.current_female_price),
   }));
 
   const activeCategoryCount = categories.filter((category: { is_active: boolean }) => category.is_active).length;
+  const activeCategoriesForPreview = categories.filter((category: { is_active: boolean }) => category.is_active);
+  const ticketMode = resolveTicketPresentationMode(activeCategoryCount);
+  const ticketModeLabel = ticketMode === "single"
+    ? "Ingresso único (sem categoria)"
+    : ticketMode === "category_hidden"
+      ? "1 categoria ativa — o comprador só vê o lote"
+      : `${activeCategoryCount} categorias ativas — o comprador escolhe a categoria`;
   let singleTicketPriceStatus: { male_price: number | null; female_price: number | null; price_confirmed: boolean; registration_enabled: boolean } | null = null;
-  if (currentStep === 3 && activeCategoryCount === 0) {
+  if ((currentStep === 2 || currentStep === 3) && activeCategoryCount === 0) {
     const statusResult = await getEventSingleTicketPriceStatusAction(event.id);
     singleTicketPriceStatus = statusResult.success
       ? statusResult.status
@@ -210,6 +229,8 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   })) as BatchCategoryRow[];
+
+  const totalBatchCount = new Set(batches.map((row) => row.id)).size;
 
   const benefits = (benefitsData ?? []).map((row: {
     id: string;
@@ -289,9 +310,26 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
         <div className="flex-1 space-y-6">
           <TopBar title={`Evento: ${event.name}`} subtitle="Fluxo sequencial: dados do evento, categorias/lotes e adicionais" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Eventos",href:"/painel/eventos"},{label:String(event.name)}]} backHref="/painel/eventos" fallbackHref="/painel/eventos" />
 
-          <SectionCard title="Etapas de configuração" description="Siga a sequência para concluir o evento sem pular etapas.">
-            <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          <EventSummaryCard
+            event={{
+              id: event.id,
+              name: event.name,
+              year: event.year,
+              description: event.description,
+              starts_at: event.starts_at,
+              ends_at: event.ends_at,
+              location: event.location,
+              is_active: event.is_active,
+              registration_enabled: event.registration_enabled,
+              banner_card_url: event.banner_card_url,
+              banner_hero_url: event.banner_hero_url,
+              participants_count: Number(ticketsCount ?? 0),
+            }}
+          />
+
+          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/50 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap gap-1.5">
                 {[
                   { step: 1, label: "Dados" },
                   { step: 2, label: "Categorias" },
@@ -305,10 +343,10 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                   <Link
                     key={item.step}
                     href={`/painel/eventos/${event.id}?etapa=${item.step}`}
-                    className={`rounded-xl border px-3 py-2 text-center text-xs ${
+                    className={`rounded-lg border px-2.5 py-1.5 text-center text-[11px] whitespace-nowrap transition ${
                       currentStep === item.step
-                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                        : "border-slate-700 bg-slate-950/60 text-slate-300"
+                        ? "border-emerald-500/50 bg-emerald-500/15 font-medium text-emerald-200"
+                        : "border-slate-700 bg-slate-950/60 text-slate-400 hover:border-slate-600 hover:text-slate-200"
                     }`}
                   >
                     {item.step}. {item.label}
@@ -316,20 +354,20 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                 ))}
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex shrink-0 justify-end gap-2">
                 {currentStep > 1 ? (
-                  <Link href={`/painel/eventos/${event.id}?etapa=${currentStep - 1}`} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">
-                    Voltar etapa
+                  <Link href={`/painel/eventos/${event.id}?etapa=${currentStep - 1}`} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:border-slate-500">
+                    ← Voltar etapa
                   </Link>
                 ) : null}
                 {currentStep < 8 ? (
-                  <Link href={`/painel/eventos/${event.id}?etapa=${currentStep + 1}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">
-                    Próxima etapa
+                  <Link href={`/painel/eventos/${event.id}?etapa=${currentStep + 1}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200 hover:border-emerald-400">
+                    Próxima etapa →
                   </Link>
                 ) : null}
               </div>
             </div>
-          </SectionCard>
+          </div>
 
           {currentStep === 1 ? (
             <SectionCard title="Etapa 1: Dados básicos" description="Nome, data, descrição, local, banners e regras do ingresso deste evento.">
@@ -342,7 +380,21 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
 
           {currentStep === 2 ? (
             <SectionCard title="Etapa 2: Categorias do evento" description="Defina categorias que poderão ser usadas nos lotes deste evento.">
-              <CategoriesManager eventId={event.id} categories={categories} benefits={benefits} />
+              <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
+                Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
+              </div>
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_310px]">
+                <CategoriesManager eventId={event.id} categories={categories} benefits={benefits} />
+                <div className="space-y-4">
+                  <BuyerPresentationPreview
+                    event={{ name: event.name, starts_at: event.starts_at, location: event.location, banner_card_url: event.banner_card_url, banner_hero_url: event.banner_hero_url }}
+                    activeCategories={activeCategoriesForPreview}
+                    singleTicketPrice={singleTicketPriceStatus}
+                  />
+                  <EventResumeCard data={{ ticketModeLabel, activeCategoryCount, totalCategoryCount: categories.length, totalBatchCount, ticketsCount: Number(ticketsCount ?? 0) }} />
+                  <EventHelpCard step={currentStep} />
+                </div>
+              </div>
             </SectionCard>
           ) : null}
 
@@ -353,11 +405,25 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                 ? "Este evento não tem categoria ativa: defina o preço do ingresso único."
                 : "Crie e edite lotes com preço unissex ou por gênero e categorias ativas por lote."}
             >
-              {activeCategoryCount === 0 && singleTicketPriceStatus ? (
-                <SingleTicketPriceManager eventId={event.id} initialStatus={singleTicketPriceStatus} />
-              ) : (
-                <BatchesManager eventId={event.id} batches={batches} categories={categories} />
-              )}
+              <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
+                Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
+              </div>
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_310px]">
+                {activeCategoryCount === 0 && singleTicketPriceStatus ? (
+                  <SingleTicketPriceManager eventId={event.id} initialStatus={singleTicketPriceStatus} />
+                ) : (
+                  <BatchesManager eventId={event.id} batches={batches} categories={categories} />
+                )}
+                <div className="space-y-4">
+                  <BuyerPresentationPreview
+                    event={{ name: event.name, starts_at: event.starts_at, location: event.location, banner_card_url: event.banner_card_url, banner_hero_url: event.banner_hero_url }}
+                    activeCategories={activeCategoriesForPreview}
+                    singleTicketPrice={singleTicketPriceStatus}
+                  />
+                  <EventResumeCard data={{ ticketModeLabel, activeCategoryCount, totalCategoryCount: categories.length, totalBatchCount, ticketsCount: Number(ticketsCount ?? 0) }} />
+                  <EventHelpCard step={currentStep} />
+                </div>
+              </div>
             </SectionCard>
           ) : null}
 
