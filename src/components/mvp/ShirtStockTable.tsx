@@ -33,7 +33,7 @@ type ShirtStockTableProps = {
   canClearHistory: boolean;
 };
 
-type PanelMode = "purchase" | "adjustment" | "history" | null;
+type BulkMode = "purchase" | "adjustment" | null;
 
 function formatMovementType(type: string) {
   switch (type) {
@@ -64,10 +64,10 @@ export function ShirtStockTable({
   const [isPending, startTransition] = useTransition();
   const [isSavingLimit, startLimitTransition] = useTransition();
   const [isResetPending, startResetTransition] = useTransition();
-  const [activeRowId, setActiveRowId] = useState<string | null>(null);
-  const [panelMode, setPanelMode] = useState<PanelMode>(null);
-  const [quantity, setQuantity] = useState<string>("");
-  const [notes, setNotes] = useState<string>("");
+  const [historyRowId, setHistoryRowId] = useState<string | null>(null);
+  const [bulkMode, setBulkMode] = useState<BulkMode>(null);
+  const [bulkQuantities, setBulkQuantities] = useState<Record<string, string>>({});
+  const [bulkNotes, setBulkNotes] = useState<string>("");
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [historyByRow, setHistoryByRow] = useState<Record<string, InventoryMovementItem[]>>({});
   const [historyLoadingRowId, setHistoryLoadingRowId] = useState<string | null>(null);
@@ -132,42 +132,6 @@ export function ShirtStockTable({
     });
   }
 
-  function closePanel() {
-    setActiveRowId(null);
-    setPanelMode(null);
-    setQuantity("");
-    setNotes("");
-  }
-
-  function openPanel(rowId: string, mode: Exclude<PanelMode, null>) {
-    setFeedback(null);
-    setActiveRowId(rowId);
-    setPanelMode(mode);
-    setQuantity("");
-    setNotes("");
-  }
-
-  function parseQuantity(currentMode: Exclude<PanelMode, null>): { value: number } | { error: string } {
-    const parsed = Number(quantity);
-    if (!Number.isInteger(parsed)) {
-      return { error: "A quantidade deve ser um número inteiro." };
-    }
-
-    if (currentMode === "purchase" && parsed <= 0) {
-      return { error: "Para encomenda, a quantidade deve ser maior que zero." };
-    }
-
-    if (currentMode === "adjustment" && parsed === 0) {
-      return { error: "Para ajuste, a quantidade deve ser diferente de zero." };
-    }
-
-    if (currentMode === "adjustment" && notes.trim().length < 3) {
-      return { error: "Informe o motivo do ajuste." };
-    }
-
-    return { value: parsed };
-  }
-
   async function loadHistory(rowId: string) {
     setHistoryLoadingRowId(rowId);
     const result = await getInventoryMovementsAction({ inventory_id: rowId, event_id: eventId });
@@ -185,48 +149,96 @@ export function ShirtStockTable({
   }
 
   function handleOpenHistory(rowId: string) {
-    if (activeRowId === rowId && panelMode === "history") {
-      closePanel();
+    if (historyRowId === rowId) {
+      setHistoryRowId(null);
       return;
     }
 
-    openPanel(rowId, "history");
+    setFeedback(null);
+    setHistoryRowId(rowId);
     void loadHistory(rowId);
   }
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function openBulkMode(mode: Exclude<BulkMode, null>) {
+    setFeedback(null);
+    setHistoryRowId(null);
+    setBulkQuantities({});
+    setBulkNotes("");
+    setBulkMode((current) => (current === mode ? null : mode));
+  }
+
+  function closeBulkMode() {
+    setBulkMode(null);
+    setBulkQuantities({});
+    setBulkNotes("");
+  }
+
+  function updateBulkQuantity(rowId: string, value: string) {
+    setBulkQuantities((previous) => ({ ...previous, [rowId]: value }));
+  }
+
+  function rowLabel(row: ShirtStockRow) {
+    return `${row.shirt_type} ${row.shirt_size}`;
+  }
+
+  function submitBulk() {
+    if (!bulkMode) return;
     setFeedback(null);
 
-    if (!activeRowId || !panelMode || panelMode === "history") {
-      return;
+    const entries: Array<{ row: ShirtStockRow; quantity: number }> = [];
+    for (const row of rows) {
+      const raw = bulkQuantities[row.id];
+      if (raw === undefined || raw.trim() === "") continue;
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed)) {
+        setFeedback({ type: "error", message: `Quantidade inválida para ${rowLabel(row)}.` });
+        return;
+      }
+      if (bulkMode === "purchase" && parsed <= 0) {
+        setFeedback({ type: "error", message: `A quantidade de ${rowLabel(row)} deve ser maior que zero.` });
+        return;
+      }
+      if (bulkMode === "adjustment" && parsed === 0) continue;
+      entries.push({ row, quantity: parsed });
     }
 
-    const parsedQuantity = parseQuantity(panelMode);
-    if ("error" in parsedQuantity) {
-      setFeedback({ type: "error", message: parsedQuantity.error });
+    if (entries.length === 0) {
+      setFeedback({ type: "error", message: "Preencha ao menos uma quantidade." });
+      return;
+    }
+    if (bulkMode === "adjustment" && bulkNotes.trim().length < 3) {
+      setFeedback({ type: "error", message: "Informe o motivo do ajuste." });
       return;
     }
 
     startTransition(async () => {
-      const payload = {
-        event_id: eventId,
-        inventory_id: activeRowId,
-        quantity: parsedQuantity.value,
-        notes,
-      };
+      const results = await Promise.all(
+        entries.map(async ({ row, quantity }) => {
+          const payload = { event_id: eventId, inventory_id: row.id, quantity, notes: bulkNotes };
+          const result = bulkMode === "purchase" ? await addInventoryQuantityAction(payload) : await adjustInventoryQuantityAction(payload);
+          return { row, result };
+        }),
+      );
 
-      const result =
-        panelMode === "purchase"
-          ? await addInventoryQuantityAction(payload)
-          : await adjustInventoryQuantityAction(payload);
+      const failures = results.filter(({ result }) => !result.success);
 
-      setFeedback({ type: result.success ? "success" : "error", message: result.message });
-
-      if (result.success) {
-        closePanel();
-        router.refresh();
+      if (failures.length === 0) {
+        setFeedback({ type: "success", message: `${entries.length} tamanho(s) atualizado(s) com sucesso.` });
+        closeBulkMode();
+      } else {
+        const succeededIds = new Set(results.filter(({ result }) => result.success).map(({ row }) => row.id));
+        setBulkQuantities((previous) => {
+          const next = { ...previous };
+          for (const id of succeededIds) delete next[id];
+          return next;
+        });
+        setFeedback({
+          type: "error",
+          message: `${results.length - failures.length} de ${results.length} salvos. Falhou: ${failures.map(({ row, result }) => `${rowLabel(row)} (${result.message})`).join("; ")}`,
+        });
       }
+
+      router.refresh();
     });
   }
 
@@ -332,73 +344,118 @@ export function ShirtStockTable({
         ) : null}
       </section>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => openBulkMode("purchase")}
+          disabled={isPending}
+          className={`rounded-xl border px-3 py-1.5 text-xs transition ${bulkMode === "purchase" ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-emerald-800/80 text-emerald-300 hover:border-emerald-600"}`}
+        >
+          Adicionar encomenda
+        </button>
+        <button
+          type="button"
+          onClick={() => openBulkMode("adjustment")}
+          disabled={isPending}
+          className={`rounded-xl border px-3 py-1.5 text-xs transition ${bulkMode === "adjustment" ? "border-amber-500 bg-amber-500/10 text-amber-200" : "border-amber-800/80 text-amber-300 hover:border-amber-600"}`}
+        >
+          Ajustar estoque
+        </button>
+      </div>
+
+      {bulkMode ? (
+        <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
+          <p className="text-sm font-semibold text-slate-100">
+            {bulkMode === "purchase" ? "Adicionar encomenda" : "Ajustar estoque"} — preencha os tamanhos recebidos/ajustados e confirme uma única vez
+          </p>
+          <label className="mt-3 block space-y-1 text-sm">
+            <span className="text-slate-300">{bulkMode === "purchase" ? "Observação (opcional, aplicada a todos os tamanhos)" : "Motivo (obrigatório, aplicado a todos os tamanhos)"}</span>
+            <input
+              type="text"
+              value={bulkNotes}
+              onChange={(event) => setBulkNotes(event.target.value)}
+              className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none"
+              placeholder={bulkMode === "purchase" ? "Ex.: Encomenda de agosto" : "Ex.: Correção de contagem física"}
+            />
+          </label>
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" onClick={closeBulkMode} className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-300 transition hover:border-slate-500">
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={submitBulk}
+              disabled={isPending}
+              className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isPending ? "Salvando..." : "Confirmar"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-2xl border border-slate-800/80">
         <table className="min-w-full divide-y divide-slate-800 text-sm">
           <thead className="bg-slate-950/70 text-left text-slate-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Modelo</th>
-              <th className="px-4 py-3 font-medium">Tamanho</th>
-              <th className="px-4 py-3 font-medium">Total recebido</th>
-              <th className="px-4 py-3 font-medium">Reservadas</th>
-              <th className="px-4 py-3 font-medium">Entregues</th>
-              <th className="px-4 py-3 font-medium">Disponíveis</th>
-              <th className="px-4 py-3 font-medium">Ações</th>
+              <th className="px-3 py-2 font-medium">Modelo</th>
+              <th className="px-3 py-2 font-medium">Tamanho</th>
+              <th className="px-3 py-2 font-medium">Total</th>
+              <th className="px-3 py-2 font-medium">Reservadas</th>
+              <th className="px-3 py-2 font-medium">Entregues</th>
+              <th className="px-3 py-2 font-medium">Disponíveis</th>
+              <th className="px-3 py-2 font-medium">
+                {bulkMode === "purchase" ? "Quantidade recebida" : bulkMode === "adjustment" ? "Ajuste (+/-)" : "Histórico"}
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
             {rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-center text-slate-400" colSpan={7}>
+                <td className="px-3 py-4 text-center text-slate-400" colSpan={7}>
                   Sem linhas de estoque neste evento.
                 </td>
               </tr>
             ) : (
               rows.map((row) => {
                 const historyItems = historyByRow[row.id] ?? [];
-                const isActiveRow = activeRowId === row.id;
+                const isHistoryOpen = historyRowId === row.id;
 
                 return (
                   <Fragment key={row.id}>
                     <tr>
-                      <td className="px-4 py-3">{row.shirt_type}</td>
-                      <td className="px-4 py-3">{row.shirt_size}</td>
-                      <td className="px-4 py-3">{row.total_quantity}</td>
-                      <td className="px-4 py-3">{row.reserved_quantity}</td>
-                      <td className="px-4 py-3">{row.delivered_quantity}</td>
-                      <td className="px-4 py-3">{row.available}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openPanel(row.id, "purchase")}
-                            disabled={isPending}
-                            className="rounded-xl border border-emerald-800/80 px-3 py-1.5 text-xs text-emerald-300 transition hover:border-emerald-600"
-                          >
-                            Adicionar encomenda
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openPanel(row.id, "adjustment")}
-                            disabled={isPending}
-                            className="rounded-xl border border-amber-800/80 px-3 py-1.5 text-xs text-amber-300 transition hover:border-amber-600"
-                          >
-                            Ajustar estoque
-                          </button>
+                      <td className="px-3 py-2">{row.shirt_type}</td>
+                      <td className="px-3 py-2">{row.shirt_size}</td>
+                      <td className="px-3 py-2">{row.total_quantity}</td>
+                      <td className="px-3 py-2">{row.reserved_quantity}</td>
+                      <td className="px-3 py-2">{row.delivered_quantity}</td>
+                      <td className="px-3 py-2">{row.available}</td>
+                      <td className="px-3 py-2">
+                        {bulkMode ? (
+                          <input
+                            type="number"
+                            step={1}
+                            value={bulkQuantities[row.id] ?? ""}
+                            onChange={(event) => updateBulkQuantity(row.id, event.target.value)}
+                            placeholder={bulkMode === "purchase" ? "0" : "+/-0"}
+                            className="w-24 rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-1 text-sm text-slate-100 outline-none"
+                          />
+                        ) : (
                           <button
                             type="button"
                             onClick={() => handleOpenHistory(row.id)}
-                            disabled={isPending || historyLoadingRowId === row.id}
-                            className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-slate-500"
+                            disabled={historyLoadingRowId === row.id}
+                            className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-200 transition hover:border-slate-500"
                           >
-                            {historyLoadingRowId === row.id ? "Carregando..." : "Ver histórico"}
+                            {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Ver histórico"}
                           </button>
-                        </div>
+                        )}
                       </td>
                     </tr>
 
-                    {isActiveRow && panelMode === "history" ? (
+                    {isHistoryOpen ? (
                       <tr>
-                        <td colSpan={7} className="bg-slate-950/40 px-4 py-4">
+                        <td colSpan={7} className="bg-slate-950/40 px-3 py-3">
                           <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
                             <p className="text-sm font-semibold text-slate-100">Histórico de movimentações</p>
                             <div className="mt-3 space-y-2">
@@ -421,75 +478,13 @@ export function ShirtStockTable({
                             <div className="mt-4 flex justify-end">
                               <button
                                 type="button"
-                                onClick={closePanel}
+                                onClick={() => setHistoryRowId(null)}
                                 className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-500"
                               >
                                 Fechar
                               </button>
                             </div>
                           </div>
-                        </td>
-                      </tr>
-                    ) : null}
-
-                    {isActiveRow && panelMode !== "history" && panelMode !== null ? (
-                      <tr>
-                        <td colSpan={7} className="bg-slate-950/40 px-4 py-4">
-                          <form onSubmit={handleSubmit} className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
-                            <p className="text-sm font-semibold text-slate-100">
-                              {panelMode === "purchase" ? "Adicionar encomenda" : "Ajustar estoque"}
-                            </p>
-                            <div className="mt-3 grid gap-3 md:grid-cols-2">
-                              <label className="space-y-2 text-sm">
-                                <span className="text-slate-300">
-                                  {panelMode === "purchase" ? "Quantidade recebida" : "Quantidade de ajuste"}
-                                </span>
-                                <input
-                                  type="number"
-                                  step={1}
-                                  value={quantity}
-                                  onChange={(event) => setQuantity(event.target.value)}
-                                  className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none"
-                                  placeholder={panelMode === "purchase" ? "Ex: 50" : "Ex: -3 ou 4"}
-                                />
-                              </label>
-
-                              <label className="space-y-2 text-sm">
-                                <span className="text-slate-300">{panelMode === "purchase" ? "Observação (opcional)" : "Motivo"}</span>
-                                {panelMode === "adjustment" ? (
-                                  <span className="block text-xs text-slate-400">Motivo obrigatório para ajustes.</span>
-                                ) : null}
-                                <input
-                                  type="text"
-                                  value={notes}
-                                  onChange={(event) => setNotes(event.target.value)}
-                                  className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none"
-                                  placeholder={
-                                    panelMode === "purchase"
-                                      ? "Primeira encomenda, Segunda encomenda, Reposição de agosto"
-                                      : "+5 correção de contagem, -2 camisetas com defeito"
-                                  }
-                                />
-                              </label>
-                            </div>
-
-                            <div className="mt-4 flex justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={closePanel}
-                                className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-300 transition hover:border-slate-500"
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                type="submit"
-                                disabled={isPending}
-                                className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
-                              >
-                                {isPending ? "Salvando..." : panelMode === "purchase" ? "Adicionar" : "Aplicar ajuste"}
-                              </button>
-                            </div>
-                          </form>
                         </td>
                       </tr>
                     ) : null}

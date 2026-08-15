@@ -11,6 +11,7 @@ import {
   deliverFullKitAction,
   deliverKitItemAction,
   getRetiradaCapabilitiesAction,
+  getPickupTicketAction,
   searchPickupParticipantAction,
 } from "./actions";
 
@@ -49,6 +50,11 @@ export default function KitPickupPage() {
       delivered_at: string | null;
     }>;
   } | null>(null);
+  const [candidates, setCandidates] = useState<Array<{
+    contact_id: string; person_name: string; cpf: string; phone: string; ticket_id: string;
+    event_id: string; event_name: string; category_name: string; ticket_status: string; holder_name: string;
+    shirt: string; kit_status: string | null; checkin_status: string;
+  }>>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState({ canDeliverKit: false, canCheckin: false, canCombined: false });
@@ -67,25 +73,53 @@ export default function KitPickupPage() {
     setMessage(null);
     const response = await searchPickupParticipantAction(query);
     setLoading(false);
-    if (!response.success || !response.participant) {
+    if (response.success && "requires_selection" in response && response.requires_selection) {
       setResult(null);
+      setCandidates(response.candidates);
+      setMessage("Selecione explicitamente o ingresso correto.");
+      return;
+    }
+    if (!response.success || !("participant" in response) || !response.participant) {
+      setResult(null);
+      setCandidates([]);
       setMessage(response.message ?? "Nenhum inscrito encontrado.");
       return;
     }
+    setCandidates([]);
     setResult(response.participant);
+  }
+
+  async function selectTicket(ticketId: string) {
+    setLoading(true);
+    setMessage(null);
+    const response = await getPickupTicketAction(ticketId);
+    setLoading(false);
+    if (!response.success || !response.participant) {
+      setMessage(response.message ?? "Não foi possível abrir o ingresso.");
+      return;
+    }
+    setCandidates([]);
+    setResult(response.participant);
+  }
+
+  async function refreshSelectedTicket() {
+    if (!result?.ticket_id) return;
+    const response = await getPickupTicketAction(result.ticket_id);
+    if (response.success && response.participant) setResult(response.participant);
   }
 
   async function deliverKit() {
     if (!result) return;
     setLoading(true);
     try {
-      const response = await deliverFullKitAction({ participant_id: result.id });
+      if (!result.ticket_id) return;
+      const response = await deliverFullKitAction({ ticket_id: result.ticket_id });
       if (!response.success) {
         setMessage(response.message ?? "Não foi possível entregar o kit.");
         return;
       }
       setMessage("Kit entregue com sucesso.");
-      await searchParticipant();
+      await refreshSelectedTicket();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível entregar o kit.");
     } finally {
@@ -96,27 +130,29 @@ export default function KitPickupPage() {
   async function deliverItem(kitItemId: string) {
     if (!result) return;
     setLoading(true);
-    const response = await deliverKitItemAction({ participant_id: result.id, kit_item_id: kitItemId });
+    if (!result.ticket_id) return;
+    const response = await deliverKitItemAction({ ticket_id: result.ticket_id, kit_item_id: kitItemId });
     setLoading(false);
     if (!response.success) {
       setMessage(response.message ?? "Não foi possível entregar o item.");
       return;
     }
     setMessage(response.message ?? "Item entregue.");
-    await searchParticipant();
+    await refreshSelectedTicket();
   }
 
   async function checkinOnly() {
     if (!result) return;
     setLoading(true);
-    const response = await checkinEntryAction({ participant_id: result.id });
+    if (!result.ticket_id) return;
+    const response = await checkinEntryAction({ ticket_id: result.ticket_id });
     setLoading(false);
     if (!response.success) {
       setMessage(response.message ?? "Não foi possível confirmar entrada.");
       return;
     }
     setMessage(response.message ?? "Entrada confirmada.");
-    await searchParticipant();
+    await refreshSelectedTicket();
   }
 
   async function deliverKitAndCheckin() {
@@ -132,13 +168,13 @@ export default function KitPickupPage() {
       return;
     }
     setMessage(response.message ?? "Kit entregue e entrada confirmada.");
-    await searchParticipant();
+    await refreshSelectedTicket();
   }
 
   const disabled = loading || !query.trim();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
@@ -151,6 +187,7 @@ export default function KitPickupPage() {
               <button type="button" onClick={searchParticipant} disabled={disabled} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">Buscar</button>
             </div>
             {message ? <div className="mt-4 rounded-2xl bg-slate-950/70 p-3 text-sm text-slate-300">{message}</div> : null}
+            {candidates.length ? <div className="mt-5 space-y-4">{Array.from(new Map(candidates.map((item) => [item.contact_id, item])).values()).map((person) => <section key={person.contact_id} className="rounded-3xl border border-slate-700 bg-slate-950/50 p-4"><div><p className="text-lg font-semibold">{person.person_name}</p><p className="text-xs text-slate-400">{person.cpf || "CPF não informado"} · {person.phone || "Telefone não informado"}</p></div><div className="mt-4 space-y-4">{Array.from(new Set(candidates.filter((item) => item.contact_id === person.contact_id).map((item) => item.event_id))).map((eventId) => { const eventTickets = candidates.filter((item) => item.contact_id === person.contact_id && item.event_id === eventId); return <div key={eventId} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3"><p className="mb-2 text-sm font-semibold text-emerald-200">{eventTickets[0]?.event_name}</p><div className="grid gap-2 sm:grid-cols-2">{eventTickets.map((ticket) => <button key={ticket.ticket_id} type="button" onClick={() => void selectTicket(ticket.ticket_id)} disabled={loading} className="rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-left text-sm transition hover:border-emerald-500"><span className="font-semibold">{ticket.category_name} · #{ticket.ticket_id.slice(0, 8).toUpperCase()}</span><span className="mt-1 block text-xs text-slate-400">Titular: {ticket.holder_name}</span>{ticket.shirt ? <span className="mt-1 block text-xs text-slate-400">Camiseta: {ticket.shirt}</span> : null}<span className="mt-2 block text-xs text-slate-300">{ticket.kit_status ? `Kit: ${ticket.kit_status} · ` : ""}Check-in: {ticket.checkin_status}</span></button>)}</div></div>; })}</div></section>)}</div> : null}
             {result ? (
               <div className="mt-6 rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">

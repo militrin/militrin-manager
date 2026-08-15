@@ -1,191 +1,64 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { deleteKitDeliveryScheduleAction, upsertKitDeliveryScheduleAction } from "@/app/eventos/actions";
+import { deleteEventScheduleAction, upsertEventScheduleAction } from "@/app/eventos/actions";
 import { formatDateBR, toDatetimeLocalValue } from "@/lib/utils/date";
+import { DateTimeField } from "@/components/forms/DateTimeField";
 
-type KitDeliveryRow = {
-  id: string;
-  delivery_at: string;
-  city: string;
-  location: string;
-  sort_order: number;
-  is_active: boolean;
+export type EventScheduleRow = {
+  id: string; event_id: string; delivery_at: string; title: string;
+  location: string | null; description: string | null; schedule_type: string;
+  sort_order: number; is_active: boolean; is_visible_to_users: boolean;
 };
 
-type DeliveryScheduleManagerProps = {
-  initialRows: KitDeliveryRow[];
-};
+const types = [
+  ['kit_pickup', 'Retirada de kit'], ['gates_open', 'Abertura dos portões'],
+  ['event_start', 'Início do evento'], ['attraction', 'Atração/show'],
+  ['accreditation', 'Credenciamento'], ['meeting', 'Encontro'],
+  ['closing', 'Encerramento'], ['other', 'Outro'],
+] as const;
 
-function toDatetimeLocal(value: string | null) {
-  return toDatetimeLocalValue(value);
-}
+const emptyForm = { id: '', delivery_at: '', title: '', location: '', description: '', schedule_type: 'other', sort_order: '0', is_active: true, is_visible_to_users: true };
 
-export function DeliveryScheduleManager({ initialRows }: DeliveryScheduleManagerProps) {
+export function DeliveryScheduleManager({ eventId, initialRows }: { eventId: string; initialRows: EventScheduleRow[] }) {
   const [isPending, startTransition] = useTransition();
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [rows, setRows] = useState<KitDeliveryRow[]>(initialRows);
-  const [form, setForm] = useState({
-    id: "",
-    delivery_at: "",
-    city: "",
-    location: "",
-    sort_order: "0",
-    is_active: true,
-  });
-
-  function resetForm() {
-    setForm({ id: "", delivery_at: "", city: "", location: "", sort_order: "0", is_active: true });
-  }
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [rows, setRows] = useState(initialRows);
+  const [form, setForm] = useState(emptyForm);
 
   function save() {
     setMessage(null);
     startTransition(async () => {
-      const result = await upsertKitDeliveryScheduleAction({
-        id: form.id || undefined,
-        delivery_at: form.delivery_at,
-        city: form.city,
-        location: form.location,
-        sort_order: Number(form.sort_order || 0),
-        is_active: form.is_active,
+      const result = await upsertEventScheduleAction({
+        id: form.id || undefined, event_id: eventId, delivery_at: form.delivery_at,
+        title: form.title, location: form.location || null, description: form.description || null,
+        schedule_type: form.schedule_type as typeof types[number][0], sort_order: Number(form.sort_order || 0),
+        is_active: form.is_active, is_visible_to_users: form.is_visible_to_users,
       });
-
-      setMessage({ type: result.success ? "success" : "error", text: result.message });
+      setMessage({ type: result.success ? 'success' : 'error', text: result.message });
       if (!result.success) return;
-
-      const nextRow: KitDeliveryRow = {
-        id: form.id || crypto.randomUUID(),
-        delivery_at: new Date(form.delivery_at).toISOString(),
-        city: form.city,
-        location: form.location,
-        sort_order: Number(form.sort_order || 0),
-        is_active: form.is_active,
-      };
-
-      setRows((prev) => {
-        const exists = prev.some((item) => item.id === form.id);
-        const merged = exists
-          ? prev.map((item) => (item.id === form.id ? nextRow : item))
-          : [...prev, nextRow];
-
-        return [...merged].sort((a, b) => {
-          if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-          return new Date(a.delivery_at).getTime() - new Date(b.delivery_at).getTime();
-        });
-      });
-
-      resetForm();
+      const next: EventScheduleRow = { id: form.id || String(result.id), event_id: eventId, delivery_at: new Date(form.delivery_at).toISOString(), title: form.title, location: form.location || null, description: form.description || null, schedule_type: form.schedule_type, sort_order: Number(form.sort_order || 0), is_active: form.is_active, is_visible_to_users: form.is_visible_to_users };
+      setRows((current) => [...(current.some((row) => row.id === next.id) ? current.map((row) => row.id === next.id ? next : row) : [...current, next])].sort((a, b) => new Date(a.delivery_at).getTime() - new Date(b.delivery_at).getTime()));
+      setForm(emptyForm);
     });
   }
 
-  function edit(item: KitDeliveryRow) {
-    setForm({
-      id: item.id,
-      delivery_at: toDatetimeLocal(item.delivery_at),
-      city: item.city,
-      location: item.location,
-      sort_order: String(item.sort_order),
-      is_active: item.is_active,
-    });
-  }
+  function edit(row: EventScheduleRow) { setForm({ ...row, delivery_at: toDatetimeLocalValue(row.delivery_at), location: row.location ?? '', description: row.description ?? '', sort_order: String(row.sort_order) }); }
+  function remove(id: string) { startTransition(async () => { const result = await deleteEventScheduleAction(id, eventId); setMessage({ type: result.success ? 'success' : 'error', text: result.message }); if (result.success) setRows((current) => current.filter((row) => row.id !== id)); }); }
 
-  function remove(id: string) {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await deleteKitDeliveryScheduleAction(id);
-      setMessage({ type: result.success ? "success" : "error", text: result.message });
-      if (!result.success) return;
-      setRows((prev) => prev.filter((item) => item.id !== id));
-      if (form.id === id) resetForm();
-    });
-  }
-
-  return (
-    <div className="space-y-4">
-      {message ? (
-        <div className={`rounded-xl border px-3 py-2 text-sm ${message.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`}>
-          {message.text}
-        </div>
-      ) : null}
-
-      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-        <p className="text-sm font-semibold text-slate-200">Cronograma de Entregas</p>
-        <p className="mt-1 text-xs text-slate-400">Configure dia, hora, cidade e local das proximas entregas.</p>
-
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Dia e hora</span>
-            <input
-              type="datetime-local"
-              value={form.delivery_at}
-              onChange={(event) => setForm((prev) => ({ ...prev, delivery_at: event.target.value }))}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Cidade</span>
-            <input
-              value={form.city}
-              onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Local</span>
-            <input
-              value={form.location}
-              onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Ordem</span>
-            <input
-              value={form.sort_order}
-              onChange={(event) => setForm((prev) => ({ ...prev, sort_order: event.target.value }))}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-        </div>
-
-        <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-300">
-          <input
-            type="checkbox"
-            checked={form.is_active}
-            onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))}
-          />
-          Entrega ativa
-        </label>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" onClick={save} disabled={isPending} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">
-            {form.id ? "Atualizar entrega" : "Adicionar entrega"}
-          </button>
-          {form.id ? (
-            <button type="button" onClick={resetForm} className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300">
-              Cancelar edicao
-            </button>
-          ) : null}
-        </div>
-
-        <div className="mt-4 space-y-2">
-          {rows.length === 0 ? (
-            <p className="text-sm text-slate-400">Nenhuma entrega de kits configurada.</p>
-          ) : (
-            rows.map((item) => (
-              <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-200">
-                <p className="font-semibold text-white">{formatDateBR(item.delivery_at)} as {toDatetimeLocal(item.delivery_at).slice(11, 16)}</p>
-                <p>{item.city} - {item.location}</p>
-                <p className="text-xs text-slate-400">Ordem: {item.sort_order} - {item.is_active ? "Ativa" : "Inativa"}</p>
-                <div className="mt-2 flex gap-2">
-                  <button type="button" onClick={() => edit(item)} className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200">Editar</button>
-                  <button type="button" onClick={() => remove(item.id)} className="rounded-lg border border-rose-700 px-3 py-1 text-xs text-rose-200">Remover</button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+  const inputClass = "w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2";
+  return <div className="space-y-4">
+    {message ? <div className={`rounded-xl border px-3 py-2 text-sm ${message.type === 'success' ? 'border-emerald-500/30 text-emerald-200' : 'border-red-500/30 text-red-200'}`}>{message.text}</div> : null}
+    <div className="grid gap-3 md:grid-cols-2">
+      <DateTimeField label="Data e horário" value={form.delivery_at} onChange={(next) => setForm({ ...form, delivery_at: next })} />
+      <label className="space-y-1 text-sm"><span>Título</span><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputClass} /></label>
+      <label className="space-y-1 text-sm"><span>Tipo</span><select value={form.schedule_type} onChange={(e) => setForm({ ...form, schedule_type: e.target.value })} className={inputClass}>{types.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="space-y-1 text-sm"><span>Local (opcional)</span><input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} /></label>
+      <label className="space-y-1 text-sm md:col-span-2"><span>Descrição (opcional)</span><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={inputClass} rows={3} /></label>
+      <label className="space-y-1 text-sm"><span>Ordem de desempate</span><input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} className={inputClass} /></label>
     </div>
-  );
+    <div className="flex flex-wrap gap-4 text-sm"><label><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /> Ativo</label><label><input type="checkbox" checked={form.is_visible_to_users} onChange={(e) => setForm({ ...form, is_visible_to_users: e.target.checked })} /> Visível para usuários</label></div>
+    <div className="flex gap-2"><button type="button" disabled={isPending} onClick={save} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">{form.id ? 'Atualizar compromisso' : 'Adicionar compromisso'}</button>{form.id ? <button type="button" onClick={() => setForm(emptyForm)} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Cancelar</button> : null}</div>
+    <div className="space-y-2">{rows.length === 0 ? <p className="text-sm text-slate-400">Nenhum compromisso configurado para este evento.</p> : rows.map((row) => <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm"><p className="font-semibold text-white">{row.title}</p><p>{formatDateBR(row.delivery_at)} às {toDatetimeLocalValue(row.delivery_at).slice(11, 16)}</p>{row.location ? <p>{row.location}</p> : null}{row.description ? <p className="text-slate-400">{row.description}</p> : null}<p className="text-xs text-slate-500">{row.is_active ? 'Ativo' : 'Inativo'} · {row.is_visible_to_users ? 'Visível' : 'Oculto'}</p><div className="mt-2 flex gap-2"><button onClick={() => edit(row)} className="rounded-lg border border-slate-700 px-3 py-1 text-xs">Editar</button><button onClick={() => remove(row.id)} className="rounded-lg border border-rose-700 px-3 py-1 text-xs text-rose-200">Excluir</button></div></article>)}</div>
+  </div>;
 }

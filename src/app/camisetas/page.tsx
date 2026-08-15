@@ -84,7 +84,6 @@ async function getStock(selectedEventId: string | null) {
     limit_shirt_selection_to_stock: Boolean(event.limit_shirt_selection_to_stock),
   }));
 
-  const fallbackEvent = events.find((event) => event.is_active) ?? events[0] ?? null;
   const selectedEventFromQuery = selectedEvent?.id
     ? {
         id: String(selectedEvent.id),
@@ -96,7 +95,7 @@ async function getStock(selectedEventId: string | null) {
       }
     : null;
 
-  const effectiveSelectedEvent = selectedEventFromQuery ?? fallbackEvent;
+  const effectiveSelectedEvent = selectedEventFromQuery;
   const effectiveSelectedEventId = effectiveSelectedEvent?.id ?? null;
 
   if (!effectiveSelectedEventId) {
@@ -155,7 +154,7 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
     : "Selecione um evento";
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">

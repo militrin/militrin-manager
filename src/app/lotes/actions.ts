@@ -8,7 +8,6 @@ const batchSchema = z.object({
   id: z.string().uuid().optional(),
   event_id: z.string().uuid(),
   name: z.string().optional().nullable(),
-  max_confirmed_registrations: z.number().int().positive("Limite deve ser maior que zero."),
   starts_at: z.string().optional().nullable(),
   ends_at: z.string().optional().nullable(),
   is_active: z.boolean().default(false),
@@ -17,6 +16,7 @@ const batchSchema = z.object({
     enabled: z.boolean(),
     male_price: z.number().min(0, "Preco masculino por categoria invalido."),
     female_price: z.number().min(0, "Preco feminino por categoria invalido."),
+    max_confirmed_registrations: z.number().int().positive("Limite por categoria deve ser maior que zero.").nullable(),
   })).default([]),
 }).superRefine((data, ctx) => {
   const enabled = data.category_prices.filter((item) => item.enabled);
@@ -27,6 +27,8 @@ const batchSchema = z.object({
       message: "Ative pelo menos uma categoria no lote.",
     });
   }
+
+  const hasEndsAt = Boolean(data.ends_at);
 
   enabled.forEach((item, index) => {
     if (!Number.isFinite(item.male_price) || item.male_price < 0) {
@@ -41,6 +43,13 @@ const batchSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["category_prices", index, "female_price"],
         message: "Preco feminino por categoria deve ser maior ou igual a zero.",
+      });
+    }
+    if (item.max_confirmed_registrations === null && !hasEndsAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["category_prices", index, "max_confirmed_registrations"],
+        message: "Informe um limite de confirmadas, uma data de encerramento do lote, ou os dois.",
       });
     }
   });
@@ -79,7 +88,6 @@ export async function createBatchAction(payload: BatchPayload): Promise<ActionRe
     const { error } = await supabase.rpc("create_registration_batch_with_prices", {
       p_event_id: parsed.data.event_id,
       p_name: parsed.data.name?.trim() || null,
-      p_max_confirmed_registrations: parsed.data.max_confirmed_registrations,
       p_starts_at: parseTimestamp(parsed.data.starts_at),
       p_ends_at: parseTimestamp(parsed.data.ends_at),
       p_is_active: parsed.data.is_active,
@@ -110,7 +118,6 @@ export async function updateBatchAction(payload: BatchPayload): Promise<ActionRe
       p_batch_id: parsed.data.id,
       p_event_id: parsed.data.event_id,
       p_name: parsed.data.name?.trim() || null,
-      p_max_confirmed_registrations: parsed.data.max_confirmed_registrations,
       p_starts_at: parseTimestamp(parsed.data.starts_at),
       p_ends_at: parseTimestamp(parsed.data.ends_at),
       p_is_active: parsed.data.is_active,

@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { createCouponAction, toggleCouponAction, updateCouponAction } from "./actions";
 import { formatDateBR, formatDateTimeBR, toDatetimeLocalValue } from "@/lib/utils/date";
+import { DateTimeField } from "@/components/forms/DateTimeField";
 
 type CouponRow = {
   id: string;
@@ -193,15 +194,8 @@ export function CouponsManager({
             <input value={form.max_uses} onChange={(e) => updateField("max_uses", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
           </label>
 
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Início</span>
-            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.valid_from} onChange={(e) => updateField("valid_from", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Fim</span>
-            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.valid_until} onChange={(e) => updateField("valid_until", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
-          </label>
+          <DateTimeField label="Início" value={form.valid_from} onChange={(next) => updateField("valid_from", next)} />
+          <DateTimeField label="Fim" value={form.valid_until} onChange={(next) => updateField("valid_until", next)} />
         </div>
 
         <label className="mt-3 block space-y-1 text-sm">

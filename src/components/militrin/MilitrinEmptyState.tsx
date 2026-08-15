@@ -19,7 +19,7 @@ export function MilitrinEmptyState({ title, description, actionLabel, onAction, 
         <MilitrinButton className="mt-4" onClick={onAction}>{actionLabel}</MilitrinButton>
       ) : null}
       {actionLabel && actionHref ? (
-        <a href={actionHref} className="mt-4 inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+        <a href={actionHref} className="mt-4 inline-flex h-11 items-center justify-center rounded-2xl bg-gradient-to-r from-(--brand-600) to-(--brand-500) px-5 text-sm font-semibold text-white shadow-lg shadow-(--brand-600)/25 transition hover:from-(--brand-500) hover:to-(--brand-400) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--brand-400)/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
           {actionLabel}
         </a>
       ) : null}

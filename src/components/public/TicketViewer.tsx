@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import { TicketPdfButton } from './TicketPdfButton';
+import { getStatusLabel } from '@/lib/status-labels';
 
 type TicketViewerProps = {
   eventName: string;
@@ -15,18 +16,6 @@ type TicketViewerProps = {
 
 function makeQrUrl(token: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`;
-}
-
-function statusLabel(status: string) {
-  const map: Record<string, string> = {
-    active: 'Ativo',
-    used: 'Utilizado',
-    canceled: 'Cancelado',
-    expired: 'Expirado',
-    pending: 'Pendente',
-    confirmed: 'Confirmado',
-  };
-  return map[String(status || '').toLowerCase()] ?? status;
 }
 
 export function TicketViewer({
@@ -48,14 +37,14 @@ export function TicketViewer({
         <div className="p-5">
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Ingresso digital</p>
           <h3 className="mt-2 text-xl font-semibold text-white">{eventName}</h3>
-          <p className="mt-1 text-sm text-slate-300">Participante: {participantName || '-'}</p>
+          {participantName ? <p className="mt-1 text-sm text-slate-300">Titular: {participantName}</p> : null}
 
           <div className="mt-4 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
-            <p>Categoria: {categoryName || '-'}</p>
-            <p>Status: {statusLabel(status)}</p>
-            <p>Data: {eventDate || '-'}</p>
-            <p>Local: {eventLocation || '-'}</p>
-            <p>Pedido: {orderNumber || '-'}</p>
+            {categoryName ? <p>Categoria: {categoryName}</p> : null}
+            <p>Ingresso: {getStatusLabel(status)}</p>
+            {eventDate ? <p>Data: {eventDate}</p> : null}
+            {eventLocation ? <p>Local: {eventLocation}</p> : null}
+            {orderNumber ? <p>Pedido: {orderNumber}</p> : null}
             <p className="truncate">Token: {token}</p>
           </div>
 

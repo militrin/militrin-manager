@@ -1,14 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 
-export async function getActiveEventId() {
-  const supabase = createClient();
-  const { data, error } = await supabase.from("events").select("id").eq("is_active", true).maybeSingle();
-  if (error) throw error;
-  if (!data?.id) throw new Error("Nenhum evento ativo encontrado.");
-  return data.id;
-}
-
 export async function createRegistrationWithRpc(values: {
+  event_id: string;
   full_name: string;
   cpf: string;
   birth_date: string;
@@ -24,7 +17,7 @@ export async function createRegistrationWithRpc(values: {
   notes?: string | null;
 }) {
   const supabase = createClient();
-  const eventId = await getActiveEventId();
+  if (!values.event_id) throw new Error("Selecione um evento.");
 
   const { data, error } = await supabase.rpc("create_registration", {
     p_full_name: values.full_name,
@@ -40,7 +33,7 @@ export async function createRegistrationWithRpc(values: {
     p_notes: values.notes ?? null,
     p_payment_method: values.payment_method,
     p_payment_status: values.payment_status,
-    p_event_id: eventId,
+    p_event_id: values.event_id,
     p_coupon_code: values.coupon_code ?? null,
   });
 
@@ -48,9 +41,9 @@ export async function createRegistrationWithRpc(values: {
   return data as string;
 }
 
-export async function deliverKitWithRpc(participantId: string) {
+export async function deliverKitWithRpc(ticketId: string) {
   const supabase = createClient();
-  const { data, error } = await supabase.rpc("deliver_kit", { p_participant_id: participantId });
+  const { data, error } = await supabase.rpc("deliver_ticket_full_kit", { p_ticket_id: ticketId });
   if (error) throw error;
   return data as boolean;
 }

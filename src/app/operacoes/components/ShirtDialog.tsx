@@ -15,14 +15,12 @@ export function ShirtDialog({ details, onClose, onSaved }: { details: OperationD
     const changeShirtAction = (
       actions as unknown as {
         changeShirtAction?: (payload: {
-          participantId: string;
+          ticketId: string;
           shirtType: string;
           shirtSize: string;
         }) => Promise<{ success: boolean; message: string }>;
       }
     ).changeShirtAction;
-
-    if (!details.participant_id) return;
 
     if (!changeShirtAction) {
       setMessage('Troca de camiseta indisponível no momento.');
@@ -31,7 +29,7 @@ export function ShirtDialog({ details, onClose, onSaved }: { details: OperationD
 
     setLoading(true);
     const response = await changeShirtAction({
-      participantId: details.participant_id,
+      ticketId: details.ticket_id,
       shirtType: type,
       shirtSize: size,
     });

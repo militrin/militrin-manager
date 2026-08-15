@@ -29,7 +29,7 @@ export default function RedefinirSenhaPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
       <div className="mx-auto w-full max-w-md rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
         <h1 className="text-2xl font-semibold">Redefinir senha</h1>
         <form onSubmit={onSubmit} className="mt-4 space-y-3">

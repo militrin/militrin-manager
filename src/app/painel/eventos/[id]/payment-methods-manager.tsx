@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { upsertEventPaymentMethodsAction } from "@/app/eventos/actions";
 
@@ -13,6 +14,7 @@ type EventPaymentMethodsManagerProps = {
 };
 
 export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaymentMethodsManagerProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [form, setForm] = useState(initialConfig);
@@ -33,10 +35,12 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
         credit_card_installments_enabled: form.credit_card_installments_enabled,
       });
 
-      setMessage({
-        type: result.success ? "success" : "error",
-        text: result.message,
-      });
+      if (!result.success) {
+        setMessage({ type: "error", text: result.message });
+        return;
+      }
+
+      router.push(`/painel/eventos/${eventId}?etapa=6`);
     });
   }
 
@@ -85,7 +89,7 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
           disabled={isPending}
           className="mt-4 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60"
         >
-          {isPending ? "Salvando..." : "Salvar formas de pagamento"}
+          {isPending ? "Salvando..." : "Salvar e ir para próxima etapa"}
         </button>
       </div>
     </div>

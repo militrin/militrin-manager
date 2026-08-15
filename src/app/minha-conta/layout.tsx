@@ -9,18 +9,15 @@ import {
   resolveParticipantInitials,
 } from '@/lib/account/participant-identity';
 import { signOutAccountAction } from '@/app/minha-conta/actions';
+import { PublicPinCopy } from '@/app/minha-conta/public-pin-copy';
+import { getMyPublicPin } from '@/lib/account/public-pin';
 import { MilitrinAvatar } from '@/components/militrin';
-import { ArrowRight, CircleUserRound, Coins, History, Images, LayoutDashboard, LogOut, Star, Ticket, UsersRound, Trophy } from 'lucide-react';
-
-const navigation = [
-  { href: '/minha-conta', label: 'Início', icon: LayoutDashboard },
-  { href: '/minha-conta/ingressos', label: 'Meus ingressos', icon: Ticket },
-  { href: '/minha-conta/compras', label: 'Minhas compras', icon: Coins },
-  { href: '/fotos', label: 'Fotos', icon: Images },
-  { href: '/minha-conta/nivel', label: 'Minha categoria', icon: Star },
-  { href: '/minha-conta/historico', label: 'Histórico', icon: History },
-  { href: '/minha-conta/dados', label: 'Meu perfil', icon: CircleUserRound },
-];
+import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
+import { isAdministrativeIssue, isRequiredUserResolvableIssue } from '@/lib/account/participant-issue-policy';
+import { AlertTriangle, LogOut, UsersRound, Trophy, ArrowRight } from 'lucide-react';
+import { StoreCartProvider } from '@/lib/store/cart-context';
+import { CartHeaderLink } from '@/components/store/CartHeaderLink';
+import { AccountSidebarNav, AccountMobileNav } from './account-nav';
 
 const futureNavigation = [
   { href: '/minha-conta/amigos', label: 'Amigos - Em breve', icon: UsersRound },
@@ -42,11 +39,25 @@ export default async function MinhaContaLayout({ children }: { children: React.R
     redirect('/acesso-negado');
   }
 
-  if (flags.firstAccessRequired) {
+  const isAdministrativeUser = await canAccessAdministrativePanel();
+  if (flags.firstAccessRequired && !isAdministrativeUser) {
     redirect('/primeiro-acesso?next=/minha-conta');
   }
 
-  const { data: profileData } = await supabase.rpc('get_customer_profile', { p_user_id: user.id });
+  const { data: ownParticipants } = await supabase.from('participants').select('id').eq('user_id', user.id);
+  const ownParticipantIds = (ownParticipants ?? []).map((participant) => String(participant.id));
+  const { data: openIssues } = ownParticipantIds.length
+    ? await supabase.from('participant_data_issues').select('id,resolution_scope,field_code')
+      .in('participant_id', ownParticipantIds).eq('status', 'open')
+    : { data: [] };
+  const requiredUserIssueCount = (openIssues ?? []).filter(isRequiredUserResolvableIssue).length;
+  const administrativeIssueCount = (openIssues ?? []).filter(isAdministrativeIssue).length;
+  if (requiredUserIssueCount > 0) redirect('/primeiro-acesso/pendencias');
+
+  const [{ data: profileData }, publicPin] = await Promise.all([
+    supabase.rpc('get_customer_profile', { p_user_id: user.id }),
+    getMyPublicPin(user.id),
+  ]);
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const userMetadata = (user.user_metadata as Record<string, unknown> | undefined) ?? null;
 
@@ -63,48 +74,36 @@ export default async function MinhaContaLayout({ children }: { children: React.R
   });
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+    <StoreCartProvider userId={user.id}>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-1),_transparent_38%),radial-gradient(circle_at_bottom_right,_var(--brand-glow-2),_transparent_45%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 lg:flex-row">
         <aside className="rounded-[2rem] border border-slate-800/80 bg-slate-950/65 p-5 shadow-2xl shadow-black/20 lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)] lg:w-80 lg:overflow-y-auto">
           <div className="flex items-center gap-3 border-b border-slate-800/80 pb-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,_#10b981,_#34d399_55%,_#e2e8f0)] text-slate-950">
-              <Ticket size={22} />
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-emerald-300">Militrin</p>
-              <h1 className="text-xl font-semibold">Minha conta</h1>
-            </div>
+            <Link href="/" className="flex min-w-0 flex-1 items-center gap-3" title="Voltar ao início">
+              <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-black ring-1 ring-(--brand-500)/40 shadow-lg shadow-(--brand-600)/20">
+                <div aria-hidden className="mask-logo absolute inset-0.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs uppercase tracking-[0.24em] text-(--brand-300)">Militrin</p>
+                <h1 className="text-xl font-semibold">Minha conta</h1>
+              </div>
+            </Link>
+            <CartHeaderLink />
           </div>
 
           <div className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 text-sm text-slate-300">
             <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Olá, {firstName}</p>
             <div className="mt-2 flex min-w-0 items-center gap-3">
-              <MilitrinAvatar src={avatarUrl} alt={`Foto do participante ${displayName}`} initials={initials} size="sm" />
+              <MilitrinAvatar src={avatarUrl} alt={`Foto do usuário ${displayName}`} initials={initials} size="sm" />
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-slate-100" title={displayName} aria-label={displayName}>{displayName}</p>
                 <p className="truncate text-xs text-slate-400" title={String(user.email ?? '')}>{String(user.email ?? '')}</p>
               </div>
             </div>
+            {publicPin ? <PublicPinCopy publicPin={publicPin} /> : null}
           </div>
 
-          <nav className="mt-4 grid gap-2 text-sm" aria-label="Navegacao principal do participante">
-            {navigation.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-slate-200 transition hover:border-emerald-400/40 hover:bg-slate-900"
-                >
-                  <span className="flex items-center gap-3">
-                    <Icon size={16} />
-                    {item.label}
-                  </span>
-                  <ArrowRight size={14} className="text-slate-500" />
-                </Link>
-              );
-            })}
-          </nav>
+          <AccountSidebarNav isAdministrativeUser={isAdministrativeUser} />
 
           <div className="mt-4">
             <p className="px-2 text-xs uppercase tracking-[0.2em] text-slate-500">Futuro</p>
@@ -136,43 +135,22 @@ export default async function MinhaContaLayout({ children }: { children: React.R
           </form>
         </aside>
 
-        <div className="flex-1 pb-20 lg:pb-0">{children}</div>
+        <div className="flex-1 pb-20 lg:pb-0">
+          {administrativeIssueCount > 0 ? (
+            <div className="mb-4 flex gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
+              <AlertTriangle className="mt-0.5 shrink-0" size={18} />
+              <div>
+                <p className="font-semibold">Cadastro em análise</p>
+                <p className="mt-1 text-sm text-amber-100/80">{administrativeIssueCount} pendência(s) administrativa(s) aguardam conferência do organizador. O acesso à sua conta permanece disponível.</p>
+              </div>
+            </div>
+          ) : null}
+          {children}
+        </div>
       </div>
 
-      <nav className="fixed inset-x-3 bottom-3 z-40 rounded-2xl border border-slate-800/90 bg-slate-950/90 p-2 shadow-2xl shadow-black/30 backdrop-blur lg:hidden" aria-label="Navegacao rapida do participante">
-        <ul className="grid grid-cols-5 gap-1 text-[11px]">
-          <li>
-            <Link href="/minha-conta" className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-slate-200">
-              <LayoutDashboard size={15} />
-              Início
-            </Link>
-          </li>
-          <li>
-            <Link href="/minha-conta/ingressos" className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-slate-200">
-              <Ticket size={15} />
-              Ingressos
-            </Link>
-          </li>
-          <li>
-            <Link href="/minha-conta/compras" className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-slate-200">
-              <Coins size={15} />
-              Compras
-            </Link>
-          </li>
-          <li>
-            <Link href="/minha-conta/nivel" className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-slate-200">
-              <Star size={15} />
-              Categoria
-            </Link>
-          </li>
-          <li>
-            <Link href="/minha-conta/dados" className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-slate-200">
-              <CircleUserRound size={15} />
-              Perfil
-            </Link>
-          </li>
-        </ul>
-      </nav>
+      <AccountMobileNav isAdministrativeUser={isAdministrativeUser} />
     </main>
+    </StoreCartProvider>
   );
 }

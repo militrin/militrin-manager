@@ -10,23 +10,30 @@ import { CategoriesManager } from "@/app/categorias/ui";
 import { BatchesManager } from "@/app/lotes/ui";
 import { EventAddonsManager } from "./addons-manager";
 import { EventPaymentMethodsManager } from "./payment-methods-manager";
+import { ItemChangeRules } from "./item-change-rules";
+import { TicketRules } from "./ticket-rules";
+import { DeliveryScheduleManager, type EventScheduleRow } from "./delivery-schedule-manager";
+import { EventDataForm } from "./event-data-form";
+import { AttractionsManager } from "./attractions-manager";
 
 type Params = Promise<{ id: string }>;
 type SearchParams = Promise<{ etapa?: string }>;
 
-type BatchRow = {
+type BatchCategoryRow = {
   id: string;
   event_id: string;
   name: string;
   sequence_number: number;
+  ticket_category_id: string;
+  category_name: string;
   male_price: number;
   female_price: number;
-  max_confirmed_registrations: number;
+  max_confirmed_registrations: number | null;
   starts_at: string | null;
   ends_at: string | null;
   is_active: boolean;
   confirmed_count: number;
-  remaining_slots: number;
+  remaining_slots: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -37,14 +44,17 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   const supabase = await createServerSupabaseClient();
 
   const etapaValue = Number(resolvedSearchParams?.etapa ?? "1");
-  const currentStep = Number.isFinite(etapaValue) ? Math.min(6, Math.max(1, Math.trunc(etapaValue))) : 1;
+  const currentStep = Number.isFinite(etapaValue) ? Math.min(8, Math.max(1, Math.trunc(etapaValue))) : 1;
 
-  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }] = await Promise.all([
-    supabase.from("events").select("id, name, slug, year, kit_enabled, registration_enabled, is_active").eq("id", id).maybeSingle(),
+  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }] = await Promise.all([
+    supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer").eq("id", id).maybeSingle(),
     supabase.rpc("get_event_kit_items", { p_event_id: id }),
     supabase.rpc("get_event_ticket_categories", { p_event_id: id }),
     supabase.rpc("get_event_addons_dynamic_setup", { p_event_id: id }),
     supabase.rpc("get_event_payment_methods_setup", { p_event_id: id }),
+    supabase.from("event_kit_items").select("id,name,requires_variant,allow_participant_change,track_variant_inventory").eq("event_id", id).order("sort_order"),
+    supabase.from('kit_delivery_schedule').select('id,event_id,delivery_at,title,location,description,schedule_type,sort_order,is_active,is_visible_to_users').eq('event_id', id).order('delivery_at'),
+    supabase.from('event_attractions').select('id,event_id,name,description,banner_url,is_active,sort_order').eq('event_id', id).order('sort_order'),
   ]);
 
   if (eventError) throw eventError;
@@ -52,6 +62,8 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   if (categoriesError) throw categoriesError;
   if (addonsError) throw addonsError;
   if (paymentMethodsError) throw paymentMethodsError;
+  if (scheduleError) throw scheduleError;
+  if (attractionsError) throw attractionsError;
   if (!eventData?.id) notFound();
 
   const event = {
@@ -59,9 +71,21 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     name: String(eventData.name),
     slug: String(eventData.slug),
     year: eventData.year === null || eventData.year === undefined ? null : Number(eventData.year),
+    description: eventData.description ? String(eventData.description) : null,
+    starts_at: eventData.starts_at ? String(eventData.starts_at) : null,
+    ends_at: eventData.ends_at ? String(eventData.ends_at) : null,
+    registration_open_at: eventData.registration_open_at ? String(eventData.registration_open_at) : null,
+    registration_close_at: eventData.registration_close_at ? String(eventData.registration_close_at) : null,
+    location: eventData.location ? String(eventData.location) : null,
+    min_age: Number(eventData.min_age ?? 18),
+    banner_hero_url: eventData.banner_hero_url ? String(eventData.banner_hero_url) : null,
+    banner_card_url: eventData.banner_card_url ? String(eventData.banner_card_url) : null,
     kit_enabled: Boolean(eventData.kit_enabled),
     registration_enabled: Boolean(eventData.registration_enabled),
     is_active: Boolean(eventData.is_active),
+    allow_participant_item_changes: Boolean(eventData.allow_participant_item_changes),
+    allow_holder_change: Boolean(eventData.allow_holder_change),
+    allow_ticket_transfer: Boolean(eventData.allow_ticket_transfer),
   };
 
   const items = (kitData ?? []).map((row: {
@@ -152,29 +176,29 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
 
   if (batchesError) throw batchesError;
 
-  const batches = (batchesData ?? []) as BatchRow[];
-  const batchIds = batches.map((batch) => String(batch.id));
-
-  const { data: batchCategoryPricesData, error: batchCategoryPricesError } = batchIds.length > 0
-    ? await supabase
-        .from("registration_batch_prices")
-        .select("batch_id, ticket_category_id, male_price, female_price")
-        .in("batch_id", batchIds)
-    : { data: [], error: null };
-
-  if (batchCategoryPricesError) throw batchCategoryPricesError;
-
-  const batchCategoryPrices = (batchCategoryPricesData ?? []).map((row: {
-    batch_id: string;
-    ticket_category_id: string;
-    male_price: number;
-    female_price: number;
+  const batches = (batchesData ?? []).map((row: {
+    id: string; event_id: string; name: string; sequence_number: number;
+    ticket_category_id: string; category_name: string; male_price: number; female_price: number;
+    max_confirmed_registrations: number | null; starts_at: string | null; ends_at: string | null; is_active: boolean;
+    confirmed_count: number; remaining_slots: number | null; created_at: string; updated_at: string;
   }) => ({
-    batch_id: String(row.batch_id),
+    id: String(row.id),
+    event_id: String(row.event_id),
+    name: String(row.name),
+    sequence_number: Number(row.sequence_number ?? 0),
     ticket_category_id: String(row.ticket_category_id),
+    category_name: String(row.category_name),
     male_price: Number(row.male_price ?? 0),
     female_price: Number(row.female_price ?? 0),
-  }));
+    max_confirmed_registrations: row.max_confirmed_registrations === null || row.max_confirmed_registrations === undefined ? null : Number(row.max_confirmed_registrations),
+    starts_at: row.starts_at ? String(row.starts_at) : null,
+    ends_at: row.ends_at ? String(row.ends_at) : null,
+    is_active: Boolean(row.is_active),
+    confirmed_count: Number(row.confirmed_count ?? 0),
+    remaining_slots: row.remaining_slots === null || row.remaining_slots === undefined ? null : Number(row.remaining_slots),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  })) as BatchCategoryRow[];
 
   const benefits = (benefitsData ?? []).map((row: {
     id: string;
@@ -248,15 +272,15 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
-          <TopBar title={`Evento: ${event.name}`} subtitle="Fluxo sequencial: dados do evento, categorias/lotes e adicionais" />
+          <TopBar title={`Evento: ${event.name}`} subtitle="Fluxo sequencial: dados do evento, categorias/lotes e adicionais" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Eventos",href:"/painel/eventos"},{label:String(event.name)}]} backHref="/painel/eventos" fallbackHref="/painel/eventos" />
 
           <SectionCard title="Etapas de configuração" description="Siga a sequência para concluir o evento sem pular etapas.">
             <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-6">
+              <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-8">
                 {[
                   { step: 1, label: "Dados" },
                   { step: 2, label: "Categorias" },
@@ -264,6 +288,8 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                   { step: 4, label: "Adicionais" },
                   { step: 5, label: "Pagamentos" },
                   { step: 6, label: "Itens de kit" },
+                  { step: 7, label: "Cronograma" },
+                  { step: 8, label: "Atrações" },
                 ].map((item) => (
                   <Link
                     key={item.step}
@@ -285,7 +311,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                     Voltar etapa
                   </Link>
                 ) : null}
-                {currentStep < 6 ? (
+                {currentStep < 8 ? (
                   <Link href={`/painel/eventos/${event.id}?etapa=${currentStep + 1}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">
                     Próxima etapa
                   </Link>
@@ -295,15 +321,10 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
           </SectionCard>
 
           {currentStep === 1 ? (
-            <SectionCard title="Etapa 1: Dados básicos" description="Nome, data, descrição e local são definidos ao criar/editar o evento na tela principal de eventos.">
-              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-300">
-                <p>Evento: <span className="font-semibold text-slate-100">{event.name}</span></p>
-                <p className="mt-1">Slug: <span className="text-slate-200">{event.slug}</span></p>
-                <p className="mt-1">Status: <span className="text-slate-200">{event.is_active ? "Ativo" : "Inativo"}</span></p>
-                <p className="mt-3 text-xs text-slate-400">Se precisar alterar dados básicos, use o botão Editar na listagem de eventos.</p>
-                <Link href="/painel/eventos" className="mt-3 inline-flex rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">
-                  Voltar para listagem de eventos
-                </Link>
+            <SectionCard title="Etapa 1: Dados básicos" description="Nome, data, descrição, local, banners e regras do ingresso deste evento.">
+              <div className="space-y-4">
+                <EventDataForm mode="edit" event={event} />
+                <TicketRules eventId={event.id} initialHolderChange={event.allow_holder_change} initialTicketTransfer={event.allow_ticket_transfer} />
               </div>
             </SectionCard>
           ) : null}
@@ -319,7 +340,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
               {categories.length === 0 ? (
                 <EmptyState title="Nenhuma categoria cadastrada" description="Crie ao menos uma categoria antes de configurar lotes." />
               ) : (
-                <BatchesManager eventId={event.id} batches={batches} categories={categories} batchCategoryPrices={batchCategoryPrices} />
+                <BatchesManager eventId={event.id} batches={batches} categories={categories} />
               )}
             </SectionCard>
           ) : null}
@@ -343,12 +364,34 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
           ) : null}
 
           {currentStep === 6 ? (
-            <SectionCard title="Etapa 6: Itens e variações de kit" description="Opcional: detalhar itens e variações de kit utilizados no evento.">
+            <SectionCard title="Etapa 6: Itens e variações de kit" description="Opcional: detalhar itens, variações e regras de alteração do kit utilizado no evento.">
+              <ItemChangeRules eventId={event.id} initialEnabled={event.allow_participant_item_changes} items={(itemRulesData ?? []).map((item) => ({ id: String(item.id), name: String(item.name), requires_variant: Boolean(item.requires_variant), allow_participant_change: Boolean(item.allow_participant_change), track_variant_inventory: Boolean(item.track_variant_inventory) }))} />
               {!event.kit_enabled ? (
                 <EmptyState title="Kit desabilitado" description="Ative 'Possui kit' no cadastro do evento para usar itens de kit." />
               ) : (
                 <EventKitManager event={event} items={items} />
               )}
+            </SectionCard>
+          ) : null}
+          {currentStep === 7 ? (
+            <SectionCard title="Etapa 7: Cronograma do evento" description="Cadastre compromissos deste evento e controle sua visibilidade no portal do usuário.">
+              <DeliveryScheduleManager eventId={event.id} initialRows={(scheduleData ?? []).map((row) => ({
+                id: String(row.id), event_id: String(row.event_id), delivery_at: String(row.delivery_at), title: String(row.title),
+                location: row.location ? String(row.location) : null, description: row.description ? String(row.description) : null,
+                schedule_type: String(row.schedule_type), sort_order: Number(row.sort_order ?? 0),
+                is_active: Boolean(row.is_active), is_visible_to_users: Boolean(row.is_visible_to_users),
+              })) as EventScheduleRow[]} />
+            </SectionCard>
+          ) : null}
+
+          {currentStep === 8 ? (
+            <SectionCard title="Etapa 8: Atrações" description="Cadastre as atrações (line-up) deste evento. O link 'Ver atrações' só aparece na página pública quando houver ao menos uma atração ativa.">
+              <AttractionsManager eventId={event.id} attractions={(attractionsData ?? []).map((row) => ({
+                id: String(row.id), event_id: String(row.event_id), name: String(row.name),
+                description: row.description ? String(row.description) : null,
+                banner_url: row.banner_url ? String(row.banner_url) : null,
+                is_active: Boolean(row.is_active), sort_order: Number(row.sort_order ?? 0),
+              }))} />
             </SectionCard>
           ) : null}
         </div>

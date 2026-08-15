@@ -11,11 +11,11 @@ export default function AccessDeniedPage() {
         </p>
 
         <div className="mt-6 flex flex-wrap gap-2">
-          <Link href="/painel" className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-200">
-            Voltar ao painel
-          </Link>
-          <Link href="/minha-conta" className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-200">
+          <Link href="/minha-conta" className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950">
             Ir para minha conta
+          </Link>
+          <Link href="/" className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-200">
+            Voltar ao início
           </Link>
         </div>
       </div>

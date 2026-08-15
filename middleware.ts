@@ -37,6 +37,9 @@ export async function middleware(request: NextRequest) {
     '/importacoes',
     '/primeiro-acesso',
     '/inscricoes',
+    '/operacoes',
+    '/ingressos',
+    '/cadastros',
     '/retirada',
     '/camisetas',
     '/categorias',
@@ -45,6 +48,9 @@ export async function middleware(request: NextRequest) {
     '/financeiro',
     '/configuracao',
     '/configuracoes',
+    '/plataforma',
+    '/pedidos',
+    '/relatorios',
   ];
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 

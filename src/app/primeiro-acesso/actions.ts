@@ -2,11 +2,14 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { isValidCpf } from '@/lib/validation/registration';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
 import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
+import { getParticipantInviteContext, getParticipantInviteFailureCopy } from '@/lib/account/participant-invite';
+import { REQUIRED_PARTICIPANT_FIELD_CODES } from '@/lib/account/participant-issue-policy';
 
 const missingFieldLabels: Record<string, string> = {
   full_name: 'Nome completo',
@@ -102,8 +105,16 @@ export async function completeFirstAccessAction(formData: FormData) {
   const city = String(formData.get('city') ?? '').trim();
   const authEmail = String(user.email ?? '').trim().toLowerCase();
   const nextPath = sanitizePostFirstAccessNextPath(String(formData.get('next_path') ?? ''), '/minha-conta');
+  const inviteId = String(formData.get('invite_id') ?? '').trim();
 
-  if (!fullName || !cpf || !birthDate || !gender || phone.length < 10 || !city || !authEmail) {
+  const inviteContext = inviteId ? await getParticipantInviteContext(inviteId, user) : null;
+  if (inviteId) {
+    if (!inviteContext?.valid) {
+      return { success: false, message: getParticipantInviteFailureCopy(inviteContext?.reason).actionMessage };
+    }
+  }
+
+  if (!fullName || !cpf || !birthDate || phone.length < 10 || !city || !authEmail) {
     return { success: false, message: 'Preencha todos os dados obrigatórios para concluir o primeiro acesso.' };
   }
 
@@ -111,7 +122,9 @@ export async function completeFirstAccessAction(formData: FormData) {
     return { success: false, message: 'Informe um CPF válido.' };
   }
 
-  const mustChangePassword = Boolean(profile?.must_change_password);
+  const mustChangePassword = inviteContext
+    ? inviteContext.requiresPasswordSetup
+    : Boolean(profile?.must_change_password);
   const newPassword = String(formData.get('new_password') ?? '').trim();
   const confirmPassword = String(formData.get('confirm_password') ?? '').trim();
 
@@ -131,6 +144,27 @@ export async function completeFirstAccessAction(formData: FormData) {
     const passwordUpdate = await supabase.auth.updateUser({ password: newPassword });
     if (passwordUpdate.error) {
       return { success: false, message: 'Não foi possível atualizar a senha. Tente novamente.' };
+    }
+
+    if (inviteId) {
+      const passwordInviteContext = await getParticipantInviteContext(inviteId, user);
+      if (!passwordInviteContext.valid || !passwordInviteContext.requiresPasswordSetup) {
+        return { success: false, message: getParticipantInviteFailureCopy(passwordInviteContext.reason).actionMessage };
+      }
+      const admin = createServiceRoleSupabaseClient();
+      const passwordCompletion = await admin
+        .from('participant_account_invites')
+        .update({ password_setup_completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', inviteId)
+        .eq('auth_user_id', user.id)
+        .eq('requires_password_setup', true)
+        .is('password_setup_completed_at', null)
+        .in('status', ['pending', 'claimed'])
+        .select('id')
+        .maybeSingle();
+      if (passwordCompletion.error || !passwordCompletion.data) {
+        return { success: false, message: 'A senha foi atualizada, mas não foi possível confirmar esta etapa do convite. Tente novamente.' };
+      }
     }
   }
 
@@ -182,11 +216,51 @@ export async function completeFirstAccessAction(formData: FormData) {
     return { success: false, message: translateFirstAccessPersistError(accountUpdate.error.message) };
   }
 
-  if (cpf) {
-    await supabase.rpc('link_participation_history_by_cpf', {
-      p_user_id: user.id,
-      p_cpf: cpf,
-      p_actor: `first-access:${user.id}`,
+  if (inviteId) {
+    const { error: claimError } = await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
+    if (claimError) return { success: false, message: claimError.message };
+
+    const participantId = String(inviteContext?.participant?.id ?? '');
+    const allowed = new Set(inviteContext?.userResolvableFields ?? []);
+    const issueValues: Record<string, string> = {};
+    if (allowed.has('cpf')) issueValues.cpf = cpf;
+    if (allowed.has('birth_date')) issueValues.birth_date = birthDate;
+    if (allowed.has('gender')) issueValues.gender = gender;
+    if (allowed.has('phone')) issueValues.phone = phone;
+    if (allowed.has('email')) issueValues.email = authEmail;
+    if (allowed.has('city')) issueValues.city = city;
+    if (participantId && inviteContext?.openIssueIds.length && Object.keys(issueValues).length) {
+      const resolution = await supabase.rpc('resolve_participant_data_issues', {
+        p_participant_id: participantId,
+        p_expected_issue_ids: inviteContext.openIssueIds,
+        p_values: issueValues,
+      });
+      const resolutionData = resolution.data as { success?: boolean; message?: string } | null;
+      if (resolution.error || !resolutionData?.success) {
+        return { success: false, message: resolution.error?.message ?? resolutionData?.message ?? 'Não foi possível reavaliar as pendências do cadastro.' };
+      }
+    }
+    if (participantId) {
+      const finalization = await supabase.rpc('finalize_imported_participant_after_issue_resolution', {
+        p_participant_id: participantId,
+        p_resolved_fields: Object.keys(issueValues),
+      });
+      if (finalization.error) return { success: false, message: finalization.error.message };
+    }
+  }
+
+  const { data: linkedParticipants } = await supabase
+    .from('participants')
+    .select('id, gender')
+    .eq('user_id', user.id);
+
+  for (const participant of linkedParticipants ?? []) {
+    if (gender && !participant.gender) {
+      await supabase.from('participants').update({ gender, updated_at: new Date().toISOString() }).eq('id', participant.id);
+    }
+    await supabase.rpc('reevaluate_participant_data_issues', {
+      p_participant_id: participant.id,
+      p_import_batch_id: null,
     });
   }
 
@@ -221,9 +295,16 @@ export async function completeFirstAccessAction(formData: FormData) {
 
   revalidatePath('/minha-conta');
 
+  const linkedParticipantIds = (linkedParticipants ?? []).map((participant) => String(participant.id));
+  const { count: requiredIssueCount } = linkedParticipantIds.length
+    ? await supabase.from('participant_data_issues').select('id', { count: 'exact', head: true })
+      .in('participant_id', linkedParticipantIds).eq('status', 'open')
+      .eq('resolution_scope', 'user_resolvable').in('field_code', [...REQUIRED_PARTICIPANT_FIELD_CODES])
+    : { count: 0 };
+
   return {
     success: true,
     message: 'Primeiro acesso concluído com sucesso.',
-    redirect_to: nextPath,
+    redirect_to: (requiredIssueCount ?? 0) > 0 ? '/primeiro-acesso/pendencias' : nextPath,
   };
 }

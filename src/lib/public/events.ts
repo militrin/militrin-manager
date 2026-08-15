@@ -13,6 +13,9 @@ export type PublicEvent = {
   registrationCloseAt: string | null;
   isActive: boolean;
   year: number | null;
+  organizationId: string | null;
+  bannerHeroUrl: string | null;
+  bannerCardUrl: string | null;
 };
 
 export type PublicCategory = {
@@ -21,6 +24,9 @@ export type PublicCategory = {
   description: string | null;
   availableSlots: number | null;
   isActive: boolean;
+  currentBatchName: string | null;
+  currentMalePrice: number | null;
+  currentFemalePrice: number | null;
 };
 
 export type PublicBenefit = {
@@ -40,6 +46,13 @@ export type PublicKitItem = {
   isActive: boolean;
 };
 
+export type PublicAttraction = {
+  id: string;
+  name: string;
+  description: string | null;
+  bannerUrl: string | null;
+};
+
 type EventBySlugRow = {
   id: string;
   name: string;
@@ -56,6 +69,8 @@ type EventBySlugRow = {
   kit_enabled: boolean;
   is_active: boolean;
   year: number | null;
+  min_age: number;
+  banner_hero_url: string | null;
 };
 
 export type EventBySlugResult =
@@ -93,7 +108,9 @@ export async function getPublicEvents() {
 
   const { data, error } = await supabase
     .from('events')
-    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, is_active, year')
+    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, is_active, year, organization_id, banner_hero_url, banner_card_url')
+    .eq('is_active', true)
+    .is('archived_at', null)
     .order('starts_at', { ascending: true, nullsFirst: false });
 
   if (error) {
@@ -113,6 +130,9 @@ export async function getPublicEvents() {
     registrationCloseAt: event.registration_close_at ? String(event.registration_close_at) : null,
     isActive: Boolean(event.is_active),
     year: event.year === null || event.year === undefined ? null : Number(event.year),
+    organizationId: event.organization_id ? String(event.organization_id) : null,
+    bannerHeroUrl: event.banner_hero_url ? String(event.banner_hero_url) : null,
+    bannerCardUrl: event.banner_card_url ? String(event.banner_card_url) : null,
   }));
 
   return { events, error: null as string | null };
@@ -128,8 +148,10 @@ export async function getEventBySlug(eventSlug: string): Promise<EventBySlugResu
 
   const { data: event, error } = await supabase
     .from('events')
-    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, shirt_order_deadline, limit_shirt_selection_to_stock, kit_enabled, is_active, year')
+    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, shirt_order_deadline, limit_shirt_selection_to_stock, kit_enabled, is_active, year, min_age, banner_hero_url')
     .eq('slug', normalizedSlug)
+    .eq('is_active', true)
+    .is('archived_at', null)
     .maybeSingle();
 
   if (error) {
@@ -184,6 +206,8 @@ export async function getEventBySlug(eventSlug: string): Promise<EventBySlugResu
       kit_enabled: Boolean(event.kit_enabled),
       is_active: Boolean(event.is_active),
       year: event.year === null || event.year === undefined ? null : Number(event.year),
+      min_age: Number(event.min_age ?? 18),
+      banner_hero_url: event.banner_hero_url ? String(event.banner_hero_url) : null,
     },
     error: null,
   };
@@ -199,6 +223,7 @@ export async function getPublicEventDetails(eventSlug: string) {
       categories: [] as PublicCategory[],
       benefitsByCategory: {} as Record<string, PublicBenefit[]>,
       kitItems: [] as PublicKitItem[],
+      attractions: [] as PublicAttraction[],
       error: eventLookup.status === 'query_error'
         ? eventLookup.error.message
         : 'Evento nao encontrado.',
@@ -209,10 +234,11 @@ export async function getPublicEventDetails(eventSlug: string) {
   const supabase = await createServerSupabaseClient();
   const event = eventLookup.event;
 
-  const [{ data: categoriesData }, { data: benefitsData }, { data: kitData }] = await Promise.all([
+  const [{ data: categoriesData }, { data: benefitsData }, { data: kitData }, { data: attractionsData }] = await Promise.all([
     supabase.rpc('get_event_ticket_categories', { p_event_id: event.id }),
     supabase.from('ticket_category_benefits').select('id, ticket_category_id, name, description').order('sort_order', { ascending: true }),
     supabase.rpc('get_event_kit_items', { p_event_id: event.id }),
+    supabase.from('event_attractions').select('id, name, description, banner_url, is_active').eq('event_id', event.id).order('sort_order', { ascending: true }),
   ]);
 
   const categories = (categoriesData ?? []).map((row: Record<string, unknown>) => ({
@@ -221,6 +247,9 @@ export async function getPublicEventDetails(eventSlug: string) {
     description: row.description ? String(row.description) : null,
     availableSlots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
     isActive: Boolean(row.is_active),
+    currentBatchName: row.current_batch_name ? String(row.current_batch_name) : null,
+    currentMalePrice: row.current_male_price === null || row.current_male_price === undefined ? null : Number(row.current_male_price),
+    currentFemalePrice: row.current_female_price === null || row.current_female_price === undefined ? null : Number(row.current_female_price),
   })).filter((item: PublicCategory) => item.isActive);
 
   const benefitsByCategory: Record<string, PublicBenefit[]> = {};
@@ -245,6 +274,15 @@ export async function getPublicEventDetails(eventSlug: string) {
     isActive: Boolean(row.is_active),
   })).filter((item: PublicKitItem) => item.isActive);
 
+  const attractions = (attractionsData ?? [])
+    .filter((row: Record<string, unknown>) => Boolean(row.is_active))
+    .map((row: Record<string, unknown>) => ({
+      id: String(row.id ?? ''),
+      name: String(row.name ?? ''),
+      description: row.description ? String(row.description) : null,
+      bannerUrl: row.banner_url ? String(row.banner_url) : null,
+    }));
+
   return {
     status: 'found' as const,
     event: {
@@ -260,10 +298,12 @@ export async function getPublicEventDetails(eventSlug: string) {
       registrationCloseAt: event.registration_close_at ? String(event.registration_close_at) : null,
       isActive: Boolean(event.is_active),
       year: event.year === null || event.year === undefined ? null : Number(event.year),
+      bannerHeroUrl: event.banner_hero_url ? String(event.banner_hero_url) : null,
     } as PublicEvent,
     categories,
     benefitsByCategory,
     kitItems,
+    attractions,
     error: null as string | null,
     queryError: null,
   };

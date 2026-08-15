@@ -1,0 +1,4 @@
+import Link from "next/link";
+import { Sidebar } from "@/components/dashboard/Sidebar";
+import { TopBar } from "@/components/dashboard/TopBar";
+export default function BatchCourtesyPage(){return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="flex-1 space-y-6"><TopBar title="Cortesias em lote" subtitle="Ingressos" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Ingressos",href:"/ingressos"},{label:"Cortesias em lote"}]} backHref="/ingressos" fallbackHref="/ingressos"/><div className="rounded-2xl border border-slate-800 p-6"><p className="text-slate-300">Funcionalidade reservada para uma etapa futura.</p><Link href="/ingressos/emitir" className="mt-4 inline-flex text-emerald-300">Emitir uma cortesia</Link></div></div></div></main>}

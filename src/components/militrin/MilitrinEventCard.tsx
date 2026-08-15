@@ -20,7 +20,7 @@ export function MilitrinEventCard({ events }: MilitrinEventCardProps) {
 
   return (
     <MilitrinCard className="p-5">
-      <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Eventos em destaque!</p>
+      <p className="text-xs uppercase tracking-[0.2em] text-(--brand-300)">Eventos em destaque!</p>
 
       {visibleEvents.length > 0 ? (
         <div className="mt-3 space-y-3">
@@ -29,8 +29,8 @@ export function MilitrinEventCard({ events }: MilitrinEventCardProps) {
               <h3 className="line-clamp-2 text-xl font-semibold text-white" title={event.name}>{event.name}</h3>
               <p className="mt-2 text-sm text-slate-300">{event.date}</p>
               <p className="text-sm text-slate-300">{event.location}</p>
-              <p className="mt-2 text-xs uppercase tracking-wide text-slate-400">Inscricao: {event.registrationStatus}</p>
-              {event.startingPrice ? <p className="mt-1 text-sm text-emerald-200">Preco inicial: {event.startingPrice}</p> : null}
+              <p className="mt-2 text-xs uppercase tracking-wide text-slate-400">Venda: {event.registrationStatus}</p>
+              {event.startingPrice ? <p className="mt-1 text-sm text-(--brand-200)">Preço inicial: {event.startingPrice}</p> : null}
               <Link href={event.buyHref} className="mt-3 inline-flex">
                 <MilitrinButton size="sm" iconLeft={<ShoppingBag size={13} />}>Comprar ingresso</MilitrinButton>
               </Link>

@@ -1,3 +1,5 @@
+import { isValidCpf, normalizeCpfDigits, parseIsoDate } from '@/lib/imports/import-row-validation';
+
 export function removeDuplicateSpaces(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -11,8 +13,8 @@ export function normalizeForMatch(value: string) {
 }
 
 export function normalizeCpf(value: string | null | undefined) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  return digits.length === 11 ? digits : null;
+  const digits = normalizeCpfDigits(value);
+  return isValidCpf(digits) ? digits : null;
 }
 
 export function maskCpf(cpf: string | null | undefined) {
@@ -39,7 +41,7 @@ export function parseBrDateToISO(value: string | null | undefined) {
   if (!input) return null;
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-    return input;
+    return parseIsoDate(input) ? input : null;
   }
 
   const match = input.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);

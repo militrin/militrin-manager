@@ -1,173 +1,54 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import { BirthDateInput } from "@/components/forms/BirthDateInput";
-import { SHIRT_SIZES, SHIRT_TYPES } from "@/lib/constants/shirts";
-import { createClient } from "@/lib/supabase/client";
 import { formatISOToDateBR, isValidDateBR, parseDateBRToISO } from "@/lib/utils/date";
-import { updateParticipantWithStock } from "./actions";
+import { changeParticipantShirtFromEditAction, confirmParticipantPaymentFromEditAction, getParticipantEditContext, updateParticipantDetails } from "./actions";
 
-const paymentMethods = [
-  { value: "pix", label: "PIX" },
-  { value: "credit_card", label: "Cartão" },
-  { value: "cash", label: "Dinheiro" },
-  { value: "courtesy", label: "Cortesia" },
-] as const;
-const paymentStatuses = ["pending", "paid", "refunded"];
+type Participant = { id:string; full_name:string; birth_date:string|null; phone:string|null; email:string|null; city:string|null; gender:string|null; shirt_type:string|null; shirt_size:string|null; notes:string|null; payment_status:string };
+type ShirtOption = { shirt_type:string; shirt_size:string; supply_mode:string; option_label:string };
+const genderOptions = [{value:"male",label:"Masculino"},{value:"female",label:"Feminino"},{value:"other",label:"Outro"},{value:"prefer_not_to_say",label:"Prefiro não informar"}];
+const paymentLabels:Record<string,string>={paid:"Confirmado",pending:"Pendente",refunded:"Reembolsado",failed:"Falhou",cancelled:"Cancelado",processing:"Processando",expired:"Expirado"};
+const inputClass="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3";
 
-export default function EditParticipantPage({ params }: { params: Promise<{ id: string }> }) {
-  const router = useRouter();
-  const [participant, setParticipant] = useState<{
-    id: string;
-    full_name: string;
-    birth_date: string | null;
-    phone: string | null;
-    email: string | null;
-    city: string | null;
-    gender: string | null;
-    shirt_type: string | null;
-    shirt_size: string | null;
-    notes: string | null;
-    amount: number | null;
-    payment_method: string | null;
-    payment_status: string | null;
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [birthDate, setBirthDate] = useState("");
+export default function EditParticipantPage({params}:{params:Promise<{id:string}>}) {
+  const router=useRouter();
+  const [participant,setParticipant]=useState<Participant|null>(null);
+  const [birthDate,setBirthDate]=useState(""); const [message,setMessage]=useState<string|null>(null);
+  const [loading,setLoading]=useState(true); const [saving,setSaving]=useState(false);
+  const [ticketId,setTicketId]=useState<string|null>(null); const [shirtOptions,setShirtOptions]=useState<ShirtOption[]>([]);
+  const [shirtType,setShirtType]=useState(""); const [shirtSize,setShirtSize]=useState("");
+  const [shirtDelivered,setShirtDelivered]=useState(false); const [canChangeShirt,setCanChangeShirt]=useState(false); const [canConfirmPayment,setCanConfirmPayment]=useState(false);
 
-  useEffect(() => {
-    async function load() {
-      const { id } = await params;
-      const supabase = createClient();
-      const [{ data, error }, { data: payment, error: paymentError }] = await Promise.all([
-        supabase.from("participants").select("*").eq("id", id).single(),
-        supabase
-          .from("payments")
-          .select("payment_method, payment_status, final_amount, amount")
-          .eq("participant_id", id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ]);
+  useEffect(()=>{ void (async()=>{ try { const {id}=await params; const context=await getParticipantEditContext(id); const row=context.participant;
+    setParticipant({...row,payment_status:String(context.payment?.payment_status??"pending")}); setBirthDate(formatISOToDateBR(row.birth_date));
+    setTicketId(context.ticketId); setShirtOptions(context.shirtOptions as ShirtOption[]); setShirtType(String(row.shirt_type??"")); setShirtSize(String(row.shirt_size??""));
+    setShirtDelivered(context.shirtDelivered); setCanChangeShirt(context.canChangeShirt); setCanConfirmPayment(context.canConfirmPayment);
+  } catch(error){setMessage(error instanceof Error?error.message:"Não foi possível carregar o cadastro.");} finally{setLoading(false);} })(); },[params]);
 
-      if (!error) {
-        setParticipant({
-          ...data,
-          amount: Number(payment?.final_amount ?? payment?.amount ?? data.amount ?? 0),
-          payment_method: payment?.payment_method ? String(payment.payment_method) : null,
-          payment_status: payment?.payment_status ? String(payment.payment_status) : "pending",
-        });
-        setBirthDate(formatISOToDateBR(data.birth_date));
-      } else if (paymentError) {
-        setMessage(paymentError.message);
-      }
-      setLoading(false);
-    }
-    load();
-  }, [params]);
+  const shirtTypes=useMemo(()=>Array.from(new Set(shirtOptions.map(option=>option.shirt_type))),[shirtOptions]);
+  const shirtSizes=useMemo(()=>shirtOptions.filter(option=>option.shirt_type===shirtType).map(option=>option.shirt_size),[shirtOptions,shirtType]);
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const { id } = await params;
-    setSaving(true);
-    setMessage(null);
+  async function onSubmit(event:React.FormEvent<HTMLFormElement>){event.preventDefault();if(!participant)return;
+    if(!isValidDateBR(birthDate)){setMessage("Informe uma data válida no formato dd/MM/aaaa.");return;} const birth_date=parseDateBRToISO(birthDate);if(!birth_date)return;
+    const form=new FormData(event.currentTarget);setSaving(true);setMessage(null);try{await updateParticipantDetails({id:participant.id,full_name:String(form.get("full_name")??""),birth_date,phone:String(form.get("phone")??""),email:String(form.get("email")??""),city:String(form.get("city")??"")||null,gender:String(form.get("gender")??"")||null,notes:String(form.get("notes")??"")||null});setMessage("Dados cadastrais atualizados.");router.back();}catch(error){setMessage(error instanceof Error?error.message:"Não foi possível atualizar o cadastro.");}finally{setSaving(false);}}
+  async function confirmPayment(){if(!participant)return;setSaving(true);setMessage(null);try{const result=await confirmParticipantPaymentFromEditAction(participant.id);setMessage(result.message);if(result.success)setParticipant({...participant,payment_status:"paid"});}catch(error){setMessage(error instanceof Error?error.message:"Não foi possível confirmar o pagamento.");}finally{setSaving(false);}}
+  async function saveShirt(){if(!participant||!ticketId)return;setSaving(true);setMessage(null);try{const result=await changeParticipantShirtFromEditAction({participantId:participant.id,ticketId,shirtType,shirtSize});setMessage(result.message);}catch(error){setMessage(error instanceof Error?error.message:"Não foi possível alterar a camiseta.");}finally{setSaving(false);}}
 
-    if (!isValidDateBR(birthDate)) {
-      setMessage("Informe uma data válida no formato dd/MM/aaaa.");
-      setSaving(false);
-      return;
-    }
-
-    const birthDateIso = parseDateBRToISO(birthDate);
-    if (!birthDateIso) {
-      setMessage("Informe uma data válida no formato dd/MM/aaaa.");
-      setSaving(false);
-      return;
-    }
-
-    const payload = {
-      full_name: form.get("full_name")?.toString() ?? "",
-      birth_date: birthDateIso,
-      phone: form.get("phone")?.toString() ?? "",
-      email: form.get("email")?.toString().trim() ?? "",
-      city: form.get("city")?.toString() ?? null,
-      gender: form.get("gender")?.toString() ?? null,
-      shirt_type: form.get("shirt_type")?.toString() ?? "",
-      shirt_size: form.get("shirt_size")?.toString() ?? "",
-      notes: form.get("notes")?.toString() ?? null,
-      amount: Number(form.get("amount") ?? 0),
-      payment_method: form.get("payment_method")?.toString() ?? null,
-      payment_status: form.get("payment_status")?.toString() ?? "pending",
-    };
-
-    if (!payload.email) {
-      setMessage("E-mail é obrigatório.");
-      setSaving(false);
-      return;
-    }
-
-    try {
-      await updateParticipantWithStock({
-        id,
-        full_name: payload.full_name,
-        birth_date: payload.birth_date,
-        phone: payload.phone,
-        email: payload.email,
-        city: payload.city,
-        gender: payload.gender,
-        shirt_type: payload.shirt_type,
-        shirt_size: payload.shirt_size,
-        notes: payload.notes,
-        amount: payload.amount,
-        payment_method: payload.payment_method,
-        payment_status: payload.payment_status,
-      });
-      setMessage("Dados atualizados com sucesso.");
-      setSaving(false);
-      router.push(`/inscricoes/${id}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o inscrito.");
-      setSaving(false);
-    }
-  }
-
-  if (loading || !participant) return <div className="p-8 text-slate-200">Carregando...</div>;
-
-  return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
-        <Sidebar />
-        <div className="flex-1 space-y-6">
-          <TopBar title="Editar inscrito" subtitle="Atualize os dados e o pagamento" />
-          <SectionCard title="Dados do participante" description="Edite os dados e o status de pagamento.">
-            <form onSubmit={onSubmit} className="space-y-5">
-              {message ? <div className="rounded-2xl bg-slate-950/70 p-3 text-sm text-slate-300">{message}</div> : null}
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Nome</span><input defaultValue={participant.full_name} name="full_name" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <BirthDateInput name="birth_date" value={birthDate} onChange={setBirthDate} required error={message === "Informe uma data válida no formato dd/MM/aaaa." ? message : undefined} />
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Telefone</span><input defaultValue={participant.phone ?? ""} name="phone" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">E-mail</span><input type="email" required defaultValue={participant.email ?? ""} name="email" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Cidade</span><input defaultValue={participant.city ?? ""} name="city" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Sexo</span><input defaultValue={participant.gender ?? ""} name="gender" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Modelo</span><select defaultValue={participant.shirt_type ?? "Camiseta"} name="shirt_type" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3"><option value="">Selecione</option>{SHIRT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Tamanho</span><select defaultValue={participant.shirt_size ?? ""} name="shirt_size" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{SHIRT_SIZES[participant.shirt_type as keyof typeof SHIRT_SIZES]?.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Valor</span><input defaultValue={participant.amount ?? ""} name="amount" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Forma de pagamento</span><select defaultValue={participant.payment_method ?? "pix"} name="payment_method" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label>
-                <label className="space-y-2 text-sm"><span className="text-slate-300">Status do pagamento</span><select defaultValue={participant.payment_status ?? "pending"} name="payment_status" className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">{paymentStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
-              </div>
-              <label className="block space-y-2 text-sm"><span className="text-slate-300">Observações</span><textarea defaultValue={participant.notes ?? ""} name="notes" rows={4} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" /></label>
-              <div className="flex justify-end"><button type="submit" disabled={saving} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">{saving ? "Salvando..." : "Salvar alterações"}</button></div>
-            </form>
-          </SectionCard>
-        </div>
-      </div>
-    </main>
-  );
+  if(loading)return <div className="p-8 text-slate-200">Carregando...</div>;
+  if(!participant)return <div className="p-8 text-rose-200">{message??"Cadastro não encontrado."}</div>;
+  const participantHref=`/inscricoes/${participant.id}`;
+  return <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row"><Sidebar/><div className="flex-1 space-y-6"><TopBar title="Editar inscrito" subtitle="Dados cadastrais, pagamento e camiseta usam operações separadas" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Inscrições",href:"/inscricoes"},{label:participant.full_name,href:participantHref},{label:"Editar inscrito"}]} backHref={participantHref} fallbackHref="/inscricoes"/><SectionCard title="Dados do participante" description="Salvar alterações modifica somente os dados cadastrais permitidos.">
+    <form onSubmit={onSubmit} className="space-y-5">{message?<div className="rounded-2xl bg-slate-950/70 p-3 text-sm text-slate-300">{message}</div>:null}<div className="grid gap-4 md:grid-cols-2">
+      <label className="space-y-2 text-sm"><span>Nome</span><input defaultValue={participant.full_name} name="full_name" className={inputClass}/></label><BirthDateInput name="birth_date" value={birthDate} onChange={setBirthDate} required/>
+      <label className="space-y-2 text-sm"><span>Telefone</span><input defaultValue={participant.phone??""} name="phone" className={inputClass}/></label><label className="space-y-2 text-sm"><span>E-mail</span><input type="email" required defaultValue={participant.email??""} name="email" className={inputClass}/></label>
+      <label className="space-y-2 text-sm"><span>Cidade</span><input defaultValue={participant.city??""} name="city" className={inputClass}/></label><label className="space-y-2 text-sm"><span>Sexo</span><select defaultValue={participant.gender??""} name="gender" className={inputClass}><option value="">Selecione</option>{genderOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+    </div><label className="block space-y-2 text-sm"><span>Observações</span><textarea defaultValue={participant.notes??""} name="notes" rows={4} className={inputClass}/></label><div className="flex justify-end"><button type="submit" disabled={saving} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-60">{saving?"Salvando...":"Salvar alterações"}</button></div></form>
+    <div className="mt-6 border-t border-slate-800 pt-5"><p className="text-sm font-semibold">Status do pagamento</p><p className="mt-2 text-sm">{paymentLabels[participant.payment_status]??participant.payment_status}</p>{participant.payment_status==="pending"&&canConfirmPayment?<button type="button" onClick={confirmPayment} disabled={saving} className="mt-3 rounded-xl border border-emerald-500/40 px-3 py-2 text-sm text-emerald-200">Confirmar pagamento</button>:null}</div>
+    {ticketId&&canChangeShirt?<div className="mt-6 space-y-4 border-t border-slate-800 pt-5"><div><p className="text-sm font-semibold">Camiseta do ingresso</p><p className="text-xs text-emerald-200">Sob encomenda</p></div><div className="grid gap-4 md:grid-cols-2"><label className="space-y-2 text-sm"><span>Modelo</span><select value={shirtType} onChange={event=>{setShirtType(event.target.value);setShirtSize("");}} disabled={shirtDelivered} className={inputClass}><option value="">Selecione</option>{shirtTypes.map(type=><option key={type}>{type}</option>)}</select></label><label className="space-y-2 text-sm"><span>Tamanho</span><select value={shirtSize} onChange={event=>setShirtSize(event.target.value)} disabled={shirtDelivered||!shirtType} className={inputClass}><option value="">Selecione</option>{shirtSizes.map(size=><option key={size}>{size}</option>)}</select></label></div>{shirtDelivered?<p className="text-sm text-amber-200">Camiseta já entregue. Use uma operação explícita de troca ou estorno.</p>:<button type="button" onClick={saveShirt} disabled={saving||!shirtType||!shirtSize} className="rounded-xl border border-emerald-500/40 px-3 py-2 text-sm text-emerald-200 disabled:opacity-50">Salvar camiseta</button>}</div>:null}
+  </SectionCard></div></div></main>;
 }

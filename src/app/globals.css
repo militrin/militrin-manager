@@ -15,6 +15,182 @@
   --militrin-warning: #f59e0b;
   --militrin-danger: #f43f5e;
   --militrin-info: #38bdf8;
+
+  /* Tema de marca: valores padrão (rosa). Sobrescritos por [data-brand]. */
+  --brand-100: #fce7f3;
+  --brand-200: #fbcfe8;
+  --brand-300: #f9a8d4;
+  --brand-400: #f472b6;
+  --brand-500: #ec4899;
+  --brand-600: #db2777;
+
+  /*
+   * Calculados a partir de --brand-500/600, então herdam qualquer tema
+   * definido em [data-brand] sem precisar ser redeclarados por tema.
+   * Usados no fundo ambiente (radial-gradient) em praticamente toda a
+   * aplicação, para que o "clima" visual do sistema acompanhe a cor de marca.
+   */
+  --brand-glow-1: color-mix(in oklab, var(--brand-500) 14%, transparent);
+  --brand-glow-2: color-mix(in oklab, var(--brand-600) 8%, transparent);
+  --brand-glow: color-mix(in oklab, var(--brand-500) 16%, transparent);
+  --brand-glow-strong: color-mix(in oklab, var(--brand-500) 18%, transparent);
+}
+
+[data-brand='green'] {
+  --brand-100: #dcfce7;
+  --brand-200: #bbf7d0;
+  --brand-300: #86efac;
+  --brand-400: #4ade80;
+  --brand-500: #22c55e;
+  --brand-600: #16a34a;
+}
+
+[data-brand='blue'] {
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-300: #93c5fd;
+  --brand-400: #60a5fa;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+}
+
+[data-brand='purple'] {
+  --brand-100: #f3e8ff;
+  --brand-200: #e9d5ff;
+  --brand-300: #d8b4fe;
+  --brand-400: #c084fc;
+  --brand-500: #a855f7;
+  --brand-600: #9333ea;
+}
+
+[data-brand='amber'] {
+  --brand-100: #fef3c7;
+  --brand-200: #fde68a;
+  --brand-300: #fcd34d;
+  --brand-400: #fbbf24;
+  --brand-500: #f59e0b;
+  --brand-600: #d97706;
+}
+
+[data-brand='teal'] {
+  --brand-100: #ccfbf1;
+  --brand-200: #99f6e4;
+  --brand-300: #5eead4;
+  --brand-400: #2dd4bf;
+  --brand-500: #14b8a6;
+  --brand-600: #0d9488;
+}
+
+[data-brand='red'] {
+  --brand-100: #fee2e2;
+  --brand-200: #fecaca;
+  --brand-300: #fca5a5;
+  --brand-400: #f87171;
+  --brand-500: #ef4444;
+  --brand-600: #dc2626;
+}
+
+[data-brand='rose'] {
+  --brand-100: #ffe4e6;
+  --brand-200: #fecdd3;
+  --brand-300: #fda4af;
+  --brand-400: #fb7185;
+  --brand-500: #f43f5e;
+  --brand-600: #e11d48;
+}
+
+[data-brand='fuchsia'] {
+  --brand-100: #fae8ff;
+  --brand-200: #f5d0fe;
+  --brand-300: #f0abfc;
+  --brand-400: #e879f9;
+  --brand-500: #d946ef;
+  --brand-600: #c026d3;
+}
+
+[data-brand='violet'] {
+  --brand-100: #ede9fe;
+  --brand-200: #ddd6fe;
+  --brand-300: #c4b5fd;
+  --brand-400: #a78bfa;
+  --brand-500: #8b5cf6;
+  --brand-600: #7c3aed;
+}
+
+[data-brand='indigo'] {
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-300: #a5b4fc;
+  --brand-400: #818cf8;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+}
+
+[data-brand='sky'] {
+  --brand-100: #e0f2fe;
+  --brand-200: #bae6fd;
+  --brand-300: #7dd3fc;
+  --brand-400: #38bdf8;
+  --brand-500: #0ea5e9;
+  --brand-600: #0284c7;
+}
+
+[data-brand='cyan'] {
+  --brand-100: #cffafe;
+  --brand-200: #a5f3fc;
+  --brand-300: #67e8f9;
+  --brand-400: #22d3ee;
+  --brand-500: #06b6d4;
+  --brand-600: #0891b2;
+}
+
+[data-brand='emerald'] {
+  --brand-100: #d1fae5;
+  --brand-200: #a7f3d0;
+  --brand-300: #6ee7b7;
+  --brand-400: #34d399;
+  --brand-500: #10b981;
+  --brand-600: #059669;
+}
+
+[data-brand='lime'] {
+  --brand-100: #ecfccb;
+  --brand-200: #d9f99d;
+  --brand-300: #bef264;
+  --brand-400: #a3e635;
+  --brand-500: #84cc16;
+  --brand-600: #65a30d;
+}
+
+[data-brand='yellow'] {
+  --brand-100: #fef9c3;
+  --brand-200: #fef08a;
+  --brand-300: #fde047;
+  --brand-400: #facc15;
+  --brand-500: #eab308;
+  --brand-600: #ca8a04;
+}
+
+[data-brand='orange'] {
+  --brand-100: #ffedd5;
+  --brand-200: #fed7aa;
+  --brand-300: #fdba74;
+  --brand-400: #fb923c;
+  --brand-500: #f97316;
+  --brand-600: #ea580c;
+}
+
+.mask-logo {
+  background-color: var(--brand-500);
+  -webkit-mask-image: url('/militrin-logo.png');
+  mask-image: url('/militrin-logo.png');
+  mask-mode: luminance;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
 }
 
 @theme inline {

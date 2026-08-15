@@ -5,6 +5,46 @@ export type ParsedSheet = {
   rows: Record<string, string>[];
 };
 
+const EMPTY_XLSX_HEADER = /^__EMPTY(?:_\d+)?$/i;
+
+export function parseSpreadsheetMatrix(matrix: unknown[][]): ParsedSheet {
+  const headerRowIndex = matrix.findIndex((row) =>
+    row.some((value) => String(value ?? '').trim().length > 0),
+  );
+  if (headerRowIndex < 0) return { headers: [], rows: [] };
+
+  const rawHeaders = matrix[headerRowIndex].map((value) => String(value ?? '').trim());
+  const dataRows = matrix.slice(headerRowIndex + 1);
+  const usefulColumns = rawHeaders
+    .map((header, index) => ({ header, index }))
+    .filter(({ header, index }) =>
+      header.length > 0
+      && !EMPTY_XLSX_HEADER.test(header)
+      && dataRows.some((row) => String(row[index] ?? '').trim().length > 0),
+    );
+
+  const headerCounts = new Map<string, number>();
+  for (const { header } of usefulColumns) {
+    const key = header.toLocaleLowerCase('pt-BR');
+    headerCounts.set(key, (headerCounts.get(key) ?? 0) + 1);
+  }
+
+  const columns = usefulColumns.map(({ header, index }) => ({
+    index,
+    header: (headerCounts.get(header.toLocaleLowerCase('pt-BR')) ?? 0) > 1
+      ? `${header} (coluna ${index + 1})`
+      : header,
+  }));
+  const headers = columns.map(({ header }) => header);
+  const rows = dataRows
+    .filter((row) => columns.some(({ index }) => String(row[index] ?? '').trim().length > 0))
+    .map((row) => Object.fromEntries(
+      columns.map(({ header, index }) => [header, String(row[index] ?? '').trim()]),
+    ));
+
+  return { headers, rows };
+}
+
 function parseCsv(content: string): ParsedSheet {
   const lines = content
     .split(/\r?\n/)
@@ -39,34 +79,22 @@ function parseCsv(content: string): ParsedSheet {
     return result;
   };
 
-  const headers = splitLine(lines[0]).map((header, index) => header || `coluna_${index + 1}`);
-  const rows = lines.slice(1).map((line) => {
-    const values = splitLine(line);
-    return headers.reduce<Record<string, string>>((acc, header, index) => {
-      acc[header] = String(values[index] ?? '').trim();
-      return acc;
-    }, {});
-  });
-
-  return { headers, rows };
+  return parseSpreadsheetMatrix(lines.map(splitLine));
 }
 
 function parseXlsx(buffer: ArrayBuffer): ParsedSheet {
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return { headers: [], rows: [] };
   const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
-
-  const headers = rows.length ? Object.keys(rows[0]) : [];
-  const normalizedRows = rows.map((row) => {
-    const next: Record<string, string> = {};
-    for (const header of headers) {
-      next[header] = String(row[header] ?? '').trim();
-    }
-    return next;
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: '',
+    blankrows: false,
+    raw: false,
   });
 
-  return { headers, rows: normalizedRows };
+  return parseSpreadsheetMatrix(matrix);
 }
 
 export async function parseSpreadsheetFile(file: File): Promise<ParsedSheet> {

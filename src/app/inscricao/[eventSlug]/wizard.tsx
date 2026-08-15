@@ -22,12 +22,16 @@ import {
 } from '@/lib/validation/registration';
 import { formatDateTimeBR, formatISOToDateBR } from '@/lib/utils/date';
 import { normalizePricingGenderInput, resolvePricingGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
+import { getStatusLabel } from '@/lib/status-labels';
+import { StoreCart } from '@/components/store/StoreCart';
+import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
 
 type EventData = {
   id: string;
   slug: string;
   name: string;
   description: string | null;
+  banner_hero_url: string | null;
   starts_at: string | null;
   ends_at: string | null;
   location: string | null;
@@ -37,6 +41,7 @@ type EventData = {
   shirt_order_deadline: string | null;
   limit_shirt_selection_to_stock: boolean;
   kit_enabled: boolean;
+  min_age: number;
   payment_pix_enabled: boolean;
   payment_credit_card_single_enabled: boolean;
   payment_credit_card_installments_enabled: boolean;
@@ -53,6 +58,9 @@ type Category = {
   available_slots: number | null;
   is_active: boolean;
   sort_order: number;
+  current_batch_name: string | null;
+  current_male_price: number | null;
+  current_female_price: number | null;
 };
 
 type Benefit = { id: string; name: string; description: string | null };
@@ -103,6 +111,7 @@ type WizardProps = {
       birth_date: boolean;
     };
   };
+  storeItems: StoreItemForPurchase[];
 };
 
 type PricingState = {
@@ -242,7 +251,7 @@ type KitSelectionsState = {
   shirtSize: string;
 };
 
-const STORAGE_VERSION = 'v3';
+const STORAGE_VERSION = 'v4';
 
 function paymentMethodLabel(method: CheckoutPaymentMethod) {
   if (method === 'credit_card_single') return 'Credito a vista';
@@ -269,6 +278,14 @@ function sanitizePaymentMethod(method: string | null | undefined, event: EventDa
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+}
+
+function categoryPriceLabel(category: Category) {
+  const prices = [category.current_male_price, category.current_female_price].filter((value): value is number => value !== null);
+  if (prices.length === 0) return 'Preço a definir';
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  return min === max ? money(min) : `a partir de ${money(min)}`;
 }
 
 function deadlineText(value: string | null) {
@@ -310,6 +327,7 @@ export function RegistrationWizard({
   kitItems,
   inventory,
   initialBuyer,
+  storeItems,
 }: WizardProps) {
   const canSimulatePayment = process.env.NODE_ENV === 'development';
   const router = useRouter();
@@ -358,7 +376,7 @@ export function RegistrationWizard({
   const topRef = useRef<HTMLHeadingElement | null>(null);
 
   const activeCategories = useMemo(
-    () => categories.filter((category) => category.is_active && (category.available_slots === null || category.available_slots > 0)),
+    () => categories.filter((category) => category.is_active && (category.available_slots === null || category.available_slots > 0) && category.current_batch_name !== null),
     [categories],
   );
 
@@ -380,7 +398,7 @@ export function RegistrationWizard({
   const hasRequiredShirt = activeShirtItems.some((item) => item.is_required);
   const hasKitStep = activeKitItems.length > 0;
   const shouldShowItemConfiguration = hasKitStep || activeShirtItems.length > 0;
-  const totalSteps = hasKitStep ? 7 : 6;
+  const totalSteps = 4;
 
   const sizeAvailability = useMemo(() => {
     const map = new Map<string, number>();
@@ -555,7 +573,7 @@ export function RegistrationWizard({
 
   const selectedCategory = activeCategories.find((cat) => cat.id === form.category_id) || null;
 
-  const stepShown = step > 3 && !hasKitStep ? step - 1 : step;
+  const stepShown = step;
 
   const cpfLocked = initialBuyer.locked.cpf;
   const birthDateLocked = initialBuyer.locked.birth_date;
@@ -609,11 +627,7 @@ export function RegistrationWizard({
 
   function onBack() {
     if (!canBack()) return;
-    if (step === 7 && registration?.payment.payment_status === 'paid') return;
-    if (!hasKitStep && step === 4) {
-      goTo(2);
-      return;
-    }
+    if (step === totalSteps && registration?.payment.payment_status === 'paid') return;
     goTo(step - 1);
   }
 
@@ -842,31 +856,14 @@ export function RegistrationWizard({
     return allErrors;
   }
 
-  function handleItemsNext() {
-    const itemErrors = validateCheckoutItems();
-    if (itemErrors.length > 0) {
-      setErrors(itemErrors);
-      return;
-    }
-    unlockAndGoTo(5);
-  }
-
-  async function handleCategoryNext() {
-    if (!form.category_id) {
-      setErrors(['Selecione uma categoria para continuar.']);
-      return;
-    }
-
-    const category = activeCategories.find((item) => item.id === form.category_id);
-    if (!category) {
-      setErrors(['A categoria escolhida não está disponível.']);
-      return;
-    }
+  function selectCategory(categoryId: string) {
+    setField('category_id', categoryId);
+    setErrors([]);
 
     startTransition(async () => {
       const result = await getPublicPricingPreviewAction({
         event_id: event.id,
-        ticket_category_id: form.category_id,
+        ticket_category_id: categoryId,
         gender: resolvePricingGender({ requestGender: form.gender, buyerGender: initialBuyer.gender }) ?? '',
         coupon_code: form.coupon_code || undefined,
       });
@@ -878,8 +875,28 @@ export function RegistrationWizard({
       syncItemCount(form.quantity);
       await refreshItemPricingByCoupon(form.coupon_code || undefined);
       setLiveMessage('Categoria validada e preço atualizado.');
-      unlockAndGoTo(2);
     });
+  }
+
+  function handleChooseTicketNext() {
+    if (!form.category_id) {
+      setErrors(['Selecione uma categoria para continuar.']);
+      return;
+    }
+
+    const category = activeCategories.find((item) => item.id === form.category_id);
+    if (!category) {
+      setErrors(['A categoria escolhida não está disponível.']);
+      return;
+    }
+
+    const itemErrors = validateCheckoutItems();
+    if (itemErrors.length > 0) {
+      setErrors(itemErrors);
+      return;
+    }
+
+    unlockAndGoTo(2);
   }
 
   async function handlePersonalNext() {
@@ -943,12 +960,8 @@ export function RegistrationWizard({
       syncItemCount(form.quantity);
       await refreshItemPricingByCoupon(form.coupon_code || undefined);
       setLiveMessage('Seus dados foram carregados da sua conta e o valor foi recalculado.');
-      unlockAndGoTo(hasKitStep ? 3 : 4);
+      unlockAndGoTo(3);
     });
-  }
-
-  async function handleKitNext() {
-    unlockAndGoTo(4);
   }
 
   async function handleApplyCoupon() {
@@ -1100,7 +1113,7 @@ export function RegistrationWizard({
     setLiveMessage('Pedido criado.');
 
     if ((createdRegistration.final_amount ?? 0) <= 0) {
-      unlockAndGoTo(7);
+      unlockAndGoTo(4);
       sessionStorage.removeItem(storageKey);
       return;
     }
@@ -1127,8 +1140,6 @@ export function RegistrationWizard({
           : prev,
       );
     }
-
-    unlockAndGoTo(6);
   }
 
   async function handleSimulatePaid() {
@@ -1143,7 +1154,7 @@ export function RegistrationWizard({
       setRegistration(mapOrderToRegistration(paid.order));
       setLiveMessage('Pagamento confirmado.');
       sessionStorage.removeItem(storageKey);
-      unlockAndGoTo(7);
+      unlockAndGoTo(4);
     });
   }
 
@@ -1153,24 +1164,13 @@ export function RegistrationWizard({
   }
 
   const progress = (stepShown / totalSteps) * 100;
-  const visibleTotalSteps = hasKitStep ? 7 : 6;
-  const trail = hasKitStep
-    ? [
-        { id: 1, label: 'Evento' },
-        { id: 2, label: 'Dados' },
-        { id: 3, label: 'Categoria' },
-        { id: 4, label: 'Camiseta' },
-        { id: 5, label: 'Pagamento' },
-        { id: 6, label: 'Resumo' },
-        { id: 7, label: 'Concluído' },
-      ]
-    : [
-        { id: 1, label: 'Evento' },
-        { id: 2, label: 'Dados' },
-        { id: 4, label: 'Pagamento' },
-        { id: 5, label: 'Resumo' },
-        { id: 6, label: 'Concluído' },
-      ];
+  const visibleTotalSteps = totalSteps;
+  const trail = [
+    { id: 1, label: 'Escolha seu ingresso' },
+    { id: 2, label: 'Seus dados' },
+    { id: 3, label: 'Pagamento' },
+    { id: 4, label: 'Concluído' },
+  ];
 
   const itemTotals = sumCheckoutItemTotals(activeCheckoutItems);
 
@@ -1196,7 +1196,7 @@ export function RegistrationWizard({
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.16),transparent_35%),linear-gradient(180deg,#020617,#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow),transparent_35%),linear-gradient(180deg,#020617,#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
       <div className="mx-auto w-full max-w-6xl">
         <div className="mb-4 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1226,6 +1226,11 @@ export function RegistrationWizard({
               </Link>
             </div>
           </div>
+
+          {event.banner_hero_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={event.banner_hero_url} alt="" className="mt-4 h-40 w-full rounded-2xl object-cover sm:h-52" />
+          ) : null}
 
           <h1 ref={topRef} tabIndex={-1} className="mt-4 text-2xl font-semibold outline-none sm:text-3xl">
             {event.name}
@@ -1311,7 +1316,8 @@ export function RegistrationWizard({
 
             {step === 1 && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">1. Escolha sua categoria</h2>
+                <h2 className="text-lg font-semibold">1. Escolha seu ingresso</h2>
+                <p className="text-sm text-slate-300">Selecione a categoria, o gênero e a quantidade de ingressos. Cada ingresso pode ter sua própria configuração.</p>
                 {activeCategories.length === 0 ? (
                   <p className="text-sm text-slate-300">Não há categorias com vagas disponíveis para este evento.</p>
                 ) : (
@@ -1332,7 +1338,7 @@ export function RegistrationWizard({
                             name="category"
                             value={category.id}
                             checked={selected}
-                            onChange={() => setField('category_id', category.id)}
+                            onChange={() => selectCategory(category.id)}
                           />
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -1343,7 +1349,7 @@ export function RegistrationWizard({
                               )}
                             </div>
                             <span className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">
-                              {category.available_slots === null ? 'Vagas ilimitadas' : `${category.available_slots} vagas`}
+                              {category.current_batch_name ? `${category.current_batch_name} — ${categoryPriceLabel(category)}` : categoryPriceLabel(category)}
                             </span>
                           </div>
                         </label>
@@ -1351,17 +1357,6 @@ export function RegistrationWizard({
                     })}
                   </div>
                 )}
-
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    disabled={isPending || activeCategories.length === 0}
-                    onClick={handleCategoryNext}
-                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
-                  >
-                    {isPending ? 'Validando...' : 'Continuar'}
-                  </button>
-                </div>
               </div>
             )}
 
@@ -1422,7 +1417,12 @@ export function RegistrationWizard({
                             label="Nascimento"
                           />
                           {form.birth_date && (
-                            <span className="text-xs text-slate-400">Idade: {calculateAge(form.birth_date)} anos</span>
+                            <span className={`text-xs ${event.min_age > 0 && calculateAge(form.birth_date) < event.min_age ? 'text-rose-400' : 'text-slate-400'}`}>
+                              Idade: {calculateAge(form.birth_date)} anos
+                              {event.min_age > 0 && calculateAge(form.birth_date) < event.min_age
+                                ? ` — este evento exige idade mínima de ${event.min_age} anos`
+                                : ''}
+                            </span>
                           )}
                         </div>
                       )}
@@ -1512,41 +1512,22 @@ export function RegistrationWizard({
               </div>
             )}
 
-            {step === 3 && hasKitStep && (
+            {step === 1 && form.category_id && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">3. Kit</h2>
-
-                <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
-                  <p className="font-medium text-slate-100">Itens ativos do kit</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5">
-                    {activeKitItems.map((item) => (
-                      <li key={item.id}>
-                        {item.name} x{item.quantity_per_participant}
-                        {item.is_required ? ' (obrigatorio)' : ' (opcional)'}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <p className="text-sm text-slate-300">
-                  A configuracao de genero e camiseta sera feita individualmente para cada ingresso na proxima etapa.
-                </p>
-
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleKitNext}
-                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
-                  >
-                    Continuar
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {step === 4 && (
-              <div className="space-y-4">
-                <h2 className="text-lg font-semibold">4. Cupom</h2>
+                {hasKitStep ? (
+                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
+                    <p className="font-medium text-slate-100">Itens ativos do kit</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {activeKitItems.map((item) => (
+                        <li key={item.id}>
+                          {item.name} x{item.quantity_per_participant}
+                          {item.is_required ? ' (obrigatorio)' : ' (opcional)'}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-slate-400">A configuração de gênero e camiseta é feita individualmente para cada ingresso abaixo.</p>
+                  </div>
+                ) : null}
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="space-y-1 sm:col-span-2">
@@ -1577,7 +1558,7 @@ export function RegistrationWizard({
                         min={1}
                         max={10}
                         value={form.quantity}
-                        onChange={(event_) => {
+                        onChange={async (event_) => {
                           const parsed = Number(event_.target.value || 1);
                           const nextQuantity = Math.max(1, Math.min(10, parsed));
                           if (nextQuantity < form.quantity) {
@@ -1597,6 +1578,7 @@ export function RegistrationWizard({
                           }
                           setField('quantity', nextQuantity);
                           syncItemCount(nextQuantity);
+                          await refreshItemPricingByCoupon(form.coupon_code || undefined);
                         }}
                         className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
                       />
@@ -1798,19 +1780,19 @@ export function RegistrationWizard({
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={handleItemsNext}
-                    disabled={isRepricingItems}
-                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
+                    onClick={handleChooseTicketNext}
+                    disabled={isPending || isRepricingItems}
+                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
                   >
-                    {isRepricingItems ? 'Atualizando...' : 'Continuar'}
+                    {isPending || isRepricingItems ? 'Atualizando...' : 'Continuar'}
                   </button>
                 </div>
               </div>
             )}
 
-            {step === 5 && (
+            {step === 3 && !registration && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">5. Resumo e pagamento</h2>
+                <h2 className="text-lg font-semibold">3. Pagamento</h2>
                 <div className="grid gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 sm:grid-cols-2">
                   <p>
                     <strong>Nome:</strong> {form.full_name}
@@ -1895,9 +1877,9 @@ export function RegistrationWizard({
               </div>
             )}
 
-            {step === 6 && registration && (
+            {step === 3 && registration && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">6. Pagamento do pedido</h2>
+                <h2 className="text-lg font-semibold">3. Pagamento do pedido</h2>
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
                   <p>
@@ -1910,7 +1892,7 @@ export function RegistrationWizard({
                     Valor: <strong className="text-emerald-300">{money(registration.payment.final_amount)}</strong>
                   </p>
                   <p>
-                    Status: <strong>{registration.payment.payment_status}</strong>
+                    Pagamento: <strong>{getStatusLabel(registration.payment.payment_status)}</strong>
                   </p>
                   <p>
                     Expira em: <strong>{deadlineText(registration.payment.expires_at)}</strong>
@@ -1947,7 +1929,7 @@ export function RegistrationWizard({
                         <li key={item.item_id} className="rounded-lg border border-slate-700 px-3 py-2">
                           <p>Ingresso {item.item_position} - {item.category_name || selectedCategory?.name || '-'}</p>
                           <p>Titular: {item.titular_display}</p>
-                          <p>Status: {item.item_status}</p>
+                          <p>Ingresso: {getStatusLabel(item.item_status)}</p>
                         </li>
                       ))}
                     </ul>
@@ -1968,7 +1950,7 @@ export function RegistrationWizard({
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => unlockAndGoTo(7)}
+                      onClick={() => unlockAndGoTo(4)}
                       className="h-11 rounded-2xl border border-slate-700 px-6 text-sm text-slate-200"
                     >
                       Ver resumo do pedido
@@ -1983,7 +1965,7 @@ export function RegistrationWizard({
                         router.push(`/minha-conta/ingressos/${ticketId}`);
                         return;
                       }
-                      unlockAndGoTo(7);
+                      unlockAndGoTo(4);
                     }}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
                   >
@@ -1993,18 +1975,18 @@ export function RegistrationWizard({
               </div>
             )}
 
-            {step === 7 && registration && (
+            {step === 4 && registration && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">7. Resumo final do pedido</h2>
+                <h2 className="text-lg font-semibold">4. Resumo final do pedido</h2>
                 <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4 text-sm text-emerald-100">
                   <p>
                     Pedido registrado para <strong>{registration.participant_name}</strong>.
                   </p>
                   <p>
-                    Status da inscrição: <strong>{registration.reservation_status}</strong>
+                    Inscrição: <strong>{getStatusLabel(registration.reservation_status)}</strong>
                   </p>
                   <p>
-                    Status do pagamento: <strong>{registration.payment.payment_status}</strong>
+                    Pagamento: <strong>{getStatusLabel(registration.payment.payment_status)}</strong>
                   </p>
                   <p>
                     Total pago: <strong>{money(registration.payment.final_amount)}</strong>
@@ -2030,7 +2012,7 @@ export function RegistrationWizard({
                     <p><strong>Valor original:</strong> {money(registration.payment.amount)}</p>
                     <p><strong>Desconto:</strong> {money(registration.payment.discount_amount)}</p>
                     <p><strong>Valor final:</strong> {money(registration.payment.final_amount)}</p>
-                    <p><strong>Status:</strong> {registration.payment.payment_status}</p>
+                    <p><strong>Pagamento:</strong> {getStatusLabel(registration.payment.payment_status)}</p>
                   </div>
 
                   {registration.payment.payment_status === 'paid' && registration.qr_token ? (
@@ -2041,7 +2023,7 @@ export function RegistrationWizard({
                         participantName={registration.participant_name}
                         status="active"
                         categoryName={registration.category_name}
-                        eventDate={event.starts_at ? formatDateTimeBR(String(event.starts_at), ' às ') : null}
+                        eventDate={event.starts_at ? String(event.starts_at) : null}
                         eventLocation={event.location}
                         token={registration.qr_token}
                       />
@@ -2068,7 +2050,7 @@ export function RegistrationWizard({
                       <ul className="mt-2 list-disc space-y-1 pl-5">
                         {registration.items.map((item) => (
                           <li key={item.item_id}>
-                            Ingresso {item.item_position}: {item.titular_display} - {item.ticket_status || item.item_status}
+                            Ingresso {item.item_position}: {item.titular_display} - {getStatusLabel(item.ticket_status || item.item_status)}
                           </li>
                         ))}
                       </ul>
@@ -2079,7 +2061,7 @@ export function RegistrationWizard({
                     <ul className="mt-2 list-disc space-y-1 pl-5">
                       {registration.kit_items.map((item) => (
                         <li key={item.kit_item_id}>
-                          {item.item_name} x{item.quantity} - {item.status}
+                          {item.item_name} x{item.quantity} - {getStatusLabel(item.status)}
                         </li>
                       ))}
                     </ul>
@@ -2087,6 +2069,16 @@ export function RegistrationWizard({
                     <p className="mt-2">Sem itens de kit vinculados.</p>
                   )}
                 </div>
+
+                {storeItems.length > 0 ? (
+                  <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
+                    <p className="font-medium text-slate-100">Que tal levar também...</p>
+                    <p className="mt-1 text-xs text-slate-400">Itens opcionais do evento, comprados separadamente do ingresso.</p>
+                    <div className="mt-3">
+                      <StoreCart eventId={event.id} items={storeItems} />
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="flex flex-wrap gap-3">
                   {registration.payment.payment_status === 'paid' ? (

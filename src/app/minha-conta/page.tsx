@@ -1,8 +1,10 @@
 import Link from 'next/link';
-import { CalendarDays, Medal, QrCode, ShoppingBag, Ticket, UserRound } from 'lucide-react';
+import { Medal, QrCode, ShoppingBag, Ticket, UserRound } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
-import { getLoyaltyLevel, getLoyaltyProgress, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
+import { getStatusLabel } from '@/lib/status-labels';
+import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getAccountEventSchedule } from '@/lib/account/event-schedule';
 import {
   resolveParticipantAvatarUrl,
   resolveParticipantFirstName,
@@ -11,11 +13,9 @@ import {
 } from '@/lib/account/participant-identity';
 import {
   MilitrinAvatar,
-  MilitrinBadge,
   MilitrinButton,
   MilitrinEmptyState,
   MilitrinEventCard,
-  MilitrinProgress,
   MilitrinSection,
   MilitrinStat,
 } from '@/components/militrin';
@@ -74,68 +74,39 @@ function findInitialPrice(rows: Array<Record<string, unknown>>) {
   return Math.min(...candidates);
 }
 
-function formatProgressMessage(params: {
-  remaining: number;
-  nextLevelName: string | null;
-  completed: boolean;
-  confirmedParticipations: number;
-  currentLevelSlug: string;
-}) {
-  const { remaining, nextLevelName, completed, confirmedParticipations, currentLevelSlug } = params;
-
-  if (currentLevelSlug.toLowerCase() === 'novato' && confirmedParticipations === 0) {
-    return 'Registre sua primeira participação para começar sua evolução.';
-  }
-
-  if (completed) {
-    return 'Você alcançou o nível máximo do Militrin.';
-  }
-
-  if (!nextLevelName) {
-    return 'Seu próximo nível será exibido assim que houver uma nova faixa configurada.';
-  }
-
-  return remaining === 1
-    ? `Falta 1 participação oficial para chegar ao ${nextLevelName}.`
-    : `Faltam ${remaining} participações oficiais para chegar ao ${nextLevelName}.`;
-}
-
 export default async function MinhaContaPage() {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [profileResult, ordersResult, ticketsResult, eventsResult, tiersResult, featuredEventsResult, kitDeliveriesResult] = await Promise.all([
+  const [profileResult, ordersResult, eventsResult, featuredEventsResult] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
-    supabase
-      .from('orders')
-      .select('id, order_number, status, final_amount, created_at, confirmed_at, participant_id, participants(full_name), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), tickets(id, status, token), payments(payment_method, payment_status)')
-      .eq('user_id', user?.id ?? '')
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('tickets')
-      .select('id, status, issued_at, order_id, orders!inner(user_id)')
-      .eq('orders.user_id', user?.id ?? '')
-      .order('issued_at', { ascending: false }),
+    getAccountOrders(supabase, user?.id ?? ''),
     supabase
       .from('events')
       .select('id, name, slug, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at')
       .eq('registration_enabled', true)
       .order('starts_at', { ascending: true, nullsFirst: false }),
-    supabase
-      .from('loyalty_tiers')
-      .select('id, slug, name, badge, min_confirmed_participations, sort_order')
-      .order('min_confirmed_participations', { ascending: true })
-      .order('sort_order', { ascending: true }),
     supabase.rpc('get_featured_events_for_dashboard'),
-    supabase.rpc('get_upcoming_kit_deliveries', { p_limit: 4 }),
   ]);
+
+  if (ordersResult.error) {
+    console.error('[minha-conta] erro ao carregar pedidos canônicos', ordersResult.error);
+    return <section className="rounded-3xl border border-rose-700/40 bg-rose-950/20 p-5 text-sm text-rose-100">Não foi possível carregar o dashboard agora.</section>;
+  }
+
+  const orders = (ordersResult.data ?? []) as Array<Record<string, unknown>>;
+  const ticketScope = await getAccessibleTicketScope(supabase, user?.id ?? '', orders);
+  if (ticketScope.error) {
+    console.error('[minha-conta] erro ao carregar ingressos canônicos', { stage: ticketScope.stage, error: ticketScope.error });
+    return <section className="rounded-3xl border border-rose-700/40 bg-rose-950/20 p-5 text-sm text-rose-100">Não foi possível carregar o dashboard agora.</section>;
+  }
+  const scheduleResult = await getAccountEventSchedule(supabase, ticketScope.ownedEventIds, { limit: 4 });
+  if (scheduleResult.error) console.error('[minha-conta] erro ao carregar cronograma dos eventos', scheduleResult.error);
 
   const profile = (Array.isArray(profileResult.data) ? profileResult.data[0] : profileResult.data) as Record<string, unknown> | null;
   const userMetadata = (user?.user_metadata as Record<string, unknown> | undefined) ?? null;
-  const loyaltyLevels = sortLoyaltyLevels((tiersResult.data ?? []).map((level) => normalizeLoyaltyLevel(level as Record<string, unknown>)));
-  const orders = ordersResult.data ?? [];
   const openEvents = (eventsResult.data ?? []).filter((event) => isEventOpen(event));
   const featuredEvents = ((featuredEventsResult.data ?? []) as Array<{
     event_id: string;
@@ -161,28 +132,13 @@ export default async function MinhaContaPage() {
     sort_order: Number(event.sort_order ?? 0),
   }));
   const dashboardEvents = featuredEvents.length > 0 ? featuredEvents : openEvents;
-  const kitDeliveries = ((kitDeliveriesResult.data ?? []) as Array<{
-    id: string;
-    delivery_at: string;
-    city: string;
-    location: string;
-    sort_order: number;
-  }>).map((item) => ({
-    id: String(item.id),
-    delivery_at: String(item.delivery_at),
-    city: String(item.city ?? ''),
-    location: String(item.location ?? ''),
-    sort_order: Number(item.sort_order ?? 0),
-  }));
-  const allTickets = ticketsResult.data ?? [];
+  const eventSchedule = scheduleResult.data;
+  const allTickets = ticketScope.tickets;
   const activeTickets = allTickets.filter((ticket) => String(ticket.status ?? '') === 'active');
   const highlightedTicket = allTickets.find((ticket) => {
     const status = String(ticket.status ?? '').toLowerCase();
     return status === 'active' || status === 'used';
   }) ?? null;
-  const confirmedParticipations = orders.filter((order) => order.status === 'confirmed').length;
-  const currentLevel = getLoyaltyLevel(confirmedParticipations, loyaltyLevels);
-  const progress = getLoyaltyProgress(confirmedParticipations, loyaltyLevels);
 
   const displayName = resolveParticipantFullName({
     profile,
@@ -206,7 +162,7 @@ export default async function MinhaContaPage() {
   const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
   const latestOrder = orders[0] ?? null;
   const highlightedTicketOrder = highlightedTicket
-    ? orders.find((order) => String(order.id ?? '') === String(highlightedTicket.order_id ?? '')) ?? null
+    ? ticketScope.orders.find((order) => String(order.id ?? '') === String(highlightedTicket.order_id ?? '')) ?? null
     : null;
 
   const highlightedTicketEventName = (() => {
@@ -238,7 +194,8 @@ export default async function MinhaContaPage() {
       <MilitrinSection
         eyebrow="Dashboard"
         title={`Olá, ${greetingName}!`}
-        description="Bem-vindo ao Portal do Participante Militrin."
+        description="Bem-vindo à sua conta Militrin."
+        className="relative isolate overflow-hidden"
         action={
           highlightedTicket ? (
             <Link href={`/minha-conta/ingressos/${highlightedTicket.id}`}>
@@ -247,38 +204,26 @@ export default async function MinhaContaPage() {
           ) : null
         }
       >
+        <div
+          aria-hidden
+          className="mask-logo pointer-events-none absolute -right-12 -top-10 -z-10 hidden h-72 w-72 rotate-6 opacity-25 md:block"
+        />
         <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
           <article className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
-            <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Cartão do participante</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-(--brand-300)">Dados do usuário</p>
             <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
-                <MilitrinAvatar src={profilePhotoUrl} alt={`Foto do participante ${displayName}`} initials={greetingInitials} size="lg" />
+                <MilitrinAvatar src={profilePhotoUrl} alt={`Foto do usuário ${displayName}`} initials={greetingInitials} size="lg" />
                 <div className="min-w-0">
                   <p className="truncate text-xl font-semibold text-white" title={displayName} aria-label={displayName}>{displayName}</p>
-                  <p className="text-sm text-slate-300">Participante desde {memberSinceYear}</p>
+                  <p className="text-sm text-slate-300">Usuário desde {memberSinceYear}</p>
                 </div>
               </div>
-              <MilitrinBadge tone="success">{String(currentLevel.badge)}</MilitrinBadge>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <MilitrinStat label="Categoria atual" value={String(currentLevel.name)} icon={<Medal size={14} />} />
-              <MilitrinStat label="Participações oficiais" value={confirmedParticipations} icon={<CalendarDays size={14} />} />
-              <MilitrinStat label="Nível atual" value={String(currentLevel.badge)} icon={<Ticket size={14} />} />
-            </div>
-
-            <div className="mt-4">
-              <MilitrinProgress
-                label="Progresso para próxima categoria"
-                value={progress.progress}
-                helper={formatProgressMessage({
-                  remaining: progress.remaining,
-                  nextLevelName: progress.next?.name ?? null,
-                  completed: progress.completed,
-                  confirmedParticipations,
-                  currentLevelSlug: currentLevel.slug,
-                })}
-              />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <MilitrinStat label="Categoria" value="Em breve" icon={<Medal size={14} />} />
+              <MilitrinStat label="Nível" value="Em breve" icon={<Ticket size={14} />} />
             </div>
           </article>
 
@@ -297,7 +242,7 @@ export default async function MinhaContaPage() {
               <div className="mt-3 space-y-3 text-sm text-slate-200">
                 <p className="truncate font-semibold text-white" title={highlightedTicketEventName}>{highlightedTicketEventName}</p>
                 <Link href={`/minha-conta/ingressos/${highlightedTicket.id}`}>
-                  <MilitrinButton variant="success" iconLeft={<QrCode size={15} />}>Abrir QR Code</MilitrinButton>
+                  <MilitrinButton iconLeft={<QrCode size={15} />}>Abrir QR Code</MilitrinButton>
                 </Link>
               </div>
             ) : confirmedOrders.length > 0 ? (
@@ -313,25 +258,27 @@ export default async function MinhaContaPage() {
           </article>
 
           <article className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Cronograma de entrega de kits</p>
-            {kitDeliveries.length > 0 ? (
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Cronograma dos seus eventos</p>
+            {eventSchedule.length > 0 ? (
               <div className="mt-3 space-y-3 text-sm text-slate-200">
-                {kitDeliveries.map((item) => (
+                {eventSchedule.map((item) => (
                   <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
                     <p className="font-semibold text-white">{formatDateTimeBR(item.delivery_at, ' às ')}</p>
-                    <p>{item.city}</p>
-                    <p className="truncate" title={item.location}>{item.location}</p>
+                    <p className="mt-1 font-medium text-(--brand-200)">{item.event_name}</p>
+                    <p>{item.title}</p>
+                    {item.location ? <p className="truncate text-slate-300" title={item.location}>{item.location}</p> : null}
+                    {item.description ? <p className="line-clamp-2 text-xs text-slate-400">{item.description}</p> : null}
                   </div>
                 ))}
-                <Link href="/minha-conta/entregas" className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
-                  Ver todas as entregas registradas!
+                <Link href="/minha-conta/entregas" className="inline-flex h-10 items-center justify-center rounded-xl border border-(--brand-400)/40 bg-(--brand-500)/10 px-4 text-xs font-semibold text-(--brand-100) transition hover:bg-(--brand-500)/20">
+                  Ver cronograma completo
                 </Link>
               </div>
             ) : (
               <div className="mt-3 space-y-3">
-                <p className="text-sm text-slate-300">Nenhuma entrega de kits programada no momento.</p>
-                <Link href="/minha-conta/entregas" className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
-                  Ver todas as entregas registradas!
+                <p className="text-sm text-slate-300">Nenhum compromisso futuro nos seus eventos.</p>
+                <Link href="/minha-conta/entregas" className="inline-flex h-10 items-center justify-center rounded-xl border border-(--brand-400)/40 bg-(--brand-500)/10 px-4 text-xs font-semibold text-(--brand-100) transition hover:bg-(--brand-500)/20">
+                  Ver cronograma completo
                 </Link>
               </div>
             )}
@@ -342,14 +289,14 @@ export default async function MinhaContaPage() {
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MilitrinStat label="Compras" value={orders.length} icon={<ShoppingBag size={14} />} className="border-slate-800 bg-slate-950/60" />
         <MilitrinStat label="Ingressos ativos" value={activeTickets.length} icon={<Ticket size={14} />} className="border-slate-800 bg-slate-950/60" />
-        <MilitrinStat label="Participações oficiais" value={confirmedParticipations} icon={<CalendarDays size={14} />} className="border-slate-800 bg-slate-950/60" />
-        <MilitrinStat label="Nível atual" value={String(currentLevel.name)} icon={<Medal size={14} />} className="border-slate-800 bg-slate-950/60" />
+        <MilitrinStat label="Categoria" value="Em breve" icon={<Medal size={14} />} className="border-slate-800 bg-slate-950/60" />
+        <MilitrinStat label="Nível" value="Em breve" icon={<Ticket size={14} />} className="border-slate-800 bg-slate-950/60" />
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Link href="/minha-conta/comprar"><MilitrinButton className="w-full" iconLeft={<ShoppingBag size={15} />}>Comprar ingresso</MilitrinButton></Link>
         <Link href="/minha-conta/ingressos"><MilitrinButton className="w-full" variant="secondary" iconLeft={<Ticket size={15} />}>Ver meus ingressos</MilitrinButton></Link>
-        <Link href="/minha-conta/compras"><MilitrinButton className="w-full" variant="secondary" iconLeft={<CalendarDays size={15} />}>Ver compras</MilitrinButton></Link>
+        <Link href="/minha-conta/compras"><MilitrinButton className="w-full" variant="secondary" iconLeft={<ShoppingBag size={15} />}>Ver compras</MilitrinButton></Link>
         <Link href="/minha-conta/dados"><MilitrinButton className="w-full" variant="secondary" iconLeft={<UserRound size={15} />}>Atualizar perfil</MilitrinButton></Link>
       </section>
 
@@ -360,7 +307,7 @@ export default async function MinhaContaPage() {
             <div className="mt-3 space-y-2 text-sm text-slate-200">
               <p>Pedido: {String(pendingOrder.order_number ?? '-')}</p>
               <p>Valor: {money(Number(pendingOrder.final_amount ?? 0))}</p>
-              <p>Status: {String(pendingOrder.status)}</p>
+              <p>Pedido: {getStatusLabel(String(pendingOrder.status))}</p>
               <Link href={`/minha-conta/compras/${pendingOrder.id}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/20">
                 Continuar pagamento
               </Link>
@@ -375,8 +322,8 @@ export default async function MinhaContaPage() {
           {latestOrder ? (
             <div className="mt-3 space-y-2 text-sm text-slate-200">
               <p>Último pedido: {String(latestOrder.order_number ?? '-')}</p>
-              <p>Status: {String(latestOrder.status ?? '-')}</p>
-              <Link href={`/minha-conta/compras/${latestOrder.id}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20">
+              <p>Pedido: {getStatusLabel(String(latestOrder.status ?? ''))}</p>
+              <Link href={`/minha-conta/compras/${latestOrder.id}`} className="inline-flex h-10 items-center justify-center rounded-xl border border-(--brand-400)/40 bg-(--brand-500)/10 px-4 text-xs font-semibold text-(--brand-100) transition hover:bg-(--brand-500)/20">
                 Ver detalhes
               </Link>
             </div>
@@ -386,7 +333,7 @@ export default async function MinhaContaPage() {
         </article>
       </section>
 
-      {!orders.length ? (
+      {!ticketScope.orderItems.length ? (
         <MilitrinEmptyState
           title="Você ainda não possui ingressos."
           description="Escolha um evento aberto e crie seu primeiro ingresso no portal."

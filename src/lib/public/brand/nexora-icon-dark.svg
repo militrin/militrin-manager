@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">NEXORA</title>
+  <rect width="512" height="512" rx="112" fill="#050B1A"/>
+  <path fill="#00D6A0" d="M112 92 282 216v92l-70-51v126l-100 37V92Z"/>
+  <path fill="#0B3767" d="m310 178 90-86v328l-90-37V178Z"/>
+</svg>

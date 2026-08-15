@@ -1,0 +1,28 @@
+
+> militrin-manager@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.11 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.3.3:3000
+- Environments: .env.local
+✓ Ready in 642ms
+Creating turbopack project { dir: 'C:\\Projetos\\militrin-manager', testMode: true }
+
+ GET /auth/callback 200 in 492ms (next.js: 226ms, application-code: 266ms)
+ GET /primeiro-acesso 307 in 252ms (next.js: 123ms, application-code: 129ms)
+ GET /cadastros 307 in 238ms (next.js: 67ms, application-code: 171ms)
+ GET /acesso-negado 200 in 112ms (next.js: 47ms, application-code: 65ms)
+ GET /entrar?next=%2Fminha-conta 200 in 96ms (next.js: 44ms, application-code: 52ms)
+ GET /entrar?next=%2Fminha-conta 200 in 36ms (next.js: 6ms, application-code: 30ms)
+ GET /minha-conta 200 in 7.3s (next.js: 89ms, application-code: 7.2s)
+ POST /entrar?next=/minha-conta 200 in 61ms (next.js: 8ms, application-code: 53ms)
+  └─ ƒ signInPublicAccountAction({"email":"h.dogui@gmail.com","next_path":null,"password":"d0s32900","...":"1 item not stringified"}) in 35ms src/app/inscricao/actions.ts
+ GET /cadastros 307 in 143ms (next.js: 7ms, application-code: 136ms)
+ GET /acesso-negado 200 in 44ms (next.js: 6ms, application-code: 38ms)
+ GET /entrar?next=%2Fminha-conta 200 in 53ms (next.js: 6ms, application-code: 48ms)
+ GET /entrar?next=%2Fminha-conta 200 in 39ms (next.js: 5ms, application-code: 33ms)
+ POST /entrar?next=/minha-conta 200 in 25ms (next.js: 6ms, application-code: 19ms)
+  └─ ƒ signInPublicAccountAction({"email":"h.dogui@gmail.com","next_path":null,"password":"d0s32900","...":"1 item not stringified"}) in 9ms src/app/inscricao/actions.ts
+ GET /minha-conta 200 in 7.1s (next.js: 5ms, application-code: 7.1s)
+[?25h

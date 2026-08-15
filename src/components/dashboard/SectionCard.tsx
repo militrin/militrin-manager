@@ -1,6 +1,6 @@
 type SectionCardProps = {
   title: string;
-  description: string;
+  description?: string;
   children: React.ReactNode;
 };
 

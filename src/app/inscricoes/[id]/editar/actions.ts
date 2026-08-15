@@ -1,90 +1,127 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { assertPermission } from "@/lib/admin/permissions";
+import { finalizeCadastroPaymentAndTicketAction } from "@/app/cadastros/actions";
 
-export async function updateParticipantWithStock(payload: {
-  id: string;
-  full_name: string;
-  birth_date: string | null;
-  phone: string;
-  email: string;
-  city: string | null;
-  gender: string | null;
-  shirt_type: string;
-  shirt_size: string;
-  notes: string | null;
-  amount: number;
-  payment_method: string | null;
-  payment_status: string;
+const ALLOWED_GENDERS = new Set(["male", "female", "other", "prefer_not_to_say"]);
+
+async function requireParticipantContext(participantId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data: participant, error } = await supabase.from("participants")
+    .select("id,event_id,organization_id,full_name,birth_date,phone,email,city,gender,shirt_type,shirt_size,notes")
+    .eq("id", participantId).maybeSingle();
+  if (error || !participant) throw error ?? new Error("Participante não encontrado.");
+  const { data: canAccess, error: accessError } = await supabase.rpc("user_can_access_organization", {
+    p_user_id: (await supabase.auth.getUser()).data.user?.id,
+    p_organization_id: participant.organization_id,
+  });
+  if (accessError || !canAccess) throw new Error("Sem acesso à organização do cadastro.");
+  return { supabase, participant };
+}
+
+export async function getParticipantEditContext(participantId: string) {
+  await assertPermission("participants.edit_basic");
+  const { supabase, participant } = await requireParticipantContext(participantId);
+  const [{ data: payments, error: paymentError }, { data: tickets, error: ticketError }] = await Promise.all([
+    supabase.from("payments").select("id,payment_method,payment_status,final_amount,amount")
+      .eq("participant_id", participantId).eq("event_id", participant.event_id).limit(2),
+    supabase.from("tickets").select("id,status,order_item_id").eq("participant_id", participantId)
+      .eq("event_id", participant.event_id).neq("status", "cancelled").limit(2),
+  ]);
+  if (paymentError) throw paymentError;
+  if (ticketError) throw ticketError;
+  if ((payments?.length ?? 0) > 1) throw new Error("Mais de um pagamento encontrado para este cadastro.");
+  if ((tickets?.length ?? 0) > 1) throw new Error("Mais de um ingresso encontrado para este cadastro.");
+  const payment = payments?.[0] ?? null;
+  const ticket = tickets?.[0] ?? null;
+  const [canConfirmPayment, canChangeShirt] = await Promise.all([
+    hasPermission("finance.confirm_payment"),
+    hasPermission("inventory.change_participant_shirt"),
+  ]);
+
+  let shirtOptions: Array<Record<string, unknown>> = [];
+  let shirtDelivered = false;
+  if (ticket?.id && canChangeShirt) {
+    const [{ data: options, error: optionError }, { data: kitItems, error: kitError }] = await Promise.all([
+      supabase.rpc("get_admin_ticket_shirt_options", { p_ticket_id: ticket.id }),
+      supabase.rpc("get_ticket_kit_items", { p_ticket_id: ticket.id }),
+    ]);
+    if (optionError) throw optionError;
+    if (kitError) throw kitError;
+    shirtOptions = (options ?? []) as Array<Record<string, unknown>>;
+    shirtDelivered = ((kitItems ?? []) as Array<Record<string, unknown>>).some(
+      (item) => item.item_type === "shirt" && item.status === "delivered",
+    );
+  }
+
+  return {
+    participant,
+    payment,
+    ticketId: ticket?.id ?? null,
+    shirtOptions,
+    shirtDelivered,
+    canConfirmPayment,
+    canChangeShirt,
+  };
+}
+
+export async function updateParticipantDetails(payload: {
+  id: string; full_name: string; birth_date: string; phone: string; email: string;
+  city: string | null; gender: string | null; notes: string | null;
 }) {
   await assertPermission("participants.edit_basic");
-
-  const supabase = await createServerSupabaseClient();
-  const { data: participant, error: participantError } = await supabase.from("participants").select("id, shirt_type, shirt_size, event_id").eq("id", payload.id).single();
-  if (participantError || !participant) throw participantError ?? new Error("Participante não encontrado.");
-
-  const { data: currentStock, error: stockError } = await supabase.from("shirt_inventory").select("id, total_quantity, reserved_quantity, delivered_quantity").eq("event_id", participant.event_id).eq("shirt_type", participant.shirt_type).eq("shirt_size", participant.shirt_size).maybeSingle();
-  if (stockError) throw stockError;
-
-  const { data: nextStock, error: nextStockError } = await supabase.from("shirt_inventory").select("id, total_quantity, reserved_quantity, delivered_quantity").eq("event_id", participant.event_id).eq("shirt_type", payload.shirt_type).eq("shirt_size", payload.shirt_size).maybeSingle();
-  if (nextStockError) throw nextStockError;
-
-  if (!nextStock) {
-    throw new Error("Estoque não configurado para o modelo/tamanho selecionado.");
-  }
-
-  const nextAvailable = Number(nextStock.total_quantity ?? 0) - Number(nextStock.reserved_quantity ?? 0) - Number(nextStock.delivered_quantity ?? 0);
-  const shirtChanged = currentStock?.id !== nextStock.id;
-  if (shirtChanged && nextAvailable <= 0) {
-    throw new Error("Não há estoque disponível para o novo modelo/tamanho de camiseta.");
-  }
-
-  if (currentStock && shirtChanged) {
-    await supabase
-      .from("shirt_inventory")
-      .update({ reserved_quantity: Math.max(0, Number(currentStock.reserved_quantity ?? 0) - 1), updated_at: new Date().toISOString() })
-      .eq("id", currentStock.id);
-  }
-
-  if (shirtChanged) {
-    await supabase.from("shirt_inventory").update({ reserved_quantity: (nextStock.reserved_quantity ?? 0) + 1, updated_at: new Date().toISOString() }).eq("id", nextStock.id);
-  }
-
-  const { error: updateParticipantError } = await supabase.from("participants").update({
+  if (payload.gender && !ALLOWED_GENDERS.has(payload.gender)) throw new Error("Sexo inválido.");
+  const { supabase } = await requireParticipantContext(payload.id);
+  const { error } = await supabase.from("participants").update({
     full_name: payload.full_name,
     birth_date: payload.birth_date,
     phone: payload.phone,
     email: payload.email.trim().toLowerCase(),
     city: payload.city,
     gender: payload.gender,
-    shirt_type: payload.shirt_type,
-    shirt_size: payload.shirt_size,
     notes: payload.notes,
-    amount: payload.amount,
   }).eq("id", payload.id);
-
-  if (updateParticipantError) throw updateParticipantError;
-
-  const { error: paymentError } = await supabase.from("payments").update({
-    amount: payload.amount,
-    payment_method: payload.payment_method,
-    payment_status: payload.payment_status,
-  }).eq("participant_id", payload.id);
-
-  if (paymentError) throw paymentError;
-
-  await supabase.from("audit_logs").insert({
-    actor: "system",
-    action: "participant_updated",
-    entity_type: "participants",
-    entity_id: payload.id,
-    details: {
-      shirt_type: payload.shirt_type,
-      shirt_size: payload.shirt_size,
-      payment_status: payload.payment_status,
-    },
+  if (error) throw error;
+  const { error: reevaluateError } = await supabase.rpc("reevaluate_participant_data_issues", {
+    p_participant_id: payload.id, p_import_batch_id: null,
   });
+  if (reevaluateError) throw reevaluateError;
+  revalidatePath(`/inscricoes/${payload.id}`);
+  revalidatePath(`/inscricoes/${payload.id}/editar`);
+  return { success: true as const, message: "Dados cadastrais atualizados." };
+}
 
-  return true;
+export async function confirmParticipantPaymentFromEditAction(participantId: string) {
+  const { participant, payment } = await getParticipantEditContext(participantId);
+  if (!payment) throw new Error("Pagamento não encontrado.");
+  if (payment.payment_status === "paid") return { success: true as const, message: "Pagamento já confirmado." };
+  return finalizeCadastroPaymentAndTicketAction({
+    participantId,
+    paymentId: payment.id,
+    eventId: participant.event_id,
+    organizationId: participant.organization_id,
+  });
+}
+
+export async function changeParticipantShirtFromEditAction(input: {
+  participantId: string; ticketId: string; shirtType: string; shirtSize: string;
+}) {
+  await assertPermission("inventory.change_participant_shirt");
+  const context = await getParticipantEditContext(input.participantId);
+  if (context.ticketId !== input.ticketId) throw new Error("Ingresso não corresponde ao cadastro.");
+  if (context.shirtDelivered) throw new Error("Camiseta já entregue. Use uma operação explícita de troca ou estorno.");
+  const allowed = context.shirtOptions.some((option) => option.shirt_type === input.shirtType && option.shirt_size === input.shirtSize);
+  if (!allowed) throw new Error("Combinação de modelo e tamanho não habilitada para o evento.");
+  const { supabase } = await requireParticipantContext(input.participantId);
+  const { error } = await supabase.rpc("admin_change_ticket_shirt", {
+    p_ticket_id: input.ticketId,
+    p_new_shirt_type: input.shirtType,
+    p_new_shirt_size: input.shirtSize,
+  });
+  if (error) throw error;
+  revalidatePath(`/inscricoes/${input.participantId}/editar`);
+  revalidatePath(`/ingressos/${input.ticketId}`);
+  return { success: true as const, message: "Camiseta atualizada." };
 }

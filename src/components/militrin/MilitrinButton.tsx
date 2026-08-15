@@ -6,7 +6,7 @@ type ButtonVariant = 'primary' | 'secondary' | 'success' | 'warning' | 'danger' 
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 const variantClass: Record<ButtonVariant, string> = {
-  primary: 'bg-emerald-400 text-slate-950 hover:bg-emerald-300',
+  primary: 'bg-gradient-to-r from-(--brand-600) to-(--brand-500) text-white shadow-lg shadow-(--brand-600)/25 hover:from-(--brand-500) hover:to-(--brand-400)',
   secondary: 'border border-slate-700 bg-slate-900/70 text-slate-100 hover:border-slate-500',
   success: 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20',
   warning: 'border border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20',

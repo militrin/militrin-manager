@@ -2,6 +2,7 @@
 
 import { getOperationsGridConfig } from "./tableGrid";
 import type { PickupCapabilities, PickupEvent, PickupListItem } from "../types";
+import { MaterializeItemsDialog } from "./MaterializeItemsDialog";
 
 function maskCpf(cpf: string) {
   const digits = cpf.replace(/\D/g, "");
@@ -25,7 +26,7 @@ function Badge({
   };
 
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${classes[tone]}`}>
+    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes[tone]}`}>
       {children}
     </span>
   );
@@ -62,31 +63,38 @@ export function OperationRow({
   onDeliverFullKit,
   onDeliverKitAndCheckin,
   onCheckin,
+  onItemsMaterialized,
 }: {
   item: PickupListItem;
   selectedEvent: PickupEvent | null;
   isExpanded: boolean;
   busy: boolean;
   capabilities: PickupCapabilities;
-  onToggleDetails: (participantId: string) => void;
-  onDeliverFullKit: (participantId: string) => Promise<void>;
-  onDeliverKitAndCheckin: (participantId: string) => Promise<void>;
-  onCheckin: (participantId: string) => Promise<void>;
+  onToggleDetails: (entry: PickupListItem) => void;
+  onDeliverFullKit: (ticketId: string, participantId: string | null) => Promise<void>;
+  onDeliverKitAndCheckin: (ticketId: string, participantId: string | null) => Promise<void>;
+  onCheckin: (ticketId: string) => Promise<void>;
+  onItemsMaterialized: (ticketId: string) => Promise<void>;
 }) {
   const grid = getOperationsGridConfig(selectedEvent);
   const age = getAge(item.birth_date);
   const gender = formatGender(item.gender);
   const shirtLabel = [item.shirt_type, item.shirt_size].filter(Boolean).join(" ").trim();
+  const hasTicket = item.kind === "ticket";
+
+  function toggle() {
+    onToggleDetails(item);
+  }
 
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={() => onToggleDetails(item.id)}
+      onClick={toggle}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onToggleDetails(item.id);
+          toggle();
         }
       }}
       className={`grid grid-cols-1 gap-1.5 px-3 py-2.5 transition hover:bg-slate-800/45 lg:gap-2 ${grid.row} ${
@@ -95,13 +103,22 @@ export function OperationRow({
     >
       <div>
         <div className="flex items-center gap-2">
-          <span className="text-slate-500">{isExpanded ? "▼" : "▶"}</span>
-          <span className="text-sm font-semibold text-slate-100">{item.full_name}</span>
+          <span className="text-slate-500">{hasTicket ? (isExpanded ? "▼" : "▶") : "•"}</span>
+          <span className="text-sm font-semibold text-slate-100">
+            {item.buyer_type === "imported_holder" ? "Portador" : "Titular"}: {item.participant_name}
+          </span>
         </div>
         <div className="mt-0.5 text-[11px] text-slate-400">
-          {(item.city || "Sem cidade") + " · " + gender + " · " + (age === null ? "idade n/i" : `${age} anos`)}
+          {(item.city || "Não informado") + " · " + gender + " · " + (age === null ? "Não informado" : `${age} anos`)}
         </div>
         <div className="text-[11px] text-slate-500">CPF {maskCpf(item.cpf)}</div>
+        <div className="text-[11px] text-slate-500">
+          {item.kind === "participant_without_ticket"
+            ? "Inscrição importada sem ingresso gerado"
+            : item.order_ticket_count > 1
+            ? `Pedido com ${item.order_ticket_count} ingressos · ingresso ${item.order_ticket_position} de ${item.order_ticket_count}`
+            : "Pedido com 1 ingresso"}
+        </div>
       </div>
 
       <div className="text-sm"><span className="text-slate-500 lg:hidden">Categoria: </span>{item.category_name || "—"}</div>
@@ -126,13 +143,17 @@ export function OperationRow({
 
       {selectedEvent?.has_kit ? (
         <div>
-          <span className="text-slate-500 lg:hidden">Kit: </span>
+          <span className="text-slate-500 lg:hidden">Itens: </span>
           {item.kit_status === "delivered" ? (
             <Badge tone="green">Entregue</Badge>
           ) : item.kit_status === "partial" ? (
             <Badge tone="blue">Parcial</Badge>
           ) : item.kit_status === "none" ? (
-            <Badge tone="gray">Sem kit</Badge>
+            <Badge tone="gray">Não se aplica</Badge>
+          ) : item.kit_status === "configuration_pending" ? (
+            <Badge tone="yellow">Configuração pendente</Badge>
+          ) : item.kit_status === "error" ? (
+            <Badge tone="red">Erro ao consultar</Badge>
           ) : (
             <Badge tone="yellow">Pendente</Badge>
           )}
@@ -144,53 +165,65 @@ export function OperationRow({
         {item.checkin_status === "done" ? <Badge tone="green">Realizado</Badge> : <Badge tone="yellow">Pendente</Badge>}
       </div>
 
-      {selectedEvent?.wristband_enabled ? (
-        <div>
-          <span className="text-slate-500 lg:hidden">Pulseira: </span>
-          {item.wristband?.status === "active" ? (
-            <Badge tone="green">Vinculada</Badge>
-          ) : (
-            <Badge tone="yellow">Pendente</Badge>
-          )}
-        </div>
-      ) : null}
-
       <div className="flex flex-wrap items-center gap-1.5 lg:content-start" onClick={(event) => event.stopPropagation()}>
-        {selectedEvent?.has_kit ? (
+        {item.kind === "participant_without_ticket" ? (
           <>
+            <Badge tone={item.is_imported_without_ticket ? "blue" : "gray"}>
+              {item.is_imported_without_ticket ? "Importação sem ingresso" : "Sem ingresso"}
+            </Badge>
+            <button type="button" onClick={() => onToggleDetails(item)} className="rounded-lg border border-amber-500/40 px-2 py-1 text-[11px] font-semibold text-amber-200">
+              Ver detalhes
+            </button>
+          </>
+        ) : item.kit_status === "configuration_pending" ? (
+          hasTicket && capabilities.canDeliverKit
+            ? <MaterializeItemsDialog ticketId={item.ticket_id} onSuccess={() => onItemsMaterialized(item.id)} />
+            : <Badge tone="yellow">Revisar itens</Badge>
+        ) : item.kit_status === "error" ? null : item.checkin_status === "done" && (item.kit_status === "delivered" || item.kit_status === "none") ? (
+          <Badge tone="green">Concluído</Badge>
+        ) : (
+          <>
+            {selectedEvent?.has_kit && item.kit_status !== "delivered" && item.kit_status !== "none" ? (
             <button
+              title="Entregar somente os itens ainda pendentes"
+              aria-label="Entregar itens pendentes"
               type="button"
               disabled={
                 busy ||
                 !capabilities.canDeliverKit ||
-                !item.can_operate ||
-                item.kit_status === "delivered" ||
-                item.kit_status === "none"
+                !hasTicket ||
+                !item.can_operate
               }
-              onClick={() => void onDeliverFullKit(item.id)}
+              onClick={() => void onDeliverFullKit(item.ticket_id, item.participant_id)}
               className="rounded-lg border border-emerald-500/40 px-2 py-1 text-[11px] font-semibold text-emerald-200 disabled:opacity-40"
             >
-              Entregar kit
+              Entregar itens
             </button>
-
+            ) : null}
+            {selectedEvent?.has_kit && item.kit_status !== "delivered" && item.kit_status !== "none" && item.checkin_status !== "done" ? (
             <button
+              title="Entregar itens pendentes e depois realizar o check-in"
+              aria-label="Entregar itens pendentes e realizar check-in"
               type="button"
-              disabled={busy || !capabilities.canCombined || !item.can_operate || item.checkin_status === "done"}
-              onClick={() => void onDeliverKitAndCheckin(item.id)}
+              disabled={busy || !capabilities.canCombined || !hasTicket || !item.can_operate}
+              onClick={() => void onDeliverKitAndCheckin(item.ticket_id, item.participant_id)}
               className="rounded-lg bg-cyan-500 px-2 py-1 text-[11px] font-semibold text-cyan-950 disabled:opacity-40"
             >
-              Kit + check-in
+              Entregar + check-in
             </button>
-          </>
-        ) : (
+            ) : null}
+            {item.checkin_status !== "done" && (item.kit_status === "delivered" || item.kit_status === "none" || !selectedEvent?.has_kit) ? (
           <button
+            title="Realizar check-in"
             type="button"
-            disabled={busy || !capabilities.canCheckin || !item.can_operate || item.checkin_status === "done"}
-            onClick={() => void onCheckin(item.id)}
+            disabled={busy || !capabilities.canCheckin || !hasTicket || !item.can_operate}
+            onClick={() => void onCheckin(item.ticket_id)}
             className="rounded-lg bg-cyan-500 px-2 py-1 text-[11px] font-semibold text-cyan-950 disabled:opacity-40"
           >
             Fazer check-in
           </button>
+            ) : null}
+          </>
         )}
       </div>
     </div>

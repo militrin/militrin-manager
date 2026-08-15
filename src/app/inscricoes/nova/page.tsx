@@ -23,6 +23,7 @@ import {
 } from "./actions";
 import { formatCpf, formatPhone, registrationSchema, type RegistrationFormValues } from "@/lib/validation/registration";
 import { formatDateTimeBR } from "@/lib/utils/date";
+import { useSearchParams } from "next/navigation";
 
 const paymentMethods = [
   { value: "pix", label: "PIX" },
@@ -80,6 +81,10 @@ type FormContextState = {
 
 type CreatedRegistrationState = {
   id: string;
+  order_id: string;
+  order_item_id: string;
+  payment_id: string;
+  ticket_id: string | null;
   full_name: string;
   event_name: string;
   batch_name: string;
@@ -116,7 +121,9 @@ function formatRemainingSeconds(ms: number) {
 }
 
 export default function NewRegistrationPage() {
-  const [submitState, setSubmitState] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const searchParams = useSearchParams();
+  const selectedEventId = searchParams.get("eventId") ?? "";
+  const [submitState, setSubmitState] = useState<{ type: "success" | "error"; message: string; issueWithoutHolderHref?: string } | null>(null);
   const [createdRegistration, setCreatedRegistration] = useState<CreatedRegistrationState | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
@@ -178,7 +185,7 @@ export default function NewRegistrationPage() {
 
     const loadContext = async () => {
       setIsLoadingContext(true);
-      const result = await getRegistrationFormContextAction();
+      const result = await getRegistrationFormContextAction(selectedEventId);
 
       if (!mounted) return;
 
@@ -212,7 +219,7 @@ export default function NewRegistrationPage() {
     return () => {
       mounted = false;
     };
-  }, [setValue]);
+  }, [setValue, selectedEventId]);
 
   useEffect(() => {
     if (!payment?.expires_at || payment.payment_status !== "pending") return;
@@ -246,6 +253,7 @@ export default function NewRegistrationPage() {
     setPricingError(null);
 
     const result = await getPricingPreviewAction({
+      event_id: selectedEventId,
       gender: genderValue,
       ticket_category_id: ticketCategoryId,
       coupon_code: couponToApply?.trim() ? couponToApply : undefined,
@@ -267,7 +275,7 @@ export default function NewRegistrationPage() {
     setIsApplyingCoupon(true);
     setCouponState(null);
 
-    const result = await validateCouponAction({ code: couponCode ?? "", gender: genderValue ?? "", ticket_category_id: ticketCategoryId ?? "" });
+    const result = await validateCouponAction({ event_id: selectedEventId, code: couponCode ?? "", gender: genderValue ?? "", ticket_category_id: ticketCategoryId ?? "" });
     setIsApplyingCoupon(false);
 
     if (!result.success || !result.pricing) {
@@ -284,11 +292,15 @@ export default function NewRegistrationPage() {
     setSubmitState(null);
     setCreatedRegistration(null);
 
-    const result = await createRegistrationAction(data);
+    const result = await createRegistrationAction(selectedEventId, data);
     setIsSubmitting(false);
 
     if (!result?.success) {
-      setSubmitState({ type: "error", message: result?.message ?? "Não foi possível concluir a inscrição." });
+      setSubmitState({
+        type: "error",
+        message: result?.message ?? "Não foi possível concluir a inscrição.",
+        issueWithoutHolderHref: "issueWithoutHolderHref" in result ? result.issueWithoutHolderHref : undefined,
+      });
       return;
     }
 
@@ -412,18 +424,18 @@ export default function NewRegistrationPage() {
     setCouponState(null);
   };
 
-  const currentCategory = genderValue?.toLowerCase().includes("femin") ? "Feminino" : genderValue?.toLowerCase().includes("mascul") ? "Masculino" : "Nao selecionada";
+  const currentCategory = activeCategories.find((category) => category.id === ticketCategoryId)?.name ?? "Não selecionada";
   const isFormBlocked = Boolean(formUnavailableMessage) || Boolean(createdRegistration);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
 
         <div className="flex-1 space-y-6">
-          <TopBar title="Nova inscrição" subtitle="Cadastro de participante" />
+          <TopBar title="Nova inscrição" subtitle="Cadastro de participante" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Inscrições",href:"/inscricoes"},{label:"Nova inscrição"}]} backHref="/inscricoes" fallbackHref="/inscricoes" />
 
-          <SectionCard title="Dados do participante" description="Preencha os dados e salve a inscrição no Supabase.">
+          <SectionCard title="Nova inscrição manual" description="Cadastre a pessoa e configure separadamente a unidade de ingresso.">
             {isLoadingContext ? (
               <div className="mb-4 flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
                 <Loader2 size={16} className="animate-spin" /> Carregando lote e estoque...
@@ -441,7 +453,15 @@ export default function NewRegistrationPage() {
               {submitState ? (
                 <div className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${submitState.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`}>
                   {submitState.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                  <span>{submitState.message}</span>
+                  <div>
+                    <span>{submitState.message}</span>
+                    {submitState.issueWithoutHolderHref ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Link href={submitState.issueWithoutHolderHref} className="rounded-lg bg-amber-300 px-3 py-2 font-semibold text-slate-950">Emitir sem titular</Link>
+                        <button type="button" onClick={() => setSubmitState(null)} className="rounded-lg border border-slate-700 px-3 py-2">Cancelar</button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -545,6 +565,10 @@ export default function NewRegistrationPage() {
               ) : null}
 
               <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <h3 className="text-base font-semibold text-slate-100">Dados do participante</h3>
+                  <p className="text-sm text-slate-400">Dados cadastrais da pessoa, independentes do ingresso.</p>
+                </div>
                 <label className="space-y-2 text-sm">
                   <span className="text-slate-300">Nome completo</span>
                   <input {...register("full_name")} disabled={isFormBlocked} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none" />
@@ -616,6 +640,25 @@ export default function NewRegistrationPage() {
                   <input {...register("city")} disabled={isFormBlocked} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none" />
                 </label>
 
+                <div className="mt-2 border-t border-slate-800 pt-5 md:col-span-2">
+                  <h3 className="text-base font-semibold text-slate-100">Dados do ingresso</h3>
+                  <p className="text-sm text-slate-400">Categoria, lote, pagamento e camiseta pertencem a este ingresso.</p>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <span className="text-slate-300">Evento</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-200">
+                    {formContext?.active_event_name ?? "Evento selecionado"}
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <span className="text-slate-300">Lote</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-200">
+                    {pricing?.batch_name ?? formContext?.batch_name ?? "Lote ativo"}
+                  </div>
+                </div>
+
                 {formContext?.has_shirt_item ? (
                   <>
                     <label className="space-y-2 text-sm">
@@ -656,8 +699,7 @@ export default function NewRegistrationPage() {
                   </>
                 ) : null}
 
-                {activeCategories.length >= 2 ? (
-                  <label className="space-y-2 text-sm">
+                <label className="space-y-2 text-sm">
                     <span className="text-slate-300">Categoria de acesso</span>
                     <select
                       {...register("ticket_category_id", {
@@ -678,16 +720,7 @@ export default function NewRegistrationPage() {
                       ))}
                     </select>
                     {errors.ticket_category_id ? <p className="text-sm text-red-400">{errors.ticket_category_id.message}</p> : null}
-                  </label>
-                ) : (
-                  <div className="space-y-2 text-sm">
-                    <span className="text-slate-300">Categoria de acesso</span>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-200">
-                      {activeCategories[0]?.name ?? "Open Bar"}
-                    </div>
-                    <input type="hidden" {...register("ticket_category_id")} defaultValue={activeCategories[0]?.id ?? ""} />
-                  </div>
-                )}
+                </label>
 
                 <label className="space-y-2 text-sm">
                   <span className="text-slate-300">Forma de pagamento</span>

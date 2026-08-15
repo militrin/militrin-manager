@@ -8,8 +8,8 @@ export const militrinTokens = {
   title: 'text-white font-semibold',
   text: 'text-slate-200',
   textMuted: 'text-slate-300',
-  eyebrow: 'text-xs uppercase tracking-[0.22em] text-emerald-300',
-  focusRing: 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
+  eyebrow: 'text-xs uppercase tracking-[0.22em] text-(--brand-300)',
+  focusRing: 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--brand-400)/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
 };
 
 export const militrinStatusTone = {

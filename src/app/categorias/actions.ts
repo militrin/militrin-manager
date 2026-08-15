@@ -10,7 +10,6 @@ const categorySchema = z.object({
   name: z.string().trim().min(1, "Informe o nome da categoria."),
   slug: z.string().trim().min(1, "Informe o slug."),
   description: z.string().optional().nullable(),
-  capacity: z.union([z.number().int().positive(), z.null()]),
   is_active: z.boolean(),
   sort_order: z.number().int(),
 });
@@ -33,7 +32,7 @@ export async function createCategoryAction(payload: z.infer<typeof categorySchem
       p_name: parsed.data.name,
       p_slug: parsed.data.slug,
       p_description: parsed.data.description ?? null,
-      p_capacity: parsed.data.capacity,
+      p_capacity: null,
       p_is_active: parsed.data.is_active,
       p_sort_order: parsed.data.sort_order,
     });
@@ -60,7 +59,7 @@ export async function updateCategoryAction(payload: z.infer<typeof categorySchem
       p_name: parsed.data.name,
       p_slug: parsed.data.slug,
       p_description: parsed.data.description ?? null,
-      p_capacity: parsed.data.capacity,
+      p_capacity: null,
       p_is_active: parsed.data.is_active,
       p_sort_order: parsed.data.sort_order,
     });

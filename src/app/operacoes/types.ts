@@ -87,7 +87,7 @@ export type OperationRow = {
   payment_status: string;
   payment_method: string;
   registration_status: string;
-  kit_status: 'none' | 'pending' | 'partial' | 'delivered';
+  kit_status: 'none' | 'configuration_pending' | 'error' | 'pending' | 'partial' | 'delivered';
   checkin_status: 'pending' | 'done';
   wristband: WristbandSummary | null;
   shirt_available: number | null;
@@ -171,44 +171,134 @@ export type PickupWristband = {
   linked_at: string | null;
 } | null;
 
-export type PickupListItem = {
+type OperationEntryBase = {
   id: string;
-  event_id: string;
+  ticket_token: string | null;
+  ticket_status: string | null;
+  ticket_used_at: string | null;
+  ticket_issued_at: string | null;
+  participant_id: string | null;
+  participant_name: string;
+  participant_email: string;
   full_name: string;
   cpf: string;
   phone: string;
   city: string;
   gender: string | null;
   birth_date: string | null;
+  registration_status: string;
+  event_id: string;
+  event_name: string;
+  category_id: string | null;
+  category_name: string;
+  order_id: string | null;
+  order_number: string | null;
+  order_created_at: string | null;
+  buyer_user_id: string | null;
+  buyer_name: string;
+  buyer_cpf: string;
+  buyer_phone: string;
+  buyer_email: string;
+  buyer_type?: "account" | "imported_holder";
+  import_batch_id?: string | null;
   payment_status: string;
   payment_method: string;
-  registration_status: string;
   shirt_type: string;
   shirt_size: string;
-  category_name: string;
-  event_name: string;
-  ticket_id: string | null;
-  ticket_status: string | null;
-  ticket_used_at: string | null;
-  kit_status: 'none' | 'pending' | 'partial' | 'delivered';
+  kit_status: 'none' | 'configuration_pending' | 'error' | 'pending' | 'partial' | 'delivered';
   checkin_status: 'pending' | 'done';
+  wristband_id: string | null;
+  wristband_code: string | null;
+  wristband_status: string | null;
   can_operate: boolean;
   block_reason: string | null;
+  order_ticket_count: number;
+  order_ticket_position: number;
   event_has_kit: boolean;
   event_has_shirt: boolean;
   event_wristband_enabled: boolean;
   event_wristband_required_for_kit: boolean;
   event_wristband_required_for_checkin: boolean;
+  is_imported_without_ticket: boolean;
   wristband: PickupWristband;
 };
 
-export type PickupDetails = PickupListItem & {
-  event_kit_enabled: boolean;
+export type TicketBackedOperationEntry = OperationEntryBase & {
+  kind: "ticket";
+  ticket_id: string;
+};
+
+export type ParticipantOnlyLegacyOperationEntry = OperationEntryBase & {
+  kind: "participant_without_ticket";
+  ticket_id: null;
+  participant_id: string;
+};
+
+export type OperationTicketRow =
+  | TicketBackedOperationEntry
+  | ParticipantOnlyLegacyOperationEntry;
+
+export type OperationGroup = {
+  id: string;
+  group_type: "order" | "imported_participant" | "participant";
+  order_id: string | null;
+  order_number: string | null;
+  order_created_at: string | null;
+  buyer_user_id: string | null;
+  buyer_name: string;
+  buyer_cpf: string;
+  buyer_phone: string;
+  buyer_email: string;
+  participant_id: string | null;
+  participant_name: string;
+  ticket_count: number;
+  pending_count: number;
+  completed_count: number;
+  is_imported_without_ticket: boolean;
+  tickets: OperationTicketRow[];
+};
+
+export type OperationOrderTicketSummary = {
+  ticket_id: string;
   ticket_token: string | null;
+  ticket_status: string;
+  participant_id: string | null;
+  participant_name: string;
+  category_name: string;
+  shirt_type: string;
+  shirt_size: string;
+  wristband_code: string | null;
+  wristband_status: string | null;
+};
+
+export type OperationTicketDetails = TicketBackedOperationEntry & {
+  event_kit_enabled: boolean;
   last_checkin_at: string | null;
   last_checkin_actor: string | null;
   all_kit_delivered: boolean;
   allow_checkin_during_kit_delivery: boolean;
+  issues: Array<{
+    id: string;
+    field_code: string;
+    issue_type: string;
+    message: string;
+    blocks_payment: boolean;
+    blocks_ticket_issuance: boolean;
+    blocks_checkin: boolean;
+    blocks_kit_delivery: boolean;
+  }>;
+  shirt_options: Array<{ type: string; sizes: string[] }>;
+  shirt_stock: {
+    shirt_type: string;
+    shirt_size: string;
+    supply_mode: string;
+    physical_available: number | null;
+    status: "available" | "last_unit" | "out_of_stock" | "not_applicable";
+  } | null;
+  can_finalize_ticket: boolean;
+  can_issue_ticket: boolean;
+  registration_contact_pin: string | null;
+  order_tickets: OperationOrderTicketSummary[];
   kit_items: Array<{
     kit_item_id: string;
     item_name: string;
@@ -216,6 +306,11 @@ export type PickupDetails = PickupListItem & {
     quantity: number;
     status: string;
     delivered_at: string | null;
+    delivered_by: string | null;
+    shirt_type: string | null;
+    shirt_size: string | null;
+    physical_available: number | null;
+    stock_status: "available" | "last_unit" | "out_of_stock" | "not_applicable";
   }>;
   purchase_tickets: Array<{
     ticket_id: string;
@@ -227,6 +322,48 @@ export type PickupDetails = PickupListItem & {
     category_name: string;
   }>;
 };
+
+export type OperationParticipantDetails = ParticipantOnlyLegacyOperationEntry & {
+  origin: "import" | "registration";
+  without_ticket_class: "data_pending_import" | "legacy_unresolved" | "regularizable" | "manual_review";
+  organization_id: string;
+  payment_id: string | null;
+  can_finalize_ticket: boolean;
+  can_issue_ticket: boolean;
+  registration_contact_pin: string | null;
+  import_batch_ids: string[];
+  issues: Array<{
+    id: string;
+    field_code: string;
+    issue_type: string;
+    message: string;
+    blocks_payment: boolean;
+    blocks_ticket_issuance: boolean;
+    blocks_checkin: boolean;
+    blocks_kit_delivery: boolean;
+  }>;
+  shirt_options: Array<{ type: string; sizes: string[] }>;
+  legacy_kit_items: Array<{
+    id: string;
+    item_name: string;
+    status: string;
+    delivered_at: string | null;
+    legacy_unresolved: boolean;
+  }>;
+  no_ticket_reason: string;
+  can_regularize_ticket: boolean;
+  regularization_reason: string;
+  regularization_blockers: string[];
+  batch_id: string | null;
+  event_categories: Array<{ id: string; name: string }>;
+  event_batches: Array<{ id: string; name: string }>;
+};
+
+export type PickupListItem = OperationTicketRow;
+
+export type PickupDetails = OperationTicketDetails | OperationParticipantDetails;
+
+export type PickupListGroup = OperationGroup;
 
 export type PickupFilters = {
   eventId: string;
@@ -248,6 +385,7 @@ export type PickupCapabilities = {
   canDeliverKit: boolean;
   canCheckin: boolean;
   canCombined: boolean;
+  canChangeShirt: boolean;
 };
 
 export const EMPTY_PICKUP_FILTERS: PickupFilters = {

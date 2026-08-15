@@ -9,28 +9,33 @@ import {
   deliverKitAndCheckinAction,
   deliverKitItemAction,
   getPickupEventsAction,
-  getPickupParticipantDetailsAction,
+  getOperationTicketDetailsAction,
+  getOperationParticipantDetailsAction,
   getRetiradaCapabilitiesAction,
-  listPickupParticipantsAction,
+  listOperationTicketsAction,
   searchPickupParticipantByQrAction,
 } from "./actions";
+import { confirmParticipantPaymentAction } from "@/app/inscricoes/actions";
 import { OperationsDashboard } from "./components/OperationsDashboard";
 import { OperationsFilters } from "./components/OperationsFilters";
 import { OperationsHeader } from "./components/OperationsHeader";
 import { OperationsTable } from "./components/OperationsTable";
 import { QrScannerModal } from "./components/QrScannerModal";
+import { BatchMaterializeItemsDialog } from "./components/MaterializeItemsDialog";
 import {
   EMPTY_PICKUP_FILTERS,
   type PickupCapabilities,
   type PickupDetails,
   type PickupEvent,
   type PickupFilters,
+  type PickupListGroup,
   type PickupListItem,
   type PickupSortDirection,
   type PickupSortField,
 } from "./types";
 
 const VIEW_STATE_STORAGE_KEY = "operacoes.view-state.v1";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHIRT_TYPE_RANK = new Map<string, number>([["camiseta", 0], ["babylook", 1]]);
 const SHIRT_SIZE_RANK = new Map<string, number>([
   ["PP", 0],
@@ -104,7 +109,7 @@ function compareNullable(
 }
 
 function getSortValue(item: PickupListItem, field: PickupSortField) {
-  if (field === "name") return item.full_name;
+  if (field === "name") return item.buyer_name || item.participant_name;
   if (field === "city") return item.city;
   if (field === "gender") return item.gender ?? null;
   if (field === "age") return getAge(item.birth_date);
@@ -151,9 +156,10 @@ function compareByField(
     const kitRank = (status: string) => {
       if (status === "pending") return 0;
       if (status === "partial") return 1;
-      if (status === "delivered") return 2;
-      if (status === "none") return 3;
-      return 4;
+      if (status === "configuration_pending") return 2;
+      if (status === "delivered") return 3;
+      if (status === "none") return 4;
+      return 5;
     };
 
     const rankCompare = compareNullable(kitRank(a.kit_status), kitRank(b.kit_status), direction);
@@ -180,6 +186,7 @@ function compareByField(
 }
 
 function isPending(item: PickupListItem) {
+  if (item.kind !== "ticket") return false;
   if (item.payment_status !== "paid") return true;
   if (item.checkin_status !== "done") return true;
   if (item.event_has_kit && item.kit_status !== "delivered" && item.kit_status !== "none") return true;
@@ -187,46 +194,41 @@ function isPending(item: PickupListItem) {
   return false;
 }
 
-function getInitialViewState() {
-  if (typeof window === "undefined") {
-    return {
-      filters: EMPTY_PICKUP_FILTERS,
-      appliedFilters: EMPTY_PICKUP_FILTERS,
-      sortField: "name" as PickupSortField,
-      sortDirection: "asc" as PickupSortDirection,
-    };
+function isConcluded(item: PickupListItem, selectedEvent: PickupEvent | null) {
+  if (item.kind !== "ticket") return false;
+  if (!selectedEvent?.has_kit) {
+    return item.checkin_status === "done";
   }
 
-  try {
-    const raw = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
-    if (!raw) throw new Error("empty");
-    const parsed = JSON.parse(raw) as {
-      filters?: PickupFilters;
-      appliedFilters?: PickupFilters;
-      sortField?: PickupSortField;
-      sortDirection?: PickupSortDirection;
-    };
-
-    return {
-      filters: { ...EMPTY_PICKUP_FILTERS, ...(parsed.filters ?? {}) },
-      appliedFilters: { ...EMPTY_PICKUP_FILTERS, ...(parsed.appliedFilters ?? parsed.filters ?? {}) },
-      sortField: parsed.sortField ?? "name",
-      sortDirection: parsed.sortDirection ?? "asc",
-    };
-  } catch {
-    return {
-      filters: EMPTY_PICKUP_FILTERS,
-      appliedFilters: EMPTY_PICKUP_FILTERS,
-      sortField: "name" as PickupSortField,
-      sortDirection: "asc" as PickupSortDirection,
-    };
-  }
+  return item.checkin_status === "done" && (item.kit_status === "delivered" || item.kit_status === "none");
 }
 
 function detailToListItem(detail: PickupDetails): PickupListItem {
   return {
+    kind: detail.kind,
     id: detail.id,
+    ticket_id: detail.ticket_id,
+    ticket_token: detail.ticket_token,
+    ticket_status: detail.ticket_status,
+    ticket_used_at: detail.ticket_used_at,
+    ticket_issued_at: detail.ticket_issued_at,
+    participant_id: detail.participant_id,
+    participant_name: detail.participant_name,
+    participant_email: detail.participant_email,
     event_id: detail.event_id,
+    event_name: detail.event_name,
+    category_id: detail.category_id,
+    category_name: detail.category_name,
+    order_id: detail.order_id,
+    order_number: detail.order_number,
+    order_created_at: detail.order_created_at,
+    buyer_user_id: detail.buyer_user_id,
+    buyer_name: detail.buyer_name,
+    buyer_cpf: detail.buyer_cpf,
+    buyer_phone: detail.buyer_phone,
+    buyer_email: detail.buyer_email,
+    buyer_type: detail.buyer_type,
+    import_batch_id: detail.import_batch_id,
     full_name: detail.full_name,
     cpf: detail.cpf,
     phone: detail.phone,
@@ -238,35 +240,46 @@ function detailToListItem(detail: PickupDetails): PickupListItem {
     registration_status: detail.registration_status,
     shirt_type: detail.shirt_type,
     shirt_size: detail.shirt_size,
-    category_name: detail.category_name,
-    event_name: detail.event_name,
-    ticket_id: detail.ticket_id,
-    ticket_status: detail.ticket_status,
-    ticket_used_at: detail.ticket_used_at,
     kit_status: detail.kit_status,
     checkin_status: detail.checkin_status,
+    wristband_id: detail.wristband_id,
+    wristband_code: detail.wristband_code,
+    wristband_status: detail.wristband_status,
     can_operate: detail.can_operate,
     block_reason: detail.block_reason,
+    order_ticket_count: detail.order_ticket_count,
+    order_ticket_position: detail.order_ticket_position,
     event_has_kit: detail.event_has_kit,
     event_has_shirt: detail.event_has_shirt,
     event_wristband_enabled: detail.event_wristband_enabled,
     event_wristband_required_for_kit: detail.event_wristband_required_for_kit,
     event_wristband_required_for_checkin: detail.event_wristband_required_for_checkin,
+    is_imported_without_ticket: detail.is_imported_without_ticket,
     wristband: detail.wristband,
-  };
+  } as PickupListItem;
+}
+
+function upsertTicketInGroups(current: PickupListGroup[], row: PickupListItem) {
+  return current.map((group) => {
+    if (!group.tickets.some((ticket) => ticket.id === row.id)) return group;
+    return {
+      ...group,
+      tickets: group.tickets.map((ticket) => (ticket.id === row.id ? row : ticket)),
+    };
+  });
 }
 
 export default function KitPickupPage() {
-  const initialViewState = useMemo(() => getInitialViewState(), []);
-
-  const [filters, setFilters] = useState<PickupFilters>(initialViewState.filters);
-  const [appliedFilters, setAppliedFilters] = useState<PickupFilters>(initialViewState.appliedFilters);
-  const [sortField, setSortField] = useState<PickupSortField>(initialViewState.sortField);
-  const [sortDirection, setSortDirection] = useState<PickupSortDirection>(initialViewState.sortDirection);
+  const [filters, setFilters] = useState<PickupFilters>(EMPTY_PICKUP_FILTERS);
+  const [appliedFilters, setAppliedFilters] = useState<PickupFilters>(EMPTY_PICKUP_FILTERS);
+  const [sortField, setSortField] = useState<PickupSortField>("name");
+  const [sortDirection, setSortDirection] = useState<PickupSortDirection>("asc");
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [events, setEvents] = useState<PickupEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<PickupEvent | null>(null);
   const [items, setItems] = useState<PickupListItem[]>([]);
   const [visibleItems, setVisibleItems] = useState<PickupListItem[]>([]);
+  const [groups, setGroups] = useState<PickupListGroup[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, PickupDetails>>({});
   const [loading, setLoading] = useState(true);
@@ -277,6 +290,7 @@ export default function KitPickupPage() {
     canDeliverKit: false,
     canCheckin: false,
     canCombined: false,
+    canChangeShirt: false,
   });
 
   const shirtTypes = useMemo(
@@ -299,6 +313,63 @@ export default function KitPickupPage() {
     [items],
   );
 
+  const visibleGroups = useMemo(() => {
+    const visibleIndex = new Map(visibleItems.map((item, index) => [item.id, index]));
+    return groups
+      .map((group) => ({
+        ...group,
+        tickets: group.tickets
+          .filter((ticket) => visibleIndex.has(ticket.id))
+          .sort((a, b) => (visibleIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER)
+            - (visibleIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER)),
+      }))
+      .filter((group) => group.tickets.length > 0)
+      .sort((a, b) => {
+        const aIndex = Math.min(...a.tickets.map((ticket) => visibleIndex.get(ticket.id) ?? Number.MAX_SAFE_INTEGER));
+        const bIndex = Math.min(...b.tickets.map((ticket) => visibleIndex.get(ticket.id) ?? Number.MAX_SAFE_INTEGER));
+        return aIndex - bIndex;
+      });
+  }, [groups, visibleItems]);
+
+  const operationSummary = useMemo(() => {
+    const totalGroups = visibleGroups.length;
+    const totalTickets = visibleGroups.reduce((acc, group) => acc + group.tickets.filter((entry) => entry.kind === "ticket").length, 0);
+    const completed = visibleItems.filter((item) => item.kind === "ticket" && isConcluded(item, selectedEvent)).length;
+    const pending = Math.max(0, totalTickets - completed);
+
+    return {
+      totalGroups,
+      totalTickets,
+      pending,
+      completed,
+    };
+  }, [visibleGroups, visibleItems, selectedEvent]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      try {
+        const raw = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as {
+            filters?: PickupFilters;
+            appliedFilters?: PickupFilters;
+            sortField?: PickupSortField;
+            sortDirection?: PickupSortDirection;
+          };
+
+          setFilters({ ...EMPTY_PICKUP_FILTERS, ...(parsed.filters ?? {}) });
+          setAppliedFilters({ ...EMPTY_PICKUP_FILTERS, ...(parsed.appliedFilters ?? parsed.filters ?? {}) });
+          setSortField(parsed.sortField ?? "name");
+          setSortDirection(parsed.sortDirection ?? "asc");
+        }
+      } catch {
+        // Ignore invalid localStorage payload and keep deterministic defaults.
+      } finally {
+        setPreferencesLoaded(true);
+      }
+    });
+  }, []);
+
   function buildLocalView(
     sourceItems: PickupListItem[],
     activeFilters: PickupFilters,
@@ -309,7 +380,16 @@ export default function KitPickupPage() {
 
     const filtered = sourceItems.filter((item) => {
       if (search) {
-        const haystack = normalizeText([item.full_name, item.cpf, item.phone].join(" "));
+        const haystack = normalizeText([
+          item.participant_name,
+          item.participant_email,
+          item.cpf,
+          item.phone,
+          item.buyer_name,
+          item.buyer_cpf,
+          item.buyer_phone,
+          item.buyer_email,
+        ].join(" "));
         if (!haystack.includes(search)) return false;
       }
 
@@ -343,19 +423,33 @@ export default function KitPickupPage() {
     setLoading(true);
     if (!keepMessage) setMessage(null);
 
-    const response = await listPickupParticipantsAction({ eventId });
+    let response: Awaited<ReturnType<typeof listOperationTicketsAction>>;
+
+    try {
+      response = await listOperationTicketsAction({ eventId });
+    } catch (error) {
+      setLoading(false);
+      setItems([]);
+      setVisibleItems([]);
+      setGroups([]);
+      setMessage(error instanceof Error ? error.message : "Não foi possível carregar a lista.");
+      return;
+    }
 
     setLoading(false);
 
     if (!response.success) {
       setItems([]);
       setVisibleItems([]);
+      setGroups([]);
       setMessage(response.message ?? "Não foi possível carregar a lista.");
       return;
     }
 
-    const loadedItems = response.participants;
+    const loadedItems = response.tickets;
+    const loadedGroups = response.groups ?? [];
     setItems(loadedItems);
+    setGroups(loadedGroups);
     applyView(loadedItems);
 
     if (expandedId && !loadedItems.some((item) => item.id === expandedId)) {
@@ -380,10 +474,24 @@ export default function KitPickupPage() {
   }
 
   useEffect(() => {
+    if (!preferencesLoaded) return;
+
     void (async () => {
       const [capabilityResponse, eventsResponse] = await Promise.all([
-        getRetiradaCapabilitiesAction(),
-        getPickupEventsAction(),
+        getRetiradaCapabilitiesAction().catch(() => ({
+          success: false as const,
+          capabilities: {
+            canDeliverKit: false,
+            canCheckin: false,
+            canCombined: false,
+            canChangeShirt: false,
+          },
+        })),
+        getPickupEventsAction().catch((error) => ({
+          success: false as const,
+          message: error instanceof Error ? error.message : "Não foi possível carregar os eventos.",
+          events: [] as PickupEvent[],
+        })),
       ]);
 
       if (capabilityResponse.success) {
@@ -399,11 +507,9 @@ export default function KitPickupPage() {
       const loadedEvents = eventsResponse.events as PickupEvent[];
       setEvents(loadedEvents);
 
-      const preferredEvent =
-        (filters.eventId && loadedEvents.find((event) => event.id === filters.eventId)) ??
-        loadedEvents.find((event) => event.is_active) ??
-        loadedEvents[0] ??
-        null;
+      const preferredEvent = filters.eventId
+        ? loadedEvents.find((event) => event.id === filters.eventId) ?? null
+        : null;
 
       if (!preferredEvent) {
         setMessage("Nenhum evento encontrado.");
@@ -429,10 +535,10 @@ export default function KitPickupPage() {
     })();
     // Carrega somente ao abrir a tela.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [preferencesLoaded]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !preferencesLoaded) return;
 
     window.localStorage.setItem(
       VIEW_STATE_STORAGE_KEY,
@@ -443,20 +549,41 @@ export default function KitPickupPage() {
         sortDirection,
       }),
     );
-  }, [filters, appliedFilters, sortField, sortDirection]);
+  }, [filters, appliedFilters, sortField, sortDirection, preferencesLoaded]);
 
-  async function toggleDetails(participantId: string) {
-    if (expandedId === participantId) {
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setAppliedFilters(filters);
+      applyView(items, filters, sortField, sortDirection);
+    }, filters.search ? 220 : 120);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  // applyView usa exatamente os estados listados abaixo como defaults; inclui-la
+  // recriaria o timer em toda renderizacao porque ela tambem atualiza estado.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, items, sortField, sortDirection, preferencesLoaded]);
+
+  async function toggleDetails(entry: PickupListItem) {
+    const entryId = entry.id;
+    if (expandedId === entryId) {
       setExpandedId(null);
       return;
     }
 
-    setExpandedId(participantId);
+    setExpandedId(entryId);
 
-    if (details[participantId]) return;
+    if (details[entryId]) return;
 
-    setActionId(participantId);
-    const response = await getPickupParticipantDetailsAction(participantId);
+    setActionId(entryId);
+    const response = entry.kind === "ticket"
+      ? UUID_PATTERN.test(entry.ticket_id)
+        ? await getOperationTicketDetailsAction(entry.ticket_id)
+        : { success: false as const, message: "Identificador de ingresso inválido." }
+      : await getOperationParticipantDetailsAction(entry.participant_id);
     setActionId(null);
 
     if (!response.success || !response.participant) {
@@ -466,12 +593,13 @@ export default function KitPickupPage() {
 
     setDetails((current) => ({
       ...current,
-      [participantId]: response.participant as PickupDetails,
+      [entryId]: response.participant as PickupDetails,
     }));
   }
 
-  async function refreshParticipant(participantId: string) {
-    const response = await getPickupParticipantDetailsAction(participantId);
+  async function refreshTicket(ticketId: string) {
+    if (!UUID_PATTERN.test(ticketId)) return;
+    const response = await getOperationTicketDetailsAction(ticketId);
 
     if (!response.success || !response.participant) return;
 
@@ -480,26 +608,31 @@ export default function KitPickupPage() {
 
     setDetails((current) => ({
       ...current,
-      [participantId]: participant,
+      [ticketId]: participant,
     }));
 
-    setItems((current) => current.map((item) => (item.id === participantId ? row : item)));
-    setVisibleItems((current) => current.map((item) => (item.id === participantId ? row : item)));
+    setItems((current) => current.map((item) => (item.id === ticketId ? row : item)));
+    setVisibleItems((current) => current.map((item) => (item.id === ticketId ? row : item)));
+    setGroups((current) => upsertTicketInGroups(current, row));
   }
 
   async function runAction(
-    participantId: string,
-    action: () => Promise<{ success: boolean; message?: string }>,
+    ticketId: string,
+    action: () => Promise<{ success: boolean; message?: string; code?: string }>,
   ) {
-    setActionId(participantId);
+    if (!UUID_PATTERN.test(ticketId)) {
+      setMessage("Identificador de ingresso inválido.");
+      return;
+    }
+    setActionId(ticketId);
     setMessage(null);
 
     try {
       const response = await action();
       setMessage(response.message ?? (response.success ? "Operação concluída." : "Operação não concluída."));
 
-      if (response.success) {
-        await refreshParticipant(participantId);
+      if (response.success || response.code === "SHIRT_OUT_OF_STOCK") {
+        await refreshTicket(ticketId);
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Falha inesperada.");
@@ -519,6 +652,11 @@ export default function KitPickupPage() {
 
     const participant = response.participant as PickupDetails;
 
+    if (participant.kind !== "ticket" || !UUID_PATTERN.test(participant.ticket_id)) {
+      setMessage("O QR Code não corresponde a um ingresso válido.");
+      return;
+    }
+
     if (participant.event_id !== selectedEvent?.id) {
       setMessage("Participante encontrado em outro evento. Selecione o evento correspondente para operar.");
       return;
@@ -527,25 +665,27 @@ export default function KitPickupPage() {
     const row = detailToListItem(participant);
 
     setShowScanner(false);
-    setDetails((current) => ({ ...current, [participant.id]: participant }));
-    setExpandedId(participant.id);
+    setDetails((current) => ({ ...current, [participant.ticket_id]: participant }));
+    setExpandedId(participant.ticket_id);
 
     setItems((current) => {
-      if (current.some((item) => item.id === participant.id)) {
-        return current.map((item) => (item.id === participant.id ? row : item));
+      if (current.some((item) => item.id === participant.ticket_id)) {
+        return current.map((item) => (item.id === participant.ticket_id ? row : item));
       }
       return [row, ...current];
     });
 
     setVisibleItems((current) => {
-      if (current.some((item) => item.id === participant.id)) {
-        return current.map((item) => (item.id === participant.id ? row : item));
+      if (current.some((item) => item.id === participant.ticket_id)) {
+        return current.map((item) => (item.id === participant.ticket_id ? row : item));
       }
       return [row, ...current];
     });
 
+    setGroups((current) => upsertTicketInGroups(current, row));
+
     window.setTimeout(() => {
-      document.getElementById(`participant-${participant.id}`)?.scrollIntoView({
+      document.getElementById(`participant-${participant.ticket_id}`)?.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
@@ -586,11 +726,6 @@ export default function KitPickupPage() {
     }));
   }
 
-  function handleApplyFilters() {
-    setAppliedFilters(filters);
-    applyView(items, filters, sortField, sortDirection);
-  }
-
   function handleSort(field: PickupSortField) {
     const nextDirection: PickupSortDirection =
       field === sortField
@@ -619,40 +754,69 @@ export default function KitPickupPage() {
     applyView(items, cleared, sortField, sortDirection);
   }
 
-  async function handleRefreshList() {
-    if (!selectedEvent?.id) return;
-    await loadList(selectedEvent.id, true);
-  }
-
-  async function handleDeliverFullKit(participantId: string) {
-    await runAction(participantId, () =>
-      deliverFullKitAction({ participant_id: participantId }),
+  async function handleDeliverFullKit(ticketId: string, _participantId: string | null) {
+    void _participantId;
+    await runAction(ticketId, () =>
+      deliverFullKitAction({ ticket_id: ticketId }),
     );
   }
 
-  async function handleDeliverKitAndCheckin(participantId: string) {
-    await runAction(participantId, () =>
-      deliverKitAndCheckinAction({ participant_id: participantId }),
+  async function handleDeliverKitAndCheckin(ticketId: string, participantId: string | null) {
+    void participantId;
+    await runAction(ticketId, () =>
+      deliverKitAndCheckinAction({ ticket_id: ticketId }),
     );
   }
 
-  async function handleCheckin(participantId: string) {
-    await runAction(participantId, () =>
-      checkinEntryAction({ participant_id: participantId }),
+  async function handleCheckin(ticketId: string) {
+    await runAction(ticketId, () =>
+      checkinEntryAction({ ticket_id: ticketId }),
     );
   }
 
-  async function handleDeliverKitItem(participantId: string, kitItemId: string) {
-    await runAction(participantId, () =>
+  async function handleConfirmPayment(ticketId: string, participantId: string) {
+    await runAction(ticketId, () => confirmParticipantPaymentAction(participantId));
+  }
+
+  async function handleDeliverKitItem(ticketId: string, _participantId: string | null, kitItemId: string) {
+    void _participantId;
+    await runAction(ticketId, () =>
       deliverKitItemAction({
-        participant_id: participantId,
+        ticket_id: ticketId,
         kit_item_id: kitItemId,
       }),
     );
   }
 
+  async function handleParticipantResolved(
+    participantId: string,
+    result: { ticketId: string | null; finalization: string | null; message: string },
+  ) {
+    setMessage(result.message);
+    setDetails((current) => {
+      const next = { ...current };
+      delete next[participantId];
+      return next;
+    });
+    setExpandedId(null);
+    if (selectedEvent?.id) await loadList(selectedEvent.id, true);
+  }
+
+  async function handleItemsMaterialized(ticketId?: string) {
+    if (ticketId) {
+      setDetails((current) => {
+        const next = { ...current };
+        delete next[ticketId];
+        return next;
+      });
+    } else {
+      setDetails({});
+    }
+    if (selectedEvent) await loadList(selectedEvent.id, true);
+  }
+
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       {showScanner ? (
         <QrScannerModal
           onClose={() => setShowScanner(false)}
@@ -670,6 +834,15 @@ export default function KitPickupPage() {
             title="Operação do evento"
             description="Filtre localmente e execute as ações operacionais sem perder o estado visual da tela."
           >
+            {selectedEvent && visibleItems.some((item) => item.kind === "ticket" && item.kit_status === "configuration_pending") && capabilities.canDeliverKit ? (
+              <div className="mb-3 flex justify-end">
+                <BatchMaterializeItemsDialog
+                  eventId={selectedEvent.id}
+                  count={visibleItems.filter((item) => item.kind === "ticket" && item.kit_status === "configuration_pending").length}
+                  onSuccess={() => handleItemsMaterialized()}
+                />
+              </div>
+            ) : null}
             <OperationsFilters
               filters={filters}
               events={events}
@@ -679,22 +852,19 @@ export default function KitPickupPage() {
               categories={categories}
               cities={cities}
               loading={loading}
-              itemCount={visibleItems.length}
+              summary={operationSummary}
               onEventChange={(eventId) => {
                 void handleEventChange(eventId);
               }}
               onFilterChange={handleFilterChange}
-              onApplyFilters={handleApplyFilters}
-              onClearFilters={handleClearFilters}
+              onClearAllFilters={handleClearFilters}
               onOpenScanner={() => setShowScanner(true)}
-              onRefreshList={() => {
-                void handleRefreshList();
-              }}
             />
 
             <OperationsDashboard message={message}>
               <OperationsTable
                 selectedEvent={selectedEvent}
+                groups={visibleGroups}
                 items={visibleItems}
                 details={details}
                 expandedId={expandedId}
@@ -710,6 +880,9 @@ export default function KitPickupPage() {
                 onDeliverKitAndCheckin={handleDeliverKitAndCheckin}
                 onCheckin={handleCheckin}
                 onDeliverKitItem={handleDeliverKitItem}
+                onItemsMaterialized={handleItemsMaterialized}
+                onParticipantResolved={handleParticipantResolved}
+                onConfirmPayment={handleConfirmPayment}
               />
             </OperationsDashboard>
           </SectionCard>

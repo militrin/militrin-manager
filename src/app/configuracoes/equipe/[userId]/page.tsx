@@ -57,7 +57,7 @@ export default async function TeamUserAccessPage({ params }: { params: Promise<{
     }));
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
@@ -65,6 +65,8 @@ export default async function TeamUserAccessPage({ params }: { params: Promise<{
             title="Editar acesso da equipe"
             subtitle="Defina funcao base, status e overrides individuais"
             actions={<Link href="/painel/configuracoes/equipe" className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-200">Voltar para equipe</Link>}
+            breadcrumbs={[{label:"Início",href:"/painel"},{label:"Configurações",href:"/configuracao"},{label:"Equipe",href:"/painel/configuracoes/equipe"},{label:String(user.full_name ?? "Usuário")}]}
+            backHref="/painel/configuracoes/equipe"
           />
 
           <AdminSection title="Usuario selecionado" description="Contexto do membro e status atual">

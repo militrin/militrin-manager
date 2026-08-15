@@ -4,7 +4,7 @@ import { getLoyaltyLevel, getLoyaltyProgress, normalizeLoyaltyLevel, sortLoyalty
 import { MilitrinBadge, MilitrinProgress, MilitrinSection, MilitrinStat } from '@/components/militrin';
 
 const BENEFITS_BY_LEVEL: Record<string, string[]> = {
-  bronze: ['Acesso ao portal do participante', 'Historico de compras e ingressos'],
+  bronze: ['Acesso à conta Militrin', 'Histórico de compras e ingressos'],
   prata: ['Prioridade em novidades do evento', 'Reconhecimento no perfil do portal'],
   ouro: ['Maior destaque na comunidade Militrin', 'Convites para ativacoes especiais'],
   diamante: ['Experiencia premium no portal', 'Beneficios progressivos por participacao'],
@@ -93,7 +93,7 @@ export default async function NivelPage() {
         </MilitrinSection>
       </div>
 
-      <MilitrinSection eyebrow="Mapa de niveis" title="Progressao oficial" description="Faixas usadas no portal do participante.">
+      <MilitrinSection eyebrow="Mapa de níveis" title="Progressão oficial" description="Faixas usadas na conta Militrin.">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {loyaltyLevels.map((level) => {
             const active = level.slug === currentLevel.slug;

@@ -212,7 +212,7 @@ export function EventKitManager({ event, items }: { event: EventSummary; items: 
         </div>
 
         <div className="mt-3 grid gap-2 md:grid-cols-3 text-sm text-slate-300">
-          <label className="flex items-center gap-2"><input type="checkbox" checked={form.requires_variant} onChange={(event) => setForm((prev) => ({ ...prev, requires_variant: event.target.checked }))} /> Possui variação</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={form.requires_variant} onChange={(event) => setForm((prev) => ({ ...prev, requires_variant: event.target.checked }))} /> Este item possui tamanhos/opções?</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.is_required} onChange={(event) => setForm((prev) => ({ ...prev, is_required: event.target.checked }))} /> Obrigatório</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))} /> Ativo</label>
         </div>
@@ -245,8 +245,8 @@ export function EventKitManager({ event, items }: { event: EventSummary; items: 
                 <button type="button" onClick={() => deleteItem(item)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200">Excluir</button>
               </div>
 
-              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                <p className="text-xs font-semibold text-slate-300">Variações</p>
+              {item.requires_variant ? <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                <p className="text-xs font-semibold text-slate-300">Tamanhos/opções</p>
                 <div className="mt-2 space-y-2">
                   {item.variants.length === 0 ? <p className="text-xs text-slate-500">Sem variações.</p> : item.variants.map((variant) => (
                     <div key={variant.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1.5 text-xs text-slate-300">
@@ -257,12 +257,12 @@ export function EventKitManager({ event, items }: { event: EventSummary; items: 
                 </div>
 
                 <div className="mt-3 grid gap-2 md:grid-cols-4">
-                  <input value={draft.name} onChange={(event) => setVariantDrafts((prev) => ({ ...prev, [item.id]: { ...draft, name: event.target.value } }))} placeholder="Nome" className="rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1.5 text-xs" />
+                  <input value={draft.name} onChange={(event) => setVariantDrafts((prev) => ({ ...prev, [item.id]: { ...draft, name: event.target.value } }))} placeholder="Opção (ex.: 500 ml)" className="rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1.5 text-xs" />
                   <input value={draft.value} onChange={(event) => setVariantDrafts((prev) => ({ ...prev, [item.id]: { ...draft, value: event.target.value } }))} placeholder="Valor" className="rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1.5 text-xs" />
                   <input value={draft.sort_order} onChange={(event) => setVariantDrafts((prev) => ({ ...prev, [item.id]: { ...draft, sort_order: event.target.value } }))} placeholder="Ordem" className="rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1.5 text-xs" />
-                  <button type="button" onClick={() => saveVariant(item.id)} className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-950">Adicionar variação</button>
+                  <button type="button" onClick={() => saveVariant(item.id)} className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-950">Adicionar opção</button>
                 </div>
-              </div>
+              </div> : <p className="mt-4 text-xs text-slate-500">Opção única · nenhuma variante artificial será criada.</p>}
             </div>
           );
         })}

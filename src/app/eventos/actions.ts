@@ -18,7 +18,47 @@ const eventSchema = z.object({
   is_active: z.boolean().default(false),
   registration_enabled: z.boolean().default(false),
   kit_enabled: z.boolean().default(false),
+  min_age: z.number().int().min(0, "Idade mínima inválida.").default(18),
+  banner_hero_url: z.string().optional().nullable(),
+  banner_card_url: z.string().optional().nullable(),
 });
+
+export async function setEventParticipantItemChangesAction(eventId: string, enabled: boolean) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_event_participant_item_changes", {
+    p_event_id: eventId,
+    p_enabled: enabled,
+  });
+  if (error) return { success: false, message: error.message };
+  revalidatePath(`/painel/eventos/${eventId}`);
+  return { success: true, message: "Configuração salva." };
+}
+
+export async function setEventKitItemChangeRulesAction(itemId: string, allowChange: boolean, trackInventory: boolean) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_event_kit_item_change_rules", {
+    p_kit_item_id: itemId,
+    p_allow_change: allowChange,
+    p_track_inventory: trackInventory,
+  });
+  if (error) return { success: false, message: error.message };
+  return { success: true, message: "Regra do item salva." };
+}
+
+export async function setEventKitItemVariantStockAction(variantId: string, totalQuantity: number) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_event_kit_item_variant_stock", { p_variant_id: variantId, p_total_quantity: totalQuantity });
+  if (error) return { success: false, message: error.message };
+  return { success: true, message: "Estoque da opção salvo." };
+}
+
+export async function setEventTicketHolderRulesAction(eventId: string, allowHolderChange: boolean, allowTicketTransfer: boolean) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_event_ticket_holder_rules", { p_event_id: eventId, p_allow_holder_change: allowHolderChange, p_allow_ticket_transfer: allowTicketTransfer });
+  if (error) return { success: false, message: error.message };
+  revalidatePath(`/painel/eventos/${eventId}`);
+  return { success: true, message: "Regras de titularidade salvas." };
+}
 
 const duplicateSchema = z.object({
   source_event_id: z.string().uuid(),
@@ -34,13 +74,17 @@ const duplicateSchema = z.object({
   copy_coupons: z.boolean().default(false),
 });
 
-const kitDeliveryScheduleSchema = z.object({
+const eventScheduleSchema = z.object({
   id: z.string().uuid().optional(),
-  delivery_at: z.string().trim().min(1, 'Informe dia e hora da entrega.'),
-  city: z.string().trim().min(1, 'Informe a cidade.'),
-  location: z.string().trim().min(1, 'Informe o local.'),
+  event_id: z.string().uuid(),
+  delivery_at: z.string().trim().min(1, 'Informe dia e hora do compromisso.'),
+  title: z.string().trim().min(1, 'Informe o título.'),
+  location: z.string().trim().optional().nullable(),
+  description: z.string().trim().optional().nullable(),
+  schedule_type: z.enum(['kit_pickup', 'gates_open', 'event_start', 'attraction', 'accreditation', 'meeting', 'closing', 'other']),
   sort_order: z.number().int().default(0),
   is_active: z.boolean().default(true),
+  is_visible_to_users: z.boolean().default(true),
 });
 
 const eventPaymentMethodsSchema = z.object({
@@ -122,7 +166,15 @@ export async function createEventAction(payload: z.infer<typeof eventSchema>) {
 
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.rpc("create_event", {
+
+    // Resolve organização no servidor — nunca confia no cliente
+    const { data: orgId, error: orgError } = await supabase.rpc('current_organization_id');
+    if (orgError) throw orgError;
+    if (!orgId) {
+      return { success: false, message: 'Nenhuma organização encontrada para o usuário.' };
+    }
+
+    const { data: createdEventId, error } = await supabase.rpc("create_event", {
       p_name: parsed.data.name,
       p_slug: parsed.data.slug,
       p_year: parsed.data.year,
@@ -135,25 +187,19 @@ export async function createEventAction(payload: z.infer<typeof eventSchema>) {
       p_is_active: parsed.data.is_active,
       p_registration_enabled: parsed.data.registration_enabled,
       p_kit_enabled: parsed.data.kit_enabled,
+      p_organization_id: orgId as string,
+      p_min_age: parsed.data.min_age,
+      p_banner_hero_url: parsed.data.banner_hero_url ?? null,
+      p_banner_card_url: parsed.data.banner_card_url ?? null,
     });
 
     if (error) throw error;
-
-    const { data: createdEvent, error: fetchCreatedError } = await supabase
-      .from('events')
-      .select('id')
-      .eq('slug', parsed.data.slug)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (fetchCreatedError) throw fetchCreatedError;
 
     await revalidateEventsPages();
     return {
       success: true,
       message: "Evento criado com sucesso.",
-      eventId: createdEvent?.id ? String(createdEvent.id) : null,
+      eventId: createdEventId ? String(createdEventId) : null,
     };
   } catch (error) {
     return { success: false, message: resolveActionErrorMessage(error, "Falha ao criar evento.") };
@@ -182,9 +228,18 @@ export async function updateEventAction(payload: z.infer<typeof eventSchema>) {
       p_is_active: parsed.data.is_active,
       p_registration_enabled: parsed.data.registration_enabled,
       p_kit_enabled: parsed.data.kit_enabled,
+      p_banner_hero_url: parsed.data.banner_hero_url ?? null,
+      p_banner_card_url: parsed.data.banner_card_url ?? null,
     });
 
     if (error) throw error;
+
+    const { error: minAgeError } = await supabase.rpc("set_event_min_age", {
+      p_event_id: parsed.data.id,
+      p_min_age: parsed.data.min_age,
+    });
+    if (minAgeError) throw minAgeError;
+
     await revalidateEventsPages();
     return { success: true, message: "Evento atualizado com sucesso." };
   } catch (error) {
@@ -207,33 +262,7 @@ export async function activateEventAction(eventId: string) {
 export async function deactivateEventAction(eventId: string) {
   try {
     const supabase = await createServerSupabaseClient();
-
-    const { data: currentEvent, error: eventError } = await supabase
-      .from('events')
-      .select('id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, registration_enabled, kit_enabled')
-      .eq('id', eventId)
-      .maybeSingle();
-
-    if (eventError) throw eventError;
-    if (!currentEvent?.id) {
-      return { success: false, message: 'Evento não encontrado.' };
-    }
-
-    const { error } = await supabase.rpc('update_event', {
-      p_event_id: String(currentEvent.id),
-      p_name: String(currentEvent.name ?? ''),
-      p_slug: String(currentEvent.slug ?? ''),
-      p_year: currentEvent.year === null || currentEvent.year === undefined ? null : Number(currentEvent.year),
-      p_description: currentEvent.description ? String(currentEvent.description) : null,
-      p_starts_at: currentEvent.starts_at ? String(currentEvent.starts_at) : null,
-      p_ends_at: currentEvent.ends_at ? String(currentEvent.ends_at) : null,
-      p_registration_open_at: currentEvent.registration_open_at ? String(currentEvent.registration_open_at) : null,
-      p_registration_close_at: currentEvent.registration_close_at ? String(currentEvent.registration_close_at) : null,
-      p_location: currentEvent.location ? String(currentEvent.location) : null,
-      p_is_active: false,
-      p_registration_enabled: Boolean(currentEvent.registration_enabled),
-      p_kit_enabled: Boolean(currentEvent.kit_enabled),
-    });
+    const { error } = await supabase.rpc('set_event_inactive', { p_event_id: eventId });
 
     if (error) throw error;
     await revalidateEventsPages();
@@ -278,7 +307,7 @@ export async function duplicateEventAction(payload: z.infer<typeof duplicateSche
 
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.rpc("duplicate_event_configuration", {
+    const { data: newEventId, error } = await supabase.rpc("duplicate_event_configuration", {
       p_source_event_id: parsed.data.source_event_id,
       p_target_name: parsed.data.target_name,
       p_target_slug: parsed.data.target_slug,
@@ -293,50 +322,86 @@ export async function duplicateEventAction(payload: z.infer<typeof duplicateSche
     });
 
     if (error) throw error;
+
+    if (newEventId) {
+      const { data: sourceEvent } = await supabase
+        .from("events")
+        .select("min_age")
+        .eq("id", parsed.data.source_event_id)
+        .maybeSingle();
+      if (sourceEvent?.min_age !== undefined && sourceEvent?.min_age !== null) {
+        await supabase.rpc("set_event_min_age", { p_event_id: newEventId, p_min_age: sourceEvent.min_age });
+      }
+    }
+
     await revalidateEventsPages();
-    return { success: true, message: "Configuração de evento duplicada com sucesso." };
+    return {
+      success: true,
+      message: "Configuração de evento duplicada com sucesso.",
+      eventId: newEventId ? String(newEventId) : null,
+    };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao duplicar evento." };
   }
 }
 
-export async function upsertKitDeliveryScheduleAction(payload: z.infer<typeof kitDeliveryScheduleSchema>) {
-  const parsed = kitDeliveryScheduleSchema.safeParse(payload);
+export async function upsertEventScheduleAction(payload: z.infer<typeof eventScheduleSchema>) {
+  const parsed = eventScheduleSchema.safeParse(payload);
   if (!parsed.success) {
-    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos para entrega de kits.' };
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos para o compromisso.' };
   }
 
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.rpc('upsert_kit_delivery_schedule', {
+    const { data, error } = await supabase.rpc('upsert_event_schedule_item', {
       p_id: parsed.data.id ?? null,
+      p_event_id: parsed.data.event_id,
       p_delivery_at: parseTs(parsed.data.delivery_at),
-      p_city: parsed.data.city,
+      p_title: parsed.data.title,
       p_location: parsed.data.location,
+      p_description: parsed.data.description,
+      p_schedule_type: parsed.data.schedule_type,
       p_sort_order: Number(parsed.data.sort_order ?? 0),
       p_is_active: parsed.data.is_active,
+      p_is_visible_to_users: parsed.data.is_visible_to_users,
     });
 
     if (error) throw error;
     await revalidateEventsPages();
-    return { success: true, message: parsed.data.id ? 'Entrega de kits atualizada.' : 'Entrega de kits criada.' };
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath('/minha-conta/entregas');
+    return { success: true, id: String(data), message: parsed.data.id ? 'Compromisso atualizado.' : 'Compromisso criado.' };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : 'Falha ao salvar entrega de kits.' };
+    return { success: false, message: error instanceof Error ? error.message : 'Falha ao salvar compromisso.' };
   }
 }
 
-export async function deleteKitDeliveryScheduleAction(id: string) {
+export async function restoreEventAction(eventId: string) {
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.rpc('delete_kit_delivery_schedule', {
+    const { error } = await supabase.rpc("restore_event", { p_event_id: eventId });
+    if (error) throw error;
+    await revalidateEventsPages();
+    return { success: true, message: "Evento restaurado como inativo e com vendas fechadas." };
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : "Falha ao restaurar evento." };
+  }
+}
+
+export async function deleteEventScheduleAction(id: string, eventId: string) {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('delete_event_schedule_item', {
       p_id: id,
     });
 
     if (error) throw error;
     await revalidateEventsPages();
-    return { success: true, message: 'Entrega de kits removida.' };
+    revalidatePath(`/painel/eventos/${eventId}`);
+    revalidatePath('/minha-conta/entregas');
+    return { success: true, message: 'Compromisso removido.' };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : 'Falha ao remover entrega de kits.' };
+    return { success: false, message: error instanceof Error ? error.message : 'Falha ao remover compromisso.' };
   }
 }
 
@@ -614,5 +679,62 @@ export async function deleteKitVariantAction(variantId: string) {
     return { success: true, message: "Variação removida." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao remover variação." };
+  }
+}
+
+const attractionSchema = z.object({
+  id: z.string().uuid().optional(),
+  event_id: z.string().uuid(),
+  name: z.string().trim().min(1, "Informe o nome da atração."),
+  description: z.string().optional().nullable(),
+  banner_url: z.string().optional().nullable(),
+  is_active: z.boolean().default(true),
+  sort_order: z.number().int().default(0),
+});
+
+export async function upsertEventAttractionAction(payload: z.infer<typeof attractionSchema>) {
+  const parsed = attractionSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc("upsert_event_attraction", {
+      p_id: parsed.data.id ?? null,
+      p_event_id: parsed.data.event_id,
+      p_name: parsed.data.name,
+      p_description: parsed.data.description ?? null,
+      p_banner_url: parsed.data.banner_url ?? null,
+      p_is_active: parsed.data.is_active,
+      p_sort_order: parsed.data.sort_order,
+    });
+
+    if (error) throw error;
+
+    revalidatePath('/eventos');
+    revalidatePath(`/eventos/${parsed.data.event_id}`);
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    return { success: true, message: parsed.data.id ? "Atração atualizada." : "Atração criada." };
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : "Falha ao salvar atração." };
+  }
+}
+
+export async function deleteEventAttractionAction(payload: { event_id: string; attraction_id: string }) {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc("delete_event_attraction", {
+      p_event_id: payload.event_id,
+      p_attraction_id: payload.attraction_id,
+    });
+
+    if (error) throw error;
+
+    revalidatePath('/eventos');
+    revalidatePath(`/painel/eventos/${payload.event_id}`);
+    return { success: true, message: "Atração removida." };
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : "Falha ao remover atração." };
   }
 }

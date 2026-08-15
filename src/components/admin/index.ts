@@ -8,4 +8,6 @@ export * from './AdminParticipantCard';
 export * from './AdminSection';
 export * from './AdminStatCard';
 export * from './AdminStatusBadge';
+export * from './OrgSelector';
+export * from './ReportDataTable';
 export * from './utils';

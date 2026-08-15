@@ -1,0 +1,25 @@
+MILITRIN_EMAIL_PROVIDER não definido. Usando ConsoleEmailProvider (modo desenvolvimento).
+[minha-conta] erro ao carregar pedidos canônicos {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '\n' +
+    'Caused by: AggregateError:  (EACCES)\n' +
+    'AggregateError: \n' +
+    '    at internalConnectMultiple (node:net:1194:18)\n' +
+    '    at afterConnectMultiple (node:net:1784:7)\n' +
+    '    at TCPConnectWrap.callbackTrampoline (node:internal/async_hooks:130:17)',
+  hint: '',
+  code: ''
+}
+[minha-conta] erro ao carregar pedidos canônicos {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '\n' +
+    'Caused by: AggregateError:  (EACCES)\n' +
+    'AggregateError: \n' +
+    '    at internalConnectMultiple (node:net:1194:18)\n' +
+    '    at afterConnectMultiple (node:net:1784:7)\n' +
+    '    at TCPConnectWrap.callbackTrampoline (node:internal/async_hooks:130:17)',
+  hint: '',
+  code: ''
+}

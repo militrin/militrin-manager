@@ -7,7 +7,6 @@ import { getEmailProvider } from '@/lib/email/fake-provider';
 import { generatePublicPixAction, simulatePublicPaymentAction } from '@/app/inscricao/actions';
 import { formatDateBR, toISODateFromBR } from '@/lib/utils/date';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
-import { normalizeShirtSize as normalizeShirtSizeBase, normalizeShirtType } from '@/lib/constants/shirts';
 import { assertPermission } from '@/lib/admin/permissions';
 
 const emailProvider = getEmailProvider();
@@ -24,10 +23,10 @@ async function loadOwnedTicketContext(supabase: Awaited<ReturnType<typeof create
   return supabase
     .from('tickets')
     .select(
-      'id, token, status, issued_at, used_at, ownership_status, participant_id, order_id, order_item_id, orders!inner(id, order_number, status, user_id, event_id, events(id, name, starts_at, shirt_order_deadline, limit_shirt_selection_to_stock)), order_items(id, item_position, status, ownership_status, holder_full_name, shirt_type, shirt_size, ticket_category_id, participant_id, notes, participants(id, full_name, email, shirt_type, shirt_size, ticket_category_id), ticket_categories(name))',
+      'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, events(id, name, starts_at, shirt_order_deadline, limit_shirt_selection_to_stock), order_items(id, item_position, status, ownership_status, holder_full_name, shirt_type, shirt_size, ticket_category_id, participant_id, participants(id, full_name, email, shirt_type, shirt_size, ticket_category_id), ticket_categories(name))',
     )
     .eq('id', ticketId)
-    .eq('orders.user_id', userId)
+    .eq('owner_user_id', userId)
     .maybeSingle();
 }
 
@@ -62,7 +61,7 @@ export async function defineTicketHolderAction(formData: FormData) {
 
   const orderItem = getTicketOrderItem(ticket as Record<string, unknown>);
   const order = getTicketOrder(ticket as Record<string, unknown>);
-  const eventId = String(order?.event_id ?? '');
+  const eventId = String(order?.event_id ?? ticket.event_id ?? '');
 
   const { data: participant, error: participantError } = await supabase
     .from('participants')
@@ -71,12 +70,12 @@ export async function defineTicketHolderAction(formData: FormData) {
     .maybeSingle();
 
   if (participantError) return { success: false, message: participantError.message };
-  if (!participant?.id) return { success: false, message: 'Participante nao encontrado.' };
+  if (!participant?.id) return { success: false, message: 'Titular não encontrado.' };
   if (String(participant.event_id ?? '') !== eventId) {
     return { success: false, message: 'O titular precisa pertencer ao mesmo evento do ingresso.' };
   }
   if (String(participant.user_id ?? '') !== user.id) {
-    return { success: false, message: 'Voce so pode definir titular com um participante vinculado a sua conta.' };
+    return { success: false, message: 'Você só pode definir um titular vinculado à sua conta.' };
   }
 
   const { error: assignError } = await supabase.rpc('assign_order_item_participant', {
@@ -105,7 +104,7 @@ export async function transferTicketAction(formData: FormData) {
   return { ...result, message: 'Ingresso transferido com sucesso.' };
 }
 
-export async function changeTicketShirtAction(formData: FormData) {
+export async function requestTicketItemChangeAction(formData: FormData) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -114,25 +113,36 @@ export async function changeTicketShirtAction(formData: FormData) {
   }
 
   const ticketId = String(formData.get('ticket_id') ?? '').trim();
-  const shirtType = normalizeShirtType(String(formData.get('shirt_type') ?? ''));
-  const shirtSize = shirtType ? normalizeShirtSizeBase(String(formData.get('shirt_size') ?? '')) : '';
+  const kitItemId = String(formData.get('kit_item_id') ?? '').trim();
+  const requestedVariantId = String(formData.get('requested_variant_id') ?? '').trim();
+  const reason = String(formData.get('reason') ?? '').trim();
 
-  if (!ticketId || !shirtType || !shirtSize) {
-    return { success: false, message: 'Selecione modelo e tamanho validos.' };
+  if (!ticketId || !kitItemId || !requestedVariantId) {
+    return { success: false, message: 'Selecione um item e uma opção válidos.' };
   }
 
   const { data: ticket, error } = await loadOwnedTicketContext(supabase, ticketId, user.id);
   if (error) return { success: false, message: error.message };
   if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
 
-  const orderItem = getTicketOrderItem(ticket as Record<string, unknown>);
   const order = getTicketOrder(ticket as Record<string, unknown>);
-  const participant = Array.isArray(orderItem?.participants) ? orderItem.participants[0] : orderItem?.participants;
-  const event = Array.isArray(order?.events) ? order.events[0] : order?.events;
-  const eventId = String(order?.event_id ?? '');
-  const enforcePhysicalStock = Boolean(event?.limit_shirt_selection_to_stock);
-  const currentType = normalizeShirtType(String(orderItem?.shirt_type ?? participant?.shirt_type ?? ''));
-  const currentSize = normalizeShirtSizeBase(String(orderItem?.shirt_size ?? participant?.shirt_size ?? ''));
+  const { error: changeError } = await supabase.rpc('request_ticket_item_change', {
+    p_ticket_id: ticketId,
+    p_kit_item_id: kitItemId,
+    p_requested_variant_id: requestedVariantId,
+    p_reason: reason || null,
+  });
+  if (changeError) return { success: false, message: changeError.message };
+
+  revalidatePath('/minha-conta');
+  revalidatePath('/minha-conta/ingressos');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/minha-conta/compras/${String(order?.id ?? ticket.order_id ?? '')}`);
+
+  return { success: true, message: 'Alteração solicitada · Aguardando confirmação do organizador' };
+
+  /* Legacy direct-stock implementation intentionally disabled. The transaction is
+     now owned exclusively by public.change_ticket_shirt(ticket_id, ...).
 
   const { data: currentStock, error: currentStockError } = await supabase
     .from('shirt_inventory')
@@ -212,12 +222,71 @@ await supabase.from('audit_logs').insert({
     success: true,
     message: enforcePhysicalStock ? 'Camiseta alterada com estoque validado.' : 'Camiseta alterada com sucesso.',
   };
+  */
+}
+
+export async function findUserByPinAction(ticketId: string, pin: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('find_user_by_public_pin', { p_ticket_id: ticketId, p_pin: pin });
+  if (error) return { user: null, message: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { user: null, message: 'Nenhum usuário encontrado para esse PIN.' };
+  return { user: { fullName: String(row.full_name) }, message: null };
+}
+
+async function changeHolderByPin(functionName: string, ticketId: string, pin: string, extra: Record<string, unknown> = {}) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc(functionName, { p_ticket_id: ticketId, p_pin: pin, ...extra });
+  if (error) return { success: false, message: error.message.includes('HOLDER_ALREADY_HAS_TICKET_FOR_EVENT') ? 'Esta pessoa ja e titular de outro ingresso neste evento.' : error.message };
+  revalidatePath('/minha-conta/ingressos'); revalidatePath(`/minha-conta/ingressos/${ticketId}`); revalidatePath('/operacoes');
+  return { success: true, message: 'Titularidade atualizada com sucesso.' };
+}
+
+export async function adminChangeTicketShirtAction(ticketId: string, shirtOption: string) {
+  await assertPermission('inventory.change_participant_shirt');
+  const [shirtType, shirtSize, extra] = shirtOption.split('|');
+  if (!ticketId || !shirtType || !shirtSize || extra) return { success: false, message: 'Selecione uma camiseta valida.' };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('admin_change_ticket_shirt', {
+    p_ticket_id: ticketId, p_new_shirt_type: shirtType, p_new_shirt_size: shirtSize,
+  });
+  if (error) return { success: false, message: error.message.includes('SHIRT_OUT_OF_STOCK') ? 'Esta camiseta nao esta disponivel no estoque.' : error.message };
+  revalidatePath('/operacoes');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  return { success: true, message: 'Camiseta atualizada.' };
+}
+export async function defineTicketHolderByPinAction(ticketId: string, pin: string) { return changeHolderByPin('define_ticket_holder_by_pin', ticketId, pin); }
+export async function transferTicketByPinAction(ticketId: string, pin: string) { return changeHolderByPin('transfer_ticket_by_pin', ticketId, pin); }
+export async function adminTransferTicketByPinAction(ticketId: string, pin: string, mode: 'define' | 'transfer') {
+  await assertPermission('participants.edit_basic');
+  return changeHolderByPin('admin_transfer_ticket_by_pin', ticketId, pin, { p_reason: 'Alteração administrativa no detalhe do ingresso', p_operation: mode === 'define' ? 'holder_assigned' : 'ticket_transferred' });
+}
+
+export async function reviewTicketItemChangeAction(formData: FormData) {
+  await assertPermission('kits.deliver');
+  const requestId = String(formData.get('request_id') ?? '').trim();
+  const decision = String(formData.get('decision') ?? '').trim();
+  const notes = String(formData.get('notes') ?? '').trim();
+  const ticketId = String(formData.get('ticket_id') ?? '').trim();
+  if (!requestId || !['approved', 'rejected'].includes(decision)) return { success: false, message: 'Solicitação inválida.' };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('review_ticket_item_change_request', {
+    p_request_id: requestId,
+    p_decision: decision,
+    p_notes: notes || null,
+  });
+  if (error) return { success: false, message: error.message };
+  revalidatePath('/operacoes');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/minha-conta/ingressos/${ticketId}/itens`);
+  return { success: true, message: decision === 'approved' ? 'Solicitação aprovada.' : 'Solicitação rejeitada.' };
 }
 
 export async function updateTicketCategoryAction(formData: FormData) {
   await assertPermission('participants.edit_basic');
 
   const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
   const ticketId = String(formData.get('ticket_id') ?? '').trim();
   const ticketCategoryId = String(formData.get('ticket_category_id') ?? '').trim();
 
@@ -253,17 +322,14 @@ export async function updateTicketCategoryAction(formData: FormData) {
     await supabase.from('order_items').update({ ticket_category_id: ticketCategoryId, updated_at: new Date().toISOString() }).eq('id', String(orderItem.id));
   }
 
-  if (orderItem?.participant_id) {
-    await supabase.from('participants').update({ ticket_category_id: ticketCategoryId, updated_at: new Date().toISOString() }).eq('id', String(orderItem.participant_id));
-  }
-
 await supabase.from('audit_logs').insert({
   action: 'ticket_category_changed',
   entity_type: 'tickets',
   entity_id: ticketId,
   event_id: eventId,
   details: {
-    actor: 'admin',
+    actor_user_id: user?.id ?? null,
+    previous_category_id: orderItem?.ticket_category_id ?? null,
     ticket_category_id: ticketCategoryId,
   },
 });
@@ -467,15 +533,15 @@ export async function resendTicketEmailAction(orderId: string) {
 
   const { data: ticket, error: ticketError } = await supabase
     .from('tickets')
-    .select('token')
+    .select('id, token')
     .eq('order_id', order.id)
     .maybeSingle();
 
   if (ticketError) return { success: false, message: ticketError.message };
   if (!ticket?.token) return { success: false, message: 'Ingresso ainda nao emitido.' };
 
-  const { data: kitItems, error: kitError } = await supabase.rpc('get_participant_kit_items', {
-    p_participant_id: order.participant_id,
+  const { data: kitItems, error: kitError } = await supabase.rpc('get_ticket_kit_items', {
+    p_ticket_id: ticket.id,
   });
   if (kitError) return { success: false, message: kitError.message };
 
@@ -484,7 +550,7 @@ export async function resendTicketEmailAction(orderId: string) {
   const participantEmail = String(participant?.email ?? '').trim().toLowerCase();
 
   if (!participantEmail) {
-    return { success: false, message: 'Nao foi possivel identificar o e-mail do participante.' };
+    return { success: false, message: 'Não foi possível identificar o e-mail do titular.' };
   }
 
   await emailProvider.sendTicketConfirmation({

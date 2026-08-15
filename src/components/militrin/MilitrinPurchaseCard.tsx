@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { MilitrinCard } from './MilitrinCard';
 import { MilitrinStatusBadge } from './MilitrinStatusBadge';
+import { getStatusLabel } from '@/lib/status-labels';
 
 type MilitrinPurchaseCardProps = {
   orderNumber: string;
@@ -9,7 +10,7 @@ type MilitrinPurchaseCardProps = {
   finalAmount: string;
   quantity?: number;
   subtitle?: string | null;
-  paymentMethod: string;
+  paymentMethod?: string | null;
   paymentStatus: string;
   orderStatus: string;
   expiration?: string | null;
@@ -44,8 +45,8 @@ export function MilitrinPurchaseCard({
       <div className="mt-4 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
         <p>Data: {date}</p>
         <p>Valor final: {finalAmount}</p>
-        <p>Pagamento: {paymentMethod}</p>
-        <p>Status pagamento: {paymentStatus}</p>
+        {paymentMethod ? <p>Forma de pagamento: {paymentMethod}</p> : null}
+        <p>Pagamento: {getStatusLabel(paymentStatus)}</p>
       </div>
 
       {expiration ? <p className="mt-2 text-xs text-amber-200">Expira em: {expiration}</p> : null}

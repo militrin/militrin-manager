@@ -1,18 +1,30 @@
 "use client";
 
-import Link from "next/link";
-import { Bell, Plus, Search } from "lucide-react";
+import type { ReactNode } from "react";
+import { Bell } from "lucide-react";
 import { PanelUserBadge } from "./PanelUserBadge";
+import { AppBreadcrumb } from "@/components/navigation/AppBreadcrumb";
+import type { BreadcrumbItem } from "@/lib/navigation/admin-navigation";
 
 export function TopBar({
   title,
   subtitle,
+  breadcrumbs,
+  backHref,
+  fallbackHref,
+  actions,
 }: {
   title: string;
   subtitle: string;
+  breadcrumbs?: BreadcrumbItem[];
+  backHref?: string;
+  fallbackHref?: string;
+  actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-col gap-4 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 lg:flex-row lg:items-center lg:justify-between">
+    <header className="space-y-4 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10">
+      <AppBreadcrumb items={breadcrumbs ?? [{label:"Início",href:"/painel"},{label:title}]} backHref={backHref} fallbackHref={fallbackHref}/>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <p className="text-sm font-medium uppercase tracking-[0.28em] text-emerald-400">
           {subtitle}
@@ -21,22 +33,7 @@ export function TopBar({
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <label className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-400">
-          <Search size={16} />
-          <input
-            className="w-full bg-transparent outline-none placeholder:text-slate-500 sm:w-56"
-            placeholder="Buscar inscrição"
-            aria-label="Buscar inscrição"
-          />
-        </label>
-
-        <Link
-          href="/inscricoes/nova"
-          className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-2.5 font-medium text-emerald-950 transition hover:bg-emerald-400"
-        >
-          <Plus size={18} />
-          Nova inscrição
-        </Link>
+        {actions}
 
         <div className="flex items-center gap-3">
           <button className="rounded-2xl border border-slate-800 p-2.5 text-slate-300 transition hover:bg-slate-800">
@@ -44,6 +41,7 @@ export function TopBar({
           </button>
           <PanelUserBadge />
         </div>
+      </div>
       </div>
     </header>
   );

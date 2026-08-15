@@ -9,6 +9,7 @@ import {
 } from '@/components/admin';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAdminAccessContext } from '@/lib/admin/access';
+import { DashboardEventSelector } from './dashboard-event-selector';
 
 type EventOption = { id: string; name: string; is_active: boolean };
 
@@ -73,11 +74,10 @@ async function getDashboardData(eventId?: string) {
     is_active: Boolean(event.is_active),
   }));
 
-  const selectedEvent = (eventId && events.find((item) => item.id === eventId)) ?? events.find((item) => item.is_active) ?? events[0] ?? null;
-  if (!selectedEvent) {
+  if (events.length === 0) {
     return {
       events,
-      selectedEvent: null,
+      selectedEvent: null as EventOption | null,
       participants: [] as Array<Record<string, unknown>>,
       payments: [] as Array<Record<string, unknown>>,
       tickets: [] as Array<Record<string, unknown>>,
@@ -86,27 +86,40 @@ async function getDashboardData(eventId?: string) {
     };
   }
 
+  // Sem eventId ou eventId="all": agrega dados de todos os eventos.
+  const selectedEvent = eventId && eventId !== 'all' ? events.find((item) => item.id === eventId) ?? null : null;
+
+  let participantsQuery = supabase
+    .from('participants')
+    .select('id, full_name, city, gender, created_at, final_amount, registration_status, shirt_type, shirt_size, batch_id, registration_batches(name), ticket_categories(name), reservation_status');
+  let paymentsQuery = supabase
+    .from('payments')
+    .select('id, participant_id, final_amount, payment_status, payment_method, created_at');
+  let ticketsQuery = supabase
+    .from('tickets')
+    .select('id, status, used_at, participant_id');
+  let inventoryQuery = supabase
+    .from('shirt_inventory')
+    .select('id, shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity');
+  let kitRowsQuery = supabase
+    .from('participant_kit_items')
+    .select('ticket_id, status, tickets(participant_id)')
+    .not('ticket_id', 'is', null);
+
+  if (selectedEvent) {
+    participantsQuery = participantsQuery.eq('event_id', selectedEvent.id);
+    paymentsQuery = paymentsQuery.eq('event_id', selectedEvent.id);
+    ticketsQuery = ticketsQuery.eq('event_id', selectedEvent.id);
+    inventoryQuery = inventoryQuery.eq('event_id', selectedEvent.id);
+    kitRowsQuery = kitRowsQuery.eq('event_id', selectedEvent.id);
+  }
+
   const [{ data: participants, error: participantsError }, { data: payments, error: paymentsError }, { data: tickets, error: ticketsError }, { data: inventory, error: inventoryError }, { data: kitRows, error: kitError }] = await Promise.all([
-    supabase
-      .from('participants')
-      .select('id, full_name, city, gender, created_at, final_amount, registration_status, shirt_type, shirt_size, batch_id, registration_batches(name), ticket_categories(name), reservation_status')
-      .eq('event_id', selectedEvent.id),
-    supabase
-      .from('payments')
-      .select('id, participant_id, final_amount, payment_status, payment_method, created_at')
-      .eq('event_id', selectedEvent.id),
-    supabase
-      .from('tickets')
-      .select('id, status, used_at, participant_id')
-      .eq('event_id', selectedEvent.id),
-    supabase
-      .from('shirt_inventory')
-      .select('id, shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity')
-      .eq('event_id', selectedEvent.id),
-    supabase
-      .from('participant_kit_items')
-      .select('participant_id, status')
-      .eq('event_id', selectedEvent.id),
+    participantsQuery,
+    paymentsQuery,
+    ticketsQuery,
+    inventoryQuery,
+    kitRowsQuery,
   ]);
 
   if (participantsError) throw participantsError;
@@ -122,7 +135,7 @@ async function getDashboardData(eventId?: string) {
     payments: payments ?? [],
     tickets: tickets ?? [],
     inventory: inventory ?? [],
-      kitRows: kitRows ?? [],
+    kitRows: kitRows ?? [],
   };
 }
 
@@ -169,7 +182,8 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
 
   const kitByParticipant = new Map<string, { total: number; delivered: number }>();
   for (const row of kitRows) {
-    const key = String(row.participant_id ?? '');
+    const ticket = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+    const key = String(ticket?.participant_id ?? '');
     if (!key) continue;
     const prev = kitByParticipant.get(key) ?? { total: 0, delivered: 0 };
     kitByParticipant.set(key, {
@@ -204,34 +218,21 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
   const hasData = totalParticipants > 0 || paymentRows.length > 0 || ticketRows.length > 0;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
           <AdminPageHeader
             title="Dashboard Administrativo"
-            subtitle={`Central operacional premium do Militrin com dados reais do evento selecionado: ${data.selectedEvent?.name ?? 'nenhum'}.`}
-            actions={(
-              <form action="/painel" className="flex items-center gap-2">
-                <select
-                  name="eventId"
-                  defaultValue={data.selectedEvent?.id ?? ''}
-                  className="h-10 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100"
-                >
-                  {data.events.map((event) => (
-                    <option key={event.id} value={event.id}>{event.name}</option>
-                  ))}
-                </select>
-                <button type="submit" className="h-10 rounded-xl bg-emerald-400 px-4 text-xs font-semibold text-slate-950">Aplicar</button>
-              </form>
-            )}
+            subtitle={`Central operacional premium do Militrin com dados reais de: ${data.selectedEvent?.name ?? 'todos os eventos'}.`}
+            actions={<DashboardEventSelector events={data.events} selectedId={data.selectedEvent?.id ?? 'all'} />}
           />
 
-          {!data.selectedEvent ? (
+          {data.events.length === 0 ? (
             <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." />
           ) : (
             <>
-              <AdminSection title="Resumo geral" description={`Evento selecionado: ${data.selectedEvent.name}`}>
+              <AdminSection title="Inscrições" description={`Evento: ${data.selectedEvent?.name ?? 'todos os eventos'}`}>
                 {!hasData ? (
                   <AdminEmptyState title="Sem dados para o evento" description="As métricas aparecem automaticamente quando houver inscrições, pagamentos e ingressos." />
                 ) : (
@@ -240,20 +241,31 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
                     <AdminStatCard label="Confirmados" value={confirmed} tone="success" />
                     <AdminStatCard label="Pendentes" value={pending} tone="warning" />
                     <AdminStatCard label="Cancelados" value={cancelled} />
-                    <AdminStatCard label="Ingressos emitidos" value={issuedTickets} />
-                    <AdminStatCard label="Check-ins realizados" value={checkins} />
-                    <AdminStatCard label="Recebidas" value={inventoryReceived} />
-                    <AdminStatCard label="Reservadas" value={inventoryReserved} />
-                    <AdminStatCard label="Entregues" value={inventoryDelivered} />
-                    <AdminStatCard label="Disponíveis" value={inventoryAvailable} />
-                    <AdminStatCard label="Necessidade de encomenda" value={inventoryNeedToOrder} />
-                    <AdminStatCard label="PIX" value={pixCount} />
-                    <AdminStatCard label="Cartão" value={cardCount} />
-                    <AdminStatCard label="Cortesias" value={courtesyCount} />
-                    <AdminStatCard label="Kits entregues" value={fullyDeliveredKits} />
                   </div>
                 )}
               </AdminSection>
+
+              {hasData ? (
+                <AdminSection title="Ingressos e kits" description="Emissão, check-in e entrega de kit completo">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <AdminStatCard label="Ingressos emitidos" value={issuedTickets} />
+                    <AdminStatCard label="Check-ins realizados" value={checkins} />
+                    <AdminStatCard label="Participantes com kit completo entregue" value={fullyDeliveredKits} />
+                  </div>
+                </AdminSection>
+              ) : null}
+
+              {hasData ? (
+                <AdminSection title="Estoque de camisetas" description="Quantidade de peças, não de participantes">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <AdminStatCard label="Camisetas recebidas" value={inventoryReceived} />
+                    <AdminStatCard label="Camisetas reservadas" value={inventoryReserved} />
+                    <AdminStatCard label="Camisetas entregues" value={inventoryDelivered} />
+                    <AdminStatCard label="Camisetas disponíveis em estoque" value={inventoryAvailable} tone="success" />
+                    <AdminStatCard label="Faltam encomendar" value={inventoryNeedToOrder} tone={inventoryNeedToOrder > 0 ? 'warning' : undefined} />
+                  </div>
+                </AdminSection>
+              ) : null}
 
               <AdminSection
                 title="Financeiro resumido"
@@ -261,9 +273,16 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
                 actions={canViewFinancial ? <AdminStatusBadge status="confirmed" /> : <AdminStatusBadge status="pending" />}
               >
                 {canViewFinancial ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <AdminStatCard label="Receita confirmada" value={money(confirmedRevenue)} tone="success" />
-                    <AdminStatCard label="Receita pendente" value={money(pendingRevenue)} tone="warning" />
+                  <div className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <AdminStatCard label="Receita confirmada" value={money(confirmedRevenue)} tone="success" />
+                      <AdminStatCard label="Receita pendente" value={money(pendingRevenue)} tone="warning" />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <AdminStatCard label="Pagamentos via PIX" value={pixCount} />
+                      <AdminStatCard label="Pagamentos via cartão" value={cardCount} />
+                      <AdminStatCard label="Cortesias" value={courtesyCount} />
+                    </div>
                   </div>
                 ) : (
                   <AdminEmptyState title="Acesso financeiro restrito" description="Seu perfil atual não possui visualização de valores monetários." />
@@ -297,7 +316,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
               </div>
 
               <div className="flex justify-end">
-                <Link href="/inscricoes" className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">
+                <Link href="/cadastros" className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">
                   Abrir lista avançada de participantes
                 </Link>
               </div>

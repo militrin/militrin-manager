@@ -1,0 +1,10 @@
+
+> militrin-manager@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.11 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.3.3:3001
+- Environments: .env.local
+✓ Ready in 626ms
+[?25h

@@ -15,7 +15,6 @@ type CategoryRow = {
   name: string;
   slug: string;
   description: string | null;
-  capacity: number | null;
   is_active: boolean;
   sort_order: number;
   confirmed_count: number;
@@ -89,7 +88,6 @@ export function CategoriesManager({
     name: "",
     slug: "",
     description: "",
-    capacity: "",
     is_active: true,
     sort_order: "0",
   });
@@ -109,7 +107,7 @@ export function CategoriesManager({
 
   function resetForm() {
     setEditingId(null);
-    setForm({ name: "", slug: "", description: "", capacity: "", is_active: true, sort_order: "0" });
+    setForm({ name: "", slug: "", description: "", is_active: true, sort_order: "0" });
   }
 
   function loadForEdit(category: CategoryRow) {
@@ -118,7 +116,6 @@ export function CategoriesManager({
       name: category.name,
       slug: category.slug,
       description: category.description ?? "",
-      capacity: category.capacity === null ? "" : String(category.capacity),
       is_active: category.is_active,
       sort_order: String(category.sort_order),
     });
@@ -133,7 +130,6 @@ export function CategoriesManager({
         name: form.name,
         slug: form.slug || slugify(form.name),
         description: form.description || null,
-        capacity: form.capacity ? Number(form.capacity) : null,
         is_active: form.is_active,
         sort_order: Number(form.sort_order || 0),
       };
@@ -208,31 +204,14 @@ export function CategoriesManager({
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Slug</span>
+            <span className="text-slate-300">Ordem de exibição</span>
             <input
-              value={form.slug}
-              onChange={(event) => setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Capacidade</span>
-            <input
-              value={form.capacity}
-              onChange={(event) => setForm((prev) => ({ ...prev, capacity: event.target.value }))}
-              placeholder="Vazio = sem limite"
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Ordem</span>
-            <input
+              type="number"
               value={form.sort_order}
               onChange={(event) => setForm((prev) => ({ ...prev, sort_order: event.target.value }))}
               className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
             />
+            <span className="block text-xs text-slate-500">Define a posição na lista: 1 aparece primeiro, 2 aparece em segundo, e assim por diante.</span>
           </label>
 
           <label className="space-y-1 text-sm md:col-span-2">
@@ -295,7 +274,6 @@ export function CategoriesManager({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-base font-semibold text-slate-100">{category.name}</p>
-                  <p className="text-xs text-slate-400">slug: {category.slug}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">Confirmados: {category.confirmed_count}</span>

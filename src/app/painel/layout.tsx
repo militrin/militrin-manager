@@ -1,6 +1,6 @@
-import { requirePermission } from '@/lib/admin/permissions';
+import { requireAdministrativePanelAccess } from '@/lib/admin/panel-access';
 
 export default async function PainelLayout({ children }: { children: React.ReactNode }) {
-  await requirePermission('dashboard.view');
+  await requireAdministrativePanelAccess();
   return <>{children}</>;
 }

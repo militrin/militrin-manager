@@ -5,8 +5,166 @@ import { revalidatePath } from "next/cache";
 import { getEmailProvider } from "@/lib/email/fake-provider";
 import { assertPermission } from "@/lib/admin/permissions";
 import { normalizeShirtSize, normalizeShirtType } from "@/lib/constants/shirts";
+import type { UpdatePaymentStatusInput } from "./payment-status.types";
 
 const emailProvider = getEmailProvider();
+
+export type ResolveParticipantDataIssuesInput = {
+  participantId: string;
+  expectedIssueIds: string[];
+  values: Partial<Record<'gender' | 'birth_date' | 'cpf' | 'shirt_type' | 'shirt_size' | 'city' | 'phone' | 'email' | 'category' | 'batch', string>>;
+};
+
+export async function getParticipantIssueOptionsAction(participantId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data: participant, error } = await supabase.from("participants").select("event_id,ticket_category_id,batch_id").eq("id", participantId).single();
+  if (error || !participant?.event_id) return { success: false as const, message: error?.message ?? "Cadastro não encontrado." };
+  const eventId = String(participant.event_id);
+  const [categoriesResult, batchesResult, shirtsResult] = await Promise.all([
+    supabase.from("ticket_categories").select("id,name").eq("event_id", eventId).eq("is_active", true).order("name"),
+    supabase.from("registration_batches").select("id,name").eq("event_id", eventId).eq("is_active", true).order("starts_at"),
+    supabase.from("shirt_inventory").select("shirt_type,shirt_size").eq("event_id", eventId).order("shirt_type").order("shirt_size"),
+  ]);
+  if (categoriesResult.error || batchesResult.error || shirtsResult.error) {
+    return { success: false as const, message: categoriesResult.error?.message ?? batchesResult.error?.message ?? shirtsResult.error?.message ?? "Falha ao carregar opções." };
+  }
+  const batchIds = (batchesResult.data ?? []).map((item) => String(item.id));
+  const prices = batchIds.length
+    ? await supabase.from("registration_batch_prices").select("batch_id,ticket_category_id,male_price,female_price").in("batch_id", batchIds)
+    : { data: [], error: null };
+  if (prices.error) return { success: false as const, message: prices.error.message };
+  const shirtMap = new Map<string, string[]>();
+  for (const item of shirtsResult.data ?? []) {
+    const type = String(item.shirt_type ?? ""); const size = String(item.shirt_size ?? "");
+    if (type && size) shirtMap.set(type, [...(shirtMap.get(type) ?? []), size]);
+  }
+  return { success: true as const, currentCategoryId: participant.ticket_category_id ? String(participant.ticket_category_id) : "", currentBatchId: participant.batch_id ? String(participant.batch_id) : "", categories: categoriesResult.data ?? [], batches: batchesResult.data ?? [], prices: prices.data ?? [], shirts: Array.from(shirtMap, ([type, sizes]) => ({ type, sizes })) };
+}
+export async function resolveMyParticipantDataIssuesAction(input: ResolveParticipantDataIssuesInput) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.id) return { success: false as const, message: "Sessão expirada." };
+  const { data: participant } = await supabase.from("participants").select("id").eq("id", input.participantId).eq("user_id", user.id).maybeSingle();
+  if (!participant?.id) return { success: false as const, message: "Cadastro não vinculado a esta conta." };
+  if (input.values.category || input.values.batch) return { success: false as const, message: "Categoria e lote dependem do organizador." };
+  const { data, error } = await supabase.rpc("resolve_participant_data_issues", {
+    p_participant_id: input.participantId, p_expected_issue_ids: input.expectedIssueIds, p_values: input.values,
+  });
+  if (error) return { success: false as const, message: error.message };
+  const result = data as { success?: boolean; message?: string; remaining_issues?: Array<Record<string, unknown>> } | null;
+  if (!result?.success) return { success: false as const, message: result?.message ?? "Não foi possível reavaliar o cadastro." };
+  const { data: finalization, error: finalizationError } = await supabase.rpc("finalize_imported_participant_after_issue_resolution", {
+    p_participant_id: input.participantId, p_resolved_fields: Object.keys(input.values),
+  });
+  if (finalizationError) return { success: false as const, message: finalizationError.message };
+  const finalized = finalization as { finalization?: string; ticket_id?: string | null } | null;
+  revalidatePath("/primeiro-acesso/pendencias"); revalidatePath("/minha-conta"); revalidatePath("/minha-conta/ingressos"); revalidatePath("/operacoes"); revalidatePath("/cadastros");
+  return { success: true as const, message: finalized?.ticket_id ? "Cadastro concluído e ingresso emitido." : result.message ?? "Cadastro reavaliado.", remainingIssues: result.remaining_issues ?? [], finalization: finalized?.finalization ?? null, ticketId: finalized?.ticket_id ?? null };
+}
+
+export async function resolveParticipantDataIssuesAction(input: ResolveParticipantDataIssuesInput) {
+  await assertPermission("participants.edit_basic");
+
+  if (!input.participantId || input.expectedIssueIds.length === 0) {
+    return { success: false as const, message: "Pendencias invalidas." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: participant, error: participantError } = await supabase.from("participants").select("event_id").eq("id", input.participantId).single();
+  if (participantError || !participant?.event_id) return { success: false as const, message: participantError?.message ?? "Cadastro não encontrado." };
+
+  const rpcValues = { ...input.values };
+  const categoryId = rpcValues.category || null;
+  const batchId = rpcValues.batch || null;
+  delete rpcValues.category;
+  delete rpcValues.batch;
+  const { data: currentIssues, error: currentIssuesError } = await supabase.from("participant_data_issues").select("id").eq("participant_id", input.participantId).eq("status", "open");
+  if (currentIssuesError) return { success: false as const, message: currentIssuesError.message };
+  const currentIds = (currentIssues ?? []).map((issue) => String(issue.id)).sort();
+  const expectedIds = [...input.expectedIssueIds].sort();
+  if (currentIds.length !== expectedIds.length || currentIds.some((id, index) => id !== expectedIds[index])) {
+    return { success: false as const, conflict: true, message: "As pendências foram atualizadas por outro usuário. Recarregue e tente novamente." };
+  }
+  if (categoryId && !(await supabase.from("ticket_categories").select("id", { count: "exact", head: true }).eq("id", categoryId).eq("event_id", participant.event_id)).count) {
+    return { success: false as const, message: "Categoria inválida para este evento." };
+  }
+  if (batchId && !(await supabase.from("registration_batches").select("id", { count: "exact", head: true }).eq("id", batchId).eq("event_id", participant.event_id)).count) {
+    return { success: false as const, message: "Lote inválido para este evento." };
+  }
+  if (categoryId || batchId) {
+    const { error: optionError } = await supabase.from("participants").update({
+      ...(categoryId ? { ticket_category_id: categoryId } : {}),
+      ...(batchId ? { batch_id: batchId } : {}),
+      updated_at: new Date().toISOString(),
+    }).eq("id", input.participantId);
+    if (optionError) return { success: false as const, message: optionError.message };
+  }
+  const { data, error } = await supabase.rpc("resolve_participant_data_issues", {
+    p_participant_id: input.participantId,
+    p_expected_issue_ids: input.expectedIssueIds,
+    p_values: rpcValues,
+  });
+
+  if (error) return { success: false as const, message: error.message };
+
+  const result = data as {
+    success?: boolean;
+    conflict?: boolean;
+    message?: string;
+    base_amount?: number | null;
+    final_amount?: number | null;
+    payment_status?: string;
+    remaining_issues?: Array<Record<string, unknown>>;
+  } | null;
+
+  if (!result?.success) {
+    return {
+      success: false as const,
+      conflict: Boolean(result?.conflict),
+      message: result?.message ?? "Nao foi possivel resolver as pendencias.",
+    };
+  }
+
+  const resolvedFields = Object.keys(input.values);
+  const { data: finalizationData, error: finalizationError } = await supabase.rpc(
+    "finalize_imported_participant_after_issue_resolution",
+    { p_participant_id: input.participantId, p_resolved_fields: resolvedFields },
+  );
+  if (finalizationError) return { success: false as const, message: finalizationError.message };
+  const finalization = finalizationData as {
+    applicable?: boolean;
+    finalization?: "paid_and_ticket_issued" | "payment_pending" | "issues_remaining" | "not_imported";
+    ticket_id?: string | null;
+    payment_id?: string | null;
+    order_id?: string | null;
+    order_item_id?: string | null;
+  } | null;
+
+  revalidatePath("/inscricoes");
+  revalidatePath(`/inscricoes/${input.participantId}`);
+  revalidatePath("/operacoes");
+  revalidatePath("/cadastros");
+
+  const message = finalization?.finalization === "paid_and_ticket_issued"
+    ? "Dados concluídos e ingresso emitido."
+    : finalization?.finalization === "payment_pending"
+      ? "Dados concluídos. Pagamento aguardando confirmação."
+      : result.message ?? "Dados atualizados e reavaliados.";
+
+  return {
+    success: true as const,
+    message,
+    baseAmount: result.base_amount ?? null,
+    finalAmount: result.final_amount ?? null,
+    paymentStatus: result.payment_status ?? "pending",
+    remainingIssues: result.remaining_issues ?? [],
+    finalization: finalization?.finalization ?? null,
+    ticketId: finalization?.ticket_id ?? null,
+    paymentId: finalization?.payment_id ?? null,
+    orderId: finalization?.order_id ?? null,
+    orderItemId: finalization?.order_item_id ?? null,
+  };
+}
 
 export async function releaseExpiredReservationsAction() {
   await assertPermission("participants.view");
@@ -31,6 +189,17 @@ export async function confirmParticipantPaymentAction(participantId: string) {
   await assertPermission("finance.confirm_payment");
 
   const supabase = await createServerSupabaseClient();
+
+  const { count: blockingIssueCount, error: blockingIssueError } = await supabase
+    .from("participant_data_issues")
+    .select("id", { count: "exact", head: true })
+    .eq("participant_id", participantId)
+    .eq("status", "open")
+    .eq("blocks_payment", true);
+  if (blockingIssueError) return { success: false, message: blockingIssueError.message };
+  if ((blockingIssueCount ?? 0) > 0) {
+    return { success: false, message: "Complete os dados pendentes antes de confirmar o pagamento." };
+  }
 
   const { data: participant, error: participantError } = await supabase
     .from("participants")
@@ -58,6 +227,31 @@ export async function confirmParticipantPaymentAction(participantId: string) {
   const methodRaw = String(payment.payment_method ?? "pix").toLowerCase();
   const method = methodRaw === "credit_card" ? "credit_card" : "pix";
 
+  const { count: importedHistoryCount, error: importedHistoryError } = await supabase
+    .from("participation_history")
+    .select("id", { count: "exact", head: true })
+    .eq("participant_id", participantId)
+    .eq("event_id", participant.event_id)
+    .eq("source", "import")
+    .not("import_batch_id", "is", null);
+  if (importedHistoryError) return { success: false, message: importedHistoryError.message };
+
+  if ((importedHistoryCount ?? 0) > 0) {
+    const { data: importedResult, error: importedError } = await supabase.rpc(
+      "finalize_imported_participant_after_issue_resolution",
+      { p_participant_id: participantId, p_resolved_fields: [], p_force_confirm: true },
+    );
+    if (importedError) return { success: false, message: importedError.message };
+    const finalized = importedResult as { ticket_id?: string | null } | null;
+    revalidatePath("/painel");
+    revalidatePath("/inscricoes");
+    revalidatePath(`/inscricoes/${participantId}`);
+    revalidatePath("/operacoes");
+    return finalized?.ticket_id
+      ? { success: true, message: "Pagamento confirmado e ingresso emitido." }
+      : { success: false, message: "Pagamento confirmado, mas o ingresso nao foi emitido." };
+  }
+
   const { error: rpcError } = await supabase.rpc("simulate_payment_paid", {
     p_participant_id: participantId,
     p_payment_method: method,
@@ -82,14 +276,13 @@ export async function confirmParticipantPaymentAction(participantId: string) {
 }
 
 export async function changeParticipantShirtAction(input: {
-  participantId: string;
+  ticketId: string;
   shirtType: string;
   shirtSize: string;
 }) {
   await assertPermission("inventory.change_participant_shirt");
 
   const supabase = await createServerSupabaseClient();
-  const { participantId } = input;
   const shirtType = normalizeShirtType(input.shirtType);
   const shirtSize = normalizeShirtSize(input.shirtSize);
 
@@ -97,93 +290,14 @@ export async function changeParticipantShirtAction(input: {
     return { success: false, message: "Modelo/tamanho inválidos." };
   }
 
-  const { data: participant, error: participantError } = await supabase
-    .from("participants")
-    .select("id, event_id, shirt_type, shirt_size")
-    .eq("id", participantId)
-    .maybeSingle();
-
-  if (participantError) return { success: false, message: participantError.message };
-  if (!participant?.id) return { success: false, message: "Participante nao encontrado." };
-
-  const { data: eventData, error: eventError } = await supabase
-    .from("events")
-    .select("id, limit_shirt_selection_to_stock")
-    .eq("id", participant.event_id)
-    .maybeSingle();
-
-  if (eventError) return { success: false, message: eventError.message };
-  if (!eventData?.id) return { success: false, message: "Evento vinculado ao participante nao encontrado." };
-
-  const enforcePhysicalStock = Boolean(eventData.limit_shirt_selection_to_stock);
-
-  const currentType = normalizeShirtType(String(participant.shirt_type ?? ""));
-  const currentSize = normalizeShirtSize(String(participant.shirt_size ?? ""));
-  if (currentType === shirtType && currentSize === shirtSize) {
-    return { success: true, message: "Camiseta ja esta neste modelo e tamanho." };
-  }
-
-  const { data: currentStock, error: currentStockError } = await supabase
-    .from("shirt_inventory")
-    .select("id, reserved_quantity")
-    .eq("event_id", participant.event_id)
-    .eq("shirt_type", currentType)
-    .eq("shirt_size", currentSize)
-    .maybeSingle();
-  if (currentStockError) return { success: false, message: currentStockError.message };
-
-  const { data: nextStock, error: nextStockError } = await supabase
-    .from("shirt_inventory")
-    .select("id, total_quantity, reserved_quantity, delivered_quantity")
-    .eq("event_id", participant.event_id)
-    .eq("shirt_type", shirtType)
-    .eq("shirt_size", shirtSize)
-    .maybeSingle();
-  if (nextStockError) return { success: false, message: nextStockError.message };
-  if (!nextStock?.id) return { success: false, message: "Estoque nao configurado para o modelo/tamanho selecionado." };
-
-  const available = Number(nextStock.total_quantity ?? 0) - Number(nextStock.reserved_quantity ?? 0) - Number(nextStock.delivered_quantity ?? 0);
-  if (enforcePhysicalStock && available <= 0) {
-    return { success: false, message: "Sem estoque disponivel para o novo tamanho/modelo." };
-  }
-
-  if (currentStock?.id && Number(currentStock.reserved_quantity ?? 0) > 0) {
-    const { error: releaseError } = await supabase
-      .from("shirt_inventory")
-      .update({ reserved_quantity: Math.max(0, Number(currentStock.reserved_quantity ?? 0) - 1), updated_at: new Date().toISOString() })
-      .eq("id", currentStock.id);
-    if (releaseError) return { success: false, message: releaseError.message };
-  }
-
-  const { error: reserveError } = await supabase
-    .from("shirt_inventory")
-    .update({ reserved_quantity: Number(nextStock.reserved_quantity ?? 0) + 1, updated_at: new Date().toISOString() })
-    .eq("id", nextStock.id);
-  if (reserveError) return { success: false, message: reserveError.message };
-
-  const { error: participantUpdateError } = await supabase
-    .from("participants")
-    .update({ shirt_type: shirtType, shirt_size: shirtSize })
-    .eq("id", participantId);
-  if (participantUpdateError) return { success: false, message: participantUpdateError.message };
-
-  await supabase.from("audit_logs").insert({
-    actor: "admin",
-    action: "shirt_changed",
-    entity_type: "participants",
-    entity_id: participantId,
-    event_id: participant.event_id,
-    details: {
-      previous_type: currentType,
-      previous_size: currentSize,
-      next_type: shirtType,
-      next_size: shirtSize,
-    },
+  const { error } = await supabase.rpc("change_ticket_shirt", {
+    p_ticket_id: input.ticketId,
+    p_new_shirt_type: shirtType,
+    p_new_shirt_size: shirtSize,
   });
+  if (error) return { success: false, message: error.message };
 
   revalidatePath("/inscricoes");
-  revalidatePath(`/inscricoes/${participantId}`);
-  revalidatePath(`/inscricoes/${participantId}/editar`);
 
   return { success: true, message: "Camiseta alterada com sucesso." };
 }
@@ -192,10 +306,11 @@ export async function resendParticipantTicketAction(participantId: string) {
   await assertPermission("orders.resend_ticket");
 
   const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
 
   const { data: participant, error: participantError } = await supabase
     .from("participants")
-    .select("id, event_id, full_name, email, payment_status, registration_status, ticket_categories(name)")
+    .select("id, event_id, organization_id, full_name, email, payment_status, registration_status, ticket_categories(name)")
     .eq("id", participantId)
     .maybeSingle();
 
@@ -214,11 +329,12 @@ export async function resendParticipantTicketAction(participantId: string) {
 
   const { data: ticket, error: ticketError } = await supabase
     .from("tickets")
-    .select("token")
+    .select("id, token, status")
     .eq("participant_id", participantId)
     .maybeSingle();
   if (ticketError) return { success: false, message: ticketError.message };
   if (!ticket?.token) return { success: false, message: "Ingresso ainda nao emitido." };
+  if (ticket.status === "cancelled") return { success: false, message: "Ingresso cancelado nao pode ser reenviado." };
 
   const { data: eventData } = await supabase
     .from("events")
@@ -226,8 +342,8 @@ export async function resendParticipantTicketAction(participantId: string) {
     .eq("id", participant.event_id)
     .maybeSingle();
 
-  const { data: kitItems } = await supabase.rpc("get_participant_kit_items", {
-    p_participant_id: participantId,
+  const { data: kitItems } = await supabase.rpc("get_ticket_kit_items", {
+    p_ticket_id: ticket.id,
   });
 
   const participantEmail = String(participant.email ?? "").trim().toLowerCase();
@@ -253,5 +369,69 @@ export async function resendParticipantTicketAction(participantId: string) {
     accountUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/inscricoes/${participantId}`,
   });
 
+  const { error: auditError } = await supabase.from("audit_logs").insert({
+    action: "ticket_resent",
+    entity_type: "tickets",
+    entity_id: ticket.id,
+    event_id: participant.event_id,
+    details: { actor_user_id: user?.id ?? null, organization_id: participant.organization_id, participant_id: participant.id, channel: "email" },
+  });
+  if (auditError) return { success: false, message: "Ingresso enviado, mas a auditoria do reenvio falhou." };
+
   return { success: true, message: "Ingresso reenviado por e-mail." };
+}
+
+// ─── Comentário: admin_update_payment_status na migration 076 é a proteção final.
+// A action TypeScript valida + repassa; o RPC revalida tudo no servidor com SELECT FOR UPDATE.
+
+export async function updateParticipantPaymentStatusAction(
+  input: UpdatePaymentStatusInput,
+): Promise<{ success: boolean; message: string }> {
+  const { participantId, paymentId, expectedCurrentStatus, newStatus, reason } = input;
+
+  await assertPermission(newStatus === "refunded" ? "finance.refund" : "finance.confirm_payment");
+
+  if (!participantId || !paymentId || !newStatus) {
+    return { success: false, message: "Dados inválidos." };
+  }
+  if (!reason.trim() || reason.trim().length < 3) {
+    return { success: false, message: "Motivo obrigatório (mínimo 3 caracteres)." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+
+  if (newStatus === "paid") {
+    const { count, error: issueError } = await supabase
+      .from("participant_data_issues")
+      .select("id", { count: "exact", head: true })
+      .eq("participant_id", participantId)
+      .eq("status", "open")
+      .eq("blocks_payment", true);
+
+    if (issueError) return { success: false, message: issueError.message };
+    if ((count ?? 0) > 0) {
+      return { success: false, message: "Complete os dados pendentes antes de confirmar o pagamento." };
+    }
+  }
+
+  const { data, error } = await supabase.rpc("admin_update_payment_status", {
+    p_payment_id: paymentId,
+    p_participant_id: participantId,
+    p_expected_current_status: expectedCurrentStatus,
+    p_new_status: newStatus,
+    p_reason: reason.trim(),
+  });
+
+  if (error) return { success: false, message: error.message };
+
+  const result = data as { success: boolean; message: string } | null;
+  if (!result?.success) {
+    return { success: false, message: result?.message ?? "Erro ao alterar status." };
+  }
+
+  revalidatePath("/inscricoes");
+  revalidatePath(`/inscricoes/${participantId}`);
+  revalidatePath("/financeiro");
+
+  return { success: true, message: result.message ?? "Status alterado com sucesso." };
 }

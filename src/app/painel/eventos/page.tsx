@@ -8,16 +8,17 @@ import { EventsManager } from "@/app/eventos/ui";
 async function getEventsData() {
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: eventsData, error: eventsError }, { data: activeEventData, error: activeEventError }, { data: highlightsData, error: highlightsError }] = await Promise.all([
+  const [{ data: eventsData, error: eventsError }, { data: eventStates, error: eventStatesError }, { data: highlightsData, error: highlightsError }] = await Promise.all([
     supabase.rpc("get_events_overview"),
-    supabase.from("events").select("id, name").eq("is_active", true).maybeSingle(),
+    supabase.from("events").select("id, name, archived_at, archived_by").order("starts_at", { ascending: false }),
     supabase.from('event_highlights').select('event_id, sort_order, is_active'),
   ]);
 
   if (eventsError) throw eventsError;
-  if (activeEventError) throw activeEventError;
+  if (eventStatesError) throw eventStatesError;
   if (highlightsError) throw highlightsError;
 
+  const stateById = new Map((eventStates ?? []).map((row) => [String(row.id), row]));
   const events = (eventsData ?? []).map((row: {
     id: string;
     name: string;
@@ -32,6 +33,7 @@ async function getEventsData() {
     registration_enabled: boolean;
     kit_enabled: boolean;
     is_active: boolean;
+    min_age: number | null;
     participants_count: number;
     created_at: string;
     updated_at: string;
@@ -49,13 +51,16 @@ async function getEventsData() {
     registration_enabled: Boolean(row.registration_enabled),
     kit_enabled: Boolean(row.kit_enabled),
     is_active: Boolean(row.is_active),
+    min_age: Number(row.min_age ?? 18),
     participants_count: Number(row.participants_count ?? 0),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
+    archived_at: stateById.get(String(row.id))?.archived_at ? String(stateById.get(String(row.id))?.archived_at) : null,
+    archived_by: stateById.get(String(row.id))?.archived_by ? String(stateById.get(String(row.id))?.archived_by) : null,
   }));
 
   return {
-    activeEvent: activeEventData?.id ? { id: String(activeEventData.id), name: String(activeEventData.name ?? "") } : null,
+    activeEvents: events.filter((event: { is_active: boolean }) => event.is_active).map((event: { id: string; name: string }) => ({ id: event.id, name: event.name })),
     events,
     highlights: (highlightsData ?? []).map((row: { event_id: string; sort_order: number; is_active: boolean }) => ({
       event_id: String(row.event_id),
@@ -66,10 +71,10 @@ async function getEventsData() {
 }
 
 export default async function AdminEventsPage() {
-  const { activeEvent, events, highlights } = await getEventsData();
+  const { activeEvents, events, highlights } = await getEventsData();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
@@ -78,7 +83,7 @@ export default async function AdminEventsPage() {
             {events.length === 0 ? (
               <EmptyState title="Nenhum evento cadastrado" description="Crie o primeiro evento para iniciar a gestão." />
             ) : null}
-            <EventsManager events={events} activeEvent={activeEvent} highlights={highlights} />
+            <EventsManager events={events} activeEvents={activeEvents} highlights={highlights} />
           </SectionCard>
         </div>
       </div>

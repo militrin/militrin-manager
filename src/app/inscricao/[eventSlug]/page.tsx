@@ -6,6 +6,7 @@ import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { getEventBySlug } from '@/lib/public/events';
 import { buildShirtInventoryVariants } from '@/lib/constants/shirts';
+import { getStoreItemsForEvent } from '@/lib/store/get-store-items';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -18,6 +19,9 @@ type CategoryRow = {
   is_active: boolean;
   sort_order: number;
   available_slots: number | null;
+  current_batch_name: string | null;
+  current_male_price: number | null;
+  current_female_price: number | null;
 };
 
 type InitialBuyer = {
@@ -73,7 +77,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
 
   if (profileStatus.error) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
         <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
           <h1 className="text-2xl font-semibold text-white">Não foi possível carregar seu perfil</h1>
           <p className="mt-2 text-sm text-slate-300">Tente novamente para continuar sua compra.</p>
@@ -153,7 +157,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
 
   if (eventLookup.status === 'query_error') {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
         <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
           <h1 className="text-2xl font-semibold text-white">Falha ao carregar a inscrição</h1>
           <p className="mt-2 text-sm text-slate-300">Ocorreu um erro técnico ao consultar o evento por slug.</p>
@@ -177,7 +181,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
 
   if (!event?.id) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
         <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
           <h1 className="text-2xl font-semibold text-white">Evento não encontrado</h1>
           <p className="mt-2 text-sm text-slate-300">O link informado não corresponde a um evento disponível para inscrição.</p>
@@ -230,6 +234,9 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     available_slots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
     is_active: Boolean(row.is_active),
     sort_order: Number(row.sort_order ?? 0),
+    current_batch_name: row.current_batch_name ? String(row.current_batch_name) : null,
+    current_male_price: row.current_male_price === null || row.current_male_price === undefined ? null : Number(row.current_male_price),
+    current_female_price: row.current_female_price === null || row.current_female_price === undefined ? null : Number(row.current_female_price),
   }));
 
   const benefitsByCategory: Record<string, Array<{ id: string; name: string; description: string | null }>> = {};
@@ -297,6 +304,8 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     registration_close_at: event.registration_close_at ? String(event.registration_close_at) : null,
   });
 
+  const storeItems = await getStoreItemsForEvent(supabase, String(event.id));
+
   return (
     <RegistrationWizard
       event={{
@@ -304,6 +313,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
         slug: String(event.slug),
         name: String(event.name),
         description: event.description ? String(event.description) : null,
+        banner_hero_url: event.banner_hero_url ? String(event.banner_hero_url) : null,
         starts_at: event.starts_at ? String(event.starts_at) : null,
         ends_at: event.ends_at ? String(event.ends_at) : null,
         location: event.location ? String(event.location) : null,
@@ -313,6 +323,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
         shirt_order_deadline: event.shirt_order_deadline ? String(event.shirt_order_deadline) : null,
         limit_shirt_selection_to_stock: Boolean(event.limit_shirt_selection_to_stock),
         kit_enabled: Boolean(event.kit_enabled),
+        min_age: Number(event.min_age ?? 18),
         payment_pix_enabled: paymentMethods.pix_enabled,
         payment_credit_card_single_enabled: paymentMethods.credit_card_single_enabled,
         payment_credit_card_installments_enabled: paymentMethods.credit_card_installments_enabled,
@@ -323,6 +334,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       kitItems={kitItems}
       inventory={inventory}
       initialBuyer={initialBuyer}
+      storeItems={storeItems}
     />
   );
 }

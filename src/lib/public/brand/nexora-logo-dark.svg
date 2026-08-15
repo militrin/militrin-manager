@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 430" role="img" aria-labelledby="title desc">
+  <title id="title">NEXORA Event Technology</title><desc id="desc">Logo horizontal para fundos escuros</desc>
+  <rect width="1400" height="430" fill="#050B1A"/>
+  <g transform="translate(35 35) scale(.7)">
+    <path fill="#00D6A0" d="M96 72 288 212v104l-80-58v142L96 440V72Z"/>
+    <path fill="#0B3767" d="m320 168 96-96v368l-96-40V168Z"/>
+  </g>
+  <text x="405" y="245" fill="#F7FAFC" font-family="Montserrat, Inter, Arial, sans-serif" font-size="128" font-weight="500" letter-spacing="22">NEXORA</text>
+  <text x="416" y="326" fill="#00D6A0" font-family="Montserrat, Inter, Arial, sans-serif" font-size="32" font-weight="600" letter-spacing="17">EVENT TECHNOLOGY</text>
+</svg>

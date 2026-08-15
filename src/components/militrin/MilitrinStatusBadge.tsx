@@ -1,4 +1,5 @@
 import { MilitrinBadge } from './MilitrinBadge';
+import { getStatusLabel } from '@/lib/status-labels';
 
 type MilitrinStatusBadgeProps = {
   status: string;
@@ -15,5 +16,5 @@ function resolveTone(status: string): 'neutral' | 'success' | 'warning' | 'dange
 }
 
 export function MilitrinStatusBadge({ status, label }: MilitrinStatusBadgeProps) {
-  return <MilitrinBadge tone={resolveTone(status)}>{label ?? status}</MilitrinBadge>;
+  return <MilitrinBadge tone={resolveTone(status)}>{label ?? getStatusLabel(status)}</MilitrinBadge>;
 }

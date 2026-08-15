@@ -10,6 +10,7 @@ import {
   resolveParticipantInitials,
 } from '@/lib/account/participant-identity';
 import { sanitizeInternalNextPath } from '@/lib/utils/safe-navigation';
+import { getMyPublicPin } from '@/lib/account/public-pin';
 
 export default async function DadosPage({
   searchParams,
@@ -25,7 +26,10 @@ export default async function DadosPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: profileData } = await supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null });
+  const [{ data: profileData }, publicPin] = await Promise.all([
+    supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
+    getMyPublicPin(user?.id),
+  ]);
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const birthDate = formatISOToDateBR(String(profile?.birth_date ?? ''));
   const userMetadata = (user?.user_metadata as Record<string, unknown> | undefined) ?? null;
@@ -57,16 +61,17 @@ export default async function DadosPage({
     <section className="space-y-4">
       <MilitrinSection
         eyebrow="Meu perfil"
-        title="Dados do participante"
+        title="Dados do usuário"
         description="Atualize dados publicos e preferencias de privacidade com seguranca."
       >
         <div className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-          <MilitrinAvatar src={photoUrl} alt={`Foto do participante ${displayName}`} initials={resolveParticipantInitials(displayName)} />
+          <MilitrinAvatar src={photoUrl} alt={`Foto do usuário ${displayName}`} initials={resolveParticipantInitials(displayName)} />
           <div>
             <p className="text-sm text-slate-300">Perfil ativo</p>
             <p className="text-lg font-semibold text-white" title={displayName}>{displayName}</p>
           </div>
         </div>
+        {publicPin ? <div className="mb-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4"><p className="text-xs uppercase tracking-wider text-emerald-300">Seu PIN Militrin</p><p className="mt-1 font-mono text-xl font-semibold tracking-[0.2em] text-white">{publicPin}</p><p className="mt-1 text-xs text-slate-400">Compartilhe este código para receber titularidade ou transferência de ingressos. Ele não é uma senha.</p></div> : null}
 
         <form action={saveProfileAction} className="grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="next_path" value={safeNext} />
@@ -80,7 +85,7 @@ export default async function DadosPage({
             <input name="cpf" defaultValue={String(profile?.cpf ?? '')} readOnly className="h-11 w-full cursor-not-allowed rounded-2xl border border-slate-700 bg-slate-900/50 px-4 text-sm text-slate-300 outline-none" />
           </label>
 
-          <BirthDateInput name="birth_date" value={birthDate} onChange={() => undefined} required disabled label="Nascimento" className="space-y-1" />
+          <BirthDateInput name="birth_date" value={birthDate} required disabled label="Nascimento" className="space-y-1" />
 
           <label className="space-y-1">
             <span className="text-sm text-slate-300">Genero</span>
@@ -111,7 +116,7 @@ export default async function DadosPage({
           <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-slate-300">Visibilidade do perfil</span>
             <select name="profile_visibility" defaultValue={String(profile?.profile_visibility ?? 'participants')} className="h-11 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none focus:border-emerald-400">
-              <option value="participants">Participantes</option>
+              <option value="participants">Usuários</option>
               <option value="friends">Amigos</option>
               <option value="private">Privado</option>
             </select>

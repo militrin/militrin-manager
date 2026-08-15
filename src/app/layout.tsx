@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { getBrandTheme } from "@/lib/theme/get-brand-theme";
+import { HomeButton } from "@/components/HomeButton";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,17 +19,23 @@ export const metadata: Metadata = {
   description: "Painel administrativo do Militrin Manager",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const brandTheme = await getBrandTheme();
+
   return (
     <html
       lang="pt-BR"
+      data-brand={brandTheme}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <HomeButton />
+        {children}
+      </body>
     </html>
   );
 }

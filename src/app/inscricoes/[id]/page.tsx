@@ -9,9 +9,9 @@ import {
   AdminStatCard,
   AdminStatusBadge,
 } from '@/components/admin';
+import { CopyableId } from '@/components/CopyableId';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
-import { changeParticipantShirtAction, confirmParticipantPaymentAction, resendParticipantTicketAction } from '../actions';
 import { getAdminAccessContext } from '@/lib/admin/access';
 
 function money(value: number) {
@@ -31,12 +31,15 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
 
   const { data: participant, error } = await supabase
     .from('participants')
-    .select('id, event_id, user_id, full_name, cpf, birth_date, gender, phone, email, city, shirt_type, shirt_size, registration_status, created_at, notes, base_amount, discount_amount, final_amount, ticket_categories(name), registration_batches(name), events(name, year)')
+    .select('id, event_id, user_id, full_name, cpf, birth_date, gender, phone, email, city, shirt_type, shirt_size, registration_status, created_at, notes, base_amount, discount_amount, final_amount, registration_contacts(public_pin), events(name, year)')
     .eq('id', id)
     .maybeSingle();
 
   if (error) throw error;
   if (!participant?.id) notFound();
+
+  const registrationContactRelation = participant.registration_contacts as { public_pin: string | null } | { public_pin: string | null }[] | null;
+  const registrationContactPin = (Array.isArray(registrationContactRelation) ? registrationContactRelation[0] : registrationContactRelation)?.public_pin ?? null;
 
   const [{ data: profileData }, { data: paymentData }, { data: orderData }, { data: ticketData }, { data: historyData }, { data: auditData }, { data: inventoryData }, { data: kitData }] = await Promise.all([
     participant.user_id ? supabase.rpc('get_customer_profile', { p_user_id: participant.user_id }) : Promise.resolve({ data: null }),
@@ -54,10 +57,9 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
       .limit(1),
     supabase
       .from('tickets')
-      .select('id, token, status, issued_at, used_at')
+      .select('id, token, status, issued_at, used_at, order_items(id,shirt_type,shirt_size,ticket_categories(name),registration_batches(name))')
       .eq('participant_id', participant.id)
-      .order('issued_at', { ascending: false })
-      .limit(1),
+      .order('issued_at', { ascending: false }),
     supabase
       .from('participation_history')
       .select('id, status')
@@ -74,22 +76,27 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
       .eq('event_id', participant.event_id)
       .order('shirt_type', { ascending: true })
       .order('shirt_size', { ascending: true }),
-    supabase.rpc('get_participant_kit_items', { p_participant_id: participant.id }),
+    Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
   ]);
 
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const payment = Array.isArray(paymentData) ? paymentData[0] : paymentData;
   const order = Array.isArray(orderData) ? orderData[0] : orderData;
-  const ticket = Array.isArray(ticketData) ? ticketData[0] : ticketData;
-  const category = Array.isArray(participant.ticket_categories) ? participant.ticket_categories[0] : participant.ticket_categories;
-  const batch = Array.isArray(participant.registration_batches) ? participant.registration_batches[0] : participant.registration_batches;
+  const tickets = ticketData ?? [];
+  const ticket = tickets[0];
+  const { data: ticketKitData } = ticket?.id
+    ? await supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })
+    : { data: [] as Array<Record<string, unknown>> };
+  const ticketItem = Array.isArray(ticket?.order_items) ? ticket.order_items[0] : ticket?.order_items;
+  const category = Array.isArray(ticketItem?.ticket_categories) ? ticketItem.ticket_categories[0] : ticketItem?.ticket_categories;
+  const batch = Array.isArray(ticketItem?.registration_batches) ? ticketItem.registration_batches[0] : ticketItem?.registration_batches;
   const eventObj = Array.isArray(participant.events) ? participant.events[0] : participant.events;
 
   const historyRows = historyData ?? [];
   const confirmedHistoryCount = historyRows.filter((item) => String(item.status ?? '') === 'confirmed').length;
   const levelName = profile?.loyalty_tier_name ? String(profile.loyalty_tier_name) : 'Novato';
 
-  const kitItems = (kitData ?? []) as Array<Record<string, unknown>>;
+  const kitItems = (ticketKitData ?? kitData ?? []) as Array<Record<string, unknown>>;
   const kitDelivered = kitItems.filter((item) => String(item.status ?? '') === 'delivered').length;
 
   const timelineItems = [
@@ -167,7 +174,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
   });
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
@@ -200,6 +207,9 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                 <p><span className="text-slate-400">Cidade:</span> {participant.city ?? '-'}</p>
                 <p><span className="text-slate-400">Conta vinculada:</span> {participant.user_id ? 'Sim' : 'Não'}</p>
               </div>
+              <div className="mt-3">
+                <CopyableId label="PIN do cadastro" value={registrationContactPin} />
+              </div>
             </AdminSection>
 
             <AdminSection title="B. Inscrição atual" description="Contexto de evento e categoria">
@@ -212,26 +222,32 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                 <p><span className="text-slate-400">Origem:</span> Portal público</p>
               </div>
 
-              <form
-                className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]"
-                action={async (formData) => {
-                  'use server';
-                  const value = String(formData.get('shirt') ?? '');
-                  const [shirtType, shirtSize] = value.split('|');
-                  if (shirtType && shirtSize) {
-                    await changeParticipantShirtAction({ participantId: participant.id, shirtType, shirtSize });
-                  }
-                }}
-              >
-                <select name="shirt" defaultValue={`${participant.shirt_type}|${participant.shirt_size}`} className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm">
+              <div className="mt-4 space-y-2">
+                {tickets.map((entry) => {
+                  const item = Array.isArray(entry.order_items) ? entry.order_items[0] : entry.order_items;
+                  const entryCategory = Array.isArray(item?.ticket_categories) ? item.ticket_categories[0] : item?.ticket_categories;
+                  const entryBatch = Array.isArray(item?.registration_batches) ? item.registration_batches[0] : item?.registration_batches;
+                  return (
+                    <div key={String(entry.id)} className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-200 sm:grid-cols-2">
+                      <p><span className="text-slate-400">Ingresso:</span> {String(entry.id)}</p>
+                      <p><span className="text-slate-400">Categoria:</span> {String(entryCategory?.name ?? '-')}</p>
+                      <p><span className="text-slate-400">Lote:</span> {String(entryBatch?.name ?? '-')}</p>
+                      <p><span className="text-slate-400">Camiseta:</span> {String(item?.shirt_type ?? '-')} {String(item?.shirt_size ?? '')}</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {ticket?.id ? <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+                <select disabled defaultValue={`${participant.shirt_type}|${participant.shirt_size}`} className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm">
                   {shirtOptions.map((option) => (
                     <option key={option.key} value={`${option.shirtType}|${option.shirtSize}`} disabled={option.available <= 0 && option.key !== `${participant.shirt_type}|${participant.shirt_size}`}>
                       {option.label}
                     </option>
                   ))}
                 </select>
-                <button type="submit" className="h-10 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs text-emerald-200">Alterar camiseta</button>
-              </form>
+                <Link href={`/cadastros?q=${encodeURIComponent(String(participant.cpf ?? ''))}`} className="inline-flex h-10 items-center rounded-lg border border-emerald-500/40 px-3 text-xs text-emerald-200">Gerenciar ingresso e camiseta em Cadastros</Link>
+              </div> : null}
             </AdminSection>
 
             <AdminSection title="C. Pedido e pagamento" description="Resumo financeiro e status atual">
@@ -250,14 +266,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                 <AdminEmptyState title="Valores ocultos" description="Acesso financeiro não habilitado para este usuário administrativo." />
               )}
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                <form action={async () => { 'use server'; await confirmParticipantPaymentAction(participant.id); }}>
-                  <button type="submit" className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">Confirmar pagamento</button>
-                </form>
-                <form action={async () => { 'use server'; await resendParticipantTicketAction(participant.id); }}>
-                  <button type="submit" className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200">Reenviar ingresso</button>
-                </form>
-              </div>
+              <div className="mt-4"><Link href={`/cadastros?q=${encodeURIComponent(String(participant.cpf ?? ''))}`} className="inline-flex rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-200">Gerenciar pagamento e ingresso em Cadastros</Link></div>
             </AdminSection>
 
             <AdminSection title="D. Ingresso" description="Ticket, QR e check-in">

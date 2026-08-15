@@ -36,6 +36,14 @@ function parseTimestamp(value: string | null | undefined) {
   return trimmed ? new Date(trimmed).toISOString() : null;
 }
 
+async function assertCouponEventAccess(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  eventId: string,
+) {
+  const { data, error } = await supabase.from("events").select("id").eq("id", eventId).is("archived_at", null).maybeSingle();
+  if (error || !data?.id) throw new Error("Evento inválido ou sem acesso para gerenciar cupons.");
+}
+
 export async function createCouponAction(payload: CouponPayload): Promise<ActionResult> {
   const parsed = couponSchema.safeParse(payload);
   if (!parsed.success) {
@@ -44,6 +52,7 @@ export async function createCouponAction(payload: CouponPayload): Promise<Action
 
   try {
     const supabase = await createServerSupabaseClient();
+    await assertCouponEventAccess(supabase, parsed.data.event_id);
     const { error } = await supabase.rpc("create_coupon", {
       p_event_id: parsed.data.event_id,
       p_code: parsed.data.code,
@@ -72,6 +81,7 @@ export async function updateCouponAction(payload: CouponPayload): Promise<Action
 
   try {
     const supabase = await createServerSupabaseClient();
+    await assertCouponEventAccess(supabase, parsed.data.event_id);
     const { error } = await supabase.rpc("update_coupon", {
       p_coupon_id: parsed.data.id,
       p_event_id: parsed.data.event_id,
@@ -96,6 +106,7 @@ export async function updateCouponAction(payload: CouponPayload): Promise<Action
 export async function toggleCouponAction(payload: { id: string; event_id: string; is_active: boolean }): Promise<ActionResult> {
   try {
     const supabase = await createServerSupabaseClient();
+    await assertCouponEventAccess(supabase, payload.event_id);
     const { error } = await supabase.rpc("toggle_coupon_active", {
       p_coupon_id: payload.id,
       p_event_id: payload.event_id,

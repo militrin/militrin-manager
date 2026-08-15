@@ -8,6 +8,8 @@ import { PaymentReceiptPdfButton } from '@/components/public/PaymentReceiptPdfBu
 import { buildLegacyOrderAggregate } from '@/lib/orders/aggregate';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
+import { getStatusLabel } from '@/lib/status-labels';
+import { optionalDisplayValue } from '@/lib/optional-display';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -76,7 +78,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       .maybeSingle(),
     supabase
       .from('tickets')
-      .select('participant_id, token, status, order_id')
+      .select('id, participant_id, token, status, order_id')
       .eq('order_id', orderId),
   ]);
 
@@ -131,7 +133,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
 
   const categoryObj = categoryResult.data;
   const batchObj = batchResult.data;
-  const tickets = (ticketsResult.data ?? []) as Array<{ participant_id: string | null; token: string | null; status: string | null }>;
+  const tickets = (ticketsResult.data ?? []) as Array<{ id: string; participant_id: string | null; token: string | null; status: string | null }>;
 
   const aggregate = buildLegacyOrderAggregate({
     orderId: String(order.id),
@@ -154,7 +156,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const normalizedPaymentStatus = normalizeStatus(String(payment?.payment_status));
   const canShowTicket = normalizedOrderStatus === 'confirmed' && aggregate.items.some((item) => item.ticketToken);
   const receiptItemsSummary = aggregate.items
-    .map((item) => `${item.participantName ?? 'Titular'}${item.categoryName ? ` • ${item.categoryName}` : ''}${item.ticketStatus ? ` • ${item.ticketStatus}` : ''}`)
+    .map((item) => `${item.participantName ?? 'Titular'}${item.categoryName ? ` • ${item.categoryName}` : ''}${item.ticketStatus ? ` • ${getStatusLabel(item.ticketStatus)}` : ''}`)
     .join('; ');
 
   const { data: couponRedemption } = participantId
@@ -170,11 +172,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const couponObj = Array.isArray(couponRedemption?.coupons) ? couponRedemption?.coupons[0] : couponRedemption?.coupons;
   const couponCode = couponObj?.code ? String(couponObj.code) : null;
 
-  const { data: kitItemsData } = participantId
-    ? await supabase.rpc('get_participant_kit_items', {
-        p_participant_id: participantId,
-      })
-    : { data: [] };
+  const kitResults = await Promise.all(tickets.map((ticket) => supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })));
+  const kitItemsData = kitResults.flatMap((result) => result.data ?? []);
+  const shirtKitItem = kitItemsData.find((item) => String(item.item_type ?? '') === 'shirt') as Record<string, unknown> | undefined;
+  const shirtVariant = (shirtKitItem?.variant_data ?? {}) as Record<string, unknown>;
+  const shirtType = optionalDisplayValue(shirtVariant.shirt_type ?? participant?.shirt_type);
+  const shirtSize = optionalDisplayValue(shirtVariant.shirt_size ?? participant?.shirt_size);
 
   async function resendAction() {
     'use server';
@@ -200,32 +203,32 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               <p>Cupom: {couponCode ?? 'Sem cupom'}</p>
               <p>Desconto cupom: {money(Number(couponRedemption?.discount_amount ?? 0))}</p>
               <p>Valor final: {money(Number(order.final_amount ?? 0))}</p>
-              <p className="inline-flex items-center gap-2">Status pedido: <MilitrinStatusBadge status={normalizedOrderStatus} /></p>
+              <p className="inline-flex items-center gap-2">Pedido: <MilitrinStatusBadge status={normalizedOrderStatus} /></p>
             </div>
           </article>
 
           <article className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Participante e evento</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Titular e evento</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <p>Participante: {participant?.full_name ? String(participant.full_name) : '-'}</p>
-              <p>Evento: {eventObj?.name ? String(eventObj.name) : '-'}</p>
-              <p>Categoria: {categoryObj?.name ? String(categoryObj.name) : '-'}</p>
-              <p>Lote: {batchObj?.name ? String(batchObj.name) : '-'}</p>
-              <p>Camiseta: {participant?.shirt_type ? String(participant.shirt_type) : '-'} / {participant?.shirt_size ? String(participant.shirt_size) : '-'}</p>
-              <p>Local: {eventObj?.location ? String(eventObj.location) : '-'}</p>
+              {optionalDisplayValue(participant?.full_name) ? <p>Titular: {optionalDisplayValue(participant?.full_name)}</p> : null}
+              {optionalDisplayValue(eventObj?.name) ? <p>Evento: {optionalDisplayValue(eventObj?.name)}</p> : null}
+              {optionalDisplayValue(categoryObj?.name) ? <p>Categoria: {optionalDisplayValue(categoryObj?.name)}</p> : null}
+              {optionalDisplayValue(batchObj?.name) ? <p>Lote: {optionalDisplayValue(batchObj?.name)}</p> : null}
+              {shirtKitItem && shirtType && shirtSize ? <p>Camiseta: {shirtType} / {shirtSize}</p> : null}
+              {optionalDisplayValue(eventObj?.location) ? <p>Local: {optionalDisplayValue(eventObj?.location)}</p> : null}
             </div>
           </article>
         </div>
       </MilitrinSection>
 
-      <MilitrinSection eyebrow="Pagamento" title="Pagamento e prazos" description="Acompanhe status e reserva da inscricao.">
+      <MilitrinSection eyebrow="Pagamento" title="Pagamento e prazos" description="Acompanhe o pagamento e o status do pedido.">
         <div className="grid gap-3 lg:grid-cols-2">
           <article className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
             <div className="grid gap-2 sm:grid-cols-2">
-              <p>Forma de pagamento: {payment?.payment_method ? String(payment.payment_method) : '-'}</p>
-              <p className="inline-flex items-center gap-2">Status pagamento: <MilitrinStatusBadge status={normalizedPaymentStatus} /></p>
-              <p>Status pedido: {normalizedOrderStatus}</p>
-              <p>Pago em: {payment?.paid_at ? formatDateTimeBR(String(payment.paid_at), ' as ') : '-'}</p>
+              {optionalDisplayValue(payment?.payment_method) ? <p>Forma de pagamento: {optionalDisplayValue(payment?.payment_method)}</p> : null}
+              <p className="inline-flex items-center gap-2">Pagamento: <MilitrinStatusBadge status={normalizedPaymentStatus} /></p>
+              <p>Pedido: {getStatusLabel(normalizedOrderStatus)}</p>
+              {payment?.paid_at ? <p>Pago em: {formatDateTimeBR(String(payment.paid_at), ' as ')}</p> : null}
             </div>
 
             {normalizedOrderStatus === 'pending' && participant?.reservation_expires_at ? (
@@ -247,7 +250,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {kitItemsData.map((item: Record<string, unknown>) => (
                   <li key={String(item.kit_item_id)}>
-                    {String(item.item_name)} x{Number(item.quantity ?? 1)} - {String(item.status ?? 'reserved')}
+                    {String(item.item_name)} x{Number(item.quantity ?? 1)} - {getStatusLabel(String(item.status ?? 'reserved'))}
                   </li>
                 ))}
               </ul>
@@ -256,7 +259,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
         </div>
       </MilitrinSection>
 
-      <MilitrinSection eyebrow="Ingresso" title="Ticket e QR Code" description="Disponivel apenas para pedidos confirmados.">
+      <MilitrinSection eyebrow="Ingresso" title="Ingresso e QR Code" description="Disponível apenas para pedidos confirmados.">
         {canShowTicket ? (
           <div className="space-y-4">
             {aggregate.items.filter((item) => item.ticketToken).map((item, index) => (
@@ -267,7 +270,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                   participantName={item.participantName ?? String(participant?.full_name ?? '')}
                   status={item.ticketStatus ?? 'active'}
                   categoryName={item.categoryName}
-                  eventDate={eventObj?.starts_at ? formatDateTimeBR(String(eventObj.starts_at), ' as ') : null}
+                  eventDate={eventObj?.starts_at ? String(eventObj.starts_at) : null}
                   eventLocation={eventObj?.location ? String(eventObj.location) : null}
                   token={String(item.ticketToken)}
                   orderNumber={String(order.order_number)}
@@ -284,9 +287,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
         <PaymentReceiptPdfButton
           orderNumber={String(order.order_number)}
           eventName={String(eventObj?.name ?? 'Evento')}
-          createdAt={order.created_at ? formatDateTimeBR(String(order.created_at), ' as ') : null}
+          createdAt={order.created_at ? String(order.created_at) : null}
           paymentStatus={normalizedPaymentStatus}
-          paymentMethod={String(payment?.payment_method ?? '-')}
+          paymentMethod={optionalDisplayValue(payment?.payment_method)}
           finalAmount={money(Number(order.final_amount ?? 0))}
           itemsSummary={receiptItemsSummary}
           className="rounded-2xl border border-slate-600 px-4 py-2 text-sm text-slate-100"

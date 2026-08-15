@@ -23,7 +23,7 @@ export default async function MyRegistrationPage({ params }: { params: Promise<{
   const snapshot = result.snapshot;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
       <div className="mx-auto w-full max-w-3xl space-y-4">
         <header className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Militrin</p>

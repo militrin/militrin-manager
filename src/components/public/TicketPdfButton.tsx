@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { getStatusLabel } from '@/lib/status-labels';
+import { applyReportPage, finalizeReportPages, formatReportDateTime, REPORT_THEME, splitTechnicalIdentifier } from '@/lib/reports/report-theme';
 
 type TicketPdfButtonProps = {
   eventName: string;
@@ -63,56 +65,62 @@ export function TicketPdfButton({
       }
 
       const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const generatedAt = new Date().toISOString();
+      const { colors } = REPORT_THEME;
 
-      // White card-like background.
-      doc.setFillColor(255, 255, 255);
-      doc.rect(0, 0, 595, 842, 'F');
+      applyReportPage(doc, 'Ingresso Militrin');
 
       // Header block.
-      doc.setFillColor(245, 247, 250);
-      doc.roundedRect(40, 32, 515, 72, 10, 10, 'F');
-      doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(40, 32, 515, 72, 10, 10, 'S');
+      doc.setFillColor(...colors.card);
+      doc.roundedRect(40, 56, 515, 58, 8, 8, 'F');
+      doc.setDrawColor(...colors.border);
+      doc.roundedRect(40, 56, 515, 58, 8, 8, 'S');
 
-      doc.setTextColor(15, 23, 42);
+      doc.setTextColor(...colors.text);
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(20);
-      doc.text('Ingresso Militrin', 56, 74);
+      doc.setFontSize(16);
+      doc.text(eventName, 56, 89);
 
       if (logoDataUrl) {
-        doc.addImage(logoDataUrl, 'PNG', 446, 42, 96, 52);
+        doc.addImage(logoDataUrl, 'PNG', 446, 61, 96, 46);
       } else {
-        doc.setFillColor(236, 72, 153);
-        doc.roundedRect(456, 50, 86, 34, 8, 8, 'F');
+        doc.setFillColor(...colors.green);
+        doc.roundedRect(456, 68, 86, 30, 7, 7, 'F');
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(12);
-        doc.text('MILITRIN', 499, 71, { align: 'center' });
-        doc.setTextColor(15, 23, 42);
+        doc.text('MILITRIN', 499, 88, { align: 'center' });
+        doc.setTextColor(...colors.text);
       }
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(12);
-      doc.text(`Evento: ${eventName}`, 56, 142);
-      doc.text(`Participante: ${participantName || '-'}`, 56, 164);
-      doc.text(`Categoria: ${categoryName || '-'}`, 56, 186);
-      doc.text(`Status: ${status}`, 56, 208);
-      doc.text(`Data: ${eventDate || '-'}`, 56, 230);
-      doc.text(`Local: ${eventLocation || '-'}`, 56, 252);
-      doc.text(`Pedido: ${orderNumber || '-'}`, 56, 274);
+      const detailLines = [
+        `Evento: ${eventName}`,
+        participantName ? `Titular: ${participantName}` : null,
+        categoryName ? `Categoria: ${categoryName}` : null,
+        `Ingresso: ${getStatusLabel(status)}`,
+        eventDate ? `Data: ${formatReportDateTime(eventDate)}` : null,
+        eventLocation ? `Local: ${eventLocation}` : null,
+        orderNumber ? `Pedido: ${orderNumber}` : null,
+      ].filter((line): line is string => Boolean(line));
+      detailLines.forEach((line, index) => doc.text(line, 56, 145 + (index * 21)));
 
-      doc.setTextColor(71, 85, 105);
+      doc.setTextColor(...colors.muted);
       doc.setFontSize(10);
-      doc.text(`Token: ${token}`, 56, 302);
+      doc.setFont('courier', 'normal');
+      doc.text('Identificação técnica:', 56, 166 + (detailLines.length * 21));
+      doc.text(splitTechnicalIdentifier(token, 54), 56, 180 + (detailLines.length * 21));
 
-      doc.setFillColor(255, 255, 255);
-      doc.setDrawColor(203, 213, 225);
+      doc.setFillColor(...colors.white);
+      doc.setDrawColor(...colors.border);
       doc.roundedRect(56, 330, 300, 300, 12, 12, 'FD');
       doc.addImage(qrDataUrl, 'PNG', 74, 348, 264, 264);
 
       doc.setFontSize(10);
-      doc.setTextColor(100, 116, 139);
+      doc.setTextColor(...colors.muted);
       doc.text('Apresente este QR Code na entrada do evento.', 56, 650);
+      finalizeReportPages(doc, generatedAt, 'Militrin · Ingresso');
       doc.save(`ingresso-${token}.pdf`);
     } finally {
       setLoading(false);

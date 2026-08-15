@@ -4,7 +4,7 @@ import { formatBirthDateBRInput } from '@/lib/utils/date';
 
 type BirthDateInputProps = {
   value: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
   name: string;
   required?: boolean;
   disabled?: boolean;
@@ -33,7 +33,7 @@ export function BirthDateInput({
         name={name}
         type="text"
         value={value}
-        onChange={(event) => onChange(formatBirthDateBRInput(event.target.value))}
+        onChange={onChange ? (event) => onChange(formatBirthDateBRInput(event.target.value)) : undefined}
         placeholder="dd/MM/aaaa"
         inputMode="numeric"
         autoComplete="bday"

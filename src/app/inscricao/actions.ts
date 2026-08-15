@@ -7,9 +7,11 @@ import { toISODateFromBR } from '@/lib/utils/date';
 import { formatDateBR } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
+import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
 import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
+import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBuyerToNewOrder } from '@/lib/registrations/active-ticket-holder';
 
 type PricingPreview = {
   batch_id: string;
@@ -227,6 +229,14 @@ async function getEventPaymentMethodsConfig(
   };
 }
 
+async function getEventMinAge(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  eventId: string,
+) {
+  const { data } = await supabase.from('events').select('min_age').eq('id', eventId).maybeSingle();
+  return Number(data?.min_age ?? 18);
+}
+
 function isMethodAllowedByConfig(
   method: CheckoutPaymentMethod,
   config: {
@@ -252,10 +262,11 @@ async function resolvePostAuthPath(params: {
   nextPath?: string | null;
   wizardPath?: string | null;
 }) {
+  const administrativeAccess = await canAccessAdministrativePanel(params.userId);
   const destination = resolvePostAuthDestination({
     nextPath: params.nextPath,
     wizardPath: params.wizardPath,
-    fallback: '/minha-conta',
+    fallback: administrativeAccess ? '/painel' : '/minha-conta',
   });
 
   const flags = await getFirstAccessFlags(params.userId, params.authEmail ?? null);
@@ -616,21 +627,33 @@ async function getRegistrationSnapshotByParticipantId(
   participantId: string,
   fallbackEventId: string,
 ) {
-  const [{ data: paymentData, error: paymentError }, { data: participantData, error: participantError }, { data: kitData, error: kitError }, { data: ticket }, { data: order }] = await Promise.all([
+  const [{ data: paymentData, error: paymentError }, { data: participantData, error: participantError }, { data: ticketRows, error: ticketError }, { data: order }] = await Promise.all([
     supabase.rpc('get_participant_payment_details', { p_participant_id: participantId }),
     supabase
       .from('participants')
       .select('id, event_id, full_name, registration_status, reservation_status, reservation_expires_at, shirt_type, shirt_size, email, ticket_categories(name), registration_batches(name)')
       .eq('id', participantId)
       .single(),
-    supabase.rpc('get_participant_kit_items', { p_participant_id: participantId }),
-    supabase.from('tickets').select('token').eq('participant_id', participantId).maybeSingle(),
+    supabase
+      .from('tickets')
+      .select('id, token, order_items!inner(participant_id)')
+      .eq('order_items.participant_id', participantId)
+      .neq('status', 'cancelled')
+      .limit(2),
     supabase.from('orders').select('id, order_number, status').eq('participant_id', participantId).maybeSingle(),
   ]);
 
   if (paymentError) return { success: false as const, message: paymentError.message };
   if (participantError) return { success: false as const, message: participantError.message };
-  if (kitError) return { success: false as const, message: kitError.message };
+  if (ticketError) return { success: false as const, message: ticketError.message };
+  if ((ticketRows?.length ?? 0) > 1) {
+    return { success: false as const, message: 'Mais de um ingresso encontrado para o participante; informe o ingresso explicitamente.' };
+  }
+  const ticket = ticketRows?.[0] ?? null;
+  const { data: ticketKitData, error: ticketKitError } = ticket?.id
+    ? await supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (ticketKitError) return { success: false as const, message: ticketKitError.message };
 
   const paymentRow = (Array.isArray(paymentData) ? paymentData[0] : paymentData) as Record<string, unknown> | null;
   if (!paymentRow) return { success: false as const, message: 'Pagamento nao encontrado apos criar inscricao.' };
@@ -653,7 +676,7 @@ async function getRegistrationSnapshotByParticipantId(
       shirt_type: participantData.shirt_type ? String(participantData.shirt_type) : null,
       shirt_size: participantData.shirt_size ? String(participantData.shirt_size) : null,
       payment: mapPayment(paymentRow),
-      kit_items: (kitData ?? []).map((item: Record<string, unknown>) => ({
+      kit_items: (ticketKitData ?? []).map((item: Record<string, unknown>) => ({
         kit_item_id: String(item.kit_item_id ?? ''),
         item_name: String(item.item_name ?? ''),
         item_type: String(item.item_type ?? ''),
@@ -721,8 +744,12 @@ async function sendTransactionEmails(params: {
       .select('id, token')
       .eq('participant_id', params.participantId)
       .maybeSingle(),
-    supabase.rpc('get_participant_kit_items', { p_participant_id: params.participantId }),
+    Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
   ]);
+
+  const { data: ticketKitItems } = ticket?.id
+    ? await supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })
+    : { data: [] as Array<Record<string, unknown>> };
 
   if (params.paymentStatus === 'paid' && ticket?.token && order && participant) {
     const eventObj = Array.isArray(order.events) ? order.events[0] : order.events;
@@ -733,7 +760,7 @@ async function sendTransactionEmails(params: {
       eventDate: eventObj?.starts_at ? formatDateBR(String(eventObj.starts_at)) : null,
       eventLocation: eventObj?.location ? String(eventObj.location) : null,
       categoryName: relationName(participant.ticket_categories),
-      kitItems: (kitItems ?? []).map((item: Record<string, unknown>) => ({
+      kitItems: (ticketKitItems ?? kitItems ?? []).map((item: Record<string, unknown>) => ({
         name: String(item.item_name ?? ''),
         quantity: Number(item.quantity ?? 1),
       })),
@@ -968,9 +995,6 @@ export async function signUpPublicAccountAction(input: {
   const birthDateIso = input.birth_date ? toISODateFromBR(input.birth_date) : null;
   if (input.birth_date && !birthDateIso) {
     return { success: false, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
-  }
-  if (input.birth_date && calculateAge(input.birth_date) < 18) {
-    return { success: false, message: 'A inscrição exige idade mínima de 18 anos.' };
   }
 
   const emailRedirectTo = `${appBaseUrl()}/`;
@@ -1237,9 +1261,6 @@ export async function saveCheckoutBuyerProfileAction(input: {
     if (!birthDateBR) {
       return { success: false as const, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
     }
-    if (calculateAge(birthDateBR) < 18) {
-      return { success: false as const, message: 'A inscricao exige idade minima de 18 anos.' };
-    }
   }
 
   try {
@@ -1343,8 +1364,11 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
   if (!isValidCpf(cpf)) return { success: false, message: 'CPF invalido.' };
   if (!birthDateIso) return { success: false, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
 
+  const minAge = await getEventMinAge(supabase, String(input.event_id));
   const age = calculateAge(input.birth_date);
-  if (age < 18) return { success: false, message: 'A inscricao exige idade minima de 18 anos.' };
+  if (minAge > 0 && age < minAge) {
+    return { success: false, message: `A inscricao exige idade minima de ${minAge} anos para este evento.` };
+  }
 
   const { data: existingParticipant, error: existingParticipantError } = await supabase
     .from('participants')
@@ -1542,11 +1566,15 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
 
   if (!isValidCpf(cpf)) return { success: false as const, message: 'CPF invalido.' };
   if (!birthDateIso) return { success: false as const, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
-  if (calculateAge(input.buyer.birth_date) < 18) return { success: false as const, message: 'A inscricao exige idade minima de 18 anos.' };
+
+  const minAge = await getEventMinAge(supabase, String(input.event_id));
+  if (minAge > 0 && calculateAge(input.buyer.birth_date) < minAge) {
+    return { success: false as const, message: `A inscricao exige idade minima de ${minAge} anos para este evento.` };
+  }
 
   const quantity = Math.max(1, Math.min(10, Number(input.quantity || 1)));
   const rpcItemsBase = normalizeMultiOrderItemsForRpc(input.items);
-  const rpcItems = rpcItemsBase.map((item) => ({
+  let rpcItems = rpcItemsBase.map((item) => ({
     ...item,
     pricing_gender: resolvePricingGender({
       itemGender: item.pricing_gender,
@@ -1585,47 +1613,115 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
   const requestId = toTextParam(input.client_request_id);
   const notes = buildRequestScopedNotes(toTextParam(input.notes) ?? undefined, requestId ?? undefined);
 
-  let effectiveAssignFirstToBuyer = Boolean(input.assign_first_to_buyer ?? true);
-  if (effectiveAssignFirstToBuyer) {
-    const { data: existingParticipant, error: participantLookupError } = await supabase
+  const firstOwnershipMode = rpcItems[0]?.ownership_mode;
+  const isExplicitlyForSomeoneElse = firstOwnershipMode === 'named' || firstOwnershipMode === 'unassigned';
+  const assignmentRequested = input.assign_first_to_buyer !== false && !isExplicitlyForSomeoneElse;
+  let effectiveAssignFirstToBuyer = assignmentRequested;
+
+  if (assignmentRequested) {
+    const { data: profileData, error: profileError } = await supabase.rpc('get_customer_profile', {
+      p_user_id: userId,
+    });
+    if (profileError) {
+      return { success: false as const, message: 'Não foi possível validar o perfil do comprador.' };
+    }
+
+    const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+    const profileCpf = removeCpfMask(String(profile?.cpf ?? ''));
+    const profileGender = normalizePricingGenderInput(String(profile?.gender ?? ''));
+    const profileIsValid = Boolean(
+      String(profile?.full_name ?? '').trim()
+      && isValidCpf(profileCpf)
+      && String(profile?.birth_date ?? '').trim()
+      && profileGender
+      && String(profile?.phone ?? '').replace(/\D/g, '').length >= 10,
+    );
+
+    if (!profileIsValid || profileCpf !== cpf) {
+      return {
+        success: false as const,
+        message: 'Complete e valide os dados da sua conta antes de definir automaticamente o titular.',
+      };
+    }
+
+    const itemPricingGender = rpcItems[0]?.pricing_gender;
+    if (!itemPricingGender || itemPricingGender !== profileGender) {
+      return {
+        success: false as const,
+        message: 'VALIDACAO_ADMINISTRATIVA: gênero do titular incompatível ou ambíguo para o preço selecionado.',
+      };
+    }
+
+    const { data: accountParticipants, error: accountParticipantsError } = await supabase
       .from('participants')
-      .select('id')
+      .select('id, cpf, registration_contact_id')
       .eq('event_id', String(input.event_id))
       .eq('user_id', userId)
-      .eq('cpf', cpf)
-      .limit(1)
-      .maybeSingle();
+      .limit(3);
 
-    if (participantLookupError) {
-      // Safer fallback: avoid assigning automatically when lookup fails.
-      effectiveAssignFirstToBuyer = false;
-      console.warn('[checkout:create-order] participant lookup failed; disabling auto assignment', {
-        event_id: input.event_id,
-        user_id: userId,
-        code: participantLookupError.code,
-        message: participantLookupError.message,
-      });
-    } else if (existingParticipant?.id) {
-      const { count: existingTicketCount, error: ticketLookupError } = await supabase
-        .from('tickets')
-        .select('id', { count: 'exact', head: true })
+    if (accountParticipantsError) {
+      return { success: false as const, message: 'Não foi possível validar a titularidade neste evento.' };
+    }
+    if ((accountParticipants ?? []).length > 1) {
+      return {
+        success: false as const,
+        message: 'VALIDACAO_ADMINISTRATIVA: usuário possui múltiplos cadastros de participante neste evento.',
+      };
+    }
+
+    const existingAccountParticipant = accountParticipants?.[0];
+    let existingContactId = String(existingAccountParticipant?.registration_contact_id ?? '');
+    if (existingAccountParticipant && removeCpfMask(String(existingAccountParticipant.cpf ?? '')) !== cpf) {
+      return {
+        success: false as const,
+        message: 'VALIDACAO_ADMINISTRATIVA: cadastro existente do usuário possui CPF divergente neste evento.',
+      };
+    }
+
+    if (!existingAccountParticipant) {
+      const { data: unlinkedParticipantsForEvent, error: unlinkedParticipantsError } = await supabase
+        .from('participants')
+        .select('id, cpf, registration_contact_id')
         .eq('event_id', String(input.event_id))
-        .eq('participant_id', existingParticipant.id);
+        .is('user_id', null);
 
-      if (ticketLookupError) {
-        // Safer fallback: avoid assigning automatically when lookup fails.
+      if (unlinkedParticipantsError) {
+        return { success: false as const, message: 'Não foi possível validar cadastros anteriores neste evento.' };
+      }
+      const matchingUnlinkedParticipants = (unlinkedParticipantsForEvent ?? [])
+        .filter((participant) => removeCpfMask(String(participant.cpf ?? '')) === cpf);
+      if (matchingUnlinkedParticipants.length > 1) {
+        return {
+          success: false as const,
+          message: 'VALIDACAO_ADMINISTRATIVA: existem múltiplos cadastros sem conta para este CPF no evento.',
+        };
+      }
+      existingContactId = String(matchingUnlinkedParticipants[0]?.registration_contact_id ?? '');
+    }
+
+    const contactId = existingContactId;
+    if (contactId) {
+      try {
+        const holderState = await registrationContactHasActiveTicket(supabase, String(input.event_id), contactId);
+        effectiveAssignFirstToBuyer = shouldAssignBuyerToNewOrder(assignmentRequested, holderState.hasActiveTicket);
+      } catch (holderLookupError) {
         effectiveAssignFirstToBuyer = false;
-        console.warn('[checkout:create-order] ticket lookup failed; disabling auto assignment', {
+        console.warn('[checkout:create-order] holder lookup failed; disabling auto assignment', {
           event_id: input.event_id,
-          participant_id: existingParticipant.id,
-          code: ticketLookupError.code,
-          message: ticketLookupError.message,
+          registration_contact_id: contactId,
+          error: holderLookupError instanceof Error ? holderLookupError.message : String(holderLookupError),
         });
-      } else if (Number(existingTicketCount ?? 0) > 0) {
-        // Repeat purchase for the same participant: keep the new item unassigned.
-        effectiveAssignFirstToBuyer = false;
       }
     }
+
+    const ownershipModes=buyerOwnershipModes(quantity,assignmentRequested,!effectiveAssignFirstToBuyer);
+    rpcItems = rpcItems.map((item,index) => ownershipModes[index]==='self' ? {
+      ...item, ownership_mode: 'self', ownership_status: 'assigned',
+      holder_full_name: null, holder_email: null, holder_phone: null,
+    } : {
+      ...item, ownership_mode: 'unassigned', ownership_status: 'unassigned',
+      holder_full_name: null, holder_email: null, holder_phone: null,
+    });
   }
 
   const createOrderRpcPayload = {
@@ -1962,7 +2058,7 @@ export async function getPublicRegistrationSnapshotAction(participantId: string)
     return { success: false, message: 'Sessao necessaria para visualizar sua inscricao.' };
   }
 
-  const [{ data: participant, error: participantError }, { data: paymentData, error: paymentError }, { data: kitData, error: kitError }, { data: ticket }] = await Promise.all([
+  const [{ data: participant, error: participantError }, { data: paymentData, error: paymentError }, { data: ticketRows, error: ticketError }] = await Promise.all([
     supabase
       .from('participants')
       .select('id, event_id, full_name, cpf, registration_status, reservation_status, reservation_expires_at, created_at, shirt_type, shirt_size, ticket_categories(name), registration_batches(name), events(name)')
@@ -1970,13 +2066,25 @@ export async function getPublicRegistrationSnapshotAction(participantId: string)
       .eq('user_id', user.id)
       .single(),
     supabase.rpc('get_participant_payment_details', { p_participant_id: participantId }),
-    supabase.rpc('get_participant_kit_items', { p_participant_id: participantId }),
-    supabase.from('tickets').select('token, status').eq('participant_id', participantId).maybeSingle(),
+    supabase
+      .from('tickets')
+      .select('id, token, status, order_items!inner(participant_id)')
+      .eq('order_items.participant_id', participantId)
+      .neq('status', 'cancelled')
+      .limit(2),
   ]);
 
   if (participantError) return { success: false, message: participantError.message };
   if (paymentError) return { success: false, message: paymentError.message };
-  if (kitError) return { success: false, message: kitError.message };
+  if (ticketError) return { success: false, message: ticketError.message };
+  if ((ticketRows?.length ?? 0) > 1) {
+    return { success: false, message: 'Mais de um ingresso encontrado para o participante; informe o ingresso explicitamente.' };
+  }
+  const ticket = ticketRows?.[0] ?? null;
+  const { data: ticketKitData, error: ticketKitError } = ticket?.id
+    ? await supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (ticketKitError) return { success: false, message: ticketKitError.message };
 
   const paymentRow = (Array.isArray(paymentData) ? paymentData[0] : paymentData) as Record<string, unknown> | null;
   if (!paymentRow) return { success: false, message: 'Pagamento nao encontrado.' };
@@ -2003,7 +2111,7 @@ export async function getPublicRegistrationSnapshotAction(participantId: string)
       shirt_type: participant.shirt_type ? String(participant.shirt_type) : null,
       shirt_size: participant.shirt_size ? String(participant.shirt_size) : null,
       payment: mapPayment(paymentRow),
-      kit_items: (kitData ?? []).map((item: Record<string, unknown>) => ({
+      kit_items: (ticketKitData ?? []).map((item: Record<string, unknown>) => ({
         kit_item_id: String(item.kit_item_id ?? ''),
         item_name: String(item.item_name ?? ''),
         item_type: String(item.item_type ?? ''),

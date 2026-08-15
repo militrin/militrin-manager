@@ -1,5 +1,6 @@
 "use client";
 
+import { ExpandedTicketDetails } from "./ExpandedTicketDetails";
 import { ExpandedParticipantDetails } from "./ExpandedParticipantDetails";
 import { OperationRow } from "./OperationRow";
 import { getOperationsGridConfig } from "./tableGrid";
@@ -7,6 +8,7 @@ import type {
   PickupCapabilities,
   PickupDetails,
   PickupEvent,
+  PickupListGroup,
   PickupListItem,
   PickupSortDirection,
   PickupSortField,
@@ -31,8 +33,6 @@ const SORT_PRESETS: Array<{ field: PickupSortField; direction: PickupSortDirecti
   { field: "kit", direction: "desc", label: "Kit (entregue primeiro)" },
   { field: "checkin", direction: "asc", label: "Check-in (pendente primeiro)" },
   { field: "checkin", direction: "desc", label: "Check-in (realizado primeiro)" },
-  { field: "wristband", direction: "asc", label: "Pulseira (vinculada primeiro)" },
-  { field: "wristband", direction: "desc", label: "Pulseira (pendente primeiro)" },
 ];
 
 function HeaderButton({
@@ -65,6 +65,7 @@ function HeaderButton({
 
 export function OperationsTable({
   selectedEvent,
+  groups,
   items,
   details,
   expandedId,
@@ -78,10 +79,14 @@ export function OperationsTable({
   onDeliverKitAndCheckin,
   onCheckin,
   onDeliverKitItem,
+  onItemsMaterialized,
+  onParticipantResolved,
+  onConfirmPayment,
   onSort,
   onSortPreset,
 }: {
   selectedEvent: PickupEvent | null;
+  groups: PickupListGroup[];
   items: PickupListItem[];
   details: Record<string, PickupDetails>;
   expandedId: string | null;
@@ -90,11 +95,14 @@ export function OperationsTable({
   capabilities: PickupCapabilities;
   sortField: PickupSortField;
   sortDirection: PickupSortDirection;
-  onToggleDetails: (participantId: string) => Promise<void>;
-  onDeliverFullKit: (participantId: string) => Promise<void>;
-  onDeliverKitAndCheckin: (participantId: string) => Promise<void>;
-  onCheckin: (participantId: string) => Promise<void>;
-  onDeliverKitItem: (participantId: string, kitItemId: string) => Promise<void>;
+  onToggleDetails: (entry: PickupListItem) => Promise<void>;
+  onDeliverFullKit: (ticketId: string, participantId: string | null) => Promise<void>;
+  onDeliverKitAndCheckin: (ticketId: string, participantId: string | null) => Promise<void>;
+  onCheckin: (ticketId: string) => Promise<void>;
+  onDeliverKitItem: (ticketId: string, participantId: string | null, kitItemId: string) => Promise<void>;
+  onItemsMaterialized: (ticketId: string) => Promise<void>;
+  onParticipantResolved: (participantId: string, result: { ticketId: string | null; finalization: string | null; message: string }) => Promise<void>;
+  onConfirmPayment: (ticketId: string, participantId: string) => Promise<void>;
   onSort: (field: PickupSortField) => void;
   onSortPreset: (field: PickupSortField, direction: PickupSortDirection) => void;
 }) {
@@ -126,7 +134,7 @@ export function OperationsTable({
           <div
             className={`hidden gap-2 bg-slate-950/80 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 lg:grid ${grid.header}`}
           >
-            <HeaderButton label="Participante" field="name" currentField={sortField} currentDirection={sortDirection} onSort={onSort} />
+            <HeaderButton label="Compra / participante" field="name" currentField={sortField} currentDirection={sortDirection} onSort={onSort} />
             <div>Categoria</div>
             {selectedEvent?.has_shirt ? (
               <div className="flex items-center gap-1">
@@ -136,57 +144,82 @@ export function OperationsTable({
               </div>
             ) : null}
             <HeaderButton label="Pagamento" field="payment" currentField={sortField} currentDirection={sortDirection} onSort={onSort} />
-            {selectedEvent?.has_kit ? <HeaderButton label="Kit" field="kit" currentField={sortField} currentDirection={sortDirection} onSort={onSort} /> : null}
+            {selectedEvent?.has_kit ? <HeaderButton label="Itens" field="kit" currentField={sortField} currentDirection={sortDirection} onSort={onSort} /> : null}
             <HeaderButton label="Check-in" field="checkin" currentField={sortField} currentDirection={sortDirection} onSort={onSort} />
-            {selectedEvent?.wristband_enabled ? (
-              <HeaderButton label="Pulseira" field="wristband" currentField={sortField} currentDirection={sortDirection} onSort={onSort} />
-            ) : null}
             <div>Ações</div>
           </div>
 
           {loading && items.length === 0 ? (
-            <div className="p-8 text-center text-slate-400">Carregando participantes...</div>
-          ) : items.length === 0 ? (
-            <div className="p-8 text-center text-slate-400">Nenhum participante encontrado.</div>
+            <div className="p-8 text-center text-slate-400">Carregando ingressos...</div>
+          ) : groups.length === 0 ? (
+            <div className="p-8 text-center text-slate-400">Nenhum ingresso encontrado.</div>
           ) : (
-            items.map((item) => {
-              const isExpanded = expandedId === item.id;
-              const detail = details[item.id];
-              const busy = actionId === item.id;
-
-              return (
-                <div id={`participant-${item.id}`} key={item.id} className="border-t border-slate-800 first:border-t-0">
-                  <OperationRow
-                    item={item}
-                    selectedEvent={selectedEvent}
-                    isExpanded={isExpanded}
-                    busy={busy}
-                    capabilities={capabilities}
-                    onToggleDetails={(participantId) => {
-                      void onToggleDetails(participantId);
-                    }}
-                    onDeliverFullKit={onDeliverFullKit}
-                    onDeliverKitAndCheckin={onDeliverKitAndCheckin}
-                    onCheckin={onCheckin}
-                  />
-
-                  {isExpanded ? (
-                    <div className="bg-slate-950/55 px-4 py-5">
-                      <ExpandedParticipantDetails
-                        detail={detail}
-                        busy={busy}
-                        selectedEvent={selectedEvent}
-                        capabilities={capabilities}
-                        onDeliverFullKit={onDeliverFullKit}
-                        onCheckin={onCheckin}
-                        onDeliverKitAndCheckin={onDeliverKitAndCheckin}
-                        onDeliverKitItem={onDeliverKitItem}
-                      />
-                    </div>
-                  ) : null}
+            groups.map((group) => (
+              <div key={group.id} className="border-t border-slate-800 first:border-t-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/75 px-3 py-2 text-xs text-slate-300">
+                  <div className="font-medium text-slate-100">
+                    {group.ticket_count > 0
+                      ? `Compra ${group.order_number ?? group.order_id ?? "sem número"} · Comprador: ${group.buyer_name}`
+                      : group.group_type === "imported_participant"
+                        ? `Inscrição importada · Portador: ${group.participant_name}`
+                        : `Inscrição sem ingresso · Participante: ${group.participant_name}`}
+                  </div>
+                  <div className="text-slate-400">
+                    {group.group_type === "order"
+                      ? `${group.ticket_count} ingresso(s) · ${group.pending_count} pendente(s) · ${group.completed_count} concluído(s)`
+                      : group.ticket_count === 0
+                        ? "Sem ingresso emitido"
+                        : `${group.ticket_count} ingresso(s) · ${group.pending_count} pendente(s) · ${group.completed_count} concluído(s)`}
+                  </div>
                 </div>
-              );
-            })
+
+                {group.tickets.map((item) => {
+                  const isExpanded = expandedId === item.id;
+                  const detail = details[item.id];
+                  const busy = actionId === item.id;
+
+                  return (
+                    <div id={`participant-${item.id}`} key={item.id} className="border-t border-slate-800/70 first:border-t-0">
+                      <OperationRow
+                        item={item}
+                        selectedEvent={selectedEvent}
+                        isExpanded={isExpanded}
+                        busy={busy}
+                        capabilities={capabilities}
+                        onToggleDetails={(entry) => {
+                          void onToggleDetails(entry);
+                        }}
+                        onDeliverFullKit={onDeliverFullKit}
+                        onDeliverKitAndCheckin={onDeliverKitAndCheckin}
+                      onCheckin={onCheckin}
+                      onItemsMaterialized={onItemsMaterialized}
+                      />
+
+                      {isExpanded ? (
+                        <div className="bg-slate-950/55 px-4 py-5">
+                          {item.kind === "ticket" ? <ExpandedTicketDetails
+                            detail={detail?.kind === "ticket" ? detail : undefined}
+                            busy={busy}
+                            selectedEvent={selectedEvent}
+                            capabilities={capabilities}
+                            onDeliverFullKit={onDeliverFullKit}
+                            onCheckin={onCheckin}
+                            onDeliverKitAndCheckin={onDeliverKitAndCheckin}
+                            onDeliverKitItem={onDeliverKitItem}
+                            onConfirmPayment={(participantId) => onConfirmPayment(item.ticket_id, participantId)}
+                            onIssueResolved={(result) => onParticipantResolved(item.participant_id ?? "", result)}
+                          /> : <ExpandedParticipantDetails
+                            detail={detail?.kind === "participant_without_ticket" ? detail : undefined}
+                            busy={busy}
+                            onResolved={(result) => onParticipantResolved(item.participant_id, result)}
+                          />}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ))
           )}
         </div>
       </div>

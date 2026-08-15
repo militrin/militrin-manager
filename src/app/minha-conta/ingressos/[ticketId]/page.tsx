@@ -6,14 +6,13 @@ import { getCurrentPermissionMap } from '@/lib/admin/permissions';
 import { MilitrinButton, MilitrinSection, MilitrinStatusBadge, MilitrinTimeline, type MilitrinTimelineItem } from '@/components/militrin';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
-  changeTicketShirtAction,
-  defineTicketHolderAction,
-  transferTicketAction,
-  updateTicketCategoryAction,
+  reviewTicketItemChangeAction,
   updateTicketNotesAction,
 } from '@/app/minha-conta/actions';
-import { deliverFullKitAction, deliverKitAndCheckinAction, checkinEntryAction } from '@/app/operacoes/actions';
-import { SHIRT_SIZES } from '@/lib/constants/shirts';
+import { TicketOperationalControls } from './ticket-operational-controls';
+import { TicketHolderActions } from './ticket-holder-actions';
+import { CategoryContextAction, HolderContextAction, ShirtContextAction } from './ticket-context-actions';
+import { optionalDisplayValue } from '@/lib/optional-display';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -34,7 +33,7 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-export default async function TicketDetailPage({ params }: { params: Promise<{ ticketId: string }> }) {
+export default async function TicketDetailPage({ params, showTimeline = true, adminEditHref }: { params: Promise<{ ticketId: string }>; showTimeline?: boolean; adminEditHref?: string }) {
   const { ticketId } = await params;
   if (!isUuid(ticketId)) notFound();
 
@@ -47,34 +46,31 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
     'participants.edit_basic',
     'inventory.change_participant_shirt',
     'kits.deliver',
+    'kits.undo_delivery',
     'checkin.scan',
+    'checkin.undo',
     'orders.resend_ticket',
+    'tickets.transfer_ownership',
   ]);
   const canAdminEdit = Boolean(permissions['participants.edit_basic']);
-  const canManageOperationalFlow = Boolean(permissions['kits.deliver'] || permissions['checkin.scan']);
+  const canChangeShirt = Boolean(permissions['inventory.change_participant_shirt']);
+  const canDeliverKit = Boolean(permissions['kits.deliver']);
+  const canUndoKitDelivery = Boolean(permissions['kits.undo_delivery']);
+  const canCheckin = Boolean(permissions['checkin.scan']);
+  const canUndoCheckin = Boolean(permissions['checkin.undo']);
+  const canManageOperationalFlow = canDeliverKit || canCheckin || canUndoKitDelivery || canUndoCheckin;
+  const canTransferOwnership=Boolean(permissions['tickets.transfer_ownership']);
 
   const ticketSelect =
-  'id, token, status, issued_at, used_at, participant_id, order_id, order_item_id, orders!inner(id, order_number, status, user_id, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, shirt_order_deadline), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
+  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, events(id, name, location, starts_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), orders(id, order_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
   
-  const ownedTicketQuery = await supabase
+  const ticketResult = await supabase
     .from('tickets')
     .select(ticketSelect)
     .eq('id', ticketId)
-    .eq('orders.user_id', user?.id ?? '')
     .maybeSingle();
-
-  const adminTicketQuery = canAdminEdit && !ownedTicketQuery.data
-    ? await supabase
-        .from('tickets')
-        .select(ticketSelect)
-        .eq('id', ticketId)
-        .maybeSingle()
-    : null;
-
-  const ticketResult = ownedTicketQuery.data ? ownedTicketQuery : adminTicketQuery ?? ownedTicketQuery;
   const ticketError = ticketResult.error;
   const ticket = ticketResult.data as Record<string, unknown> | null;
-  const resolvedTicketId = String(ticket?.id ?? ticketId);
 
   if (ticketError) {
     console.log(ticketError);
@@ -90,41 +86,49 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
   const orderItem = firstRelation(ticket.order_items as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
   const participant = firstRelation((orderItem?.participants as Record<string, unknown> | Record<string, unknown>[] | null | undefined) ?? (ticket.participants as Record<string, unknown> | Record<string, unknown>[] | null | undefined));
   const payment = firstRelation(order?.payments as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
-  const eventObj = firstRelation(order?.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const eventObj = firstRelation((order?.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined) ?? (ticket.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined));
+  // LEGACY FALLBACK — do not use as canonical source: participant category only supports incomplete historical order_items.
   const categoryObj = firstRelation((orderItem?.ticket_categories as Record<string, unknown> | Record<string, unknown>[] | null | undefined) ?? (participant?.ticket_categories as Record<string, unknown> | Record<string, unknown>[] | null | undefined));
+  const batchObj = firstRelation(orderItem?.registration_batches as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
 
   const participantId = String(orderItem?.participant_id ?? ticket.participant_id ?? participant?.id ?? '');
   const orderId = String(order?.id ?? ticket.order_id ?? '');
   const orderItemId = String(orderItem?.id ?? ticket.order_item_id ?? '');
   const eventId = String(order?.event_id ?? '');
+  const isBuyer = Boolean(user?.id) && order?.buyer_type === 'account' && String(order?.user_id ?? '') === user?.id;
+  const isOwner = Boolean(user?.id) && String(ticket.owner_user_id ?? '') === user?.id;
   const orderStatus = normalizeStatus(String(order?.status ?? 'pending'));
   const paymentStatus = normalizeStatus(String(payment?.payment_status ?? 'pending'));
   const ticketStatus = normalizeStatus(String(ticket.status ?? 'pending'));
-  const canShowTicket = orderStatus === 'confirmed' && (ticketStatus === 'active' || ticketStatus === 'used');
-  const holderName = String(participant?.full_name ?? orderItem?.holder_full_name ?? 'Titular ainda nao definido');
-  const shirtType = String(orderItem?.shirt_type ?? participant?.shirt_type ?? 'Camiseta');
-  const shirtSize = String(orderItem?.shirt_size ?? participant?.shirt_size ?? '');
-  const shirtDeadline = eventObj?.shirt_order_deadline ? new Date(String(eventObj.shirt_order_deadline)) : null;
-  const afterDeadline = shirtDeadline ? new Date().getTime() > shirtDeadline.getTime() : false;
+  const { count: ticketIssuanceBlockCount } = participantId
+    ? await supabase.from('participant_data_issues').select('id', { count: 'exact', head: true })
+      .eq('participant_id', participantId).eq('status', 'open').eq('blocks_ticket_issuance', true)
+    : { count: 0 };
+  const ticketIssuanceBlocked = (ticketIssuanceBlockCount ?? 0) > 0;
+  const canShowTicket = (isOwner || canAdminEdit) && !ticketIssuanceBlocked && (order ? orderStatus === 'confirmed' : true) && (ticketStatus === 'active' || ticketStatus === 'used');
+  const hasHolder = Boolean(participantId);
+  const holderName = hasHolder ? String(participant?.full_name ?? orderItem?.holder_full_name ?? 'Titular nao identificado') : 'Titular nao definido';
+  const buyerProfileResult = order?.user_id
+    ? await supabase.from('customer_profiles').select('full_name,email').eq('user_id', String(order.user_id)).maybeSingle()
+    : { data: null };
+  const buyerProfile = buyerProfileResult.data as Record<string, unknown> | null;
+  const buyerName = String(buyerProfile?.full_name ?? buyerProfile?.email ?? (order?.buyer_type === 'imported_holder' ? 'Pedido importado sem comprador' : 'Comprador nao identificado'));
+  const ownerProfileResult = ticket.owner_user_id
+    ? await supabase.from('customer_profiles').select('full_name').eq('user_id',String(ticket.owner_user_id)).maybeSingle()
+    : {data:null};
+  const ownerProfile=ownerProfileResult.data as Record<string,unknown>|null;
+  const ownerName=String(ownerProfile?.full_name??(ticket.owner_user_id?'Conta NEXORA':'Proprietário não definido'));
 
-  const [linkedParticipantsResult, inventoryResult, kitItemsResult, timelineResult, categoriesResult] = await Promise.all([
-    participantId
-      ? supabase
-          .from('participants')
-          .select('id, full_name, ticket_category_id, shirt_type, shirt_size, user_id')
-          .eq('event_id', eventId)
-          .eq('user_id', user?.id ?? '')
-          .order('created_at', { ascending: true })
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-    eventId
-      ? supabase
-          .from('shirt_inventory')
-          .select('shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity')
-          .eq('event_id', eventId)
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-    participantId
-      ? supabase.rpc('get_participant_kit_items', { p_participant_id: participantId })
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+  const ensureKitResult = canAdminEdit ? await supabase.rpc('ensure_ticket_kit_items', { p_ticket_id: ticket.id }) : {data:{skipped_count:0},error:null};
+  const ensureKit = (ensureKitResult.data ?? {}) as Record<string, unknown>;
+  const shirtConfigurationIssue = ensureKitResult.error
+    ? 'Nao foi possivel conferir os itens deste ingresso agora.'
+    : Number(ensureKit.skipped_count ?? 0) > 0
+      ? 'Nao foi possivel identificar a camiseta deste ingresso. Revise o tamanho antes da entrega.'
+      : null;
+
+  const [kitItemsResult, timelineResult, categoriesResult, itemRequestsResult, shirtOptionsResult] = await Promise.all([
+    supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id }),
     Promise.all([
       supabase.from('audit_logs').select('id, action, created_at, details').eq('entity_type', 'tickets').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(20),
       participantId
@@ -137,29 +141,37 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
     canAdminEdit && eventId
       ? supabase.rpc('get_event_ticket_categories', { p_event_id: eventId })
       : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    supabase.from('ticket_item_change_requests').select('id,kit_item_id,status,current_variant,requested_variant,requested_at,event_kit_items(name)').eq('ticket_id', ticketId).order('requested_at', { ascending: false }),
+    canChangeShirt
+      ? supabase.rpc('get_admin_ticket_shirt_options', { p_ticket_id: ticketId })
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
   ]);
 
-  const linkedParticipants = (linkedParticipantsResult.data ?? []) as Array<Record<string, unknown>>;
-  const inventoryRows = (inventoryResult.data ?? []) as Array<Record<string, unknown>>;
   const kitItems = (kitItemsResult.data ?? []) as Array<Record<string, unknown>>;
+  const shirtKitItem = kitItems.find((item) => String(item.item_type ?? '') === 'shirt');
+  const shirtVariant = (shirtKitItem?.variant_data ?? {}) as Record<string, unknown>;
+  // LEGACY FALLBACK — do not use as canonical source: kit variant and order_item remain authoritative.
+  const shirtType = optionalDisplayValue(shirtVariant.shirt_type ?? orderItem?.shirt_type ?? participant?.shirt_type);
+  const shirtSize = optionalDisplayValue(shirtVariant.shirt_size ?? orderItem?.shirt_size ?? participant?.shirt_size);
+  const shirtVariantId = typeof shirtVariant.variant_id === 'string' && shirtVariant.variant_id.trim().length > 0
+    ? shirtVariant.variant_id.trim()
+    : null;
+  const shirtIsCanonicallyLinked = Boolean(shirtVariantId);
+  const currentShirtOption = shirtType && shirtSize ? `${shirtType}|${shirtSize}` : '';
   const [ticketLogsResult, participantLogsResult, orderItemLogsResult] = timelineResult as [
     { data: Array<Record<string, unknown>> | null },
     { data: Array<Record<string, unknown>> | null },
     { data: Array<Record<string, unknown>> | null },
   ];
   const adminCategories = (categoriesResult.data ?? []) as Array<Record<string, unknown>>;
+  const itemRequests = (itemRequestsResult.data ?? []) as Array<Record<string, unknown>>;
+  const pendingItemRequests = itemRequests.filter((request) => request.status === 'pending');
+  const shirtOptions = (shirtOptionsResult.data ?? []) as Array<Record<string, unknown>>;
 
   const kitDeliveredCount = kitItems.filter((item) => String(item.status ?? '') === 'delivered').length;
-  const kitSummary = kitItems.length > 0 ? `${kitDeliveredCount}/${kitItems.length} entregues` : 'Sem itens de kit';
-  const inventoryBySize = new Map<string, number>();
-  for (const row of inventoryRows) {
-    const type = String(row.shirt_type ?? '');
-    const size = String(row.shirt_size ?? '');
-    const available = Math.max(0, Number(row.total_quantity ?? 0) - Number(row.reserved_quantity ?? 0) - Number(row.delivered_quantity ?? 0));
-    if (type === shirtType) {
-      inventoryBySize.set(size, available);
-    }
-  }
+  const kitFullyDelivered = kitItems.length > 0 && kitDeliveredCount === kitItems.length;
+  const checkinDone = Boolean(ticket.used_at) || ticketStatus === 'used';
+  const kitSummary = `${kitDeliveredCount}/${kitItems.length} entregues`;
 
   const timelineItems = [
     {
@@ -217,49 +229,11 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
       .slice(0, 20)),
   ] satisfies MilitrinTimelineItem[];
 
-  const sizeOptions = SHIRT_SIZES[shirtType as keyof typeof SHIRT_SIZES] ?? [];
-
-  async function submitDefineTicketHolder(formData: FormData) {
-    'use server';
-    await defineTicketHolderAction(formData);
-  }
-
-  async function submitTransferTicket(formData: FormData) {
-    'use server';
-    await transferTicketAction(formData);
-  }
-
-  async function submitTicketShirtChange(formData: FormData) {
-    'use server';
-    await changeTicketShirtAction(formData);
-  }
-
-  async function submitTicketCategoryChange(formData: FormData) {
-    'use server';
-    await updateTicketCategoryAction(formData);
-  }
+  async function submitItemRequestReview(formData: FormData) { 'use server'; await reviewTicketItemChangeAction(formData); }
 
   async function submitTicketNotesChange(formData: FormData) {
     'use server';
     await updateTicketNotesAction(formData);
-  }
-
-  async function submitDeliverKit() {
-    'use server';
-    if (!participantId) return;
-    await deliverFullKitAction({ participant_id: participantId });
-  }
-
-  async function submitCheckin() {
-    'use server';
-    if (!participantId) return;
-    await checkinEntryAction({ participant_id: participantId });
-  }
-
-  async function submitDeliverKitAndCheckin() {
-    'use server';
-    if (!participantId) return;
-    await deliverKitAndCheckinAction({ participant_id: participantId });
   }
 
   return (
@@ -273,142 +247,86 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
           <div className="space-y-4">
             <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
               <div className="grid gap-2 sm:grid-cols-2">
-                <p>Nome do titular: {holderName}</p>
-                <p>Categoria: {String(categoryObj?.name ?? '-')}</p>
-                <p>Tipo de camiseta: {shirtType}</p>
-                <p>Tamanho: {shirtSize || '-'}</p>
-                <p>Status pagamento: <MilitrinStatusBadge status={paymentStatus} /></p>
-                <p>Status kit entregue: {kitDeliveredCount === kitItems.length && kitItems.length > 0 ? 'Entregue' : kitSummary}</p>
+                <p className="flex flex-wrap items-center gap-2">Titular: <strong>{holderName}</strong>{canAdminEdit ? <HolderContextAction ticketId={ticketId} hasHolder={hasHolder}/> : null}</p>
+                <p>Proprietário atual: <strong>{ownerName}</strong></p>
+                {order ? <p>Comprador: <strong>{buyerName}</strong> <span className="text-xs text-slate-500">(original)</span></p> : null}
+                {optionalDisplayValue(categoryObj?.name) ? <p className="flex flex-wrap items-center gap-2">Categoria: <strong>{optionalDisplayValue(categoryObj?.name)}</strong>{canAdminEdit ? <CategoryContextAction ticketId={ticketId} initial={String(orderItem?.ticket_category_id ?? '')} options={adminCategories.map(item=>({value:String(item.id),label:String(item.name ?? 'Categoria')}))}/> : null}</p> : null}
+                {optionalDisplayValue(batchObj?.name) ? <p>Lote: {optionalDisplayValue(batchObj?.name)}</p> : null}
+                {(shirtKitItem || shirtType || shirtSize) ? <p className="flex flex-wrap items-center gap-2">Camiseta: <strong>{shirtType && shirtSize ? `${shirtType} ${shirtSize}` : 'Nao identificada'}</strong>{canChangeShirt ? <ShirtContextAction ticketId={ticketId} initial={currentShirtOption} options={shirtOptions.map(option=>({value:`${String(option.shirt_type)}|${String(option.shirt_size)}`,label:String(option.option_label)}))}/> : null}</p> : null}
+                <p>Pagamento: <MilitrinStatusBadge status={paymentStatus} /></p>
+                {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
                 <p>Status check-in: {ticket.used_at ? 'Realizado' : 'Pendente'}</p>
                 <p>Pedido: {String(order?.order_number ?? '-')}</p>
                 <p>Valor final: {money(Number(order?.final_amount ?? payment?.final_amount ?? 0))}</p>
-                <p>Emissão: {ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : '-'}</p>
+                {ticket.issued_at ? <p>Emissão: {formatDateTimeBR(String(ticket.issued_at), ' às ')}</p> : null}
               </div>
+              {shirtConfigurationIssue ? <p className="mt-3 rounded-xl border border-amber-600/30 bg-amber-950/20 p-3 text-xs text-amber-100">{shirtConfigurationIssue}</p> : null}
+              {participantId && canManageOperationalFlow ? <div className="mt-4 border-t border-slate-800 pt-4"><p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p><TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/></div> : null}
             </div>
 
             {canShowTicket ? (
-              <TicketViewer
+              <div id="qr"><TicketViewer
                 eventName={String(eventObj?.name ?? 'Evento')}
                 participantName={holderName}
                 status={ticketStatus}
-                categoryName={String(categoryObj?.name ?? '-')}
-                eventDate={eventObj?.starts_at ? formatDateTimeBR(String(eventObj.starts_at), ' as ') : null}
+                categoryName={optionalDisplayValue(categoryObj?.name)}
+                eventDate={eventObj?.starts_at ? String(eventObj.starts_at) : null}
                 eventLocation={eventObj?.location ? String(eventObj.location) : null}
                 token={String(ticket.token ?? '')}
-                orderNumber={String(order?.order_number ?? '-')}
+                orderNumber={optionalDisplayValue(order?.order_number)}
                 showPdfButton
-              />
+              /></div>
             ) : (
               <div className="rounded-2xl border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-100">
-                O QR Code e o PDF ficam disponiveis apenas para pedidos confirmados.
+                {ticketIssuanceBlocked ? 'Ingresso aguardando conferência. O QR Code ficará disponível após a liberação do organizador.' : 'O QR Code e o PDF ficam disponíveis apenas para pedidos confirmados.'}
               </div>
             )}
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Acoes do titular</p>
-              {linkedParticipants.length ? (
-                <div className="mt-3 grid gap-4">
-                  <form action={submitDefineTicketHolder} className="space-y-3">
-                    <input type="hidden" name="ticket_id" value={String(ticket.id)} />
-                    <label className="block space-y-2 text-sm">
-                      <span className="text-slate-300">Definir titular</span>
-                      <select name="participant_id" defaultValue={participantId || ''} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100">
-                        <option value="">Selecione um participante</option>
-                        {linkedParticipants.map((item) => (
-                          <option key={String(item.id)} value={String(item.id)}>
-                            {String(item.full_name ?? 'Participante')}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      <MilitrinButton type="submit" size="sm">Definir titular</MilitrinButton>
-                    </div>
-                  </form>
+            {kitItems.length ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Itens ativos do kit</p>
+              <ul className="mt-3 space-y-2">
+                {kitItems.map((item) => <li key={String(item.kit_item_id)} className="flex items-center justify-between gap-3">
+                  <span>{String(item.item_name ?? 'Item')}</span>
+                  <span className="text-xs text-slate-400">{String(item.item_type) === 'shirt' && String(item.status) === 'not_linked' ? 'Camiseta não vinculada' : String(item.status ?? 'pendente')}</span>
+                </li>)}
+              </ul>
+            </div> : null}
+            {isOwner && ((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer))) ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ações do ingresso</p>
+              <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div>
+            </div> : null}
 
-                  <form action={submitTransferTicket} className="space-y-3">
-                    <input type="hidden" name="ticket_id" value={String(ticket.id)} />
-                    <label className="block space-y-2 text-sm">
-                      <span className="text-slate-300">Transferir ingresso para outro participante</span>
-                      <select name="participant_id" defaultValue={participantId || ''} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100">
-                        <option value="">Selecione um participante</option>
-                        {linkedParticipants.map((item) => (
-                          <option key={String(item.id)} value={String(item.id)}>
-                            {String(item.full_name ?? 'Participante')}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      <MilitrinButton type="submit" size="sm" variant="secondary">Transferir ingresso</MilitrinButton>
-                    </div>
-                  </form>
-                </div>
-              ) : (
-                <p className="mt-3 text-sm text-slate-300">Nenhum participante vinculado à sua conta para definir titularidade.</p>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Alterar camiseta</p>
-              <p className="mt-2 text-xs text-slate-400">
-                {afterDeadline
-                  ? 'Após a data limite, apenas tamanhos disponíveis podem ser escolhidos.'
-                  : 'Antes da data limite, a alteração segue a política do evento.'}
-              </p>
-              <form action={submitTicketShirtChange} className="mt-3 space-y-3">
-                <input type="hidden" name="ticket_id" value={String(ticket.id)} />
-                <input type="hidden" name="shirt_type" value={shirtType} />
-                <label className="block space-y-2 text-sm">
-                  <span className="text-slate-300">Tamanho</span>
-                  <select name="shirt_size" defaultValue={shirtSize || ''} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100">
-                    <option value="">Selecione</option>
-                    {sizeOptions.map((size) => {
-                      const available = inventoryBySize.get(size) ?? 0;
-                      const label = available < 5 ? `${size} - Restam apenas ${available}` : size;
-                      return (
-                        <option key={size} value={size} disabled={afterDeadline && available <= 0}>
-                          {label}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  <MilitrinButton type="submit" size="sm" variant="success">Salvar tamanho</MilitrinButton>
-                </div>
-              </form>
-            </div>
+            {isBuyer && kitItems.length > 0 ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
+              <p>Itens: {kitItems.length} vinculado(s)</p>
+              {pendingItemRequests.length ? <p className="mt-2 text-amber-200">{pendingItemRequests.length} alteração(ões) aguardando confirmação</p> : null}
+              <Link href={`/minha-conta/ingressos/${ticketId}/itens`} className="mt-3 inline-flex rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Gerenciar itens</Link>
+            </div> : null}
 
             {canAdminEdit ? (
               <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-slate-200">
                 <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Administração</p>
                 <div className="mt-3 grid gap-3">
+                  {pendingItemRequests.map((request) => {
+                    const item = firstRelation(request.event_kit_items as Record<string, unknown> | Record<string, unknown>[] | null); const current = request.current_variant as Record<string, unknown> | null; const requested = request.requested_variant as Record<string, unknown> | null;
+                    return <div key={String(request.id)} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+                      <p className="font-medium text-amber-100">{String(item?.name ?? 'Item')}</p>
+                      <p className="mt-1 text-xs text-amber-200">{String(current?.name ?? current?.value ?? 'Atual')} → {String(requested?.name ?? requested?.value ?? 'Solicitada')}</p>
+                      <form action={submitItemRequestReview} className="mt-3 flex flex-wrap gap-2">
+                        <input type="hidden" name="request_id" value={String(request.id)} />
+                        <input type="hidden" name="ticket_id" value={ticketId} />
+                        <button name="decision" value="approved" className="rounded-lg bg-emerald-400 px-3 py-1.5 text-xs font-semibold text-slate-950">Aprovar</button>
+                        <button name="decision" value="rejected" className="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-200">Rejeitar</button>
+                      </form>
+                    </div>;
+                  })}
                   {participantId ? (
-                    <Link href={`/inscricoes/${participantId}/editar`} className="inline-flex">
+                    <Link href={adminEditHref ?? `/ingressos/${ticketId}/editar`} className="inline-flex">
                       <MilitrinButton size="sm" variant="secondary">Editar ingresso</MilitrinButton>
                     </Link>
                   ) : null}
-
-                  {adminCategories.length > 0 ? (
-                    <form action={submitTicketCategoryChange} className="space-y-3">
-                      <input type="hidden" name="ticket_id" value={String(ticket.id)} />
-                      <label className="block space-y-2 text-sm">
-                        <span className="text-slate-300">Alterar categoria</span>
-                        <select name="ticket_category_id" defaultValue={String(orderItem?.ticket_category_id ?? participant?.ticket_category_id ?? '')} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100">
-                          <option value="">Selecione</option>
-                          {adminCategories.map((item) => (
-                            <option key={String(item.id)} value={String(item.id)}>
-                              {String(item.name ?? 'Categoria')}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <MilitrinButton type="submit" size="sm" variant="secondary">Salvar categoria</MilitrinButton>
-                    </form>
-                  ) : null}
+                  {canTransferOwnership?<Link href={`${adminEditHref ?? `/ingressos/${ticketId}/editar`}#propriedade`} className="inline-flex"><MilitrinButton size="sm" variant="secondary">Transferir propriedade</MilitrinButton></Link>:null}
 
                   <form action={submitTicketNotesChange} className="space-y-3">
                     <input type="hidden" name="ticket_id" value={String(ticket.id)} />
@@ -419,19 +337,6 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
                     <MilitrinButton type="submit" size="sm" variant="secondary">Salvar observações</MilitrinButton>
                   </form>
 
-                  {participantId && canManageOperationalFlow ? (
-                    <div className="flex flex-wrap gap-2">
-                      <form action={submitDeliverKit}>
-                        <MilitrinButton type="submit" size="sm" variant="success">Entregar kit</MilitrinButton>
-                      </form>
-                      <form action={submitCheckin}>
-                        <MilitrinButton type="submit" size="sm" variant="warning">Fazer check-in</MilitrinButton>
-                      </form>
-                      <form action={submitDeliverKitAndCheckin}>
-                        <MilitrinButton type="submit" size="sm">Entregar kit + check-in</MilitrinButton>
-                      </form>
-                    </div>
-                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -439,15 +344,15 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ t
         </div>
       </MilitrinSection>
 
-      <MilitrinSection eyebrow="Historico" title="Linha do tempo do ticket" description="Acompanhe a vida do ingresso em ordem cronologica.">
+      {showTimeline ? <MilitrinSection eyebrow="Histórico" title="Linha do tempo do ingresso" description="Acompanhe a vida do ingresso em ordem cronológica.">
         {timelineItems.length ? <MilitrinTimeline items={timelineItems} /> : <p className="text-sm text-slate-300">Sem eventos registrados ainda.</p>}
-      </MilitrinSection>
+      </MilitrinSection> : null}
 
       <div className="flex flex-wrap gap-2">
         <Link href="/minha-conta/ingressos">
           <MilitrinButton variant="secondary">Voltar para ingressos</MilitrinButton>
         </Link>
-        {orderId ? (
+        {orderId && isBuyer ? (
           <Link href={`/minha-conta/compras/${orderId}`}>
             <MilitrinButton>Ver compra</MilitrinButton>
           </Link>

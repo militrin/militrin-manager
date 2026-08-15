@@ -5,6 +5,7 @@ import { getPaymentProvider } from '@/lib/payments/get-provider';
 import type { RegistrationFormValues } from '@/lib/validation/registration';
 import { removeCpfMask } from '@/lib/validation/registration';
 import { toISODateFromBR } from '@/lib/utils/date';
+import { registrationContactHasActiveTicket } from '@/lib/registrations/active-ticket-holder';
 
 type PricingPreview = {
   batch_id: string;
@@ -56,6 +57,10 @@ type FormContext = {
 
 type RegistrationCreated = {
   participant_id: string;
+  order_id: string;
+  order_item_id: string;
+  payment_id: string;
+  ticket_id: string | null;
   full_name: string;
   batch_name: string;
   base_amount: number;
@@ -88,13 +93,16 @@ type ParticipantPaymentDetails = {
 
 const paymentProvider = getPaymentProvider();
 
-export async function getRegistrationFormContextAction() {
+export async function getRegistrationFormContextAction(eventId: string) {
   const supabase = await createServerSupabaseClient();
+
+  if (!eventId) return { success: false, message: 'Selecione explicitamente um evento.', unavailable: true };
 
   const { data: activeEvent, error: activeEventError } = await supabase
     .from('events')
     .select('id, name, kit_enabled, registration_enabled')
-    .eq('is_active', true)
+    .eq('id', eventId)
+    .is('archived_at', null)
     .maybeSingle();
 
   if (activeEventError || !activeEvent?.id) {
@@ -233,7 +241,7 @@ export async function getRegistrationFormContextAction() {
     success: true,
     context: {
       active_event_id: activeEvent.id,
-      active_event_name: String(activeEvent.name ?? 'Evento ativo'),
+      active_event_name: String(activeEvent.name ?? 'Evento selecionado'),
       kit_enabled: Boolean(activeEvent.kit_enabled),
       registration_enabled: Boolean(activeEvent.registration_enabled),
       has_shirt_item: hasShirtItem,
@@ -248,7 +256,7 @@ export async function getRegistrationFormContextAction() {
   };
 }
 
-export async function getPricingPreviewAction(payload: { gender: string; ticket_category_id: string; coupon_code?: string }) {
+export async function getPricingPreviewAction(payload: { event_id: string; gender: string; ticket_category_id: string; coupon_code?: string }) {
   const supabase = await createServerSupabaseClient();
   const gender = payload.gender?.trim() ?? '';
 
@@ -256,10 +264,20 @@ export async function getPricingPreviewAction(payload: { gender: string; ticket_
     return { success: false, message: 'Selecione o sexo para calcular o preco.' };
   }
 
+  const { data: activeEvent, error: eventError } = await supabase
+    .from('events')
+    .select('id')
+    .eq('id', payload.event_id)
+    .is('archived_at', null)
+    .maybeSingle();
+  if (eventError || !activeEvent?.id) {
+    return { success: false, message: eventError?.message ?? 'Nenhum evento ativo encontrado.' };
+  }
+
   const { data, error } = await supabase.rpc('get_registration_pricing_preview', {
     p_gender: gender,
     p_coupon_code: payload.coupon_code?.trim() || null,
-    p_event_id: null,
+    p_event_id: activeEvent.id,
     p_ticket_category_id: payload.ticket_category_id,
   });
 
@@ -293,16 +311,16 @@ export async function getPricingPreviewAction(payload: { gender: string; ticket_
   };
 }
 
-export async function validateCouponAction(payload: { code: string; gender: string; ticket_category_id: string }) {
+export async function validateCouponAction(payload: { event_id: string; code: string; gender: string; ticket_category_id: string }) {
   const code = payload.code.trim();
   if (!code) {
     return { success: false, message: 'Informe um codigo para validar.' };
   }
 
-  return getPricingPreviewAction({ gender: payload.gender, ticket_category_id: payload.ticket_category_id, coupon_code: code });
+  return getPricingPreviewAction({ event_id: payload.event_id, gender: payload.gender, ticket_category_id: payload.ticket_category_id, coupon_code: code });
 }
 
-export async function createRegistrationAction(values: RegistrationFormValues) {
+export async function createRegistrationAction(eventId: string, values: RegistrationFormValues) {
   const supabase = await createServerSupabaseClient();
   const cpf = removeCpfMask(values.cpf);
   const birthDateIso = toISODateFromBR(values.birth_date);
@@ -318,8 +336,9 @@ export async function createRegistrationAction(values: RegistrationFormValues) {
 
   const { data: activeEvent, error: activeEventError } = await supabase
     .from('events')
-    .select('id, name, kit_enabled')
-    .eq('is_active', true)
+    .select('id, name, kit_enabled, organization_id')
+    .eq('id', eventId)
+    .is('archived_at', null)
     .maybeSingle();
 
   if (activeEventError || !activeEvent?.id) {
@@ -328,8 +347,33 @@ export async function createRegistrationAction(values: RegistrationFormValues) {
 
   const couponCode = values.coupon_code?.trim() ?? '';
 
+  const { data: existingContact, error: contactError } = await supabase
+    .from('registration_contacts')
+    .select('id,public_pin')
+    .eq('organization_id', String(activeEvent.organization_id))
+    .eq('cpf', cpf)
+    .maybeSingle();
+  if (contactError) return { success: false, message: 'Não foi possível validar a titularidade desta pessoa.' };
+  if (existingContact?.id) {
+    try {
+      const holderState = await registrationContactHasActiveTicket(supabase, String(activeEvent.id), String(existingContact.id));
+      if (holderState.hasActiveTicket) {
+        return {
+          success: false,
+          requiresHolderDecision: true,
+          message: 'Esta pessoa já é titular de outro ingresso neste evento. Cancele ou use Emitir ingresso para emitir sem titular.',
+          issueWithoutHolderHref: `/ingressos/emitir?pin=${encodeURIComponent(String(existingContact.public_pin ?? ''))}`,
+        };
+      }
+    } catch {
+      return { success: false, message: 'Não foi possível validar a titularidade desta pessoa.' };
+    }
+  }
+
   try {
-    const { data, error: createError } = await supabase.rpc('create_registration', {
+    const { data, error: createError } = await supabase.rpc('create_manual_registration_order', {
+      p_event_id: activeEvent.id,
+      p_ticket_category_id: values.ticket_category_id,
       p_full_name: values.full_name.trim(),
       p_cpf: cpf,
       p_birth_date: birthDateIso,
@@ -339,13 +383,9 @@ export async function createRegistrationAction(values: RegistrationFormValues) {
       p_city: values.city?.trim() || null,
       p_shirt_type: values.shirt_type?.trim() || null,
       p_shirt_size: values.shirt_size?.trim() || null,
-      p_registration_status: 'pending',
       p_notes: values.notes?.trim() || null,
       p_payment_method: values.payment_method,
-      p_payment_status: 'pending',
-      p_event_id: activeEvent.id,
       p_coupon_code: couponCode || null,
-      p_ticket_category_id: values.ticket_category_id,
     });
 
     if (createError) {
@@ -362,8 +402,12 @@ export async function createRegistrationAction(values: RegistrationFormValues) {
       message: 'Inscrição criada com sucesso',
       registration: {
         id: String(created.participant_id),
+        order_id: String(created.order_id),
+        order_item_id: String(created.order_item_id),
+        payment_id: String(created.payment_id),
+        ticket_id: created.ticket_id ? String(created.ticket_id) : null,
         full_name: String(created.full_name),
-        event_name: String(activeEvent.name ?? 'Evento ativo'),
+        event_name: String(activeEvent.name ?? 'Evento selecionado'),
         batch_name: String(created.batch_name),
         base_amount: Number(created.base_amount ?? 0),
         discount_amount: Number(created.discount_amount ?? 0),

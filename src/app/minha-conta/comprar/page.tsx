@@ -15,7 +15,7 @@ export default async function ComprarPage() {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from('events')
-    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at')
+    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, banner_card_url')
     .eq('registration_enabled', true)
     .order('starts_at', { ascending: true, nullsFirst: false });
 
@@ -31,7 +31,7 @@ export default async function ComprarPage() {
     <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-6 shadow-lg shadow-black/10">
       <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Comprar</p>
       <h2 className="mt-2 text-3xl font-semibold text-white">Escolha um evento</h2>
-      <p className="mt-2 max-w-2xl text-sm text-slate-300">As vendas abertas aparecem abaixo. Se houver apenas um evento disponível, o sistema segue direto para o wizard de inscrição.</p>
+      <p className="mt-2 max-w-2xl text-sm text-slate-300">As vendas abertas aparecem abaixo. Se houver apenas um evento disponível, o sistema segue direto para a compra.</p>
 
       {openEvents.length === 0 ? (
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-sm text-slate-300">
@@ -44,9 +44,13 @@ export default async function ComprarPage() {
             const endsAt = event.ends_at ? formatDateBR(event.ends_at) : null;
 
             return (
-              <article key={event.id} className="rounded-[1.75rem] border border-slate-800 bg-slate-950/60 p-5">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-2">
+              <article key={event.id} className="overflow-hidden rounded-[1.75rem] border border-slate-800 bg-slate-950/60">
+                <Link href={`/eventos/${event.slug}`} className="block transition hover:bg-slate-900/60">
+                  {event.banner_card_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={event.banner_card_url} alt="" className="h-40 w-full object-cover" />
+                  ) : null}
+                  <div className="space-y-2 p-5 pb-0">
                     <h3 className="text-xl font-semibold text-white">{event.name}</h3>
                     <p className="text-sm text-slate-300">{event.description ?? 'Sem descrição.'}</p>
                     <p className="text-sm text-slate-400">
@@ -54,10 +58,12 @@ export default async function ComprarPage() {
                       {endsAt ? ` até ${endsAt}` : ''}
                     </p>
                     <p className="text-sm text-slate-400">{event.location ?? 'Local a confirmar'}</p>
-                    <p className="text-xs font-medium uppercase tracking-wide text-emerald-300">Vendas abertas</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-emerald-300">Vendas abertas · toque para ver todas as infos</p>
                   </div>
+                </Link>
+                <div className="flex justify-end p-5">
                   <Link href={`/inscricao/${event.slug}`} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
-                    Continuar inscrição
+                    Continuar compra
                   </Link>
                 </div>
               </article>

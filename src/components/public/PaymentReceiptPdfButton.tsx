@@ -1,13 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import { getStatusLabel } from '@/lib/status-labels';
+import { applyReportPage, finalizeReportPages, formatReportDateTime, REPORT_THEME } from '@/lib/reports/report-theme';
 
 type PaymentReceiptPdfButtonProps = {
   orderNumber: string;
   eventName: string;
   createdAt?: string | null;
   paymentStatus: string;
-  paymentMethod: string;
+  paymentMethod?: string | null;
   finalAmount: string;
   itemsSummary?: string | null;
   className?: string;
@@ -30,28 +32,38 @@ export function PaymentReceiptPdfButton({
     try {
       const [{ jsPDF }] = await Promise.all([import('jspdf')]);
       const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const generatedAt = new Date().toISOString();
+      const { colors } = REPORT_THEME;
 
-      doc.setFillColor(9, 16, 33);
-      doc.rect(0, 0, 595, 842, 'F');
-      doc.setTextColor(226, 232, 240);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(20);
-      doc.text('Comprovante Militrin', 48, 60);
+      applyReportPage(doc, 'Comprovante Militrin');
+      doc.setFillColor(...colors.card);
+      doc.setDrawColor(...colors.border);
+      doc.roundedRect(42, 62, 511, 250, 7, 7, 'FD');
+      doc.setTextColor(...colors.text);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(12);
-      doc.text(`Pedido: ${orderNumber}`, 48, 96);
-      doc.text(`Evento: ${eventName}`, 48, 118);
-      doc.text(`Criado em: ${createdAt ?? '-'}`, 48, 140);
-      doc.text(`Status do pagamento: ${paymentStatus}`, 48, 162);
-      doc.text(`Forma de pagamento: ${paymentMethod}`, 48, 184);
-      doc.text(`Valor pago: ${finalAmount}`, 48, 206);
+      const detailLines = [
+        `Pedido: ${orderNumber}`,
+        `Evento: ${eventName}`,
+        createdAt ? `Criado em: ${formatReportDateTime(createdAt)}` : null,
+        `Pagamento: ${getStatusLabel(paymentStatus)}`,
+        paymentMethod ? `Forma de pagamento: ${paymentMethod}` : null,
+        `Valor pago: ${finalAmount}`,
+      ].filter((line): line is string => Boolean(line));
+      detailLines.forEach((line, index) => {
+        if (index === 0) { doc.setFillColor(...colors.greenSoft); doc.roundedRect(54, 76, 475, 32, 4, 4, 'F'); doc.setTextColor(...colors.green); doc.setFont('helvetica', 'bold'); }
+        else { doc.setTextColor(...colors.text); doc.setFont('helvetica', 'normal'); }
+        doc.text(line, 64, 97 + (index * 28));
+      });
 
       if (itemsSummary) {
         const lines = doc.splitTextToSize(`Ingressos: ${itemsSummary}`, 500);
-        doc.text(lines, 48, 238);
+        doc.setTextColor(...colors.muted);
+        doc.text(lines, 64, 112 + (detailLines.length * 28));
       }
 
+      finalizeReportPages(doc, generatedAt, 'Militrin · Comprovante');
       doc.save(`comprovante-${orderNumber}.pdf`);
     } finally {
       setLoading(false);

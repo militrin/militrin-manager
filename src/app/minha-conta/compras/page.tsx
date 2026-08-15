@@ -2,6 +2,14 @@ import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinEmptyState, MilitrinPurchaseCard, MilitrinSection } from '@/components/militrin';
+import { getStatusLabel } from '@/lib/status-labels';
+import { optionalDisplayValue } from '@/lib/optional-display';
+import { getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
+
+function one<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -13,33 +21,159 @@ function normalizeOrderStatus(status: string) {
   return s;
 }
 
+function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
+  const participant = one(order.participants as Record<string, unknown> | Record<string, unknown>[] | null);
+  const eventObj = one(order.events as Record<string, unknown> | Record<string, unknown>[] | null);
+  const payment = one(order.payments as Record<string, unknown> | Record<string, unknown>[] | null);
+  const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
+  const ticket = tickets[0] ?? null;
+  const orderItems = Array.isArray(order.order_items) ? order.order_items as Array<Record<string, unknown>> : (order.order_items ? [order.order_items as Record<string, unknown>] : []);
+  const normalizedOrderStatus = normalizeOrderStatus(String(order.status ?? 'pending'));
+  const normalizedPaymentStatus = normalizeOrderStatus(String((payment as Record<string, unknown> | null)?.payment_status ?? 'pending'));
+  const firstTicketFromItems = orderItems
+    .map((item) => one(item.tickets as Record<string, unknown> | Record<string, unknown>[] | null))
+    .find((itemTicket) => itemTicket?.id) ?? null;
+  const activeTicket = firstTicketFromItems ?? ticket as Record<string, unknown> | null;
+  const showQr = normalizedOrderStatus === 'confirmed' && (activeTicket?.status === 'active' || activeTicket?.status === 'used');
+  const itemCount = orderItems.length > 0 ? orderItems.length : 1;
+  const itemSummary = orderItems.length > 0
+    ? orderItems
+        .slice(0, 3)
+        .map((item, idx) => {
+          const itemParticipant = one(item.participants as Record<string, unknown> | Record<string, unknown>[] | null);
+          const holder = (itemParticipant as Record<string, unknown> | null)?.full_name || item.holder_full_name || 'Titular ainda nao definido';
+          const itemPosition = Number(item.item_position ?? idx + 1);
+          return `#${itemPosition} ${holder} (${getStatusLabel(String(item.status ?? 'reserved'))})`;
+        })
+        .join(' • ')
+    : (participant as Record<string, unknown> | null)?.full_name as string || 'Titular ainda nao definido';
+
+  return (
+    <MilitrinPurchaseCard
+      orderNumber={String(order.order_number)}
+      eventName={(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}
+      date={formatDateBR(String(order.created_at))}
+      finalAmount={money(Number(order.final_amount ?? 0))}
+      quantity={itemCount}
+      subtitle={itemSummary}
+      paymentMethod={optionalDisplayValue((payment as Record<string, unknown> | null)?.payment_method as string | null)}
+      paymentStatus={normalizedPaymentStatus}
+      orderStatus={normalizedOrderStatus}
+      expiration={
+        normalizedOrderStatus === 'pending' && (participant as Record<string, unknown> | null)?.reservation_expires_at
+          ? formatDateTimeBR(String((participant as Record<string, unknown>).reservation_expires_at), ' as ')
+          : null
+      }
+      actions={(
+        <>
+          <Link href={`/minha-conta/compras/${order.id}`}>
+            <MilitrinButton size="sm">Ver detalhes</MilitrinButton>
+          </Link>
+          {normalizedPaymentStatus === 'pending' ? (
+            <Link href={`/minha-conta/compras/${order.id}`}>
+              <MilitrinButton size="sm" variant="warning">Continuar pagamento</MilitrinButton>
+            </Link>
+          ) : null}
+          {showQr ? (
+            <Link href={`/minha-conta/ingressos/${activeTicket?.id}`}>
+              <MilitrinButton size="sm" variant="success">Ver QR Code</MilitrinButton>
+            </Link>
+          ) : null}
+        </>
+      )}
+    />
+  );
+}
+
+function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
+  const eventObj = one(order.events as Record<string, unknown> | Record<string, unknown>[] | null);
+  const items = Array.isArray(order.store_order_items) ? order.store_order_items as Array<Record<string, unknown>> : [];
+  const normalizedOrderStatus = normalizeOrderStatus(String(order.status ?? 'pending'));
+  const normalizedPaymentStatus = normalizeOrderStatus(String(order.payment_status ?? 'pending'));
+  const itemSummary = items
+    .slice(0, 3)
+    .map((item) => {
+      const storeItem = one(item.store_items as Record<string, unknown> | Record<string, unknown>[] | null);
+      const variant = one(item.store_item_variants as Record<string, unknown> | Record<string, unknown>[] | null);
+      const variantText = variant ? ` — ${(variant as Record<string, unknown>).name}: ${(variant as Record<string, unknown>).value}` : '';
+      return `${item.quantity}x ${(storeItem as Record<string, unknown> | null)?.name ?? 'Item'}${variantText}`;
+    })
+    .join(' • ');
+
+  return (
+    <MilitrinPurchaseCard
+      orderNumber={String(order.order_number)}
+      eventName={`Loja — ${(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}`}
+      date={formatDateBR(String(order.created_at))}
+      finalAmount={money(Number(order.final_amount ?? 0))}
+      subtitle={`${items.length} item(ns) • ${itemSummary}`}
+      paymentMethod={optionalDisplayValue(order.payment_method as string | null)}
+      paymentStatus={normalizedPaymentStatus}
+      orderStatus={normalizedOrderStatus}
+      expiration={
+        normalizedOrderStatus === 'pending' && order.expires_at
+          ? formatDateTimeBR(String(order.expires_at), ' as ')
+          : null
+      }
+      actions={(
+        <>
+          <Link href={`/minha-conta/compras/loja/${order.id}`}>
+            <MilitrinButton size="sm">Ver detalhes</MilitrinButton>
+          </Link>
+          {normalizedOrderStatus === 'pending' ? (
+            <Link href={`/minha-conta/compras/loja/${order.id}`}>
+              <MilitrinButton size="sm" variant="warning">Continuar pagamento</MilitrinButton>
+            </Link>
+          ) : null}
+          {normalizedOrderStatus === 'confirmed' ? (
+            <Link href={`/minha-conta/compras/loja/${order.id}`}>
+              <MilitrinButton size="sm" variant="success">Ver QR Code</MilitrinButton>
+            </Link>
+          ) : null}
+        </>
+      )}
+    />
+  );
+}
+
 export default async function MinhasComprasPage() {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: orders, error } = await supabase
-    .from('orders')
-    .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participants(full_name, reservation_expires_at, ticket_categories(name)), events(name), payments(payment_method, payment_status), tickets(id, token, status), order_items(id, item_position, status, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))')
-    .eq('user_id', user?.id ?? '')
-    .order('created_at', { ascending: false });
+  const [{ data: orders, error }, { data: storeOrders, error: storeError }] = await Promise.all([
+    getAccountOrders(supabase, user?.id ?? ''),
+    getAccountStoreOrders(supabase, user?.id ?? ''),
+  ]);
 
   if (error) {
+    console.error('[minha-conta/compras] erro ao carregar pedidos', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
     return (
       <section className="rounded-3xl border border-rose-700/40 bg-rose-950/20 p-5 text-sm text-rose-100">
         Erro ao carregar compras. Tente novamente em instantes.
       </section>
     );
   }
+  if (storeError) console.error('[minha-conta/compras] erro ao carregar pedidos da loja', storeError);
+
+  const rows = [
+    ...(orders ?? []).map((order) => ({ kind: 'ticket' as const, order: order as Record<string, unknown>, createdAt: String(order.created_at) })),
+    ...(storeOrders ?? []).map((order) => ({ kind: 'store' as const, order: order as Record<string, unknown>, createdAt: String(order.created_at) })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return (
     <MilitrinSection
       eyebrow="Minhas compras"
       title="Pedidos e pagamentos"
-      description="Acompanhe valor final, status e acesso rapido aos ingressos confirmados."
+      description="Acompanhe valor final, status e acesso rapido aos ingressos e itens confirmados."
     >
-      {(orders ?? []).length === 0 ? (
+      {rows.length === 0 ? (
         <MilitrinEmptyState
           title="Nenhuma compra encontrada"
           description="Assim que voce criar um pedido, ele aparecera aqui com status e detalhes."
@@ -48,73 +182,11 @@ export default async function MinhasComprasPage() {
         />
       ) : (
         <div className="space-y-3">
-          {(orders ?? []).map((order) => {
-            const participant = Array.isArray(order.participants) ? order.participants[0] : order.participants;
-            const eventObj = Array.isArray(order.events) ? order.events[0] : order.events;
-            const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
-            const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
-            const ticket = tickets[0] ?? null;
-            const orderItems = Array.isArray(order.order_items) ? order.order_items : (order.order_items ? [order.order_items] : []);
-            const normalizedOrderStatus = normalizeOrderStatus(String(order.status ?? 'pending'));
-            const normalizedPaymentStatus = normalizeOrderStatus(String(payment?.payment_status ?? 'pending'));
-            const firstTicketFromItems = orderItems
-              .map((item) => {
-                const itemTicket = Array.isArray(item.tickets) ? item.tickets[0] : item.tickets;
-                return itemTicket ?? null;
-              })
-              .find((itemTicket) => itemTicket?.id) ?? null;
-            const activeTicket = firstTicketFromItems ?? ticket;
-            const showQr = normalizedOrderStatus === 'confirmed' && (activeTicket?.status === 'active' || activeTicket?.status === 'used');
-            const itemCount = orderItems.length > 0 ? orderItems.length : 1;
-            const itemSummary = orderItems.length > 0
-              ? orderItems
-                  .slice(0, 3)
-                  .map((item, idx) => {
-                    const itemParticipant = Array.isArray(item.participants) ? item.participants[0] : item.participants;
-                    const holder = itemParticipant?.full_name || item.holder_full_name || 'Titular ainda nao definido';
-                    const itemPosition = Number(item.item_position ?? idx + 1);
-                    return `#${itemPosition} ${holder} (${String(item.status ?? 'reserved')})`;
-                  })
-                  .join(' • ')
-              : participant?.full_name || 'Titular ainda nao definido';
-
-            return (
-              <MilitrinPurchaseCard
-                key={order.id}
-                orderNumber={String(order.order_number)}
-                eventName={eventObj?.name ? String(eventObj.name) : 'Evento'}
-                date={formatDateBR(String(order.created_at))}
-                finalAmount={money(Number(order.final_amount ?? 0))}
-                quantity={itemCount}
-                subtitle={itemSummary}
-                paymentMethod={payment?.payment_method ? String(payment.payment_method) : '-'}
-                paymentStatus={normalizedPaymentStatus}
-                orderStatus={normalizedOrderStatus}
-                expiration={
-                  normalizedOrderStatus === 'pending' && participant?.reservation_expires_at
-                    ? formatDateTimeBR(String(participant.reservation_expires_at), ' as ')
-                    : null
-                }
-                actions={(
-                  <>
-                    <Link href={`/minha-conta/compras/${order.id}`}>
-                      <MilitrinButton size="sm">Ver detalhes</MilitrinButton>
-                    </Link>
-                    {normalizedPaymentStatus === 'pending' ? (
-                      <Link href={`/minha-conta/compras/${order.id}`}>
-                        <MilitrinButton size="sm" variant="warning">Continuar pagamento</MilitrinButton>
-                      </Link>
-                    ) : null}
-                    {showQr ? (
-                      <Link href={`/minha-conta/ingressos/${activeTicket?.id}`}>
-                        <MilitrinButton size="sm" variant="success">Ver QR Code</MilitrinButton>
-                      </Link>
-                    ) : null}
-                  </>
-                )}
-              />
-            );
-          })}
+          {rows.map((row) => (
+            row.kind === 'ticket'
+              ? <TicketOrderCard key={`ticket-${row.order.id}`} order={row.order} />
+              : <StoreOrderCard key={`store-${row.order.id}`} order={row.order} />
+          ))}
         </div>
       )}
     </MilitrinSection>

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinEmptyState, MilitrinSection, MilitrinTimeline, type MilitrinTimelineItem } from '@/components/militrin';
+import { getStatusLabel } from '@/lib/status-labels';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -58,8 +59,8 @@ export default async function HistoricoPage() {
     return {
       sortTs: issuedAt,
       id: `ticket-${ticket.id}`,
-      title: `Ingresso ${String(ticket.status ?? 'pending')}`,
-      subtitle: eventObj?.name ? `Evento: ${String(eventObj.name)}` : 'Ingresso do participante',
+      title: `Ingresso ${getStatusLabel(String(ticket.status ?? 'pending'))}`,
+      subtitle: eventObj?.name ? `Evento: ${String(eventObj.name)}` : 'Ingresso do titular',
       date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' as ') : undefined,
       status: normalizeStatus(String(ticket.status ?? 'pending')),
     };
@@ -89,7 +90,7 @@ export default async function HistoricoPage() {
     <section className="space-y-4">
       <MilitrinSection
         eyebrow="Historico"
-        title="Linha do tempo do participante"
+        title="Linha do tempo da conta"
         description="Acompanhe seus pedidos, confirmacoes e emissao de ingressos em ordem cronologica."
         action={
           <Link href="/minha-conta/compras">

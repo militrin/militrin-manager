@@ -15,7 +15,7 @@ type ParticipantAuthCardProps = {
 
 export function ParticipantAuthCard({
   title = 'Entrar',
-  subtitle = 'Acesse suas compras, ingressos e dados do participante.',
+  subtitle = 'Acesse suas compras, ingressos e dados do usuário.',
   defaultNext = '/minha-conta',
 }: ParticipantAuthCardProps) {
   const router = useRouter();

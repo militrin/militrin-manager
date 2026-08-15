@@ -11,6 +11,10 @@ Aplicação Next.js em TypeScript para gestão de inscrições, pagamentos, cami
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anonima
+
+## Teste de convites de primeiro acesso
+
+O link de convite autentica a conta convidada e, por comportamento esperado do Supabase Auth, substitui a sessão que estiver aberta naquele perfil do navegador. Durante desenvolvimento ou homologação, abra convites em uma janela anônima ou em outro perfil do navegador para preservar a sessão administrativa.
 ```
 
 ## Criar o banco de dados

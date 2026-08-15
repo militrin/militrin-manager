@@ -5,20 +5,23 @@ import { EmptyState } from "@/components/mvp/EmptyState";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { BatchesManager } from "./ui";
 import Link from "next/link";
+import { EventContextSelector } from "@/components/admin/EventContextSelector";
 
-type BatchRow = {
+type BatchCategoryRow = {
   id: string;
   event_id: string;
   name: string;
   sequence_number: number;
+  ticket_category_id: string;
+  category_name: string;
   male_price: number;
   female_price: number;
-  max_confirmed_registrations: number;
+  max_confirmed_registrations: number | null;
   starts_at: string | null;
   ends_at: string | null;
   is_active: boolean;
   confirmed_count: number;
-  remaining_slots: number;
+  remaining_slots: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -32,46 +35,49 @@ type CategoryRow = {
   sort_order: number;
 };
 
-type BatchCategoryPriceRow = {
-  batch_id: string;
-  ticket_category_id: string;
-  male_price: number;
-  female_price: number;
-};
-
-async function getBatchesData() {
+async function getBatchesData(eventId: string | null) {
   const supabase = await createServerSupabaseClient();
-  const { data: activeEvent, error: eventError } = await supabase
-    .from("events")
-    .select("id, name")
-    .eq("is_active", true)
-    .maybeSingle();
+  const { data: events, error: eventError } = await supabase.from("events").select("id,name,is_active").is("archived_at", null).order("starts_at", { ascending: false });
+  const activeEvent = eventId ? (events ?? []).find((event) => event.id === eventId) ?? null : null;
 
   if (eventError) throw eventError;
   if (!activeEvent?.id) {
-    return { activeEvent: null, batches: [] as BatchRow[] };
+    return { activeEvent: null, events: events ?? [], batches: [] as BatchCategoryRow[], categories: [] as CategoryRow[] };
   }
 
-  const { data: batchesData, error: batchesError } = await supabase.rpc("get_registration_batches", {
-    p_event_id: activeEvent.id,
-  });
-
-  if (batchesError) throw batchesError;
-
-  const [{ data: categoriesData, error: categoriesError }, { data: pricesData, error: pricesError }] = await Promise.all([
+  const [{ data: batchesData, error: batchesError }, { data: categoriesData, error: categoriesError }] = await Promise.all([
+    supabase.rpc("get_registration_batches", { p_event_id: activeEvent.id }),
     supabase.rpc("get_event_ticket_categories", { p_event_id: activeEvent.id }),
-    supabase
-      .from("registration_batch_prices")
-      .select("batch_id, ticket_category_id, male_price, female_price")
-      .in("batch_id", (batchesData ?? []).map((batch: { id: string }) => batch.id)),
   ]);
 
+  if (batchesError) throw batchesError;
   if (categoriesError) throw categoriesError;
-  if (pricesError) throw pricesError;
 
   return {
-    activeEvent,
-    batches: (batchesData ?? []) as BatchRow[],
+    activeEvent, events: events ?? [],
+    batches: (batchesData ?? []).map((row: {
+      id: string; event_id: string; name: string; sequence_number: number;
+      ticket_category_id: string; category_name: string; male_price: number; female_price: number;
+      max_confirmed_registrations: number | null; starts_at: string | null; ends_at: string | null; is_active: boolean;
+      confirmed_count: number; remaining_slots: number | null; created_at: string; updated_at: string;
+    }) => ({
+      id: String(row.id),
+      event_id: String(row.event_id),
+      name: String(row.name),
+      sequence_number: Number(row.sequence_number ?? 0),
+      ticket_category_id: String(row.ticket_category_id),
+      category_name: String(row.category_name),
+      male_price: Number(row.male_price ?? 0),
+      female_price: Number(row.female_price ?? 0),
+      max_confirmed_registrations: row.max_confirmed_registrations === null || row.max_confirmed_registrations === undefined ? null : Number(row.max_confirmed_registrations),
+      starts_at: row.starts_at ? String(row.starts_at) : null,
+      ends_at: row.ends_at ? String(row.ends_at) : null,
+      is_active: Boolean(row.is_active),
+      confirmed_count: Number(row.confirmed_count ?? 0),
+      remaining_slots: row.remaining_slots === null || row.remaining_slots === undefined ? null : Number(row.remaining_slots),
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+    })) as BatchCategoryRow[],
     categories: (categoriesData ?? []).map((row: {
       id: string;
       event_id: string;
@@ -87,25 +93,15 @@ async function getBatchesData() {
       is_active: Boolean(row.is_active),
       sort_order: Number(row.sort_order ?? 0),
     })) as CategoryRow[],
-    batchCategoryPrices: (pricesData ?? []).map((row: {
-      batch_id: string;
-      ticket_category_id: string;
-      male_price: number;
-      female_price: number;
-    }) => ({
-      batch_id: String(row.batch_id),
-      ticket_category_id: String(row.ticket_category_id),
-      male_price: Number(row.male_price ?? 0),
-      female_price: Number(row.female_price ?? 0),
-    })) as BatchCategoryPriceRow[],
   };
 }
 
-export default async function BatchesPage() {
-  const { activeEvent, batches, categories, batchCategoryPrices } = await getBatchesData();
+export default async function BatchesPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
+  const params = await searchParams;
+  const { activeEvent, events, batches, categories } = await getBatchesData(params.eventId ?? null);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
@@ -119,10 +115,11 @@ export default async function BatchesPage() {
             </div>
           </SectionCard>
           <SectionCard title="Gestao de lotes" description="Configure limites, precos e o lote ativo do evento.">
+            <EventContextSelector events={events.map((event) => ({ id: String(event.id), name: String(event.name), is_active: Boolean(event.is_active) }))} selectedEventId={activeEvent?.id ? String(activeEvent.id) : null} pathname="/lotes" />
             {!activeEvent?.id ? (
               <EmptyState title="Nenhum evento ativo" description="Ative um evento para configurar lotes." />
             ) : (
-              <BatchesManager eventId={activeEvent.id} batches={batches} categories={categories} batchCategoryPrices={batchCategoryPrices} />
+              <BatchesManager eventId={activeEvent.id} batches={batches} categories={categories} />
             )}
           </SectionCard>
         </div>

@@ -2,20 +2,23 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { activateBatchAction, createBatchAction, deleteBatchAction, updateBatchAction } from "./actions";
+import { DateTimeField } from "@/components/forms/DateTimeField";
 
-type BatchRow = {
+type BatchCategoryRow = {
   id: string;
   event_id: string;
   name: string;
   sequence_number: number;
+  ticket_category_id: string;
+  category_name: string;
   male_price: number;
   female_price: number;
-  max_confirmed_registrations: number;
+  max_confirmed_registrations: number | null;
   starts_at: string | null;
   ends_at: string | null;
   is_active: boolean;
   confirmed_count: number;
-  remaining_slots: number;
+  remaining_slots: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -29,18 +32,12 @@ type CategoryRow = {
   sort_order: number;
 };
 
-type BatchCategoryPriceRow = {
-  batch_id: string;
-  ticket_category_id: string;
-  male_price: number;
-  female_price: number;
-};
-
 type CategoryPriceForm = {
   ticket_category_id: string;
   enabled: boolean;
   male_price: string;
   female_price: string;
+  max_confirmed_registrations: string;
 };
 
 type PricingMode = "unisex" | "gendered";
@@ -48,7 +45,6 @@ type PricingMode = "unisex" | "gendered";
 type FormState = {
   id?: string;
   name: string;
-  max_confirmed_registrations: string;
   starts_at: string;
   ends_at: string;
   is_active: boolean;
@@ -62,7 +58,6 @@ function initialForm(categories: CategoryRow[]): FormState {
 
   return {
     name: "",
-    max_confirmed_registrations: "",
     starts_at: "",
     ends_at: "",
     is_active: false,
@@ -72,6 +67,7 @@ function initialForm(categories: CategoryRow[]): FormState {
       enabled: singleCategoryId ? category.id === singleCategoryId : category.slug === "open-bar",
       male_price: "",
       female_price: "",
+      max_confirmed_registrations: "",
     })),
   };
 }
@@ -97,16 +93,24 @@ function detectPricingMode(categoryPrices: Array<{ male_price: number; female_pr
   return hasDifference ? "gendered" : "unisex";
 }
 
+type DistinctBatch = {
+  id: string;
+  event_id: string;
+  name: string;
+  sequence_number: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  is_active: boolean;
+};
+
 export function BatchesManager({
   eventId,
   batches,
   categories,
-  batchCategoryPrices,
 }: {
   eventId: string;
-  batches: BatchRow[];
+  batches: BatchCategoryRow[];
   categories: CategoryRow[];
-  batchCategoryPrices: BatchCategoryPriceRow[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState<FormState>(initialForm(categories));
@@ -114,23 +118,42 @@ export function BatchesManager({
 
   const activeCategories = useMemo(() => categories.filter((category) => category.is_active), [categories]);
   const isSingleActiveCategory = activeCategories.length === 1;
+
+  const distinctBatches = useMemo(() => {
+    const map = new Map<string, DistinctBatch>();
+    for (const row of batches) {
+      if (!map.has(row.id)) {
+        map.set(row.id, {
+          id: row.id,
+          event_id: row.event_id,
+          name: row.name,
+          sequence_number: row.sequence_number,
+          starts_at: row.starts_at,
+          ends_at: row.ends_at,
+          is_active: row.is_active,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.sequence_number - b.sequence_number);
+  }, [batches]);
+
   const nextSequenceNumber = useMemo(
-    () => batches.reduce((max, batch) => Math.max(max, Number(batch.sequence_number ?? 0)), 0) + 1,
-    [batches],
+    () => distinctBatches.reduce((max, batch) => Math.max(max, Number(batch.sequence_number ?? 0)), 0) + 1,
+    [distinctBatches],
   );
   const defaultName = useMemo(
-    () => defaultBatchName(form.id ? Number(batches.find((batch) => batch.id === form.id)?.sequence_number ?? nextSequenceNumber) : nextSequenceNumber),
-    [batches, form.id, nextSequenceNumber],
+    () => defaultBatchName(form.id ? Number(distinctBatches.find((batch) => batch.id === form.id)?.sequence_number ?? nextSequenceNumber) : nextSequenceNumber),
+    [distinctBatches, form.id, nextSequenceNumber],
   );
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function loadForEdit(batch: BatchRow) {
-    const byCategory = new Map<string, BatchCategoryPriceRow>();
-    for (const row of batchCategoryPrices) {
-      if (row.batch_id === batch.id) {
+  function loadForEdit(batch: DistinctBatch) {
+    const byCategory = new Map<string, BatchCategoryRow>();
+    for (const row of batches) {
+      if (row.id === batch.id) {
         byCategory.set(row.ticket_category_id, row);
       }
     }
@@ -138,7 +161,6 @@ export function BatchesManager({
     setForm({
       id: batch.id,
       name: batch.name,
-      max_confirmed_registrations: String(batch.max_confirmed_registrations),
       starts_at: toDatetimeLocal(batch.starts_at),
       ends_at: toDatetimeLocal(batch.ends_at),
       is_active: batch.is_active,
@@ -146,8 +168,8 @@ export function BatchesManager({
         categories.map((category) => {
           const existing = byCategory.get(category.id);
           return {
-            male_price: existing ? Number(existing.male_price) : Number(batch.male_price),
-            female_price: existing ? Number(existing.female_price) : Number(batch.female_price),
+            male_price: existing ? Number(existing.male_price) : 0,
+            female_price: existing ? Number(existing.female_price) : 0,
           };
         }),
       ),
@@ -156,8 +178,9 @@ export function BatchesManager({
         return {
           ticket_category_id: category.id,
           enabled: isSingleActiveCategory ? category.id === activeCategories[0]?.id : Boolean(existing),
-          male_price: existing ? String(existing.male_price) : String(batch.male_price),
-          female_price: existing ? String(existing.female_price) : String(batch.female_price),
+          male_price: existing ? String(existing.male_price) : "",
+          female_price: existing ? String(existing.female_price) : "",
+          max_confirmed_registrations: existing?.max_confirmed_registrations != null ? String(existing.max_confirmed_registrations) : "",
         };
       }),
     });
@@ -205,10 +228,6 @@ export function BatchesManager({
   }
 
   function runClientValidations() {
-    if (!form.max_confirmed_registrations || Number(form.max_confirmed_registrations) <= 0) {
-      return "Limite de confirmadas deve ser maior que zero.";
-    }
-
     if (form.starts_at && form.ends_at && new Date(form.ends_at).getTime() < new Date(form.starts_at).getTime()) {
       return "Data final nao pode ser anterior a data inicial.";
     }
@@ -218,6 +237,8 @@ export function BatchesManager({
       return "Ative pelo menos uma categoria no lote.";
     }
 
+    const hasEndsAt = Boolean(form.ends_at);
+
     for (const categoryPrice of enabled) {
       const male = Number(categoryPrice.male_price);
       const female = form.pricing_mode === "unisex" ? male : Number(categoryPrice.female_price);
@@ -225,6 +246,13 @@ export function BatchesManager({
         return form.pricing_mode === "unisex"
           ? "Toda categoria ativa precisa de preco unissex valido."
           : "Toda categoria ativa precisa de preco masculino e feminino validos.";
+      }
+      const limitRaw = categoryPrice.max_confirmed_registrations.trim();
+      if (limitRaw && (!Number.isInteger(Number(limitRaw)) || Number(limitRaw) <= 0)) {
+        return "O limite de confirmadas, quando preenchido, deve ser um numero inteiro maior que zero.";
+      }
+      if (!limitRaw && !hasEndsAt) {
+        return "Toda categoria ativa precisa de um limite de confirmadas, de uma data de encerramento do lote, ou dos dois.";
       }
     }
 
@@ -245,7 +273,6 @@ export function BatchesManager({
         id: form.id,
         event_id: eventId,
         name: form.name,
-        max_confirmed_registrations: Number(form.max_confirmed_registrations),
         starts_at: form.starts_at || null,
         ends_at: form.ends_at || null,
         is_active: form.is_active,
@@ -254,11 +281,13 @@ export function BatchesManager({
           const femalePrice = form.pricing_mode === "unisex"
             ? malePrice
             : Number(categoryPrice.female_price || 0);
+          const limitRaw = categoryPrice.max_confirmed_registrations.trim();
           return {
             ticket_category_id: categoryPrice.ticket_category_id,
             enabled: categoryPrice.enabled,
             male_price: malePrice,
             female_price: femalePrice,
+            max_confirmed_registrations: limitRaw ? Number(limitRaw) : null,
           };
         }),
       };
@@ -271,7 +300,7 @@ export function BatchesManager({
     });
   }
 
-  function activate(batch: BatchRow) {
+  function activate(batch: DistinctBatch) {
     setMessage(null);
     startTransition(async () => {
       const result = await activateBatchAction({ id: batch.id, event_id: batch.event_id });
@@ -279,7 +308,7 @@ export function BatchesManager({
     });
   }
 
-  function remove(batch: BatchRow) {
+  function remove(batch: DistinctBatch) {
     setMessage(null);
     startTransition(async () => {
       const result = await deleteBatchAction({ id: batch.id, event_id: batch.event_id });
@@ -295,7 +324,7 @@ export function BatchesManager({
         {!form.id ? (
           <p className="mt-2 text-sm text-emerald-200">Próximo lote: {defaultBatchName(nextSequenceNumber)}</p>
         ) : (
-          <p className="mt-2 text-sm text-slate-300">Sequencia deste lote: {ordinalLabel(Number(batches.find((batch) => batch.id === form.id)?.sequence_number ?? 0))}</p>
+          <p className="mt-2 text-sm text-slate-300">Sequencia deste lote: {ordinalLabel(Number(distinctBatches.find((batch) => batch.id === form.id)?.sequence_number ?? 0))}</p>
         )}
 
         {!form.id ? <p className="mt-1 text-xs text-slate-400">Este será o {ordinalLabel(nextSequenceNumber)} lote.</p> : null}
@@ -323,24 +352,8 @@ export function BatchesManager({
             />
           </label>
 
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Limite de confirmadas</span>
-            <input
-              value={form.max_confirmed_registrations}
-              onChange={(e) => updateField("max_confirmed_registrations", e.target.value)}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Inicio</span>
-            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.starts_at} onChange={(e) => updateField("starts_at", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Fim</span>
-            <input type="datetime-local" lang="pt-BR" placeholder="dd/MM/aaaa HH:mm" value={form.ends_at} onChange={(e) => updateField("ends_at", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
-          </label>
+          <DateTimeField label="Início" value={form.starts_at} onChange={(next) => updateField("starts_at", next)} />
+          <DateTimeField label="Fim" value={form.ends_at} onChange={(next) => updateField("ends_at", next)} />
         </div>
 
         <label className="mt-3 flex items-center gap-2 text-sm text-slate-300">
@@ -377,14 +390,15 @@ export function BatchesManager({
 
         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
           {isSingleActiveCategory ? (
-            <p className="text-sm font-semibold text-slate-200">Precos</p>
+            <p className="text-sm font-semibold text-slate-200">Preços e limite de confirmadas</p>
           ) : (
-            <p className="text-sm font-semibold text-slate-200">Precos por categoria</p>
+            <p className="text-sm font-semibold text-slate-200">Preços e limite de confirmadas por categoria</p>
           )}
           <div className="mt-3 space-y-3">
             {activeCategories.map((category) => {
               const categoryIndex = form.category_prices.findIndex((item) => item.ticket_category_id === category.id);
               const categoryPrice = categoryIndex >= 0 ? form.category_prices[categoryIndex] : null;
+              const disabled = !isSingleActiveCategory && !(categoryPrice?.enabled ?? false);
               return (
                 <div key={category.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
                   <div className="flex items-center justify-between gap-2">
@@ -400,13 +414,13 @@ export function BatchesManager({
                       </label>
                     ) : null}
                   </div>
-                  <div className={`mt-3 grid gap-3 ${form.pricing_mode === "unisex" ? "md:grid-cols-1" : "md:grid-cols-2"}`}>
+                  <div className={`mt-3 grid gap-3 ${form.pricing_mode === "unisex" ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
                     <label className="space-y-1 text-sm">
                       <span className="text-slate-300">{form.pricing_mode === "unisex" ? "Preco unissex" : "Preco masculino"}</span>
                       <input
                         value={categoryPrice?.male_price ?? ""}
                         onChange={(event) => updateCategoryPrice(categoryIndex, "male_price", event.target.value)}
-                        disabled={!isSingleActiveCategory && !(categoryPrice?.enabled ?? false)}
+                        disabled={disabled}
                         className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 disabled:opacity-60"
                       />
                     </label>
@@ -417,11 +431,23 @@ export function BatchesManager({
                         <input
                           value={categoryPrice?.female_price ?? ""}
                           onChange={(event) => updateCategoryPrice(categoryIndex, "female_price", event.target.value)}
-                          disabled={!isSingleActiveCategory && !(categoryPrice?.enabled ?? false)}
+                          disabled={disabled}
                           className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 disabled:opacity-60"
                         />
                       </label>
                     ) : null}
+
+                    <label className="space-y-1 text-sm">
+                      <span className="text-slate-300">Limite de confirmadas</span>
+                      <input
+                        value={categoryPrice?.max_confirmed_registrations ?? ""}
+                        onChange={(event) => updateCategoryPrice(categoryIndex, "max_confirmed_registrations", event.target.value)}
+                        disabled={disabled}
+                        placeholder="Vazio = sem limite por quantidade"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 disabled:opacity-60"
+                      />
+                      <span className="block text-xs text-slate-500">Opcional se o lote tiver data de encerramento (Fim). Pelo menos um dos dois precisa estar preenchido.</span>
+                    </label>
                   </div>
                 </div>
               );
@@ -441,47 +467,55 @@ export function BatchesManager({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-800/80">
-        <table className="min-w-full divide-y divide-slate-800 text-sm">
-          <thead className="bg-slate-950/70 text-left text-slate-400">
-            <tr>
-              <th className="px-4 py-3">Lote</th>
-              <th className="px-4 py-3">Masculino</th>
-              <th className="px-4 py-3">Feminino</th>
-              <th className="px-4 py-3">Limite</th>
-              <th className="px-4 py-3">Confirmadas</th>
-              <th className="px-4 py-3">Restantes</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Acoes</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
-            {batches.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">Nenhum lote cadastrado para o evento ativo.</td>
-              </tr>
-            ) : (
-              batches.map((batch) => (
-                <tr key={batch.id}>
-                  <td className="px-4 py-3">{batch.name}</td>
-                  <td className="px-4 py-3">R$ {Number(batch.male_price).toFixed(2)}</td>
-                  <td className="px-4 py-3">R$ {Number(batch.female_price).toFixed(2)}</td>
-                  <td className="px-4 py-3">{batch.max_confirmed_registrations}</td>
-                  <td className="px-4 py-3">{batch.confirmed_count}</td>
-                  <td className="px-4 py-3">{batch.remaining_slots}</td>
-                  <td className="px-4 py-3">{batch.is_active ? "Ativo" : "Inativo"}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => loadForEdit(batch)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
-                      <button type="button" onClick={() => activate(batch)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs" disabled={batch.is_active}>Ativar</button>
-                      <button type="button" onClick={() => remove(batch)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Apagar</button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="space-y-3">
+        {distinctBatches.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4 text-center text-sm text-slate-400">
+            Nenhum lote cadastrado para o evento ativo.
+          </div>
+        ) : (
+          distinctBatches.map((batch) => {
+            const rows = batches.filter((row) => row.id === batch.id);
+            return (
+              <div key={batch.id} className="overflow-hidden rounded-2xl border border-slate-800/80">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/70 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-100">{batch.name}</p>
+                    <p className="text-xs text-slate-400">{batch.is_active ? "Ativo" : "Inativo"}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => loadForEdit(batch)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
+                    <button type="button" onClick={() => activate(batch)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs" disabled={batch.is_active}>Ativar</button>
+                    <button type="button" onClick={() => remove(batch)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Apagar</button>
+                  </div>
+                </div>
+                <table className="min-w-full divide-y divide-slate-800 text-sm">
+                  <thead className="bg-slate-950/50 text-left text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Categoria</th>
+                      <th className="px-4 py-2">Masculino</th>
+                      <th className="px-4 py-2">Feminino</th>
+                      <th className="px-4 py-2">Limite</th>
+                      <th className="px-4 py-2">Confirmadas</th>
+                      <th className="px-4 py-2">Restantes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
+                    {rows.map((row) => (
+                      <tr key={`${row.id}-${row.ticket_category_id}`}>
+                        <td className="px-4 py-2 font-medium text-slate-100">{row.category_name}</td>
+                        <td className="px-4 py-2">R$ {Number(row.male_price).toFixed(2)}</td>
+                        <td className="px-4 py-2">R$ {Number(row.female_price).toFixed(2)}</td>
+                        <td className="px-4 py-2">{row.max_confirmed_registrations ?? "Sem limite"}</td>
+                        <td className="px-4 py-2">{row.confirmed_count}</td>
+                        <td className="px-4 py-2">{row.remaining_slots ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

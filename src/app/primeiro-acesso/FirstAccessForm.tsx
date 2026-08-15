@@ -19,9 +19,11 @@ type FirstAccessFormProps = {
   };
   mustChangePassword: boolean;
   nextPath: string;
+  inviteId?: string;
+  editableFields: string[];
 };
 
-export function FirstAccessForm({ initialValues, mustChangePassword, nextPath }: FirstAccessFormProps) {
+export function FirstAccessForm({ initialValues, mustChangePassword, nextPath, inviteId, editableFields }: FirstAccessFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -35,6 +37,9 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath }:
   const [city, setCity] = useState(initialValues.city);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const editable = new Set(editableFields);
+  const fieldClass = (field: string) => `h-11 w-full rounded-xl border px-3 ${editable.has(field) ? 'border-amber-500/50 bg-slate-950' : 'border-emerald-500/20 bg-slate-900/70 text-slate-300'}`;
+  const fieldStatus = (field: string) => editable.has(field) ? <span className="text-xs text-amber-300">Preenchimento necessário</span> : <span className="text-xs text-emerald-300">Dado já informado</span>;
 
   function onSubmit() {
     setMessage(null);
@@ -48,6 +53,7 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath }:
     formData.set('email', email);
     formData.set('city', city);
     formData.set('next_path', nextPath);
+    if (inviteId) formData.set('invite_id', inviteId);
     if (mustChangePassword) {
       formData.set('new_password', newPassword);
       formData.set('confirm_password', confirmPassword);
@@ -75,20 +81,20 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath }:
     >
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1 text-sm text-slate-300">
-          <span>Nome completo</span>
-          <input value={fullName} onChange={(event) => setFullName(event.target.value)} required className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
+          <span className="flex items-center justify-between gap-2"><span>Nome completo</span>{fieldStatus('full_name')}</span>
+          <input value={fullName} onChange={(event) => setFullName(event.target.value)} readOnly={!editable.has('full_name')} required className={fieldClass('full_name')} />
         </label>
 
         <label className="space-y-1 text-sm text-slate-300">
-          <span>CPF</span>
-          <input value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} required inputMode="numeric" className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
+          <span className="flex items-center justify-between gap-2"><span>CPF</span>{fieldStatus('cpf')}</span>
+          <input value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} readOnly={!editable.has('cpf')} required inputMode="numeric" className={fieldClass('cpf')} />
         </label>
 
-        <BirthDateInput name="birth_date" value={birthDate} onChange={setBirthDate} required label="Data de nascimento" />
+        <div><div className="mb-1 flex items-center justify-between gap-2 text-sm"><span>Data de nascimento</span>{fieldStatus('birth_date')}</div><BirthDateInput name="birth_date" value={birthDate} onChange={setBirthDate} disabled={!editable.has('birth_date')} required label="" /></div>
 
         <label className="space-y-1 text-sm text-slate-300">
-          <span>Gênero</span>
-          <select value={gender} onChange={(event) => setGender(event.target.value)} required className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3">
+          <span className="flex items-center justify-between gap-2"><span>Gênero</span>{fieldStatus('gender')}</span>
+          <select value={gender} onChange={(event) => setGender(event.target.value)} disabled={!editable.has('gender')} className={fieldClass('gender')}>
             <option value="">Selecione</option>
             <option value="male">Masculino</option>
             <option value="female">Feminino</option>
@@ -98,18 +104,18 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath }:
         </label>
 
         <label className="space-y-1 text-sm text-slate-300">
-          <span>Telefone</span>
-          <input value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} required inputMode="numeric" className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
+          <span className="flex items-center justify-between gap-2"><span>Telefone</span>{fieldStatus('phone')}</span>
+          <input value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} readOnly={!editable.has('phone')} required inputMode="numeric" className={fieldClass('phone')} />
         </label>
 
         <label className="space-y-1 text-sm text-slate-300 md:col-span-2">
-          <span>E-mail</span>
-          <input type="email" value={email} readOnly required className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 opacity-80" />
+          <span className="flex items-center justify-between gap-2"><span>E-mail</span><span className="text-xs text-emerald-300">Confirmado pela conta</span></span>
+          <input type="email" value={email} readOnly required className={fieldClass('email')} />
         </label>
 
         <label className="space-y-1 text-sm text-slate-300 md:col-span-2">
-          <span>Cidade</span>
-          <input value={city} onChange={(event) => setCity(event.target.value)} required className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3" />
+          <span className="flex items-center justify-between gap-2"><span>Cidade</span>{fieldStatus('city')}</span>
+          <input value={city} onChange={(event) => setCity(event.target.value)} readOnly={!editable.has('city')} required className={fieldClass('city')} />
         </label>
       </div>
 
