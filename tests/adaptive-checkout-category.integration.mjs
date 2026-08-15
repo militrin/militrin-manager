@@ -20,13 +20,18 @@ test('backend trata zero, uma e múltiplas categorias com a mesma regra adaptati
 
   const organization = await service.from('organizations').insert({ name: 'Checkout Adaptativo', slug: `adaptive-${suffix}`, status: 'active' }).select('id').single();
   assert.equal(organization.error, null, organization.error?.message);
+  let ownerRole = await service.from('admin_roles').select('id').eq('code', 'owner').maybeSingle();
+  if (!ownerRole.data) ownerRole = await service.from('admin_roles').insert({ code: 'owner', name: 'Owner', is_system: true, is_active: true }).select('id').single();
+  assert.equal(ownerRole.error, null, ownerRole.error?.message);
+  assert.equal((await service.from('admin_users').insert({ user_id: created.data.user.id, role_id: ownerRole.data.id, is_active: true })).error, null);
+  assert.equal((await service.from('organization_members').insert({ organization_id: organization.data.id, user_id: created.data.user.id, role_id: ownerRole.data.id, is_owner: true, is_active: true })).error, null);
 
-  async function createEvent(label) {
+  async function createEvent(label, { flatPriceConfirmed = true } = {}) {
     const event = await service.from('events').insert({ organization_id: organization.data.id, name: `Evento ${label}`, year: 2032,
       slug: `adaptive-${label}-${suffix}`, is_active: true, registration_enabled: true, starts_at: '2032-10-10T12:00:00Z', min_age: 0 }).select('id').single();
     assert.equal(event.error, null, event.error?.message);
     const batch = await service.from('registration_batches').insert({ event_id: event.data.id, name: 'Lote 1', sequence_number: 1,
-      male_price: 120, female_price: 100, max_confirmed_registrations: 100, is_active: true }).select('id').single();
+      male_price: 120, female_price: 100, max_confirmed_registrations: 100, is_active: true, flat_price_confirmed: flatPriceConfirmed }).select('id').single();
     assert.equal(batch.error, null, batch.error?.message);
     return { eventId: event.data.id, batchId: batch.data.id };
   }
@@ -86,8 +91,32 @@ test('backend trata zero, uma e múltiplas categorias com a mesma regra adaptati
   const disabled = await createEvent('categoria-inativa');
   await addCategory(disabled, 'Inativa', false);
   const inactivePreview = await anon.rpc('get_registration_pricing_preview', { p_event_id: disabled.eventId, p_ticket_category_id: null, p_gender: 'female' });
-  assert.equal(inactivePreview.error, null, inactivePreview.error?.message);
-  assert.equal(Number(inactivePreview.data[0].base_amount), 100);
+  assert.ok(inactivePreview.error, 'categoria existente porem indisponivel nao pode virar "ingresso unico" com preco de lote');
+  assert.match(inactivePreview.error.message, /TICKET_CATEGORY_UNAVAILABLE/);
+
+  const unconfirmed = await createEvent('preco-nao-confirmado', { flatPriceConfirmed: false });
+  const unconfirmedPreview = await anon.rpc('get_registration_pricing_preview', { p_event_id: unconfirmed.eventId, p_ticket_category_id: null, p_gender: 'male' });
+  assert.ok(unconfirmedPreview.error, 'lote sem preco de ingresso unico confirmado nunca pode retornar preco final zero silenciosamente');
+  assert.match(unconfirmedPreview.error.message, /BATCH_FLAT_PRICE_NOT_CONFIRMED/);
+
+  const unconfirmedCheckout = await anon.rpc('create_multi_ticket_order_checkout', {
+    p_event_id: unconfirmed.eventId, p_ticket_category_id: null, p_quantity: 1, p_gender: 'male', p_payment_method: 'pix',
+    p_buyer_full_name: 'Comprador Nao Confirmado', p_buyer_cpf: '52998224725', p_buyer_birth_date: '1990-01-01', p_buyer_gender: 'male',
+    p_buyer_phone: '11999990000', p_buyer_email: email, p_buyer_city: 'Sao Paulo', p_limit_per_order: 10,
+    p_assign_first_to_buyer: true, p_client_request_id: `adaptive-unconfirmed-${suffix}`, p_items: [{ pricing_gender: 'male', ownership_mode: 'self' }],
+  });
+  assert.ok(unconfirmedCheckout.error, 'pedido nao pode ser criado com preco de ingresso unico nao confirmado');
+  assert.match(unconfirmedCheckout.error.message, /BATCH_FLAT_PRICE_NOT_CONFIRMED/);
+  const unconfirmedOrderCount = await service.from('orders').select('id', { count: 'exact', head: true }).eq('event_id', unconfirmed.eventId);
+  assert.equal(unconfirmedOrderCount.count, 0, 'nenhum pedido deve ser persistido quando o preco nao foi confirmado');
+
+  const confirmResult = await anon.rpc('confirm_registration_batch_flat_price', {
+    p_batch_id: unconfirmed.batchId, p_event_id: unconfirmed.eventId, p_male_price: 150, p_female_price: 130, p_reason: 'teste automatizado',
+  });
+  assert.equal(confirmResult.error, null, confirmResult.error?.message);
+  const confirmedPreview = await anon.rpc('get_registration_pricing_preview', { p_event_id: unconfirmed.eventId, p_ticket_category_id: null, p_gender: 'male' });
+  assert.equal(confirmedPreview.error, null, confirmedPreview.error?.message);
+  assert.equal(Number(confirmedPreview.data[0].base_amount), 150);
 
   await service.auth.admin.deleteUser(created.data.user.id);
 });

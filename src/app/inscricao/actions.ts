@@ -10,7 +10,7 @@ import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
 import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
-import { normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
+import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
 import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBuyerToNewOrder } from '@/lib/registrations/active-ticket-holder';
 
 type PricingPreview = {
@@ -1538,9 +1538,17 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
     console.warn('Falha ao enviar e-mail transacional:', mailError);
   }
 
+  const zeroPaymentReason = describeZeroPaymentReason({
+    baseAmount: Number(refreshedState.snapshot.payment.amount ?? 0),
+    discountAmount: Number(refreshedState.snapshot.payment.discount_amount ?? 0),
+    finalAmount: Number(refreshedState.snapshot.final_amount ?? 0),
+    paymentMethod: refreshedState.snapshot.payment.payment_method,
+    couponApplied: Boolean(input.coupon_code?.trim()),
+  });
+
   return {
     success: true,
-    courtesy_message: Number(refreshedState.snapshot.final_amount ?? 0) <= 0 ? 'Cortesia aplicada. Nenhum pagamento sera necessario.' : null,
+    courtesy_message: zeroPaymentReason?.message ?? null,
     registration: refreshedState.snapshot,
   };
 }

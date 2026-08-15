@@ -41,3 +41,35 @@ export function sumCheckoutItemTotals(items: Array<{ unitPrice?: number; discoun
     { original: 0, discount: 0, total: 0 },
   );
 }
+
+export type ZeroPaymentReason = 'courtesy' | 'coupon' | 'free';
+
+export type ZeroPaymentContext = {
+  baseAmount: number;
+  discountAmount: number;
+  finalAmount: number;
+  paymentMethod?: string | null;
+  couponApplied?: boolean;
+};
+
+/**
+ * final_amount <= 0 nunca deve, por si so, ser lido como cortesia: um preco
+ * final igual a zero pode vir de um ingresso configurado como gratuito, de um
+ * cupom aplicado explicitamente, ou (administrativo) de uma cortesia declarada
+ * via payment_method. Esta funcao decide qual dos tres representa o pedido.
+ */
+export function describeZeroPaymentReason(context: ZeroPaymentContext): { reason: ZeroPaymentReason; message: string } | null {
+  const finalAmount = Number(context.finalAmount ?? 0);
+  if (finalAmount > 0) return null;
+
+  if (context.paymentMethod === 'courtesy') {
+    return { reason: 'courtesy', message: 'Cortesia aplicada. Nenhum pagamento será necessário.' };
+  }
+
+  const discountAmount = Number(context.discountAmount ?? 0);
+  if (context.couponApplied && discountAmount > 0) {
+    return { reason: 'coupon', message: 'Cupom aplicado. Nenhum pagamento será necessário.' };
+  }
+
+  return { reason: 'free', message: 'Ingresso gratuito. Nenhum pagamento será necessário.' };
+}

@@ -21,7 +21,7 @@ import {
   removeCpfMask,
 } from '@/lib/validation/registration';
 import { formatDateTimeBR, formatISOToDateBR } from '@/lib/utils/date';
-import { normalizePricingGenderInput, resolvePricingGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
+import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
 import { getStatusLabel } from '@/lib/status-labels';
 import { StoreCart } from '@/components/store/StoreCart';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
@@ -204,7 +204,8 @@ type CheckoutItemConfig = {
   discountAmount: number;
   finalAmount: number;
   validationErrors: string[];
-  visualStatus: 'complete' | 'missing' | 'out_of_stock' | 'price_updated';
+  visualStatus: 'complete' | 'missing' | 'out_of_stock' | 'price_updated' | 'pricing_error';
+  pricingError: string | null;
 };
 
 type OrderSnapshotPayload = {
@@ -318,6 +319,7 @@ function createCheckoutItem(seed: number, defaultGender: 'male' | 'female' | nul
     finalAmount: 0,
     validationErrors: [],
     visualStatus: 'missing',
+    pricingError: null,
   };
 }
 
@@ -796,12 +798,12 @@ export function RegistrationWizard({
         prev.map((item, index) => {
           const found = pricingResults[index];
           if (!found || !found.result.success || !found.result.pricing) {
+            // Uma falha no calculo de preco nunca pode virar R$ 0,00 silencioso:
+            // o item fica marcado com erro e bloqueia o avanco ate ser resolvido.
             return {
               ...item,
-              unitPrice: 0,
-              discountAmount: 0,
-              finalAmount: 0,
-              visualStatus: 'missing',
+              visualStatus: 'pricing_error',
+              pricingError: (found && 'message' in found.result && found.result.message) || 'Nao foi possivel calcular o preco deste ingresso.',
             };
           }
           return {
@@ -810,6 +812,7 @@ export function RegistrationWizard({
             discountAmount: Number(found.result.pricing.discount_amount ?? 0),
             finalAmount: Number(found.result.pricing.final_amount ?? 0),
             visualStatus: 'price_updated',
+            pricingError: null,
           };
         }),
       );
@@ -849,6 +852,9 @@ export function RegistrationWizard({
         if (index >= form.quantity) return item;
 
         const itemErrors: string[] = [];
+        // Um preco que falhou ao calcular nunca pode ser tratado como R$ 0,00:
+        // bloqueia o avanco ate que a precificacao seja recalculada com sucesso.
+        if (item.pricingError) itemErrors.push(item.pricingError);
         if (shouldShowItemConfiguration && !item.pricingGender) itemErrors.push('Selecione genero.');
         if (shouldShowItemConfiguration && item.ownershipMode === 'named' && !item.holder_full_name.trim()) itemErrors.push('Informe o titular.');
         if (shouldShowItemConfiguration && hasRequiredShirt) {
@@ -869,9 +875,11 @@ export function RegistrationWizard({
           ...item,
           pricingGender: resolvedGender,
           validationErrors: itemErrors,
-          visualStatus: itemErrors.length > 0
-            ? (itemErrors.some((msg) => msg.includes('estoque')) ? 'out_of_stock' : 'missing')
-            : 'complete',
+          visualStatus: item.pricingError
+            ? 'pricing_error'
+            : itemErrors.length > 0
+              ? (itemErrors.some((msg) => msg.includes('estoque')) ? 'out_of_stock' : 'missing')
+              : 'complete',
         };
       }),
     );
@@ -1132,7 +1140,14 @@ export function RegistrationWizard({
 
     const createdRegistration = mapOrderToRegistration(createdOrder);
     setRegistration(createdRegistration);
-    setCourtesyMessage(createdRegistration.payment.final_amount <= 0 ? 'Cortesia aplicada ao pedido.' : null);
+    const zeroPaymentReason = describeZeroPaymentReason({
+      baseAmount: createdRegistration.payment.amount,
+      discountAmount: createdRegistration.payment.discount_amount,
+      finalAmount: createdRegistration.payment.final_amount,
+      paymentMethod: createdRegistration.payment.payment_method,
+      couponApplied: Boolean(form.coupon_code.trim()),
+    });
+    setCourtesyMessage(zeroPaymentReason?.message ?? null);
     setLiveMessage('Pedido criado.');
 
     if ((createdRegistration.final_amount ?? 0) <= 0) {
@@ -1196,6 +1211,16 @@ export function RegistrationWizard({
   ];
 
   const itemTotals = sumCheckoutItemTotals(activeCheckoutItems);
+  const hasPricedCheckoutItems = activeCheckoutItems.some((item) => item.visualStatus === 'price_updated' || item.visualStatus === 'complete');
+  const hasPricingErrorItems = activeCheckoutItems.some((item) => item.visualStatus === 'pricing_error');
+  const zeroPaymentSummaryReason = hasPricedCheckoutItems && !hasPricingErrorItems
+    ? describeZeroPaymentReason({
+        baseAmount: itemTotals.original,
+        discountAmount: itemTotals.discount,
+        finalAmount: itemTotals.total,
+        couponApplied: Boolean(form.coupon_code.trim()),
+      })
+    : null;
 
   const groupedShirts = Array.from(
     activeCheckoutItems.reduce((map, item) => {
@@ -1618,8 +1643,11 @@ export function RegistrationWizard({
                     <p>Valor base: {summaryValues.original}</p>
                     <p>Desconto: {summaryValues.discount}</p>
                     <p className="mt-1 text-base font-semibold text-emerald-300">Total: {summaryValues.total}</p>
-                    {itemTotals.total <= 0 ? (
-                      <p className="mt-2 text-xs text-emerald-200">Cortesia aplicada. Nenhum pagamento sera necessario.</p>
+                    {zeroPaymentSummaryReason ? (
+                      <p className="mt-2 text-xs text-emerald-200">{zeroPaymentSummaryReason.message}</p>
+                    ) : null}
+                    {hasPricingErrorItems ? (
+                      <p className="mt-2 text-xs text-rose-300">Não foi possível calcular o preço de um ou mais ingressos. Corrija antes de continuar.</p>
                     ) : null}
                   </div>
 
@@ -1637,8 +1665,16 @@ export function RegistrationWizard({
                             {activeCheckoutItems.map((item, index) => (
                         <div key={item.clientId} className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
                           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Ingresso {index + 1}</p>
-                          <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                            {item.visualStatus === 'complete' ? 'Completo' : item.visualStatus === 'out_of_stock' ? 'Sem estoque' : item.visualStatus === 'price_updated' ? 'Preco atualizado' : 'Faltam dados'}
+                          <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${item.visualStatus === 'pricing_error' ? 'border-rose-500/30 bg-rose-500/10 text-rose-100' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
+                            {item.visualStatus === 'complete'
+                              ? 'Completo'
+                              : item.visualStatus === 'out_of_stock'
+                                ? 'Sem estoque'
+                                : item.visualStatus === 'price_updated'
+                                  ? 'Preco atualizado'
+                                  : item.visualStatus === 'pricing_error'
+                                    ? (item.pricingError || 'Falha ao calcular preco')
+                                    : 'Faltam dados'}
                           </div>
                           <div className="mt-2 grid gap-2 sm:grid-cols-3">
                             <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-2 py-2">
@@ -1889,11 +1925,11 @@ export function RegistrationWizard({
                     </p>
                   ) : (
                     <p className="sm:col-span-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-100">
-                      Cupom de cortesia aplicado. Valor final zerado automaticamente.
+                      {zeroPaymentSummaryReason?.message ?? 'Nenhum pagamento sera necessario.'}
                     </p>
                   )}
                   <p>
-                    <strong>Pagamento:</strong> {itemTotals.total <= 0 ? 'Nao necessario (cortesia)' : paymentMethodLabel(form.payment_method)}
+                    <strong>Pagamento:</strong> {itemTotals.total <= 0 ? 'Nao necessario' : paymentMethodLabel(form.payment_method)}
                   </p>
                   <p>
                     <strong>Total:</strong> {summaryValues.total}
