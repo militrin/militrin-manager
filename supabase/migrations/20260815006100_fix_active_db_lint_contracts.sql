@@ -81,22 +81,251 @@ end; $$;
 revoke all on function public.admin_transfer_ticket_holder(uuid,uuid,text) from public,anon,authenticated;
 grant execute on function public.admin_transfer_ticket_holder(uuid,uuid,text) to service_role;
 
--- Corrige somente o bloco de cupons da funcao reconciliada no baseline. Os nomes
--- atuais sao notes, valid_from e valid_until.
-do $migration$
-declare v_definition text;
+-- Recriada diretamente (sem patch textual sobre pg_get_functiondef) para corrigir o
+-- bloco de cupons: os nomes atuais em public.coupons sao notes, valid_from e
+-- valid_until. Todo o restante do comportamento e identico ao baseline reconciliado.
+create or replace function public.duplicate_event_configuration(
+  p_source_event_id uuid,p_target_name text,p_target_slug text,p_target_year integer default null,
+  p_copy_categories boolean default true,p_copy_kit_items boolean default true,p_copy_benefits boolean default true,
+  p_copy_batches boolean default true,p_copy_batch_prices boolean default true,p_copy_inventory_structure boolean default true,
+  p_copy_coupons boolean default false
+) returns uuid language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_target_event_id uuid;
+  v_item record;
+  v_new_item_id uuid;
+  v_new_batch_id uuid;
+  v_batch record;
+  v_open_bar_id uuid;
+  v_target_category_id uuid;
 begin
-  select pg_get_functiondef('public.duplicate_event_configuration(uuid,text,text,integer,boolean,boolean,boolean,boolean,boolean,boolean,boolean)'::regprocedure)
-    into v_definition;
-  v_definition:=replace(v_definition,E'      description,\n      coupon_type,',E'      notes,\n      coupon_type,');
-  v_definition:=replace(v_definition,E'      starts_at,\n      ends_at,',E'      valid_from,\n      valid_until,');
-  v_definition:=replace(v_definition,E'      c.description,\n      c.coupon_type,',E'      c.notes,\n      c.coupon_type,');
-  v_definition:=replace(v_definition,E'      c.starts_at,\n      c.ends_at,',E'      c.valid_from,\n      c.valid_until,');
-  if v_definition like '%c.description%' or v_definition like '%c.starts_at%' or v_definition like '%c.ends_at%' then
-    raise exception 'DUPLICATE_EVENT_COUPON_CONTRACT_PATCH_FAILED';
+  if p_source_event_id is null then
+    raise exception 'Evento de origem obrigatorio.';
   end if;
-  execute v_definition;
-end; $migration$;
+
+  v_target_event_id := public.create_event(
+    p_target_name,
+    p_target_slug,
+    p_target_year,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    false,
+    false,
+    true
+  );
+
+  if p_copy_categories then
+    insert into public.ticket_categories (
+      event_id,
+      name,
+      slug,
+      description,
+      capacity,
+      is_active,
+      sort_order
+    )
+    select
+      v_target_event_id,
+      tc.name,
+      tc.slug,
+      tc.description,
+      tc.capacity,
+      tc.is_active,
+      tc.sort_order
+    from public.ticket_categories tc
+    where tc.event_id = p_source_event_id
+    on conflict (event_id, slug) do nothing;
+
+    if p_copy_benefits then
+      insert into public.ticket_category_benefits (
+        ticket_category_id,
+        name,
+        description,
+        sort_order
+      )
+      select
+        tc_target.id,
+        b.name,
+        b.description,
+        b.sort_order
+      from public.ticket_category_benefits b
+      join public.ticket_categories tc_source
+        on tc_source.id = b.ticket_category_id
+      join public.ticket_categories tc_target
+        on tc_target.event_id = v_target_event_id
+       and tc_target.slug = tc_source.slug
+      where tc_source.event_id = p_source_event_id;
+    end if;
+  end if;
+
+  if p_copy_kit_items then
+    for v_item in
+      select *
+      from public.event_kit_items
+      where event_id = p_source_event_id
+      order by sort_order asc, created_at asc
+    loop
+      v_new_item_id := public.upsert_event_kit_item(
+        null,
+        v_target_event_id,
+        v_item.name,
+        v_item.slug,
+        v_item.description,
+        v_item.item_type,
+        v_item.quantity_per_participant,
+        v_item.requires_variant,
+        v_item.is_required,
+        v_item.is_active,
+        v_item.sort_order
+      );
+
+      insert into public.event_kit_item_variants (
+        kit_item_id,
+        name,
+        value,
+        sort_order,
+        is_active
+      )
+      select
+        v_new_item_id,
+        v.name,
+        v.value,
+        v.sort_order,
+        v.is_active
+      from public.event_kit_item_variants v
+      where v.kit_item_id = v_item.id;
+    end loop;
+  end if;
+
+  if p_copy_batches then
+    for v_batch in
+      select *
+      from public.registration_batches
+      where event_id = p_source_event_id
+      order by sequence_number asc
+    loop
+      v_new_batch_id := public.create_registration_batch(
+        v_target_event_id,
+        v_batch.name,
+        v_batch.sequence_number,
+        v_batch.male_price,
+        v_batch.female_price,
+        v_batch.max_confirmed_registrations,
+        v_batch.starts_at,
+        v_batch.ends_at,
+        false
+      );
+
+      if p_copy_batch_prices then
+        insert into public.registration_batch_prices (
+          batch_id,
+          ticket_category_id,
+          male_price,
+          female_price
+        )
+        select
+          v_new_batch_id,
+          tc_target.id,
+          rbp.male_price,
+          rbp.female_price
+        from public.registration_batch_prices rbp
+        join public.ticket_categories tc_source
+          on tc_source.id = rbp.ticket_category_id
+        join public.ticket_categories tc_target
+          on tc_target.event_id = v_target_event_id
+         and tc_target.slug = tc_source.slug
+        where rbp.batch_id = v_batch.id
+        on conflict (batch_id, ticket_category_id)
+        do update set
+          male_price = excluded.male_price,
+          female_price = excluded.female_price,
+          updated_at = now();
+      end if;
+    end loop;
+  end if;
+
+  if p_copy_inventory_structure then
+    insert into public.shirt_inventory (
+      event_id,
+      shirt_type,
+      shirt_size,
+      total_quantity,
+      reserved_quantity,
+      delivered_quantity
+    )
+    select
+      v_target_event_id,
+      si.shirt_type,
+      si.shirt_size,
+      0,
+      0,
+      0
+    from public.shirt_inventory si
+    where si.event_id = p_source_event_id
+    on conflict (event_id, shirt_type, shirt_size)
+    do nothing;
+  end if;
+
+  if p_copy_coupons then
+    insert into public.coupons (
+      event_id,
+      code,
+      notes,
+      coupon_type,
+      discount_percent,
+      max_uses,
+      used_count,
+      valid_from,
+      valid_until,
+      is_active
+    )
+    select
+      v_target_event_id,
+      c.code,
+      c.notes,
+      c.coupon_type,
+      c.discount_percent,
+      c.max_uses,
+      0,
+      c.valid_from,
+      c.valid_until,
+      false
+    from public.coupons c
+    where c.event_id = p_source_event_id
+    on conflict (event_id, code)
+    do nothing;
+  end if;
+
+  insert into public.audit_logs (
+    action,
+    entity_type,
+    entity_id,
+    event_id,
+    details
+  ) values (
+    'event_configuration_duplicated',
+    'events',
+    v_target_event_id,
+    v_target_event_id,
+    jsonb_build_object(
+      'source_event_id', p_source_event_id,
+      'copy_categories', p_copy_categories,
+      'copy_kit_items', p_copy_kit_items,
+      'copy_benefits', p_copy_benefits,
+      'copy_batches', p_copy_batches,
+      'copy_batch_prices', p_copy_batch_prices,
+      'copy_inventory_structure', p_copy_inventory_structure,
+      'copy_coupons', p_copy_coupons
+    )
+  );
+
+  return v_target_event_id;
+end;
+$$;
 
 create or replace function public.materialize_event_ticket_kit_items(p_event_id uuid)
 returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
@@ -125,5 +354,179 @@ revoke all on function public.set_event_shirt_stock_limit(uuid,boolean),public.r
 grant execute on function public.set_event_shirt_stock_limit(uuid,boolean),public.reset_event_shirt_inventory(uuid,boolean,text),
   public.duplicate_event_configuration(uuid,text,text,integer,boolean,boolean,boolean,boolean,boolean,boolean,boolean),
   public.materialize_event_ticket_kit_items(uuid) to authenticated,service_role;
+
+-- RPCs legadas de inventario (public.shirt_inventory) sem consumidor em src/: mesmo bug
+-- de audit_logs.actor (coluna inexistente) das funcoes acima. Sem candidato ativo na
+-- aplicacao, ficam restritas a service_role em vez de reabertas para authenticated/anon.
+
+create or replace function public.create_inventory_item(p_shirt_type text,p_shirt_size text,p_total_quantity integer)
+returns uuid language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_event_id uuid;
+  v_item_id uuid;
+  v_actor uuid:=auth.uid();
+  v_actor_email text;
+begin
+  select id into v_event_id from public.events where is_active=true order by created_at desc limit 1;
+  if v_event_id is null then raise exception 'Nenhum evento ativo encontrado.'; end if;
+  if p_shirt_type not in('Camiseta','Babylook') then raise exception 'Modelo invalido. Use Camiseta ou Babylook.'; end if;
+  if p_shirt_type='Camiseta' and p_shirt_size not in('PP','P','M','G','GG','EG','EXG','EXGG') then raise exception 'Tamanho invalido para Camiseta.'; end if;
+  if p_shirt_type='Babylook' and p_shirt_size not in('PP','P','M','G','GG','EG') then raise exception 'Tamanho invalido para Babylook.'; end if;
+  if p_total_quantity is null or p_total_quantity<0 then raise exception 'Quantidade total deve ser maior ou igual a zero.'; end if;
+  if exists(select 1 from public.shirt_inventory where event_id=v_event_id and shirt_type=p_shirt_type and shirt_size=p_shirt_size) then
+    raise exception 'Ja existe uma linha para este modelo e tamanho no evento ativo.';
+  end if;
+  insert into public.shirt_inventory(event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity)
+  values(v_event_id,p_shirt_type,p_shirt_size,p_total_quantity,0,0) returning id into v_item_id;
+  select lower(email) into v_actor_email from auth.users where id=v_actor;
+  insert into public.audit_logs(action,entity_type,entity_id,event_id,details)
+  values('inventory_item_created','shirt_inventory',v_item_id,v_event_id,jsonb_build_object(
+    'actor_user_id',v_actor,'actor_email',v_actor_email,'shirt_type',p_shirt_type,'shirt_size',p_shirt_size,
+    'total_quantity',p_total_quantity,'reserved_quantity',0,'delivered_quantity',0));
+  return v_item_id;
+end; $$;
+
+create or replace function public.create_inventory_item(p_event_id uuid,p_shirt_type text,p_shirt_size text,p_total_quantity integer)
+returns uuid language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_item_id uuid;
+  v_actor uuid:=auth.uid();
+  v_actor_email text;
+  v_event_exists boolean:=false;
+begin
+  if p_event_id is null then raise exception 'Evento obrigatorio.'; end if;
+  if coalesce(trim(p_shirt_type),'')='' then raise exception 'Modelo obrigatorio.'; end if;
+  if coalesce(trim(p_shirt_size),'')='' then raise exception 'Tamanho obrigatorio.'; end if;
+  if p_total_quantity is null or p_total_quantity<0 then raise exception 'Quantidade total deve ser maior ou igual a zero.'; end if;
+  select exists(select 1 from public.events where id=p_event_id) into v_event_exists;
+  if not v_event_exists then raise exception 'Evento nao encontrado.'; end if;
+  if exists(select 1 from public.shirt_inventory where event_id=p_event_id and shirt_type=p_shirt_type and shirt_size=p_shirt_size) then
+    raise exception 'Ja existe uma linha para este modelo e tamanho neste evento.';
+  end if;
+  insert into public.shirt_inventory(event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity)
+  values(p_event_id,p_shirt_type,p_shirt_size,p_total_quantity,0,0) returning id into v_item_id;
+  select lower(email) into v_actor_email from auth.users where id=v_actor;
+  insert into public.audit_logs(action,entity_type,entity_id,event_id,details)
+  values('inventory_item_created','shirt_inventory',v_item_id,p_event_id,jsonb_build_object(
+    'actor_user_id',v_actor,'actor_email',v_actor_email,'shirt_type',p_shirt_type,'shirt_size',p_shirt_size,
+    'total_quantity',p_total_quantity,'reserved_quantity',0,'delivered_quantity',0));
+  return v_item_id;
+end; $$;
+
+create or replace function public.delete_inventory_item(p_inventory_id uuid)
+returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_event_id uuid;
+  v_actor uuid:=auth.uid();
+  v_actor_email text;
+  v_item public.shirt_inventory%rowtype;
+begin
+  select id into v_event_id from public.events where is_active=true order by created_at desc limit 1;
+  if v_event_id is null then raise exception 'Nenhum evento ativo encontrado.'; end if;
+  if p_inventory_id is null then raise exception 'ID do item e obrigatorio.'; end if;
+  select * into v_item from public.shirt_inventory where id=p_inventory_id for update;
+  if not found then raise exception 'Linha de estoque nao encontrada.'; end if;
+  if v_item.event_id is distinct from v_event_id then raise exception 'Apenas o estoque do evento ativo pode ser excluido.'; end if;
+  delete from public.shirt_inventory where id=p_inventory_id;
+  select lower(email) into v_actor_email from auth.users where id=v_actor;
+  insert into public.audit_logs(action,entity_type,entity_id,event_id,details)
+  values('inventory_item_deleted','shirt_inventory',p_inventory_id,v_event_id,jsonb_build_object(
+    'actor_user_id',v_actor,'actor_email',v_actor_email,'shirt_type',v_item.shirt_type,'shirt_size',v_item.shirt_size,
+    'total_quantity',v_item.total_quantity,'reserved_quantity',v_item.reserved_quantity,'delivered_quantity',v_item.delivered_quantity));
+  return true;
+end; $$;
+
+create or replace function public.delete_inventory_item(p_event_id uuid,p_inventory_id uuid)
+returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_item public.shirt_inventory%rowtype;
+  v_actor uuid:=auth.uid();
+  v_actor_email text;
+begin
+  if p_event_id is null then raise exception 'Evento obrigatorio.'; end if;
+  if p_inventory_id is null then raise exception 'ID do item e obrigatorio.'; end if;
+  select * into v_item from public.shirt_inventory where id=p_inventory_id and event_id=p_event_id for update;
+  if not found then raise exception 'Linha de estoque nao encontrada para o evento informado.'; end if;
+  delete from public.shirt_inventory where id=p_inventory_id;
+  select lower(email) into v_actor_email from auth.users where id=v_actor;
+  insert into public.audit_logs(action,entity_type,entity_id,event_id,details)
+  values('inventory_item_deleted','shirt_inventory',p_inventory_id,p_event_id,jsonb_build_object(
+    'actor_user_id',v_actor,'actor_email',v_actor_email,'shirt_type',v_item.shirt_type,'shirt_size',v_item.shirt_size,
+    'total_quantity',v_item.total_quantity,'reserved_quantity',v_item.reserved_quantity,'delivered_quantity',v_item.delivered_quantity));
+  return true;
+end; $$;
+
+create or replace function public.update_inventory_item(p_inventory_id uuid,p_shirt_type text,p_shirt_size text,p_total_quantity integer)
+returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_event_id uuid;
+  v_actor uuid:=auth.uid();
+  v_actor_email text;
+  v_item public.shirt_inventory%rowtype;
+begin
+  select id into v_event_id from public.events where is_active=true order by created_at desc limit 1;
+  if v_event_id is null then raise exception 'Nenhum evento ativo encontrado.'; end if;
+  if p_inventory_id is null then raise exception 'ID do item e obrigatorio.'; end if;
+  if p_shirt_type not in('Camiseta','Babylook') then raise exception 'Modelo invalido. Use Camiseta ou Babylook.'; end if;
+  if p_shirt_type='Camiseta' and p_shirt_size not in('PP','P','M','G','GG','EG','EXG','EXGG') then raise exception 'Tamanho invalido para Camiseta.'; end if;
+  if p_shirt_type='Babylook' and p_shirt_size not in('PP','P','M','G','GG','EG') then raise exception 'Tamanho invalido para Babylook.'; end if;
+  if p_total_quantity is null or p_total_quantity<0 then raise exception 'Quantidade total deve ser maior ou igual a zero.'; end if;
+  select * into v_item from public.shirt_inventory where id=p_inventory_id for update;
+  if not found then raise exception 'Linha de estoque nao encontrada.'; end if;
+  if v_item.event_id is distinct from v_event_id then raise exception 'Apenas o estoque do evento ativo pode ser alterado.'; end if;
+  if (v_item.reserved_quantity+v_item.delivered_quantity)>p_total_quantity then raise exception 'Total deve ser maior ou igual a reservadas + entregues.'; end if;
+  if exists(select 1 from public.shirt_inventory where event_id=v_event_id and shirt_type=p_shirt_type and shirt_size=p_shirt_size and id<>p_inventory_id) then
+    raise exception 'Ja existe outra linha para este modelo e tamanho no evento ativo.';
+  end if;
+  update public.shirt_inventory set shirt_type=p_shirt_type,shirt_size=p_shirt_size,total_quantity=p_total_quantity,updated_at=now() where id=p_inventory_id;
+  select lower(email) into v_actor_email from auth.users where id=v_actor;
+  insert into public.audit_logs(action,entity_type,entity_id,event_id,details)
+  values('inventory_item_updated','shirt_inventory',p_inventory_id,v_event_id,jsonb_build_object(
+    'actor_user_id',v_actor,'actor_email',v_actor_email,
+    'before',jsonb_build_object('shirt_type',v_item.shirt_type,'shirt_size',v_item.shirt_size,'total_quantity',v_item.total_quantity,
+      'reserved_quantity',v_item.reserved_quantity,'delivered_quantity',v_item.delivered_quantity),
+    'after',jsonb_build_object('shirt_type',p_shirt_type,'shirt_size',p_shirt_size,'total_quantity',p_total_quantity,
+      'reserved_quantity',v_item.reserved_quantity,'delivered_quantity',v_item.delivered_quantity)));
+  return true;
+end; $$;
+
+create or replace function public.update_inventory_item(p_event_id uuid,p_inventory_id uuid,p_shirt_type text,p_shirt_size text,p_total_quantity integer)
+returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_actor uuid:=auth.uid();
+  v_actor_email text;
+  v_item public.shirt_inventory%rowtype;
+begin
+  if p_event_id is null then raise exception 'Evento obrigatorio.'; end if;
+  if p_inventory_id is null then raise exception 'ID do item e obrigatorio.'; end if;
+  if coalesce(trim(p_shirt_type),'')='' then raise exception 'Modelo obrigatorio.'; end if;
+  if coalesce(trim(p_shirt_size),'')='' then raise exception 'Tamanho obrigatorio.'; end if;
+  if p_total_quantity is null or p_total_quantity<0 then raise exception 'Quantidade total deve ser maior ou igual a zero.'; end if;
+  select * into v_item from public.shirt_inventory where id=p_inventory_id and event_id=p_event_id for update;
+  if not found then raise exception 'Linha de estoque nao encontrada para o evento informado.'; end if;
+  if (v_item.reserved_quantity+v_item.delivered_quantity)>p_total_quantity then raise exception 'Total deve ser maior ou igual a reservadas + entregues.'; end if;
+  if exists(select 1 from public.shirt_inventory where event_id=p_event_id and shirt_type=p_shirt_type and shirt_size=p_shirt_size and id<>p_inventory_id) then
+    raise exception 'Ja existe outra linha para este modelo e tamanho neste evento.';
+  end if;
+  update public.shirt_inventory set shirt_type=p_shirt_type,shirt_size=p_shirt_size,total_quantity=p_total_quantity,updated_at=now() where id=p_inventory_id;
+  select lower(email) into v_actor_email from auth.users where id=v_actor;
+  insert into public.audit_logs(action,entity_type,entity_id,event_id,details)
+  values('inventory_item_updated','shirt_inventory',p_inventory_id,p_event_id,jsonb_build_object(
+    'actor_user_id',v_actor,'actor_email',v_actor_email,
+    'before',jsonb_build_object('shirt_type',v_item.shirt_type,'shirt_size',v_item.shirt_size,'total_quantity',v_item.total_quantity,
+      'reserved_quantity',v_item.reserved_quantity,'delivered_quantity',v_item.delivered_quantity),
+    'after',jsonb_build_object('shirt_type',p_shirt_type,'shirt_size',p_shirt_size,'total_quantity',p_total_quantity,
+      'reserved_quantity',v_item.reserved_quantity,'delivered_quantity',v_item.delivered_quantity)));
+  return true;
+end; $$;
+
+revoke all on function public.create_inventory_item(text,text,integer),public.create_inventory_item(uuid,text,text,integer),
+  public.delete_inventory_item(uuid),public.delete_inventory_item(uuid,uuid),
+  public.update_inventory_item(uuid,text,text,integer),public.update_inventory_item(uuid,uuid,text,text,integer)
+  from public,anon,authenticated;
+grant execute on function public.create_inventory_item(text,text,integer),public.create_inventory_item(uuid,text,text,integer),
+  public.delete_inventory_item(uuid),public.delete_inventory_item(uuid,uuid),
+  public.update_inventory_item(uuid,text,text,integer),public.update_inventory_item(uuid,uuid,text,text,integer)
+  to service_role;
 
 commit;
