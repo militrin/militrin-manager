@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, CalendarDays, CircleUserRound, Coins, History, Images, LayoutDashboard, ShoppingBag, Star, Ticket, type LucideIcon } from 'lucide-react';
+import { ArrowRight, CalendarDays, CircleUserRound, Coins, History, Images, LayoutDashboard, ShieldCheck, ShoppingBag, Star, Ticket, type LucideIcon } from 'lucide-react';
 import { CartNavLink, MobileCartLink } from '@/components/store/CartHeaderLink';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isCart: boolean };
@@ -63,7 +63,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-export function AccountSidebarNav({ isAdministrativeUser }: { isAdministrativeUser: boolean }) {
+export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
   const pathname = usePathname();
 
   return (
@@ -80,6 +80,22 @@ export function AccountSidebarNav({ isAdministrativeUser }: { isAdministrativeUs
           <span className="flex items-center gap-3">
             <LayoutDashboard size={16} />
             Painel administrativo
+          </span>
+          <ArrowRight size={13} />
+        </Link>
+      ) : null}
+      {isSponsorUser ? (
+        <Link
+          href="/minha-conta/patrocinador"
+          className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
+            isActivePath(pathname, '/minha-conta/patrocinador')
+              ? 'bg-amber-500 text-amber-950 shadow-md shadow-amber-600/30'
+              : 'border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <ShieldCheck size={16} />
+            Área do patrocinador
           </span>
           <ArrowRight size={13} />
         </Link>
@@ -107,12 +123,13 @@ function MobileNavLink({ href, label, icon: Icon, active }: { href: string; labe
   );
 }
 
-export function AccountMobileNav({ isAdministrativeUser }: { isAdministrativeUser: boolean }) {
+export function AccountMobileNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
   const pathname = usePathname();
+  const itemCount = 5 + (isAdministrativeUser ? 1 : 0) + (isSponsorUser ? 1 : 0);
 
   return (
     <nav className="fixed inset-x-3 bottom-3 z-40 rounded-2xl border border-slate-800/90 bg-slate-950/90 p-2 shadow-2xl shadow-black/30 backdrop-blur lg:hidden" aria-label="Navegação rápida do usuário">
-      <ul className={`grid gap-1 text-[11px] ${isAdministrativeUser ? 'grid-cols-6' : 'grid-cols-5'}`}>
+      <ul className="grid gap-1 text-[11px]" style={{ gridTemplateColumns: `repeat(${itemCount}, minmax(0, 1fr))` }}>
         {isAdministrativeUser ? (
           <li>
             <MobileNavLink href="/painel" label="Painel" icon={LayoutDashboard} active={isActivePath(pathname, '/painel')} />
@@ -133,6 +150,11 @@ export function AccountMobileNav({ isAdministrativeUser }: { isAdministrativeUse
         <li>
           <MobileNavLink href="/minha-conta/dados" label="Perfil" icon={CircleUserRound} active={isActivePath(pathname, '/minha-conta/dados')} />
         </li>
+        {isSponsorUser ? (
+          <li>
+            <MobileNavLink href="/minha-conta/patrocinador" label="Patroc." icon={ShieldCheck} active={isActivePath(pathname, '/minha-conta/patrocinador')} />
+          </li>
+        ) : null}
       </ul>
     </nav>
   );

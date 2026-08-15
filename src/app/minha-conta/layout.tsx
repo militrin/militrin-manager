@@ -53,11 +53,13 @@ export default async function MinhaContaLayout({ children }: { children: React.R
   const administrativeIssueCount = (openIssues ?? []).filter(isAdministrativeIssue).length;
   if (requiredUserIssueCount > 0) redirect('/primeiro-acesso/pendencias');
 
-  const [{ data: profileData }, publicPin] = await Promise.all([
+  const [{ data: profileData }, publicPin, sponsorRow] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user.id }),
     getMyPublicPin(user.id),
+    supabase.from('sponsors').select('id').eq('user_id', user.id).eq('is_active', true).maybeSingle(),
   ]);
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
+  const isSponsorUser = Boolean(sponsorRow.data);
   const userMetadata = (user.user_metadata as Record<string, unknown> | undefined) ?? null;
 
   const displayName = resolveParticipantFullName({
@@ -100,7 +102,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
             {publicPin ? <PublicPinCopy publicPin={publicPin} /> : null}
           </div>
 
-          <AccountSidebarNav isAdministrativeUser={isAdministrativeUser} />
+          <AccountSidebarNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} />
 
           <div className="mt-5">
             <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Futuro</p>
@@ -146,7 +148,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
         </div>
       </div>
 
-      <AccountMobileNav isAdministrativeUser={isAdministrativeUser} />
+      <AccountMobileNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} />
     </main>
     </StoreCartProvider>
   );

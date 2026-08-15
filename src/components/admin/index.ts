@@ -10,4 +10,5 @@ export * from './AdminStatCard';
 export * from './AdminStatusBadge';
 export * from './OrgSelector';
 export * from './ReportDataTable';
+export * from './SponsorBannerUpload';
 export * from './utils';

@@ -14,6 +14,7 @@ import {
   Layers,
   LogOut,
   Settings,
+  ShieldCheck,
   Shirt,
   ShoppingBag,
   Ticket,
@@ -167,6 +168,12 @@ const groups: NavGroup[] = [
         icon: UserRoundCog,
         href: "/painel/configuracoes/equipe",
         permissionAny: ["team.view"],
+      },
+      {
+        label: "Patrocinadores",
+        icon: ShieldCheck,
+        href: "/painel/patrocinadores",
+        permissionAny: ["sponsors.view"],
       },
       {
         label: "Configurações",

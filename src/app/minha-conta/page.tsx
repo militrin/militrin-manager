@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronRight, Clock, QrCode, ShoppingBag, Ticket as TicketIcon } from 'lucide-react';
+import { ChevronRight, Clock, QrCode, ShieldCheck, ShoppingBag, Ticket as TicketIcon } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
@@ -15,6 +15,7 @@ import {
 } from '@/lib/account/participant-identity';
 import { MilitrinAvatar, MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
 import { HomeTicketCarousel } from './home-ticket-carousel';
+import { HomeSponsorsCarousel, type HomeSponsor } from './home-sponsors-carousel';
 import { HomeIndicators } from './home-indicators';
 import { HomeFeaturedEvents, type HomeFeaturedEvent } from './home-featured-events';
 
@@ -68,7 +69,7 @@ export default async function MinhaContaPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [profileResult, ordersResult, eventsResult, featuredEventsResult, loyaltyTiersResult, confirmedOrdersCountResult] = await Promise.all([
+  const [profileResult, ordersResult, eventsResult, featuredEventsResult, loyaltyTiersResult, confirmedOrdersCountResult, sponsorsResult] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     getAccountOrders(supabase, user?.id ?? ''),
     supabase
@@ -79,6 +80,7 @@ export default async function MinhaContaPage() {
     supabase.rpc('get_featured_events_for_dashboard'),
     supabase.from('loyalty_tiers').select('id, slug, name, badge, min_confirmed_participations, sort_order').order('min_confirmed_participations', { ascending: true }).order('sort_order', { ascending: true }),
     supabase.from('orders').select('id', { count: 'exact', head: true }).eq('user_id', user?.id ?? '').eq('status', 'confirmed'),
+    supabase.rpc('get_active_sponsors_for_home'),
   ]);
 
   if (ordersResult.error) {
@@ -131,6 +133,15 @@ export default async function MinhaContaPage() {
   const loyaltyLevels = sortLoyaltyLevels((loyaltyTiersResult.data ?? []).map((level) => normalizeLoyaltyLevel(level as Record<string, unknown>)));
   const confirmedParticipations = Number(confirmedOrdersCountResult.count ?? 0);
   const currentLoyaltyLevel = getLoyaltyLevel(confirmedParticipations, loyaltyLevels);
+
+  // Sem patrocinadores ativos, a secao inteira some (nunca um card vazio) e
+  // "Seus ingressos" volta a ocupar a largura toda -- ver o grid condicional
+  // mais abaixo, que so vira 2 colunas quando sponsors.length > 0.
+  const sponsorRows = (sponsorsResult.data ?? []) as Array<{ sponsor_id: string; name: string; banner_url: string | null; carousel_interval_seconds: number | null }>;
+  const sponsors: HomeSponsor[] = sponsorRows
+    .filter((row) => Boolean(row.banner_url))
+    .map((row) => ({ id: String(row.sponsor_id), name: String(row.name), bannerUrl: String(row.banner_url) }));
+  const sponsorCarouselIntervalSeconds = Number(sponsorRows[0]?.carousel_interval_seconds ?? 4);
 
   const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
   const latestOrder = orders[0] ?? null;
@@ -230,21 +241,34 @@ export default async function MinhaContaPage() {
         </div>
       </MilitrinSection>
 
-      <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-            <TicketIcon size={18} className="text-(--brand-300)" />Seus ingressos
-          </h2>
-          {ticketCards.length > 0 ? (
-            <Link href="/minha-conta/ingressos" className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
-              Ver todos<ChevronRight size={13} />
-            </Link>
-          ) : null}
-        </div>
-        <div className="mt-4">
-          <HomeTicketCarousel tickets={ticketCards} />
-        </div>
-      </section>
+      <div className={sponsors.length > 0 ? 'grid gap-5 xl:grid-cols-[1.85fr_1fr]' : 'grid gap-5'}>
+        <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+              <TicketIcon size={18} className="text-(--brand-300)" />Seus ingressos
+            </h2>
+            {ticketCards.length > 0 ? (
+              <Link href="/minha-conta/ingressos" className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
+                Ver todos<ChevronRight size={13} />
+              </Link>
+            ) : null}
+          </div>
+          <div className="mt-4">
+            <HomeTicketCarousel tickets={ticketCards} />
+          </div>
+        </section>
+
+        {sponsors.length > 0 ? (
+          <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+              <ShieldCheck size={17} className="text-(--brand-300)" />Patrocinadores
+            </h2>
+            <div className="mt-4">
+              <HomeSponsorsCarousel sponsors={sponsors} intervalSeconds={sponsorCarouselIntervalSeconds} />
+            </div>
+          </section>
+        ) : null}
+      </div>
 
       <HomeIndicators
         purchaseCount={orders.length}
