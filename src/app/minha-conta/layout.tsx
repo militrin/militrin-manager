@@ -4,7 +4,6 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
 import {
   resolveParticipantAvatarUrl,
-  resolveParticipantFirstName,
   resolveParticipantFullName,
   resolveParticipantInitials,
 } from '@/lib/account/participant-identity';
@@ -66,7 +65,6 @@ export default async function MinhaContaLayout({ children }: { children: React.R
     userMetadata,
     email: user.email,
   });
-  const firstName = resolveParticipantFirstName(displayName);
   const initials = resolveParticipantInitials(displayName);
   const avatarUrl = resolveParticipantAvatarUrl({
     profile,
@@ -77,7 +75,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
     <StoreCartProvider userId={user.id}>
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-1),_transparent_38%),radial-gradient(circle_at_bottom_right,_var(--brand-glow-2),_transparent_45%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 lg:flex-row">
-        <aside className="rounded-[2rem] border border-slate-800/80 bg-slate-950/65 p-5 shadow-2xl shadow-black/20 lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)] lg:w-80 lg:overflow-y-auto">
+        <aside className="hidden rounded-[2rem] border border-slate-800/80 bg-slate-950/65 p-5 shadow-2xl shadow-black/20 lg:sticky lg:top-6 lg:block lg:h-[calc(100vh-3rem)] lg:w-80 lg:overflow-y-auto">
           <div className="flex items-center gap-3 border-b border-slate-800/80 pb-4">
             <Link href="/" className="flex min-w-0 flex-1 items-center gap-3" title="Voltar ao início">
               <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-black ring-1 ring-(--brand-500)/40 shadow-lg shadow-(--brand-600)/20">
@@ -91,9 +89,8 @@ export default async function MinhaContaLayout({ children }: { children: React.R
             <CartHeaderLink />
           </div>
 
-          <div className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 text-sm text-slate-300">
-            <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Olá, {firstName}</p>
-            <div className="mt-2 flex min-w-0 items-center gap-3">
+          <div className="mt-4 rounded-2xl bg-slate-900/60 p-3 text-sm text-slate-300">
+            <div className="flex min-w-0 items-center gap-2.5">
               <MilitrinAvatar src={avatarUrl} alt={`Foto do usuário ${displayName}`} initials={initials} size="sm" />
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-slate-100" title={displayName} aria-label={displayName}>{displayName}</p>
@@ -105,22 +102,22 @@ export default async function MinhaContaLayout({ children }: { children: React.R
 
           <AccountSidebarNav isAdministrativeUser={isAdministrativeUser} />
 
-          <div className="mt-4">
-            <p className="px-2 text-xs uppercase tracking-[0.2em] text-slate-500">Futuro</p>
-            <div className="mt-2 grid gap-2 text-sm">
+          <div className="mt-5">
+            <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Futuro</p>
+            <div className="space-y-0.5 text-sm">
               {futureNavigation.map((item) => {
                 const Icon = item.icon;
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className="flex items-center justify-between rounded-2xl border border-slate-800/80 bg-slate-900/50 px-4 py-3 text-slate-300 transition hover:border-slate-600"
+                    className="flex items-center justify-between rounded-xl px-3.5 py-2.5 text-slate-300 transition hover:bg-slate-900/70 hover:text-slate-100"
                   >
                     <span className="flex items-center gap-3">
                       <Icon size={16} />
                       {item.label}
                     </span>
-                    <ArrowRight size={14} className="text-slate-500" />
+                    <ArrowRight size={13} className="text-slate-500" />
                   </Link>
                 );
               })}

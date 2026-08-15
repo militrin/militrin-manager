@@ -7,17 +7,34 @@ import { CartNavLink, MobileCartLink } from '@/components/store/CartHeaderLink';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isCart: boolean };
 
-const navigation: NavItem[] = [
-  { href: '/minha-conta', label: 'Início', icon: LayoutDashboard, isCart: false },
-  { href: '/minha-conta/comprar', label: 'Eventos', icon: CalendarDays, isCart: false },
-  { href: '/minha-conta/ingressos', label: 'Meus ingressos', icon: Ticket, isCart: false },
-  { href: '/minha-conta/compras', label: 'Minhas compras', icon: Coins, isCart: false },
-  { href: '/minha-conta/loja', label: 'Loja', icon: ShoppingBag, isCart: false },
-  { href: '/minha-conta/carrinho', label: 'Carrinho de Compras', icon: ShoppingBag, isCart: true },
-  { href: '/fotos', label: 'Fotos', icon: Images, isCart: false },
-  { href: '/minha-conta/nivel', label: 'Minha categoria - Em breve', icon: Star, isCart: false },
-  { href: '/minha-conta/historico', label: 'Histórico', icon: History, isCart: false },
-  { href: '/minha-conta/dados', label: 'Meu perfil', icon: CircleUserRound, isCart: false },
+// Mesmos destinos/rotas de sempre, so reagrupados visualmente (nenhuma
+// navegacao nova, nenhuma removida) para aproximar do mockup aprovado.
+const navigationGroups: Array<{ title: string; items: NavItem[] }> = [
+  {
+    title: 'Minha conta',
+    items: [
+      { href: '/minha-conta', label: 'Início', icon: LayoutDashboard, isCart: false },
+      { href: '/minha-conta/ingressos', label: 'Meus ingressos', icon: Ticket, isCart: false },
+      { href: '/minha-conta/compras', label: 'Minhas compras', icon: Coins, isCart: false },
+      { href: '/minha-conta/loja', label: 'Loja', icon: ShoppingBag, isCart: false },
+      { href: '/minha-conta/carrinho', label: 'Carrinho de Compras', icon: ShoppingBag, isCart: true },
+      { href: '/minha-conta/dados', label: 'Meu perfil', icon: CircleUserRound, isCart: false },
+    ],
+  },
+  {
+    title: 'Eventos',
+    items: [
+      { href: '/minha-conta/comprar', label: 'Eventos', icon: CalendarDays, isCart: false },
+      { href: '/fotos', label: 'Fotos', icon: Images, isCart: false },
+    ],
+  },
+  {
+    title: 'Mais',
+    items: [
+      { href: '/minha-conta/nivel', label: 'Minha categoria - Em breve', icon: Star, isCart: false },
+      { href: '/minha-conta/historico', label: 'Histórico', icon: History, isCart: false },
+    ],
+  },
 ];
 
 function isActivePath(pathname: string, href: string) {
@@ -25,49 +42,58 @@ function isActivePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  if (item.isCart) return <CartNavLink active={active} />;
+  const Icon = item.icon;
+  return (
+    <Link
+      href={item.href}
+      className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm transition ${
+        active
+          ? 'bg-(--brand-500) font-semibold text-white shadow-md shadow-(--brand-600)/30'
+          : 'text-slate-300 hover:bg-slate-900/70 hover:text-slate-100'
+      }`}
+    >
+      <span className="flex items-center gap-3">
+        <Icon size={16} />
+        {item.label}
+      </span>
+      {active ? <ArrowRight size={13} className="text-white/80" /> : null}
+    </Link>
+  );
+}
+
 export function AccountSidebarNav({ isAdministrativeUser }: { isAdministrativeUser: boolean }) {
   const pathname = usePathname();
 
   return (
-    <nav className="mt-4 grid gap-2 text-sm" aria-label="Navegação principal do usuário">
+    <nav className="mt-4 space-y-5" aria-label="Navegação principal do usuário">
       {isAdministrativeUser ? (
         <Link
           href="/painel"
-          className={`flex items-center justify-between rounded-2xl border px-4 py-3 font-semibold transition ${
+          className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
             isActivePath(pathname, '/painel')
-              ? 'border-(--brand-400)/50 bg-(--brand-500)/15 text-(--brand-100) hover:bg-(--brand-500)/25'
-              : 'border-slate-800 bg-slate-900/70 text-slate-200 hover:border-(--brand-400)/40 hover:bg-slate-900'
+              ? 'bg-(--brand-500) text-white shadow-md shadow-(--brand-600)/30'
+              : 'border border-(--brand-500)/30 bg-(--brand-500)/10 text-(--brand-100) hover:bg-(--brand-500)/20'
           }`}
         >
           <span className="flex items-center gap-3">
             <LayoutDashboard size={16} />
             Painel administrativo
           </span>
-          <ArrowRight size={14} />
+          <ArrowRight size={13} />
         </Link>
       ) : null}
-      {navigation.map((item) => {
-        const active = isActivePath(pathname, item.href);
-        if (item.isCart) return <CartNavLink key={item.href} active={active} />;
-        const Icon = item.icon;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`flex items-center justify-between rounded-2xl border px-4 py-3 transition ${
-              active
-                ? 'border-(--brand-400)/50 bg-(--brand-500)/15 font-semibold text-(--brand-100) hover:bg-(--brand-500)/25'
-                : 'border-slate-800 bg-slate-900/70 text-slate-200 hover:border-(--brand-400)/40 hover:bg-slate-900'
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Icon size={16} />
-              {item.label}
-            </span>
-            <ArrowRight size={14} className={active ? 'text-(--brand-200)' : 'text-slate-500'} />
-          </Link>
-        );
-      })}
+      {navigationGroups.map((group) => (
+        <div key={group.title}>
+          <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{group.title}</p>
+          <div className="space-y-0.5">
+            {group.items.map((item) => (
+              <NavLink key={item.href} item={item} active={isActivePath(pathname, item.href)} />
+            ))}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }
