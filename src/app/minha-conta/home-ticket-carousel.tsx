@@ -115,7 +115,14 @@ export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard
       </div>
 
       {hasMultiple ? (
-        <div className="mt-2.5 flex items-center justify-center gap-1.5" role="tablist" aria-label="Selecionar ingresso">
+        <p className="mt-2 text-center text-[11px] font-medium tracking-wide text-slate-500" aria-live="polite">
+          <span aria-hidden="true">{index + 1} / {tickets.length}</span>
+          <span className="sr-only">{`Ingresso ${index + 1} de ${tickets.length}`}</span>
+        </p>
+      ) : null}
+
+      {hasMultiple ? (
+        <div className="mt-1.5 flex items-center justify-center gap-1.5" role="tablist" aria-label="Selecionar ingresso">
           {dotTargets.map((targetIndex, dotIndex) => (
             <button
               key={targetIndex}

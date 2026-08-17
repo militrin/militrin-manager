@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Layers,
   LogOut,
+  MessageSquareWarning,
   Settings,
   ShieldCheck,
   Shirt,
@@ -174,6 +175,12 @@ const groups: NavGroup[] = [
         icon: ShieldCheck,
         href: "/painel/patrocinadores",
         permissionAny: ["sponsors.view"],
+      },
+      {
+        label: "Feedbacks",
+        icon: MessageSquareWarning,
+        href: "/painel/feedbacks",
+        permissionAny: ["feedback.view"],
       },
       {
         label: "Configurações",

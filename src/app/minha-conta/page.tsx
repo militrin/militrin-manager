@@ -14,6 +14,7 @@ import {
   resolveParticipantInitials,
 } from '@/lib/account/participant-identity';
 import { MilitrinAvatar, MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
+import { BetaFeedbackWidget } from '@/components/feedback/BetaFeedbackWidget';
 import { HomeTicketCarousel } from './home-ticket-carousel';
 import { HomeSponsorsCarousel, type HomeSponsor } from './home-sponsors-carousel';
 import { HomeIndicators } from './home-indicators';
@@ -349,6 +350,8 @@ export default async function MinhaContaPage() {
           <p className="mt-4 text-sm text-slate-300">Seu primeiro pedido aparecerá aqui.</p>
         )}
       </section>
+
+      <BetaFeedbackWidget />
     </section>
   );
 }

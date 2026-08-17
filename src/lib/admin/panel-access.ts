@@ -25,6 +25,7 @@ export const ADMINISTRATIVE_PANEL_PERMISSION_CODES = [
   'team.view',
   'wristbands.view',
   'wristbands.link',
+  'feedback.view',
 ] as const;
 
 export async function canAccessAdministrativePanel(userId?: string) {

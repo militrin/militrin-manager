@@ -27,6 +27,7 @@ const sidebarPermissionCodes = [
   'wristbands.link',
   'store.view',
   'sponsors.view',
+  'feedback.view',
 ];
 
 export type SidebarContext = {
