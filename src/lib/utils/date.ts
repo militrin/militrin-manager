@@ -1,4 +1,5 @@
 const BR_DATE_REGEX = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+const ISO_DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function pad(value: number) {
   return String(value).padStart(2, '0');
@@ -18,6 +19,26 @@ export function parseDateInput(value: string | Date | null | undefined): Date | 
     const day = Number(brMatch[1]);
     const month = Number(brMatch[2]);
     const year = Number(brMatch[3]);
+    const date = new Date(year, month - 1, day);
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+      return null;
+    }
+    return date;
+  }
+
+  // Um DATE do Postgres ("YYYY-MM-DD", sem hora) representa uma data de
+  // calendário, não um instante no tempo -- new Date(text) interpretaria
+  // esse formato como meia-noite UTC, e as leituras locais (getDate() etc.)
+  // abaixo devolveriam o dia anterior em qualquer timezone atrás de UTC
+  // (todo o Brasil). Construir com o mesmo padrão local do ramo BR acima
+  // preserva o dia de calendário independentemente do fuso da máquina.
+  // Timestamps reais (com T/hora/offset) NÃO batem nesse regex e continuam
+  // caindo no new Date(text) abaixo, preservando a semântica de instante.
+  const isoDateOnlyMatch = text.match(ISO_DATE_ONLY_REGEX);
+  if (isoDateOnlyMatch) {
+    const year = Number(isoDateOnlyMatch[1]);
+    const month = Number(isoDateOnlyMatch[2]);
+    const day = Number(isoDateOnlyMatch[3]);
     const date = new Date(year, month - 1, day);
     if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
       return null;
