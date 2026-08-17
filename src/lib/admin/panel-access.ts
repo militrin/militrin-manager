@@ -25,6 +25,8 @@ export const ADMINISTRATIVE_PANEL_PERMISSION_CODES = [
   'team.view',
   'wristbands.view',
   'wristbands.link',
+  'store.view',
+  'sponsors.view',
   'feedback.view',
 ] as const;
 
