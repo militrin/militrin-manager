@@ -20,6 +20,7 @@ export default async function IntegridadePage() {
       <IntegrityCenter
         initialIssues={reportResult.success ? reportResult.issues : []}
         totalDetectorCount={reportResult.success ? reportResult.totalDetectorCount : 0}
+        checks={reportResult.success ? reportResult.checks : []}
         initialError={reportResult.success ? null : reportResult.message}
         events={eventsResult.success ? eventsResult.events : []}
       />

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requirePermission } from '@/lib/admin/permissions';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { mapReportRow } from '@/lib/integrity/report';
+import { mapDetectorCheckRow } from '@/lib/integrity/checks';
 
 export async function getIntegrityReportAction(eventId: string | null) {
   await requirePermission('integrity.view');
@@ -20,7 +21,8 @@ export async function getIntegrityReportAction(eventId: string | null) {
   if (codesResult.error) return { success: false as const, message: codesResult.error.message, issues: [] };
 
   const issues = (reportResult.data ?? []).map(mapReportRow);
-  return { success: true as const, issues, totalDetectorCount: (codesResult.data ?? []).length as number };
+  const checks = (codesResult.data ?? []).map(mapDetectorCheckRow);
+  return { success: true as const, issues, totalDetectorCount: checks.length, checks };
 }
 
 export async function getIntegrityIssueEntitiesAction(code: string, eventId: string | null) {

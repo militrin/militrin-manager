@@ -26,7 +26,31 @@
       "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess\")",
       "Bash(powershell -NoProfile -Command \"Stop-Process -Id 3116 -Force\")",
       "Bash(rm -f scripts-tmp-integrity-qa-seed.mjs scripts-tmp-integrity-qa-browser.mjs .env.development.local scripts-tmp-shot-*.png)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(powershell -NoProfile -Command \"Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue; Test-Path 'C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe'\")",
+      "Bash(where docker *)",
+      "Bash(where.exe \"Docker Desktop.exe\")",
+      "Bash(\"/c/Users/hdogu/AppData/Local/Programs/DockerDesktop/Docker Desktop.exe\")",
+      "Bash(disown)",
+      "Bash(sed -i 's/min-h-\\\\[40px\\\\]/min-h-10/g; s/min-h-\\\\[44px\\\\]/min-h-11/g' src/app/painel/integridade/integrity-center.tsx)",
+      "Bash(sed -i 's/min-h-\\\\[36px\\\\]/min-h-9/g' src/app/painel/integridade/entity-card.tsx)",
+      "Bash(xargs -I{} sh -c 'echo \"== {} ==\"; head -5 \"{}\"')",
+      "Bash(chromium-cli --help)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\({dep:p.dependencies,dev:p.devDependencies},null,2\\)\\)\")",
+      "Bash(npx --yes playwright --version)",
+      "Bash(node \"C:/Users/hdogu/AppData/Local/Temp/claude/c--Projetos-militrin-manager/9a0ab191-e7de-446f-95b3-6ead9d59f77f/scratchpad/seed-integrity-qa.mjs\")",
+      "Bash(cp \"C:/Users/hdogu/AppData/Local/Temp/claude/c--Projetos-militrin-manager/9a0ab191-e7de-446f-95b3-6ead9d59f77f/scratchpad/seed-integrity-qa.mjs\" \"c:/Projetos/militrin-manager/scripts-tmp-integrity-qa-seed.mjs\")",
+      "Bash(timeout 60 bash -c 'until curl -sf http://localhost:3000 >/dev/null; do sleep 1; done')",
+      "Bash(mkdir -p \"C:/Users/hdogu/AppData/Local/Temp/claude/c--Projetos-militrin-manager/9a0ab191-e7de-446f-95b3-6ead9d59f77f/scratchpad/shots\")",
+      "Bash(node scripts-tmp-integrity-qa-browser.mjs)",
+      "Bash(curl -sf http://localhost:3001 -o /dev/null -w \"%{http_code}\\\\n\")",
+      "Bash(timeout 40 bash -c 'until curl -sf http://localhost:3001 -o /dev/null 2>/dev/null || curl -sf http://localhost:3000 -o /dev/null 2>/dev/null; do sleep 1; done')",
+      "Bash(curl -s -o /dev/null -w \"3000=%{http_code}\\\\n\" http://localhost:3000)",
+      "Bash(curl -s -o /dev/null -w \"3001=%{http_code}\\\\n\" http://localhost:3001)",
+      "Bash(sed -i \"s#http://localhost:3001#http://localhost:3000#\" \"c:/Projetos/militrin-manager/scripts-tmp-integrity-qa-browser.mjs\")",
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 38244 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime,Path\")",
+      "Bash(powershell -NoProfile -Command \"Get-Date\")",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 38244 -Force\")"
     ]
   }
 }
