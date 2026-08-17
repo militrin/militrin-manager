@@ -16,12 +16,11 @@ import {
 } from '@/app/inscricao/actions';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
-  calculateAge,
   formatCpf,
   formatPhone,
   removeCpfMask,
 } from '@/lib/validation/registration';
-import { formatDateTimeBR, formatISOToDateBR } from '@/lib/utils/date';
+import { calculateAgeAtEventDate, formatDateTimeBR, formatISOToDateBR, isMinimumAgeSatisfied } from '@/lib/utils/date';
 import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender, resolvePricingPhase, resolvePricingPreviewGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import {
@@ -1533,14 +1532,26 @@ export function RegistrationWizard({
                             className="space-y-1"
                             label="Nascimento"
                           />
-                          {form.birth_date && (
-                            <span className={`text-xs ${event.min_age > 0 && calculateAge(form.birth_date) < event.min_age ? 'text-rose-400' : 'text-slate-400'}`}>
-                              Idade: {calculateAge(form.birth_date)} anos
-                              {event.min_age > 0 && calculateAge(form.birth_date) < event.min_age
-                                ? ` — este evento exige idade mínima de ${event.min_age} anos`
-                                : ''}
-                            </span>
-                          )}
+                          {form.birth_date && (() => {
+                            const ageAtEvent = calculateAgeAtEventDate(form.birth_date, event.starts_at);
+                            const minAgeSatisfied = isMinimumAgeSatisfied(form.birth_date, event.starts_at, event.min_age);
+                            if (event.min_age > 0 && minAgeSatisfied === null) {
+                              return (
+                                <span className="text-xs text-rose-400">
+                                  Não foi possível confirmar a idade mínima porque a data do evento não está configurada.
+                                </span>
+                              );
+                            }
+                            if (ageAtEvent === null) return null;
+                            return (
+                              <span className={`text-xs ${minAgeSatisfied === false ? 'text-rose-400' : 'text-slate-400'}`}>
+                                Idade na data do evento: {ageAtEvent} anos
+                                {minAgeSatisfied === false
+                                  ? ` — este evento exige idade mínima de ${event.min_age} anos na data do evento`
+                                  : ''}
+                              </span>
+                            );
+                          })()}
                         </div>
                       )}
 

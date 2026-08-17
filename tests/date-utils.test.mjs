@@ -11,7 +11,14 @@ process.env.TZ = 'America/Sao_Paulo';
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatDateBR, formatISOToDateBR, parseDateInput, formatDateTimeBR, calculateAgeFromDateBR } from '../src/lib/utils/date.ts';
+import {
+  formatDateBR,
+  formatISOToDateBR,
+  parseDateInput,
+  formatDateTimeBR,
+  calculateAgeAtEventDate,
+  isMinimumAgeSatisfied,
+} from '../src/lib/utils/date.ts';
 import { calculateAgeAtDate } from '../src/lib/imports/import-row-validation.ts';
 
 test('timezone do processo de teste é America/Sao_Paulo (UTC-3) -- pré-condição do bug', () => {
@@ -77,31 +84,156 @@ test('timestamp com hora do meio-dia não é achatado para meia-noite (hora não
   assert.equal(formatDateTimeBR('2026-08-17T15:45:00-03:00'), '17/08/2026 15:45');
 });
 
-test('maioridade (hoje) não sofre off-by-one por timezone -- fronteira de aniversário', () => {
-  const today = new Date();
-  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const brFromDate = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+// ============================================================
+// Regra canônica única de maioridade: idade na DATA DO EVENTO, nunca na
+// data da compra. Antes desta unificação existiam duas semânticas
+// divergentes (checkout usava idade "hoje"; importações usavam idade no
+// evento) -- calculateAgeAtEventDate (src/lib/utils/date.ts) é agora a
+// única fonte, consumida tanto pelo checkout público (src/app/inscricao/
+// actions.ts) quanto pelas importações (via o wrapper calculateAgeAtDate
+// em src/lib/imports/import-row-validation.ts).
+// ============================================================
 
-  const turns18Today = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate());
-  const turns18Tomorrow = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate() + 1);
-  const turned18Yesterday = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate() - 1);
-
-  // O valor chega do banco como DATE-only ISO, igual customer_profiles.birth_date.
-  assert.equal(calculateAgeFromDateBR(formatISOToDateBR(iso(turns18Today))), 18, 'completa 18 anos hoje');
-  assert.equal(calculateAgeFromDateBR(formatISOToDateBR(iso(turns18Tomorrow))), 17, 'completa 18 anos amanhã -- ainda 17 hoje');
-  assert.equal(calculateAgeFromDateBR(formatISOToDateBR(iso(turned18Yesterday))), 18, 'completou 18 anos ontem');
-
-  // Confere que o BR formatado bate com o dia de calendário esperado (sem
-  // o bug, nenhuma dessas datas deveria "vazar" um dia).
-  assert.equal(formatISOToDateBR(iso(turns18Today)), brFromDate(turns18Today));
+test('maioridade na data do evento: fronteira exata (no dia / um dia antes / um dia depois)', () => {
+  const eventDate = '2026-10-10';
+  assert.equal(calculateAgeAtEventDate('2008-10-10', eventDate), 18, 'completa 18 anos exatamente no dia do evento');
+  assert.equal(calculateAgeAtEventDate('2008-10-11', eventDate), 17, 'completaria 18 um dia depois do evento -- no evento ainda tem 17');
+  assert.equal(calculateAgeAtEventDate('2008-10-09', eventDate), 18, 'completou 18 anos um dia antes do evento');
 });
 
-test('maioridade na data do EVENTO (calculateAgeAtDate, usado nas importações) -- fronteira exata', () => {
+test('maioridade em ano bissexto: nascimento em 29/02', () => {
+  // Nascido em 29/02/2008 (2008 é bissexto). Evento em 2028 (também
+  // bissexto) exatamente no dia 29/02 -- aniversário "literal" já ocorreu.
+  assert.equal(calculateAgeAtEventDate('2008-02-29', '2028-02-29'), 20, 'evento cai exatamente no 29/02 de outro ano bissexto');
+  // Evento em 2027 (não-bissexto, sem 29/02): em 28/02 o aniversário de
+  // 29/02 ainda não "ocorreu" nesse ano -- só no dia seguinte (1º de março)
+  // é que a idade avança, pela mesma comparação mês/dia usada para
+  // qualquer outra data.
+  assert.equal(calculateAgeAtEventDate('2008-02-29', '2027-02-28'), 18, 'véspera do "aniversário" de quem nasceu em 29/02, em ano não-bissexto');
+  assert.equal(calculateAgeAtEventDate('2008-02-29', '2027-03-01'), 19, 'primeiro dia após o "aniversário" de 29/02 num ano não-bissexto');
+});
+
+test('timestamptz real do evento (events.starts_at) é convertido para o dia de calendário em America/Sao_Paulo, não no fuso do processo', () => {
+  // 2026-10-10T02:00:00Z é 09/10 às 23:00 em America/Sao_Paulo (UTC-3) --
+  // ou seja, o "dia do evento" em Brasília é 09/10, não 10/10, mesmo que o
+  // processo que roda o teste esteja em outro fuso.
+  assert.equal(calculateAgeAtEventDate('2008-10-09', '2026-10-10T02:00:00Z'), 18, 'instante cai em 09/10 no fuso do evento -- já fez 18');
+  assert.equal(calculateAgeAtEventDate('2008-10-10', '2026-10-10T02:00:00Z'), 17, 'instante cai em 09/10 no fuso do evento -- aniversário de 10/10 ainda não chegou');
+  // Um evento à tarde, sem ambiguidade de fuso, cai no mesmo dia em qualquer leitura.
+  assert.equal(calculateAgeAtEventDate('2008-10-10', '2026-10-10T15:00:00-03:00'), 18);
+});
+
+test('evento sem idade mínima (min_age = 0 ou nulo) sempre satisfaz, sem nem olhar a data', () => {
+  assert.equal(isMinimumAgeSatisfied('2020-01-01', null, 0), true, 'min_age 0 aprova mesmo sem starts_at válido');
+  assert.equal(isMinimumAgeSatisfied('2020-01-01', null, null), true);
+  assert.equal(isMinimumAgeSatisfied(null, null, 0), true, 'nem precisa de nascimento quando não há exigência de idade');
+});
+
+test('evento sem starts_at válido: não inventa fallback -- retorna null explicitamente quando há exigência de idade', () => {
+  assert.equal(calculateAgeAtEventDate('1990-01-01', null), null);
+  assert.equal(calculateAgeAtEventDate('1990-01-01', 'data-invalida'), null);
+  assert.equal(isMinimumAgeSatisfied('1990-01-01', null, 18), null, 'não pode decidir permitido nem bloqueado sem a data do evento');
+  assert.notEqual(isMinimumAgeSatisfied('1990-01-01', null, 18), true, 'nunca "permite" silenciosamente por falta de dado');
+});
+
+test('nascimento inválido também retorna null, nunca uma idade inventada', () => {
+  assert.equal(calculateAgeAtEventDate('2021-02-31', '2026-10-10'), null);
+  assert.equal(calculateAgeAtEventDate(null, '2026-10-10'), null);
+});
+
+test('nascimento posterior à data do evento retorna null (pessoa ainda não nascida no evento)', () => {
+  assert.equal(calculateAgeAtEventDate('2027-01-01', '2026-08-09T09:00:00Z'), null);
+});
+
+test('alterar a data do evento recalcula a elegibilidade corretamente', () => {
+  const birthDate = '2008-10-10';
+  assert.equal(isMinimumAgeSatisfied(birthDate, '2026-10-09', 18), false, 'evento um dia antes do aniversário de 18 -- ainda não pode');
+  assert.equal(isMinimumAgeSatisfied(birthDate, '2026-10-10', 18), true, 'evento remarcado para o dia do aniversário -- já pode');
+  assert.equal(isMinimumAgeSatisfied(birthDate, '2027-10-10', 18), true, 'evento adiado um ano -- continua podendo');
+});
+
+test('checkout (calculateAgeAtEventDate) e importações (calculateAgeAtDate) concordam exatamente na mesma decisão', () => {
+  const cases = [
+    ['2008-10-10', '2026-10-10'],
+    ['2008-10-11', '2026-10-10'],
+    ['2008-10-09', '2026-10-10'],
+    ['2010-02-29', '2028-02-29'],
+    ['2027-01-01', '2026-08-09T09:00:00Z'],
+    ['2008-08-10', '2026-08-09T09:00:00Z'],
+    ['2008-08-09', '2026-08-09T09:00:00Z'],
+  ];
+  for (const [birthDate, eventDate] of cases) {
+    assert.equal(
+      calculateAgeAtDate(birthDate, eventDate),
+      calculateAgeAtEventDate(birthDate, eventDate),
+      `checkout e importação divergiram para nascimento=${birthDate} evento=${eventDate}`,
+    );
+  }
+});
+
+// ============================================================
+// A idade mínima em si (events.min_age) é configurável por evento -- não
+// pode existir nenhum "18" fixo em lugar nenhum. Checkout
+// (isMinimumAgeSatisfied, src/app/inscricao/actions.ts) e importações
+// (comparação manual com eventRules.minAge, src/app/importacoes/actions.ts,
+// linha a linha replicada abaixo) precisam decidir exatamente igual para
+// qualquer min_age configurado -- não só 18.
+// ============================================================
+
+// Replica fielmente a decisão de bloqueio da linha de importação (ver
+// src/app/importacoes/actions.ts): mesma função canônica, mesma comparação,
+// só para provar equivalência sem importar um arquivo 'use server'.
+function importDecisionBlocksRow(birthDate, eventStartsAt, minAge) {
+  if (!eventStartsAt) return minAge > 0; // "Evento sem data de inicio para validar maioridade"
+  const ageAtEvent = calculateAgeAtEventDate(birthDate, eventStartsAt);
+  if (ageAtEvent === null) return null; // "Nascimento invalido ou posterior a data do evento" -- não é decisão de idade
+  return minAge > 0 && ageAtEvent < minAge;
+}
+
+test('min_age=18: 17 anos no evento bloqueia, 18 permite -- checkout e importação concordam', () => {
   const eventDate = '2026-10-10';
-  // Nasceu exatamente 18 anos antes do evento -> completa 18 no dia do evento.
-  assert.equal(calculateAgeAtDate('2008-10-10', eventDate), 18, 'completa 18 anos no dia do evento');
-  // Nasceu 1 dia depois dessa data -> no dia do evento ainda tem 17 (o aniversário de 18 é no dia seguinte ao evento).
-  assert.equal(calculateAgeAtDate('2008-10-11', eventDate), 17, 'completa 18 anos um dia depois do evento');
-  // Nasceu 1 dia antes -> já completou 18 um dia antes do evento, no dia do evento tem 18.
-  assert.equal(calculateAgeAtDate('2008-10-09', eventDate), 18, 'completou 18 anos um dia antes do evento');
+  assert.equal(isMinimumAgeSatisfied('2008-10-11', eventDate, 18), false);
+  assert.equal(importDecisionBlocksRow('2008-10-11', eventDate, 18), true);
+  assert.equal(isMinimumAgeSatisfied('2008-10-10', eventDate, 18), true);
+  assert.equal(importDecisionBlocksRow('2008-10-10', eventDate, 18), false);
+});
+
+test('min_age=21: 20 anos no evento bloqueia, 21 permite -- checkout e importação concordam', () => {
+  const eventDate = '2026-10-10';
+  assert.equal(isMinimumAgeSatisfied('2005-10-11', eventDate, 21), false, '20 anos no dia do evento, exige 21');
+  assert.equal(importDecisionBlocksRow('2005-10-11', eventDate, 21), true);
+  assert.equal(isMinimumAgeSatisfied('2005-10-10', eventDate, 21), true, 'completa 21 exatamente no dia do evento');
+  assert.equal(importDecisionBlocksRow('2005-10-10', eventDate, 21), false);
+});
+
+test('min_age=16: 17 anos no evento permite (evento mais permissivo que 18)', () => {
+  const eventDate = '2026-10-10';
+  assert.equal(calculateAgeAtEventDate('2009-10-09', eventDate), 17, 'pré-condição: essa pessoa tem 17 anos no dia do evento');
+  assert.equal(isMinimumAgeSatisfied('2009-10-09', eventDate, 16), true, '17 anos completos, evento exige só 16');
+  assert.equal(importDecisionBlocksRow('2009-10-09', eventDate, 16), false);
+});
+
+test('sem min_age (0 ou null) nunca bloqueia por idade, qualquer que seja o nascimento', () => {
+  const eventDate = '2026-10-10';
+  assert.equal(isMinimumAgeSatisfied('2020-01-01', eventDate, 0), true, 'criança de 6 anos, evento sem restrição de idade');
+  assert.equal(importDecisionBlocksRow('2020-01-01', eventDate, 0), false);
+  assert.equal(isMinimumAgeSatisfied('2020-01-01', null, 0), true, 'sem min_age nem exige starts_at válido');
+  assert.equal(importDecisionBlocksRow('2020-01-01', null, 0), false);
+});
+
+test('checkout e importação concordam para uma matriz de min_age × idade real, não só 18', () => {
+  const eventDate = '2026-10-10';
+  const minAges = [0, 1, 16, 18, 21, 65];
+  const birthDates = ['2008-10-09', '2008-10-10', '2008-10-11', '2005-10-10', '1960-01-01'];
+  for (const minAge of minAges) {
+    for (const birthDate of birthDates) {
+      const checkoutSatisfied = isMinimumAgeSatisfied(birthDate, eventDate, minAge);
+      const importBlocked = importDecisionBlocksRow(birthDate, eventDate, minAge);
+      assert.equal(
+        checkoutSatisfied,
+        !importBlocked,
+        `min_age=${minAge} nascimento=${birthDate}: checkout satisfied=${checkoutSatisfied}, import blocked=${importBlocked}`,
+      );
+    }
+  }
 });

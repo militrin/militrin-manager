@@ -17,12 +17,12 @@ import {
   removeDuplicateSpaces,
 } from '@/lib/imports/normalization';
 import {
-  calculateAgeAtDate,
   isValidCpf,
   normalizeCpfDigits,
   resolveImportOptionWithDefault,
   type ImportDataIssue,
 } from '@/lib/imports/import-row-validation';
+import { calculateAgeAtEventDate } from '@/lib/utils/date';
 
 const importTypeSchema = z.enum([
   'historical_participations',
@@ -249,7 +249,7 @@ async function getCurrentEventImportRules(
   if (!eventId) return null;
 
   const [{ data: event }, { data: shirtItems }, { data: batches }, { data: categories }] = await Promise.all([
-    supabase.from('events').select('organization_id,starts_at,limit_shirt_selection_to_stock').eq('id', eventId).maybeSingle(),
+    supabase.from('events').select('organization_id,starts_at,limit_shirt_selection_to_stock,min_age').eq('id', eventId).maybeSingle(),
     supabase.from('event_kit_items').select('id').eq('event_id', eventId).eq('item_type', 'shirt').eq('is_active', true).limit(1),
     supabase.from('registration_batches').select('id,name,sequence_number').eq('event_id', eventId).eq('is_active', true),
     supabase.from('ticket_categories').select('id,name').eq('event_id', eventId).eq('is_active', true),
@@ -265,6 +265,9 @@ async function getCurrentEventImportRules(
     organizationId: event?.organization_id ? String(event.organization_id) : null,
     genderRequiredForPricing: false,
     eventStartsAt: event?.starts_at ? String(event.starts_at) : null,
+    // Mesma configuração canônica usada no checkout público (events.min_age) --
+    // nunca um "18" artificial: 0/null aqui significa "sem exigência de idade".
+    minAge: Number(event?.min_age ?? 0),
     shirtRequiredBeforeCompletion: false,
     shirtRequiredForImport: Boolean(event?.limit_shirt_selection_to_stock && shirtItems?.length),
     batches: (batches ?? []).map((batch) => ({
@@ -531,14 +534,21 @@ export async function parseImportFileAction(formData: FormData) {
           addIssue({ field_code: 'birth_date', issue_type: 'missing_required_age', message: 'Data de nascimento obrigatoria ausente.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
         } else if (!row.birth_date) {
           addIssue({ field_code: 'birth_date', issue_type: 'invalid_date', message: 'Data de nascimento invalida.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-        } else if (!eventRules.eventStartsAt) {
+        } else if (eventRules.minAge > 0 && !eventRules.eventStartsAt) {
+          // So exigimos a data do evento quando ha de fato uma idade minima
+          // configurada -- sem isso, evento sem restricao de idade nao
+          // deveria travar a importacao por falta de starts_at.
           addIssue({ field_code: 'event_date', issue_type: 'missing_required_for_age', message: 'Evento sem data de inicio para validar maioridade.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-        } else {
-          const age = calculateAgeAtDate(row.birth_date, eventRules.eventStartsAt);
-          if (age === null) {
+        } else if (eventRules.eventStartsAt) {
+          // calculateAgeAtEventDate e a mesma fonte canonica usada no
+          // checkout publico (src/app/inscricao/actions.ts) -- nunca um "18"
+          // hardcoded aqui; o limiar real vem de eventRules.minAge
+          // (events.min_age), igual ao checkout.
+          const ageAtEvent = calculateAgeAtEventDate(row.birth_date, eventRules.eventStartsAt);
+          if (ageAtEvent === null) {
             addIssue({ field_code: 'birth_date', issue_type: 'invalid_date', message: 'Nascimento invalido ou posterior a data do evento.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-          } else if (age < 18) {
-            addIssue({ field_code: 'birth_date', issue_type: 'underage_at_event', message: 'Pessoa menor de 18 anos na data do evento.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
+          } else if (eventRules.minAge > 0 && ageAtEvent < eventRules.minAge) {
+            addIssue({ field_code: 'birth_date', issue_type: 'underage_at_event', message: `Pessoa menor de ${eventRules.minAge} anos na data do evento.`, blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
           }
         }
 

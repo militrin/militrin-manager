@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { SHIRT_SIZES, SHIRT_TYPES } from "@/lib/constants/shirts";
-import { calculateAgeFromDateBR, isValidDateBR, parseDateInput } from "@/lib/utils/date";
+import { isValidDateBR, parseDateInput } from "@/lib/utils/date";
 import { isValidCpf as validateCpf } from "@/lib/imports/import-row-validation";
 
 const cpfRegex = /^\d{11}$/;
@@ -23,10 +23,6 @@ export function formatPhone(value: string) {
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
   if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-}
-
-export function calculateAge(birthDate: string) {
-  return calculateAgeFromDateBR(birthDate);
 }
 
 export function isValidCpf(value: string) {

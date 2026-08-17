@@ -1,3 +1,5 @@
+import { calculateAgeAtEventDate } from '../utils/date.ts';
+
 export type ImportDataIssue = {
   field_code: string;
   issue_type: string;
@@ -69,16 +71,13 @@ export function parseIsoDate(value: string | null | undefined) {
   return date;
 }
 
+// Wrapper fino sobre a fonte canônica única de idade-na-data-do-evento
+// (src/lib/utils/date.ts) -- mantido aqui com esse nome/assinatura só para
+// não obrigar os chamadores existentes (importacoes/actions.ts, testes) a
+// mudar, mas o cálculo em si (ano/mês/dia, fuso do evento) vive só no
+// helper canônico, nunca duplicado.
 export function calculateAgeAtDate(birthDate: string, referenceDate: string) {
-  const birth = parseIsoDate(birthDate);
-  const reference = parseIsoDate(referenceDate.slice(0, 10));
-  if (!birth || !reference || birth.getTime() > reference.getTime()) return null;
-
-  let age = reference.getUTCFullYear() - birth.getUTCFullYear();
-  const beforeBirthday = reference.getUTCMonth() < birth.getUTCMonth()
-    || (reference.getUTCMonth() === birth.getUTCMonth() && reference.getUTCDate() < birth.getUTCDate());
-  if (beforeBirthday) age -= 1;
-  return age;
+  return calculateAgeAtEventDate(birthDate, referenceDate);
 }
 
 export function resolveImportOption(

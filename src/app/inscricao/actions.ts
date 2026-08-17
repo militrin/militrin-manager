@@ -1,10 +1,10 @@
 'use server';
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { calculateAge, isValidCpf, removeCpfMask } from '@/lib/validation/registration';
+import { isValidCpf, removeCpfMask } from '@/lib/validation/registration';
 import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { toISODateFromBR } from '@/lib/utils/date';
-import { formatDateBR } from '@/lib/utils/date';
+import { calculateAgeAtEventDate, formatDateBR, isMinimumAgeSatisfied } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
@@ -231,12 +231,26 @@ async function getEventPaymentMethodsConfig(
   };
 }
 
-async function getEventMinAge(
+async function getEventMinAgeRule(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   eventId: string,
 ) {
-  const { data } = await supabase.from('events').select('min_age').eq('id', eventId).maybeSingle();
-  return Number(data?.min_age ?? 18);
+  const { data } = await supabase.from('events').select('min_age, starts_at').eq('id', eventId).maybeSingle();
+  return { minAge: Number(data?.min_age ?? 18), eventStartsAt: data?.starts_at ?? null };
+}
+
+// Fonte única da mensagem de bloqueio por idade mínima -- usada nos dois
+// pontos de validação do checkout público (registro simples e multi-item).
+// minAgeSatisfied === null significa que não foi possível decidir (evento
+// sem starts_at válido) -- nunca deixamos passar silenciosamente nesse caso.
+function buildMinAgeMessage(minAge: number, birthDateIso: string, eventStartsAt: string | null) {
+  if (!eventStartsAt) {
+    return 'Não foi possível confirmar a idade mínima porque a data do evento não está configurada. Entre em contato com o suporte.';
+  }
+  const ageAtEvent = calculateAgeAtEventDate(birthDateIso, eventStartsAt);
+  const eventDateLabel = formatDateBR(eventStartsAt);
+  const ageClause = ageAtEvent !== null ? ` Você terá ${ageAtEvent} anos em ${eventDateLabel}.` : '';
+  return `Este evento exige idade mínima de ${minAge} anos na data do evento (${eventDateLabel}).${ageClause}`;
 }
 
 function isMethodAllowedByConfig(
@@ -1408,10 +1422,10 @@ export async function createPublicRegistrationAction(input: RegistrationCreateIn
   if (!isValidCpf(cpf)) return { success: false, message: 'CPF invalido.' };
   if (!birthDateIso) return { success: false, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
 
-  const minAge = await getEventMinAge(supabase, String(input.event_id));
-  const age = calculateAge(input.birth_date);
-  if (minAge > 0 && age < minAge) {
-    return { success: false, message: `A inscricao exige idade minima de ${minAge} anos para este evento.` };
+  const { minAge, eventStartsAt } = await getEventMinAgeRule(supabase, String(input.event_id));
+  const minAgeSatisfied = isMinimumAgeSatisfied(birthDateIso, eventStartsAt, minAge);
+  if (minAgeSatisfied !== true) {
+    return { success: false, message: buildMinAgeMessage(minAge, birthDateIso, eventStartsAt) };
   }
 
   const { data: existingParticipant, error: existingParticipantError } = await supabase
@@ -1622,9 +1636,10 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
   if (!isValidCpf(cpf)) return { success: false as const, message: 'CPF invalido.' };
   if (!birthDateIso) return { success: false as const, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
 
-  const minAge = await getEventMinAge(supabase, String(input.event_id));
-  if (minAge > 0 && calculateAge(input.buyer.birth_date) < minAge) {
-    return { success: false as const, message: `A inscricao exige idade minima de ${minAge} anos para este evento.` };
+  const { minAge, eventStartsAt } = await getEventMinAgeRule(supabase, String(input.event_id));
+  const minAgeSatisfied = isMinimumAgeSatisfied(birthDateIso, eventStartsAt, minAge);
+  if (minAgeSatisfied !== true) {
+    return { success: false as const, message: buildMinAgeMessage(minAge, birthDateIso, eventStartsAt) };
   }
 
   const quantity = Math.max(1, Math.min(10, Number(input.quantity || 1)));
