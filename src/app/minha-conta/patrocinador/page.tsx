@@ -14,6 +14,7 @@ export default async function SponsorAreaPage() {
     organization_name: string;
     name: string;
     banner_url: string | null;
+    link_url: string | null;
     is_active: boolean;
   } | undefined;
 
@@ -33,7 +34,12 @@ export default async function SponsorAreaPage() {
           Seu patrocínio está inativo no momento. O banner não será exibido na Home até a organização reativá-lo.
         </p>
       ) : null}
-      <SponsorBannerForm sponsorId={profile.sponsor_id} sponsorName={profile.name} initialBannerUrl={profile.banner_url} />
+      <SponsorBannerForm
+        sponsorId={profile.sponsor_id}
+        sponsorName={profile.name}
+        initialBannerUrl={profile.banner_url}
+        initialLinkUrl={profile.link_url}
+      />
     </MilitrinSection>
   );
 }

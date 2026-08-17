@@ -137,10 +137,10 @@ export default async function MinhaContaPage() {
   // Sem patrocinadores ativos, a secao inteira some (nunca um card vazio) e
   // "Seus ingressos" volta a ocupar a largura toda -- ver o grid condicional
   // mais abaixo, que so vira 2 colunas quando sponsors.length > 0.
-  const sponsorRows = (sponsorsResult.data ?? []) as Array<{ sponsor_id: string; name: string; banner_url: string | null; carousel_interval_seconds: number | null }>;
+  const sponsorRows = (sponsorsResult.data ?? []) as Array<{ sponsor_id: string; name: string; banner_url: string | null; link_url: string | null; carousel_interval_seconds: number | null }>;
   const sponsors: HomeSponsor[] = sponsorRows
     .filter((row) => Boolean(row.banner_url))
-    .map((row) => ({ id: String(row.sponsor_id), name: String(row.name), bannerUrl: String(row.banner_url) }));
+    .map((row) => ({ id: String(row.sponsor_id), name: String(row.name), bannerUrl: String(row.banner_url), linkUrl: row.link_url ? String(row.link_url) : null }));
   const sponsorCarouselIntervalSeconds = Number(sponsorRows[0]?.carousel_interval_seconds ?? 4);
 
   const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
@@ -241,7 +241,7 @@ export default async function MinhaContaPage() {
         </div>
       </MilitrinSection>
 
-      <div className={sponsors.length > 0 ? 'grid gap-5 xl:grid-cols-[1.85fr_1fr]' : 'grid gap-5'}>
+      <div className={sponsors.length > 0 ? 'grid gap-5 xl:grid-cols-[1fr_1fr]' : 'grid gap-5'}>
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">

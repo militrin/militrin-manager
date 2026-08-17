@@ -39,9 +39,9 @@ export function SponsorBannerUpload({
     <div className="space-y-2">
       {value ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={value} alt="" className="aspect-[16/10] w-full rounded-xl border border-slate-700 object-cover" />
+        <img src={value} alt="" className="aspect-[4/3] w-full rounded-xl border border-slate-700 object-cover" />
       ) : (
-        <div className="flex aspect-[16/10] w-full items-center justify-center rounded-xl border border-dashed border-slate-700 text-xs text-slate-500">
+        <div className="flex aspect-[4/3] w-full items-center justify-center rounded-xl border border-dashed border-slate-700 text-xs text-slate-500">
           Sem banner
         </div>
       )}
@@ -60,7 +60,7 @@ export function SponsorBannerUpload({
           <button type="button" onClick={() => onChange(null)} className="text-xs text-slate-500 underline">Remover</button>
         ) : null}
       </div>
-      <p className="text-xs text-slate-500">Proporção recomendada: 16:10 (ex.: 1200x750px). PNG, JPEG ou WebP, até 5MB.</p>
+      <p className="text-xs text-slate-500">Proporção recomendada: 1200x900px. PNG, JPEG ou WebP, até 5MB.</p>
       {error ? <p className="text-xs text-rose-300">{error}</p> : null}
     </div>
   );

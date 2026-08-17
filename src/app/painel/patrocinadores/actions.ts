@@ -5,11 +5,17 @@ import { z } from 'zod';
 import { assertPermission } from '@/lib/admin/permissions';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
+const linkUrlSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().url('Link inválido. Use uma URL completa, começando com http:// ou https://.').nullable(),
+);
+
 const upsertSchema = z.object({
   id: z.string().uuid().nullable(),
   name: z.string().trim().min(1, 'Nome obrigatório.'),
   isActive: z.boolean(),
   sortOrder: z.number().int(),
+  linkUrl: linkUrlSchema,
 });
 
 export async function listSponsorsForAdminAction() {
@@ -20,10 +26,10 @@ export async function listSponsorsForAdminAction() {
   return { success: true as const, sponsors: data ?? [] };
 }
 
-export async function upsertSponsorAction(input: { id: string | null; name: string; isActive: boolean; sortOrder: number }) {
+export async function upsertSponsorAction(input: { id: string | null; name: string; isActive: boolean; sortOrder: number; linkUrl: string | null }) {
   await assertPermission('sponsors.manage');
   const parsed = upsertSchema.safeParse(input);
-  if (!parsed.success) return { success: false as const, message: 'Dados inválidos para salvar o patrocinador.' };
+  if (!parsed.success) return { success: false as const, message: parsed.error.issues[0]?.message ?? 'Dados inválidos para salvar o patrocinador.' };
 
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc('admin_upsert_sponsor', {
@@ -32,6 +38,7 @@ export async function upsertSponsorAction(input: { id: string | null; name: stri
     p_name: parsed.data.name,
     p_is_active: parsed.data.isActive,
     p_sort_order: parsed.data.sortOrder,
+    p_link_url: parsed.data.linkUrl,
   });
 
   if (error) return { success: false as const, message: error.message };
@@ -96,4 +103,36 @@ export async function searchSponsorCandidateUsersAction(term: string) {
   const { data, error } = await supabase.rpc('admin_search_sponsor_candidate_users', { p_term: parsed.data, p_organization_id: null });
   if (error) return { success: false as const, message: error.message, candidates: [] };
   return { success: true as const, candidates: data ?? [] };
+}
+
+export async function setSponsorCarouselOrderModeAction(orderMode: 'random' | 'manual') {
+  await assertPermission('sponsors.manage');
+  const parsed = z.enum(['random', 'manual']).safeParse(orderMode);
+  if (!parsed.success) return { success: false, message: 'Estratégia de exibição inválida.' };
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('admin_set_sponsor_carousel_order_mode', {
+    p_organization_id: null,
+    p_order_mode: parsed.data,
+  });
+
+  if (error) return { success: false, message: error.message };
+  revalidatePath('/painel/patrocinadores');
+  return { success: true, message: 'Estratégia de exibição atualizada.' };
+}
+
+export async function moveSponsorAction(input: { sponsorId: string; direction: 'up' | 'down' }) {
+  await assertPermission('sponsors.manage');
+  const parsed = z.object({ sponsorId: z.string().uuid(), direction: z.enum(['up', 'down']) }).safeParse(input);
+  if (!parsed.success) return { success: false, message: 'Dados inválidos.' };
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('admin_move_sponsor', {
+    p_sponsor_id: parsed.data.sponsorId,
+    p_direction: parsed.data.direction,
+  });
+
+  if (error) return { success: false, message: error.message };
+  revalidatePath('/painel/patrocinadores');
+  return { success: true, message: 'Ordem atualizada.' };
 }

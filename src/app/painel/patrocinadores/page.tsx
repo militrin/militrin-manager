@@ -14,9 +14,11 @@ export default async function PatrocinadoresPage() {
   ]);
   const orgId = orgIdResult.data as string | null;
   const orgResult = orgId
-    ? await supabase.from('organizations').select('sponsor_carousel_interval_seconds').eq('id', orgId).maybeSingle()
+    ? await supabase.from('organizations').select('sponsor_carousel_interval_seconds, sponsor_carousel_order_mode').eq('id', orgId).maybeSingle()
     : { data: null };
-  const carouselIntervalSeconds = Number((orgResult.data as { sponsor_carousel_interval_seconds: number } | null)?.sponsor_carousel_interval_seconds ?? 4);
+  const orgRow = orgResult.data as { sponsor_carousel_interval_seconds: number; sponsor_carousel_order_mode: 'random' | 'manual' } | null;
+  const carouselIntervalSeconds = Number(orgRow?.sponsor_carousel_interval_seconds ?? 4);
+  const carouselOrderMode = orgRow?.sponsor_carousel_order_mode ?? 'random';
 
   return (
     <MilitrinSection
@@ -27,6 +29,7 @@ export default async function PatrocinadoresPage() {
       <SponsorsManager
         initialSponsors={sponsorsResult.success ? sponsorsResult.sponsors : []}
         initialCarouselIntervalSeconds={carouselIntervalSeconds}
+        initialCarouselOrderMode={carouselOrderMode}
       />
     </MilitrinSection>
   );

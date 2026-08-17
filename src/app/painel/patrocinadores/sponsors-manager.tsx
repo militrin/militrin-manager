@@ -1,11 +1,15 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 import { SponsorBannerUpload } from '@/components/admin/SponsorBannerUpload';
 import {
+  listSponsorsForAdminAction,
+  moveSponsorAction,
   searchSponsorCandidateUsersAction,
   setSponsorBannerAction,
   setSponsorCarouselIntervalAction,
+  setSponsorCarouselOrderModeAction,
   setSponsorUserAction,
   upsertSponsorAction,
 } from './actions';
@@ -14,6 +18,7 @@ export type AdminSponsorRow = {
   sponsor_id: string;
   name: string;
   banner_url: string | null;
+  link_url: string | null;
   is_active: boolean;
   sort_order: number;
   user_id: string | null;
@@ -23,14 +28,16 @@ export type AdminSponsorRow = {
 
 type SponsorCandidate = { user_id: string; full_name: string; masked_email: string | null };
 
-const emptyForm = { name: '', isActive: true, sortOrder: '0' };
+const emptyForm = { name: '', isActive: true, sortOrder: '0', linkUrl: '' };
 
 export function SponsorsManager({
   initialSponsors,
   initialCarouselIntervalSeconds,
+  initialCarouselOrderMode,
 }: {
   initialSponsors: AdminSponsorRow[];
   initialCarouselIntervalSeconds: number;
+  initialCarouselOrderMode: 'random' | 'manual';
 }) {
   const [sponsors, setSponsors] = useState(initialSponsors);
   const [isPending, startTransition] = useTransition();
@@ -40,6 +47,11 @@ export function SponsorsManager({
   const [candidateTerm, setCandidateTerm] = useState('');
   const [candidates, setCandidates] = useState<SponsorCandidate[]>([]);
   const [intervalSeconds, setIntervalSeconds] = useState(String(initialCarouselIntervalSeconds));
+  const [orderMode, setOrderMode] = useState<'random' | 'manual'>(initialCarouselOrderMode);
+
+  const activeSponsorsInOrder = sponsors
+    .filter((sponsor) => sponsor.is_active)
+    .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
 
   const editingSponsor = editingId ? sponsors.find((sponsor) => sponsor.sponsor_id === editingId) ?? null : null;
 
@@ -52,7 +64,7 @@ export function SponsorsManager({
 
   function loadForEdit(sponsor: AdminSponsorRow) {
     setEditingId(sponsor.sponsor_id);
-    setForm({ name: sponsor.name, isActive: sponsor.is_active, sortOrder: String(sponsor.sort_order) });
+    setForm({ name: sponsor.name, isActive: sponsor.is_active, sortOrder: String(sponsor.sort_order), linkUrl: sponsor.link_url ?? '' });
     setCandidates([]);
     setCandidateTerm('');
     setMessage(null);
@@ -71,6 +83,7 @@ export function SponsorsManager({
         name: form.name,
         isActive: form.isActive,
         sortOrder: Number(form.sortOrder || 0),
+        linkUrl: form.linkUrl.trim() || null,
       });
 
       setMessage({ type: result.success ? 'success' : 'error', text: result.message ?? '' });
@@ -82,6 +95,7 @@ export function SponsorsManager({
             sponsor_id: sponsorId,
             name: form.name.trim(),
             banner_url: existing?.banner_url ?? null,
+            link_url: form.linkUrl.trim() || null,
             is_active: form.isActive,
             sort_order: Number(form.sortOrder || 0),
             user_id: existing?.user_id ?? null,
@@ -103,6 +117,7 @@ export function SponsorsManager({
         name: sponsor.name,
         isActive: !sponsor.is_active,
         sortOrder: sponsor.sort_order,
+        linkUrl: sponsor.link_url,
       });
       setMessage({ type: result.success ? 'success' : 'error', text: result.message ?? '' });
       if (result.success) {
@@ -175,6 +190,29 @@ export function SponsorsManager({
     });
   }
 
+  function changeOrderMode(mode: 'random' | 'manual') {
+    const previous = orderMode;
+    setOrderMode(mode);
+    startTransition(async () => {
+      const result = await setSponsorCarouselOrderModeAction(mode);
+      setMessage({ type: result.success ? 'success' : 'error', text: result.message ?? '' });
+      if (!result.success) setOrderMode(previous);
+    });
+  }
+
+  async function refreshSponsors() {
+    const result = await listSponsorsForAdminAction();
+    if (result.success) setSponsors(result.sponsors as AdminSponsorRow[]);
+  }
+
+  function moveSponsor(sponsorId: string, direction: 'up' | 'down') {
+    startTransition(async () => {
+      const result = await moveSponsorAction({ sponsorId, direction });
+      setMessage({ type: result.success ? 'success' : 'error', text: result.message ?? '' });
+      if (result.success) await refreshSponsors();
+    });
+  }
+
   return (
     <div className="space-y-6">
       {message ? (
@@ -205,6 +243,33 @@ export function SponsorsManager({
       </div>
 
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-slate-200">Ordem de exibição</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => changeOrderMode('random')}
+            disabled={isPending}
+            className={`rounded-xl border px-4 py-2 text-sm disabled:opacity-60 ${orderMode === 'random' ? 'border-(--brand-500) bg-(--brand-500)/15 text-(--brand-100)' : 'border-slate-800 text-slate-300'}`}
+          >
+            Aleatória
+          </button>
+          <button
+            type="button"
+            onClick={() => changeOrderMode('manual')}
+            disabled={isPending}
+            className={`rounded-xl border px-4 py-2 text-sm disabled:opacity-60 ${orderMode === 'manual' ? 'border-(--brand-500) bg-(--brand-500)/15 text-(--brand-100)' : 'border-slate-800 text-slate-300'}`}
+          >
+            Sequência definida
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          {orderMode === 'random'
+            ? 'A ordem dos patrocinadores ativos é embaralhada a cada carregamento da Home e permanece estável durante a sessão.'
+            : 'Os patrocinadores ativos aparecem sempre na ordem definida abaixo (menor ordem primeiro). Use as setas na lista para reordenar.'}
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
         <p className="text-sm font-semibold text-slate-200">{editingId ? 'Editar patrocinador' : 'Novo patrocinador'}</p>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -225,6 +290,18 @@ export function SponsorsManager({
               onChange={(event) => setForm((prev) => ({ ...prev, sortOrder: event.target.value }))}
               className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
             />
+          </label>
+
+          <label className="space-y-1 text-sm md:col-span-2">
+            <span className="text-slate-300">Link de destino do banner</span>
+            <input
+              type="url"
+              placeholder="https://exemplo.com.br"
+              value={form.linkUrl}
+              onChange={(event) => setForm((prev) => ({ ...prev, linkUrl: event.target.value }))}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
+            />
+            <span className="block text-xs text-slate-500">Opcional. Ao clicar no banner, o usuário será direcionado para este endereço.</span>
           </label>
         </div>
 
@@ -323,6 +400,28 @@ export function SponsorsManager({
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {orderMode === 'manual' && sponsor.is_active ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => moveSponsor(sponsor.sponsor_id, 'up')}
+                      disabled={isPending || activeSponsorsInOrder[0]?.sponsor_id === sponsor.sponsor_id}
+                      aria-label={`Mover ${sponsor.name} para cima`}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 text-slate-300 disabled:opacity-30"
+                    >
+                      <ArrowUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveSponsor(sponsor.sponsor_id, 'down')}
+                      disabled={isPending || activeSponsorsInOrder[activeSponsorsInOrder.length - 1]?.sponsor_id === sponsor.sponsor_id}
+                      aria-label={`Mover ${sponsor.name} para baixo`}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 text-slate-300 disabled:opacity-30"
+                    >
+                      <ArrowDown size={13} />
+                    </button>
+                  </div>
+                ) : null}
                 <span className={`rounded-full border px-3 py-1 text-xs ${sponsor.is_active ? 'border-emerald-500/40 text-emerald-300' : 'border-slate-700 text-slate-400'}`}>
                   {sponsor.is_active ? 'Ativo' : 'Inativo'}
                 </span>

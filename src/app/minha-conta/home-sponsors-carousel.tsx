@@ -8,6 +8,7 @@ export type HomeSponsor = {
   id: string;
   name: string;
   bannerUrl: string;
+  linkUrl: string | null;
 };
 
 // Pausa a rotacao automatica por um tempo apos qualquer interacao manual
@@ -53,19 +54,43 @@ export function HomeSponsorsCarousel({ sponsors, intervalSeconds }: { sponsors: 
 
   return (
     <div>
-      <div className="relative aspect-[16/10] w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-        <Image src={current.bannerUrl} alt={current.name} fill unoptimized className="object-cover" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3">
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+        {current.linkUrl ? (
+          // Banner inteiro clicavel (z-0, abaixo das setas/indicadores) --
+          // nome/textos auxiliares nunca viram um link separado. Hover
+          // discreto (brilho + leve zoom, sempre clipado pelo overflow-hidden
+          // do container pai) so aparece quando ha destino real.
+          <a
+            href={current.linkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group absolute inset-0 z-0 block cursor-pointer"
+            aria-label={`Visitar site de ${current.name}`}
+          >
+            <Image
+              src={current.bannerUrl}
+              alt={current.name}
+              fill
+              unoptimized
+              className="object-cover transition duration-300 group-hover:scale-[1.03] group-hover:brightness-110"
+            />
+          </a>
+        ) : (
+          <Image src={current.bannerUrl} alt={current.name} fill unoptimized className="object-cover" />
+        )}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] bg-gradient-to-t from-black/70 to-transparent p-3">
           <p className="truncate text-xs font-semibold text-white/90">{current.name}</p>
         </div>
 
         {hasMultiple ? (
           <>
+            {/* z-10 garante que as setas ficam sempre acima do link do banner
+                (que e z-0) -- clicar nelas nunca aciona a navegacao do link. */}
             <button
               type="button"
               onClick={() => goTo(index - 1)}
               aria-label="Patrocinador anterior"
-              className="absolute left-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500"
+              className="absolute left-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500"
             >
               <ChevronLeft size={15} />
             </button>
@@ -73,7 +98,7 @@ export function HomeSponsorsCarousel({ sponsors, intervalSeconds }: { sponsors: 
               type="button"
               onClick={() => goTo(index + 1)}
               aria-label="Próximo patrocinador"
-              className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500"
+              className="absolute right-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500"
             >
               <ChevronRight size={15} />
             </button>
