@@ -14,7 +14,19 @@
       "Bash(MSYS_NO_PATHCONV=1 docker exec -i supabase_db_militrin-manager psql -U postgres -d postgres -c \"select code from admin_permissions order by code;\")",
       "Bash(node scripts-tmp-panel-guard-browser.mjs)",
       "Bash(taskkill //PID 49268 //F)",
-      "Bash(rm -f scripts-tmp-panel-guard-seed.mjs scripts-tmp-panel-guard-browser.mjs .env.development.local)"
+      "Bash(rm -f scripts-tmp-panel-guard-seed.mjs scripts-tmp-panel-guard-browser.mjs .env.development.local)",
+      "Bash(sort -t_ -k1 -n)",
+      "Bash(node -e \"console.log\\(require\\('playwright'\\) ? 'installed' : 'no'\\)\")",
+      "Bash(node scripts-tmp-integrity-qa-seed.mjs)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec -i supabase_db_militrin-manager psql -U postgres -d postgres -c \"select code from admin_permissions where code ilike '%dashboard%';\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/entrar)",
+      "Bash(break)",
+      "Bash(QA_ADMIN_EMAIL=\"qa-integrity-1786943624880-1@example.test\" QA_ADMIN_PASSWORD=\"Integrity-qa-123!\" QA_NOPERM_EMAIL=\"qa-integrity-1786943625848-4@example.test\" QA_NOPERM_PASSWORD=\"Integrity-qa-123!\" QA_EVENT_ID=\"466b7b92-b930-4a8d-8a22-ecd55bcb788e\" QA_HEALTHY_EVENT_ID=\"492d3244-bc5a-4e4d-95bc-17330dc4b5d7\" node scripts-tmp-integrity-qa-browser.mjs)",
+      "Bash(powershell -NoProfile -Command 'Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '\\\\''*node.exe'\\\\'' } | ForEach-Object { $_.Id }')",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess\")",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 3116 -Force\")",
+      "Bash(rm -f scripts-tmp-integrity-qa-seed.mjs scripts-tmp-integrity-qa-browser.mjs .env.development.local scripts-tmp-shot-*.png)",
+      "Bash(npm uninstall *)"
     ]
   }
 }

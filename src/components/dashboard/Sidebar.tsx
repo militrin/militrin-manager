@@ -15,6 +15,7 @@ import {
   LogOut,
   MessageSquareWarning,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Shirt,
   ShoppingBag,
@@ -74,6 +75,12 @@ const groups: NavGroup[] = [
         icon: LayoutDashboard,
         href: "/painel",
         permissionAny: ["dashboard.view"],
+      },
+      {
+        label: "Integridade",
+        icon: ShieldAlert,
+        href: "/painel/integridade",
+        permissionAny: ["integrity.view"],
       },
       {
         label: "Público e recorrência",

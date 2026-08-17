@@ -28,6 +28,7 @@ const sidebarPermissionCodes = [
   'store.view',
   'sponsors.view',
   'feedback.view',
+  'integrity.view',
 ];
 
 export type SidebarContext = {

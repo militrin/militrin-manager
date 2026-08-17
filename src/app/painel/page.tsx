@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import {
   Banknote, Ban, Boxes, CheckCircle2, ClipboardList, Clock3, CreditCard,
-  FileSpreadsheet, Gift, PackageCheck, QrCode, ScanLine, Shirt, Ticket,
+  FileSpreadsheet, Gift, PackageCheck, QrCode, ScanLine, ShieldAlert, Shirt, Ticket,
   TriangleAlert, Truck, UserPlus, Users, WalletCards, Warehouse,
 } from 'lucide-react';
 import { Sidebar } from '@/components/dashboard/Sidebar';
@@ -9,6 +9,8 @@ import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatCard, AdminSta
 import { getAdminAccessContext } from '@/lib/admin/access';
 import { hasPermission } from '@/lib/admin/permissions';
 import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from '@/lib/dashboard/admin-dashboard-data';
+import { summarizeIntegrityReport } from '@/lib/integrity/report';
+import { getIntegrityReportAction } from './integridade/actions';
 import { DashboardEventSelector } from './dashboard-event-selector';
 
 function money(value: number) {
@@ -24,7 +26,7 @@ type QuickAction = {
 
 export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
   const { eventId } = await searchParams;
-  const [{ canViewFinancial }, data, canIssue, canManageInventory, canOperateKits, canImport, canViewPeople, canViewFinance] = await Promise.all([
+  const [{ canViewFinancial }, data, canIssue, canManageInventory, canOperateKits, canImport, canViewPeople, canViewFinance, canViewIntegrity] = await Promise.all([
     getAdminAccessContext(),
     loadAdminDashboard(eventId),
     hasPermission('participants.create'),
@@ -33,8 +35,18 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     hasPermission('imports.view'),
     hasPermission('participants.view'),
     hasPermission('finance.view'),
+    hasPermission('integrity.view'),
   ]);
   const selectedId = data.selectedEvent?.id ?? 'all';
+  // A Central de Integridade e' a unica fonte de verdade -- o Dashboard so consome
+  // get_operational_integrity_report/summarizeIntegrityReport, nunca recalcula.
+  const integrityReport = canViewIntegrity
+    ? await getIntegrityReportAction(selectedId === 'all' ? null : selectedId)
+    : null;
+  const integrityTotals = integrityReport?.success
+    ? summarizeIntegrityReport(integrityReport.issues, integrityReport.totalDetectorCount)
+    : null;
+  const integrityHref = selectedId === 'all' ? '/painel/integridade' : `/painel/integridade?eventId=${encodeURIComponent(selectedId)}`;
   const metric = (key: DashboardMetricKey) => data.metrics.get(key) ?? { key, label: key, value: 0, rows: [] };
   const href = (key: DashboardMetricKey) => dashboardDetailHref(key, selectedId);
   const shirtAttention = metric('shirt_coherence').value;
@@ -61,6 +73,21 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
           />
 
           {!data.events.length ? <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." /> : <>
+            {canViewIntegrity ? <AdminSection compact title="Integridade operacional">
+              {integrityTotals ? <AdminStatCard
+                compact
+                label="Integridade operacional"
+                value={integrityTotals.critical || integrityTotals.attention || integrityTotals.warning
+                  ? `${integrityTotals.critical} bloqueio${integrityTotals.critical === 1 ? '' : 's'} / ${integrityTotals.attention} precisam de atenção / ${integrityTotals.warning} avisos`
+                  : '✓ Nenhum problema operacional detectado.'}
+                hint={`${integrityTotals.ok} verificações aprovadas`}
+                href={integrityHref}
+                actionLabel="Ver integridade"
+                icon={ShieldAlert}
+                tone={integrityTotals.critical ? 'danger' : integrityTotals.attention || integrityTotals.warning ? 'warning' : 'success'}
+              /> : <AdminEmptyState title="Não foi possível carregar a integridade operacional" description={integrityReport?.success === false ? integrityReport.message : 'Tente novamente em instantes.'} />}
+            </AdminSection> : null}
+
             <AdminSection compact title="Pessoas e inscrições">
               {!data.hasData ? <AdminEmptyState title="Sem dados no período" description="Os indicadores aparecerão quando houver inscrições, pagamentos ou ingressos." /> : <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
                 <AdminStatCard compact label="Pessoas no evento" value={metric('people').value} href={href('people')} icon={Users} hint="Cadastros globais vinculados" />
