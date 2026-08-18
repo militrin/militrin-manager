@@ -9,6 +9,7 @@ import {
   getEligibleCartProductsAction,
   removeCartOrderItemAction,
 } from "../actions";
+import { ProductImageGallery, type GalleryImage } from "@/components/store/product-image-gallery";
 
 type CartItem = {
   order_item_id: string;
@@ -45,6 +46,7 @@ type EligibleProduct = {
   name: string;
   description: string | null;
   image_url: string | null;
+  images: Array<{ id: string; url: string; is_primary: boolean }>;
   price: number;
   requires_variant: boolean;
   supply_mode: string;
@@ -55,8 +57,157 @@ type EligibleProduct = {
   available_quantity: number | null;
 };
 
+type ProductGroup = [string, EligibleProduct[]];
+
 function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function isGroupUnavailable(variants: EligibleProduct[]) {
+  const hasStockInfo = variants[0]?.available_quantity !== null;
+  const anyAvailable = variants.some((v) => v.available_quantity === null || (v.available_quantity ?? 0) > 0);
+  return hasStockInfo && !anyAvailable;
+}
+
+function ProductCard({ group, onSelect }: { group: ProductGroup; onSelect: (storeItemId: string) => void }) {
+  const [, variants] = group;
+  const base = variants[0];
+  const outOfStock = isGroupUnavailable(variants);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(base.store_item_id)}
+      className="flex items-start gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-left transition hover:border-emerald-500/50 hover:bg-slate-900"
+    >
+      {base.image_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={base.image_url} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+      ) : (
+        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-[9px] text-slate-500">Sem foto</div>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-100">{base.name}</p>
+        <p className="text-xs text-slate-400">{money(Number(base.price))}</p>
+        {base.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-500">{base.description}</p> : null}
+        {outOfStock ? <p className="mt-1 text-xs font-medium text-rose-400">Sem estoque</p> : null}
+      </div>
+    </button>
+  );
+}
+
+function ProductDetailModal({
+  group,
+  onClose,
+  onAdd,
+}: {
+  group: ProductGroup;
+  onClose: () => void;
+  onAdd: (storeItemId: string, variantId: string | null) => Promise<{ success: boolean; message?: string }>;
+}) {
+  const [storeItemId, variants] = group;
+  const base = variants[0];
+  const firstAvailable = variants.find((v) => v.available_quantity === null || (v.available_quantity ?? 0) > 0) ?? variants[0];
+  const [variantId, setVariantId] = useState<string | null>(base.requires_variant ? firstAvailable.variant_id : null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  const selectedVariant = base.requires_variant ? variants.find((v) => v.variant_id === variantId) ?? null : null;
+  const unavailable = base.requires_variant
+    ? !selectedVariant || (selectedVariant.available_quantity !== null && (selectedVariant.available_quantity ?? 0) <= 0)
+    : base.available_quantity !== null && (base.available_quantity ?? 0) <= 0;
+
+  const galleryImages: GalleryImage[] = base.images.length > 0
+    ? base.images.map((image) => ({ id: image.id, url: image.url }))
+    : base.image_url
+      ? [{ url: base.image_url }]
+      : [];
+
+  async function handleAdd() {
+    setSubmitting(true);
+    setError(null);
+    const result = await onAdd(storeItemId, variantId);
+    setSubmitting(false);
+    if (!result.success) { setError(result.message ?? "Não foi possível adicionar o produto."); return; }
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        className="max-h-[90vh] w-full overflow-y-auto rounded-t-3xl bg-slate-950 p-4 sm:max-w-md sm:rounded-3xl sm:p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Detalhes do produto</p>
+          <button type="button" onClick={onClose} aria-label="Fechar" className="rounded-full p-1 text-slate-400 hover:text-slate-200">
+            ✕
+          </button>
+        </div>
+
+        <div className="mt-3">
+          <ProductImageGallery images={galleryImages} alt={base.name} />
+        </div>
+
+        <div className="mt-4 space-y-1">
+          <p className="text-lg font-semibold text-slate-100">{base.name}</p>
+          <p className="text-base text-emerald-300">{money(Number(base.price))}</p>
+          {base.description ? <p className="text-sm text-slate-400">{base.description}</p> : null}
+        </div>
+
+        {base.requires_variant ? (
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Escolha uma opção</p>
+            <div className="flex flex-wrap gap-2">
+              {variants.map((variant) => {
+                const isUnavailable = variant.available_quantity !== null && (variant.available_quantity ?? 0) <= 0;
+                const selected = variant.variant_id === variantId;
+                return (
+                  <button
+                    key={variant.variant_id}
+                    type="button"
+                    onClick={() => setVariantId(variant.variant_id)}
+                    disabled={isUnavailable}
+                    className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40 ${
+                      selected ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-slate-600 text-slate-200"
+                    }`}
+                  >
+                    {variant.variant_name} {variant.variant_value}
+                    {isUnavailable ? " (sem estoque)" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : unavailable ? (
+          <p className="mt-3 text-sm font-medium text-rose-400">Sem estoque disponível.</p>
+        ) : null}
+
+        {error ? <p className="mt-3 text-xs text-rose-300">{error}</p> : null}
+
+        <button
+          type="button"
+          onClick={() => void handleAdd()}
+          disabled={submitting || unavailable}
+          className="mt-5 h-11 w-full rounded-2xl bg-emerald-500 text-sm font-semibold text-emerald-950 disabled:opacity-50"
+        >
+          {submitting ? "Adicionando..." : unavailable ? "Sem estoque" : "Adicionar ao carrinho"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function CartStep({
@@ -76,6 +227,7 @@ export function CartStep({
   const [couponCode, setCouponCode] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -95,7 +247,7 @@ export function CartStep({
   // Um produto pode ter varias variantes (linhas separadas vindas de
   // list_store_items_for_event); agrupamos por store_item_id so pra decidir
   // se ha estoque disponivel em QUALQUER variante, sem duplicar o card.
-  const productGroups = Array.from(
+  const productGroups: ProductGroup[] = Array.from(
     products.reduce((map, row) => {
       const list = map.get(row.store_item_id) ?? [];
       list.push(row);
@@ -103,14 +255,16 @@ export function CartStep({
       return map;
     }, new Map<string, EligibleProduct[]>()).entries(),
   );
+  const selectedGroup = selectedProductId ? productGroups.find(([id]) => id === selectedProductId) ?? null : null;
 
   async function handleAddProduct(storeItemId: string, variantId: string | null) {
     setBusy(true);
     setMessage(null);
     const result = await addProductToCartAction(orderId, storeItemId, variantId, 1);
     setBusy(false);
-    if (!result.success) { setMessage({ type: "error", text: result.message }); return; }
+    if (!result.success) { setMessage({ type: "error", text: result.message }); return result; }
     setCart(result.cart as unknown as CartDetails);
+    return result;
   }
 
   async function handleRemoveItem(orderItemId: string) {
@@ -186,49 +340,15 @@ export function CartStep({
         <div className="space-y-2 rounded-2xl border border-slate-700 bg-slate-950 p-4">
           <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">Compre junto</p>
           <div className="grid gap-2 sm:grid-cols-2">
-            {productGroups.map(([storeItemId, variants]) => {
-              const base = variants[0];
-              const hasStockInfo = base.available_quantity !== null;
-              const anyAvailable = variants.some((v) => v.available_quantity === null || (v.available_quantity ?? 0) > 0);
-              return (
-                <div key={storeItemId} className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-3">
-                  {base.image_url ? <img src={base.image_url} alt="" className="h-12 w-12 rounded object-cover" /> : null}
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-slate-100">{base.name}</p>
-                    <p className="text-xs text-slate-400">{money(Number(base.price))}</p>
-                    {!base.requires_variant ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleAddProduct(storeItemId, null)}
-                        disabled={busy || (hasStockInfo && !anyAvailable)}
-                        className="mt-1 rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-emerald-950 disabled:opacity-50"
-                      >
-                        {hasStockInfo && !anyAvailable ? "Sem estoque" : "Adicionar"}
-                      </button>
-                    ) : (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {variants.map((variant) => {
-                          const unavailable = variant.available_quantity !== null && (variant.available_quantity ?? 0) <= 0;
-                          return (
-                            <button
-                              key={variant.variant_id}
-                              type="button"
-                              onClick={() => void handleAddProduct(storeItemId, variant.variant_id)}
-                              disabled={busy || unavailable}
-                              className="rounded-lg border border-slate-600 px-2 py-1 text-xs text-slate-200 disabled:opacity-40"
-                            >
-                              {variant.variant_name} {variant.variant_value}{unavailable ? " (sem estoque)" : ""}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            {productGroups.map((group) => (
+              <ProductCard key={group[0]} group={group} onSelect={setSelectedProductId} />
+            ))}
           </div>
         </div>
+      ) : null}
+
+      {selectedGroup ? (
+        <ProductDetailModal group={selectedGroup} onClose={() => setSelectedProductId(null)} onAdd={handleAddProduct} />
       ) : null}
 
       <div className="space-y-2 rounded-2xl border border-slate-700 bg-slate-950 p-4">

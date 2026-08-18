@@ -1,4 +1,5 @@
 import { StoreItemForm } from "./store-item-form";
+import { StoreItemImageGallery } from "./store-item-image-gallery";
 import { StoreItemVariantForm } from "./store-item-variant-form";
 import { StoreStockInput } from "./store-stock-input";
 
@@ -13,12 +14,15 @@ type StoreItemVariant = {
   availableQuantity: number;
 };
 
+type StoreItemImage = { id: string; url: string; isPrimary: boolean };
+
 type StoreItem = {
   id: string;
   name: string;
   slug: string;
   description: string | null;
-  imageUrl: string | null;
+  primaryImageUrl: string | null;
+  images: StoreItemImage[];
   price: number;
   requiresVariant: boolean;
   sortOrder: number;
@@ -51,9 +55,9 @@ export function StoreItemCard({
     <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          {item.imageUrl ? (
+          {item.primaryImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-slate-800 object-cover" />
+            <img src={item.primaryImageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-slate-800 object-cover" />
           ) : null}
           <div>
             <p className="font-semibold text-white">
@@ -77,7 +81,6 @@ export function StoreItemCard({
               name: item.name,
               slug: item.slug,
               description: item.description,
-              imageUrl: item.imageUrl,
               price: item.price,
               requiresVariant: item.requiresVariant,
               sortOrder: item.sortOrder,
@@ -87,6 +90,8 @@ export function StoreItemCard({
           />
         ) : null}
       </div>
+
+      <StoreItemImageGallery storeItemId={item.id} images={item.images} canManage={canManage} />
 
       {item.requiresVariant ? (
         <div className="mt-3 space-y-2">

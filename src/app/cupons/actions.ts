@@ -105,6 +105,19 @@ export async function toggleCouponAction(payload: { id: string; is_active: boole
   return { success: true, message: payload.is_active ? "Cupom ativado." : "Cupom desativado." };
 }
 
+export async function deleteOrArchiveCouponAction(couponId: string): Promise<ActionResult & { action?: "deleted" | "archived" }> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("delete_or_archive_coupon", { p_coupon_id: couponId });
+  if (error) return { success: false, message: error.message };
+  const action = (data as { action?: "deleted" | "archived" } | null)?.action;
+  revalidatePath("/cupons");
+  return {
+    success: true,
+    action,
+    message: action === "archived" ? "Cupom já utilizado em pedidos — arquivado (não fica mais disponível para novas compras)." : "Cupom excluído definitivamente.",
+  };
+}
+
 export async function getCouponScopeOptionsAction(organizationId: string) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_organization_coupon_scope_options", { p_organization_id: organizationId });

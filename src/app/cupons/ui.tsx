@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { createCouponAction, getCouponDetailsAction, getCouponScopeOptionsAction, toggleCouponAction, updateCouponAction } from "./actions";
+import { createCouponAction, deleteOrArchiveCouponAction, getCouponDetailsAction, getCouponScopeOptionsAction, toggleCouponAction, updateCouponAction } from "./actions";
 import { formatDateBR, toDatetimeLocalValue } from "@/lib/utils/date";
 import { DateTimeField } from "@/components/forms/DateTimeField";
+import type { CouponStatusFilter } from "./page";
 
 type CouponRow = {
   id: string;
@@ -19,6 +20,8 @@ type CouponRow = {
   is_active: boolean;
   notes: string | null;
   created_at: string;
+  archived_at: string | null;
+  has_usage: boolean;
 };
 
 type ScopeOptions = {
@@ -62,12 +65,13 @@ function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-export function CouponsManager({ organizationId, coupons }: { organizationId: string; coupons: CouponRow[] }) {
+export function CouponsManager({ organizationId, coupons, status }: { organizationId: string; coupons: CouponRow[]; status: CouponStatusFilter }) {
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState<FormState>(initialForm());
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [options, setOptions] = useState<ScopeOptions | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(true);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -173,10 +177,25 @@ export function CouponsManager({ organizationId, coupons }: { organizationId: st
     });
   }
 
+  function confirmDelete(coupon: CouponRow) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteOrArchiveCouponAction(coupon.id);
+      setConfirmDeleteId(null);
+      setMessage({ type: result.success ? "success" : "error", text: result.message });
+      if (result.success && form.id === coupon.id) resetForm();
+    });
+  }
+
   const selectedEventsForCategories = form.event_ids.filter((id) => categoriesByEvent.has(id));
 
   return (
     <div className="space-y-6">
+      {status === "archived" ? (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          Cupons arquivados ficam fora da lista padrão e não podem mais ser aplicados em novas compras. O histórico de pedidos onde já foram usados permanece intacto.
+        </div>
+      ) : (
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
         <p className="text-sm font-semibold text-slate-200">{form.id ? "Editar cupom" : "Novo cupom"}</p>
 
@@ -335,6 +354,7 @@ export function CouponsManager({ organizationId, coupons }: { organizationId: st
           ) : null}
         </div>
       </div>
+      )}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
         <table className="min-w-full divide-y divide-slate-800 text-sm">
@@ -353,23 +373,53 @@ export function CouponsManager({ organizationId, coupons }: { organizationId: st
             {coupons.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">Nenhum cupom criado para esta organização.</td></tr>
             ) : (
-              coupons.map((coupon) => (
+              coupons.map((coupon) => {
+                const archived = coupon.archived_at !== null;
+                return (
                 <tr key={coupon.id}>
                   <td className="px-4 py-3 font-semibold">{coupon.code}</td>
                   <td className="px-4 py-3">{coupon.discount_type === "percentage" ? `${Number(coupon.discount_value).toFixed(0)}%` : money(Number(coupon.discount_value))}</td>
                   <td className="px-4 py-3">{[coupon.applies_to_tickets ? "Ingressos" : null, coupon.applies_to_products ? "Produtos" : null].filter(Boolean).join(" + ")}</td>
                   <td className="px-4 py-3">{coupon.used_count}{coupon.max_uses ? ` / ${coupon.max_uses}` : " (sem limite)"}</td>
                   <td className="px-4 py-3">{coupon.valid_from ? formatDateBR(coupon.valid_from) : "-"} {" -> "} {coupon.valid_until ? formatDateBR(coupon.valid_until) : "-"}</td>
-                  <td className="px-4 py-3">{coupon.is_active ? "Ativo" : "Inativo"}</td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => void loadForEdit(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
-                      <button type="button" onClick={() => toggle(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">{coupon.is_active ? "Desativar" : "Ativar"}</button>
-                      <button type="button" onClick={() => void navigator.clipboard.writeText(coupon.code)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Copiar código</button>
-                    </div>
+                    {archived ? (
+                      <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-200">
+                        Arquivado{coupon.archived_at ? ` em ${formatDateBR(coupon.archived_at)}` : ""}
+                      </span>
+                    ) : coupon.is_active ? "Ativo" : "Inativo"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {confirmDeleteId === coupon.id ? (
+                      <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-100">
+                        <p>
+                          {coupon.has_usage
+                            ? "Arquivar cupom — já possui utilizações. Ele será removido da lista padrão e não poderá mais ser aplicado em novas compras; o histórico de pedidos não é alterado."
+                            : "Excluir cupom definitivamente. Esta ação não pode ser desfeita."}
+                        </p>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => confirmDelete(coupon)} disabled={isPending} className="rounded-lg bg-rose-500 px-2 py-1 font-semibold text-rose-950 disabled:opacity-60">
+                            {isPending ? "Aguarde..." : coupon.has_usage ? "Confirmar arquivamento" : "Confirmar exclusão"}
+                          </button>
+                          <button type="button" onClick={() => setConfirmDeleteId(null)} disabled={isPending} className="rounded-lg border border-rose-500/40 px-2 py-1 text-rose-200">Cancelar</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {!archived ? (
+                          <>
+                            <button type="button" onClick={() => void loadForEdit(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
+                            <button type="button" onClick={() => toggle(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">{coupon.is_active ? "Desativar" : "Ativar"}</button>
+                            <button type="button" onClick={() => setConfirmDeleteId(coupon.id)} className="rounded-lg border border-rose-500/40 px-2 py-1 text-xs text-rose-300">Excluir</button>
+                          </>
+                        ) : null}
+                        <button type="button" onClick={() => void navigator.clipboard.writeText(coupon.code)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Copiar código</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

@@ -13,13 +13,22 @@ export type StoreItemVariant = {
   availableQuantity: number | null;
 };
 
+export type StoreItemImage = {
+  id: string;
+  url: string;
+  isPrimary: boolean;
+};
+
 export type StoreItemForPurchase = {
   id: string;
   /** null quando o item e oferecido em todos os eventos da organizacao. */
   eventId: string | null;
   name: string;
   description: string | null;
+  /** Imagem principal (conveniencia para cards; mesma imagem que aparece marcada como principal em `images`). */
   imageUrl: string | null;
+  /** Galeria completa, ja ordenada. Vazia quando o item nao tem nenhuma imagem. */
+  images: StoreItemImage[];
   price: number;
   requiresVariant: boolean;
   supplyMode: StoreSupplyMode;
@@ -43,6 +52,10 @@ export async function getStoreItemsForEvent(supabase: ServerSupabaseClient, even
         name: String(row.name ?? ''),
         description: row.description ? String(row.description) : null,
         imageUrl: row.image_url ? String(row.image_url) : null,
+        images: (Array.isArray(row.images) ? row.images : []).map((image) => {
+          const img = image as Record<string, unknown>;
+          return { id: String(img.id), url: String(img.url), isPrimary: Boolean(img.is_primary) };
+        }),
         price: Number(row.price ?? 0),
         requiresVariant: Boolean(row.requires_variant),
         supplyMode: row.supply_mode === 'made_to_order' ? 'made_to_order' : 'stock',

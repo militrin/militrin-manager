@@ -2,14 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { upsertStoreItemAction } from "./actions";
-import { StoreImageUpload } from "./store-image-upload";
 
 type StoreItemInput = {
   id: string;
   name: string;
   slug: string;
   description: string | null;
-  imageUrl: string | null;
   price: number;
   requiresVariant: boolean;
   sortOrder: number;
@@ -34,7 +32,6 @@ export function StoreItemForm({ eventId, eventLabel, item }: { eventId: string; 
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState(item?.name ?? "");
   const [description, setDescription] = useState(item?.description ?? "");
-  const [imageUrl, setImageUrl] = useState<string | null>(item?.imageUrl ?? null);
   const [price, setPrice] = useState(String(item?.price ?? "0"));
   const [requiresVariant, setRequiresVariant] = useState(item?.requiresVariant ?? false);
   const [supplyMode, setSupplyMode] = useState<"stock" | "made_to_order">(item?.supplyMode ?? "stock");
@@ -65,7 +62,6 @@ export function StoreItemForm({ eventId, eventLabel, item }: { eventId: string; 
             name,
             slug: `${slugify(name)}-${(item?.id ?? crypto.randomUUID()).slice(0, 8)}`,
             description,
-            imageUrl,
             price: Number(price) || 0,
             requiresVariant,
             isActive: true,
@@ -75,15 +71,14 @@ export function StoreItemForm({ eventId, eventLabel, item }: { eventId: string; 
           });
           setMessage(result.message);
           if (result.success && !item) {
-            setName(""); setDescription(""); setImageUrl(null); setPrice("0"); setRequiresVariant(false); setSupplyMode("stock"); setAvailableAllEvents(false); setOpen(false);
+            setName(""); setDescription(""); setPrice("0"); setRequiresVariant(false); setSupplyMode("stock"); setAvailableAllEvents(false); setOpen(false);
           }
         });
       }}
     >
-      <div className="sm:col-span-2">
-        <span className={fieldLabelClass}>Foto do item</span>
-        <StoreImageUpload value={imageUrl} onChange={setImageUrl} />
-      </div>
+      {!item ? (
+        <p className="text-xs text-slate-500 sm:col-span-2">As fotos são adicionadas depois, na lista de itens, assim que este item for salvo.</p>
+      ) : null}
       <div>
         <label className={fieldLabelClass} htmlFor="store-item-name">Nome do item</label>
         <input

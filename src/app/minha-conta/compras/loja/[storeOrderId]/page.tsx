@@ -42,7 +42,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
 
   const { data: order, error } = await supabase
     .from('store_orders')
-    .select('id, order_number, status, payment_method, payment_status, base_amount, final_amount, pix_code, pix_qrcode, expires_at, created_at, confirmed_at, cancelled_at, events(name), store_order_items(id, quantity, unit_price, final_amount, status, delivered_at, store_items(name, description, image_url), store_item_variants(name, value))')
+    .select('id, order_number, status, payment_method, payment_status, base_amount, final_amount, pix_code, pix_qrcode, expires_at, created_at, confirmed_at, cancelled_at, events(name), store_order_items(id, quantity, unit_price, final_amount, status, delivered_at, store_items(name, description), store_item_variants(name, value))')
     .eq('id', storeOrderId)
     .eq('user_id', user?.id ?? '')
     .maybeSingle();

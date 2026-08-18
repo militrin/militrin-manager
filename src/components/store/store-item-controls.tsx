@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { MilitrinButton } from '@/components/militrin';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
+import { ProductImageGallery } from './product-image-gallery';
 
 export type Selection = { variantId: string | null; quantity: number };
 
@@ -71,20 +72,7 @@ export function ItemDetailModal({
   notice?: ReactNode;
   extraControl?: ReactNode;
 }) {
-  const [zoomed, setZoomed] = useState(false);
   const soldOut = isSoldOut(item);
-
-  if (zoomed && item.imageUrl) {
-    return (
-      <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/95 p-4" onClick={() => setZoomed(false)}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={item.imageUrl} alt={item.name} className="max-h-full max-w-full rounded-xl object-contain" />
-        <button type="button" onClick={() => setZoomed(false)} className="absolute right-4 top-4 rounded-full border border-slate-600 bg-slate-900/80 px-3 py-1 text-sm text-slate-100">
-          Fechar
-        </button>
-      </div>
-    );
-  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" onClick={onClose}>
@@ -96,21 +84,9 @@ export function ItemDetailModal({
           </button>
         </div>
 
-        {item.imageUrl ? (
-          <button
-            type="button"
-            onClick={() => setZoomed(true)}
-            className="mt-4 block w-full cursor-zoom-in overflow-hidden rounded-2xl border border-slate-800"
-            aria-label="Ampliar imagem"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.imageUrl} alt={item.name} className="h-64 w-full object-cover" />
-          </button>
-        ) : (
-          <div className="mt-4 flex h-40 w-full items-center justify-center rounded-2xl border border-dashed border-slate-700 text-xs text-slate-500">
-            Sem foto
-          </div>
-        )}
+        <div className="mt-4">
+          <ProductImageGallery images={item.images} alt={item.name} />
+        </div>
 
         <p className="mt-4 text-lg font-semibold text-(--brand-300)">{money(item.price)}</p>
         {item.supplyMode === 'made_to_order' ? (

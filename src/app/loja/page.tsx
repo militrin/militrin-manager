@@ -20,12 +20,15 @@ type StoreItemVariant = {
   availableQuantity: number;
 };
 
+type StoreItemImage = { id: string; url: string; isPrimary: boolean };
+
 type StoreItem = {
   id: string;
   name: string;
   slug: string;
   description: string | null;
-  imageUrl: string | null;
+  primaryImageUrl: string | null;
+  images: StoreItemImage[];
   price: number;
   requiresVariant: boolean;
   sortOrder: number;
@@ -60,7 +63,7 @@ async function getStoreData(selectedEventId: string | null) {
     const { data: rows, error: rowsError } = await supabase
       .from("store_items")
       .select(
-        "id, event_id, name, slug, description, image_url, price, requires_variant, supply_mode, sort_order, store_item_variants(id, name, value, price_adjustment, sort_order, is_active), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity)"
+        "id, event_id, name, slug, description, price, requires_variant, supply_mode, sort_order, store_item_variants(id, name, value, price_adjustment, sort_order, is_active), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity), store_item_images(id, image_url, is_primary, sort_order)"
       )
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
@@ -87,6 +90,9 @@ async function getStoreData(selectedEventId: string | null) {
           totalQuantity: q.total, reservedQuantity: q.reserved, deliveredQuantity: q.delivered, availableQuantity: q.available,
         };
       });
+      const images: StoreItemImage[] = ((Array.isArray(row.store_item_images) ? row.store_item_images : []) as Array<Record<string, unknown>>)
+        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+        .map((image) => ({ id: String(image.id), url: String(image.image_url ?? ""), isPrimary: Boolean(image.is_primary) }));
       const base = availFor(invByVariant.get(null));
       const eventId = row.event_id ? String(row.event_id) : null;
       return {
@@ -94,7 +100,8 @@ async function getStoreData(selectedEventId: string | null) {
         name: String(row.name ?? ""),
         slug: String(row.slug ?? ""),
         description: row.description ? String(row.description) : null,
-        imageUrl: row.image_url ? String(row.image_url) : null,
+        primaryImageUrl: images.find((image) => image.isPrimary)?.url ?? images[0]?.url ?? null,
+        images,
         price: Number(row.price ?? 0),
         requiresVariant: Boolean(row.requires_variant),
         sortOrder: Number(row.sort_order ?? 0),
@@ -132,7 +139,11 @@ async function getStoreData(selectedEventId: string | null) {
         name: String(row.name ?? ""),
         slug: String(row.slug ?? ""),
         description: row.description ? String(row.description) : null,
-        imageUrl: row.image_url ? String(row.image_url) : null,
+        primaryImageUrl: row.image_url ? String(row.image_url) : null,
+        images: (Array.isArray(row.images) ? row.images : []).map((image) => {
+          const img = image as Record<string, unknown>;
+          return { id: String(img.id), url: String(img.url ?? ""), isPrimary: Boolean(img.is_primary) };
+        }),
         price: Number(row.price ?? 0),
         requiresVariant: Boolean(row.requires_variant),
         sortOrder: Number(row.sort_order ?? 0),

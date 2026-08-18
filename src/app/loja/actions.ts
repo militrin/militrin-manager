@@ -10,7 +10,6 @@ export async function upsertStoreItemAction(input: {
   name: string;
   slug: string;
   description: string;
-  imageUrl: string | null;
   price: number;
   requiresVariant: boolean;
   isActive: boolean;
@@ -20,13 +19,12 @@ export async function upsertStoreItemAction(input: {
 }) {
   await assertPermission("store.manage");
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc("upsert_store_item", {
+  const { data, error } = await supabase.rpc("upsert_store_item", {
     p_id: input.id,
     p_event_id: input.eventId,
     p_name: input.name,
     p_slug: input.slug,
     p_description: input.description || null,
-    p_image_url: input.imageUrl,
     p_price: input.price,
     p_requires_variant: input.requiresVariant,
     p_is_active: input.isActive,
@@ -36,7 +34,43 @@ export async function upsertStoreItemAction(input: {
   });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/loja");
-  return { success: true as const, message: "Item salvo." };
+  return { success: true as const, message: "Item salvo.", storeItemId: data as string };
+}
+
+export async function addStoreItemImageAction(storeItemId: string, imageUrl: string) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("add_store_item_image", { p_store_item_id: storeItemId, p_image_url: imageUrl });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: "Imagem adicionada." };
+}
+
+export async function removeStoreItemImageAction(imageId: string) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("remove_store_item_image", { p_image_id: imageId });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: "Imagem removida." };
+}
+
+export async function setStoreItemPrimaryImageAction(imageId: string) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_store_item_primary_image", { p_image_id: imageId });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: "Imagem principal atualizada." };
+}
+
+export async function reorderStoreItemImagesAction(storeItemId: string, imageIds: string[]) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("reorder_store_item_images", { p_store_item_id: storeItemId, p_image_ids: imageIds });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: "Ordem atualizada." };
 }
 
 export async function upsertStoreItemVariantAction(input: {
