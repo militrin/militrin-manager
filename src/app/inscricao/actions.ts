@@ -2247,6 +2247,13 @@ export async function removeCartOrderItemAction(orderId: string, orderItemId: st
   return getCartOrderDetailsAction(orderId);
 }
 
+export async function setCartOrderItemQuantityAction(orderId: string, orderItemId: string, quantity: number) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('set_cart_order_item_quantity', { p_order_item_id: orderItemId, p_quantity: quantity });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return getCartOrderDetailsAction(orderId);
+}
+
 export async function applyCartCouponAction(orderId: string, couponCode: string | null) {
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc('apply_cart_coupon', { p_order_id: orderId, p_coupon_code: couponCode ?? '' });
