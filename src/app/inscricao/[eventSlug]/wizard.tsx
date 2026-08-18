@@ -136,6 +136,66 @@ type PricingState = {
   discount_percent: number;
 };
 
+// Fonte canonica: mesmo shape devolvido por getUnifiedOrderSnapshot
+// (src/app/inscricao/actions.ts), que le get_cart_order_details -- o MESMO
+// RPC ja usado pelo CartStep. `items` mistura ingresso e produto
+// (discriminado por item_kind); nenhuma etapa depois do carrinho recalcula
+// total ou monta uma segunda lista -- so exibe o que a fonte devolve.
+type OrderSnapshotPayload = {
+  order_id: string;
+  order_number: string | null;
+  order_status: string;
+  event_id: string;
+  event_name: string | null;
+  base_amount: number;
+  discount_amount: number;
+  final_amount: number;
+  applied_coupon_code: string | null;
+  payment: {
+    payment_id: string;
+    amount: number;
+    discount_amount: number;
+    final_amount: number;
+    payment_method: string | null;
+    payment_status: string;
+    pix_code: string | null;
+    pix_qrcode: string | null;
+    gateway_payment_id: string | null;
+    expires_at: string | null;
+    paid_at: string | null;
+  };
+  items: Array<{
+    order_item_id: string;
+    item_kind: 'ticket' | 'product';
+    status: string;
+    quantity: number;
+    unit_price: number;
+    discount_amount: number;
+    final_amount: number;
+    item_position: number | null;
+    category_name: string | null;
+    batch_name: string | null;
+    shirt_type: string | null;
+    shirt_size: string | null;
+    holder_full_name: string | null;
+    participant_id: string | null;
+    participant_name: string | null;
+    ticket_id: string | null;
+    ticket_status: string | null;
+    ticket_token: string | null;
+    ownership_status: string | null;
+    titular_display: string;
+    store_item_id: string | null;
+    store_item_name: string | null;
+    store_item_image_url: string | null;
+    store_item_variant_id: string | null;
+    variant_name: string | null;
+    variant_value: string | null;
+  }>;
+};
+
+type OrderLineItem = OrderSnapshotPayload['items'][number];
+
 type RegistrationSnapshot = {
   participant_id: string;
   payment_id: string;
@@ -179,47 +239,10 @@ type RegistrationSnapshot = {
   qr_token: string | null;
   order_id: string | null;
   order_number: string | null;
-  item_count?: number;
-  items?: Array<{
-    item_id: string;
-    item_position: number;
-    item_status: string;
-    ownership_status: string;
-    participant_id: string | null;
-    participant_name: string | null;
-    holder_full_name: string | null;
-    ticket_id: string | null;
-    ticket_status: string | null;
-    ticket_token: string | null;
-    shirt_type: string | null;
-    shirt_size: string | null;
-    category_name: string | null;
-    batch_name: string | null;
-    titular_display: string;
-  }>;
-};
-
-type OrderSnapshotPayload = {
-  order_id: string;
-  order_number: string | null;
-  order_status: string;
-  event_id: string;
-  event_name: string | null;
-  payment: {
-    payment_id: string;
-    amount: number;
-    discount_amount: number;
-    final_amount: number;
-    payment_method: string | null;
-    payment_status: string;
-    pix_code?: string | null;
-    pix_qrcode?: string | null;
-    gateway_payment_id?: string | null;
-    expires_at: string | null;
-    paid_at?: string | null;
-  };
-  item_count: number;
-  items: NonNullable<RegistrationSnapshot['items']>;
+  base_amount: number;
+  discount_amount: number;
+  applied_coupon_code: string | null;
+  items: OrderLineItem[];
 };
 
 type FormState = {
@@ -284,6 +307,29 @@ function categoryPriceLabel(category: Category) {
 function deadlineText(value: string | null) {
   if (!value) return 'sem prazo';
   return formatDateTimeBR(value, ' às ');
+}
+
+function ticketLines(items: OrderLineItem[]) {
+  return items.filter((item) => item.item_kind === 'ticket');
+}
+
+function productLines(items: OrderLineItem[]) {
+  return items.filter((item) => item.item_kind === 'product');
+}
+
+/**
+ * "2 ingressos · 3 produtos" em vez de um numero ambiguo de "itens" -- um
+ * ingresso e sempre 1 linha (quantity=1), produto e a soma das quantidades
+ * das linhas (uma linha "3x Copo" conta como 3, nao 1).
+ */
+function orderItemsLabel(items: OrderLineItem[]) {
+  const ticketCount = ticketLines(items).length;
+  const productCount = productLines(items).reduce((sum, item) => sum + item.quantity, 0);
+  const parts = [
+    ticketCount > 0 ? `${ticketCount} ingresso${ticketCount === 1 ? '' : 's'}` : null,
+    productCount > 0 ? `${productCount} produto${productCount === 1 ? '' : 's'}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(' · ') : '0 itens';
 }
 
 function shirtAvailabilityText(availableStock: number, enforcePhysicalStock: boolean) {
@@ -707,27 +753,31 @@ export function RegistrationWizard({
 
   function mapOrderToRegistration(order: OrderSnapshotPayload): RegistrationSnapshot {
     const items = Array.isArray(order?.items) ? order.items : [];
-    const firstItem = items[0] ?? null;
+    // Fonte ja ordena ingresso antes de produto (ver ORDER BY em
+    // get_cart_order_details), entao o primeiro ingresso e sempre items[0]
+    // quando existe ao menos 1 -- mas busca explicita por item_kind aqui
+    // pra nunca depender silenciosamente dessa ordem.
+    const firstTicket = items.find((item) => item.item_kind === 'ticket') ?? null;
     const paid = order?.payment?.payment_status === 'paid';
 
     return {
-      participant_id: firstItem?.participant_id || firstItem?.item_id || order.order_id,
+      participant_id: firstTicket?.participant_id || firstTicket?.order_item_id || order.order_id,
       payment_id: order?.payment?.payment_id || '',
       final_amount: Number(order?.payment?.final_amount ?? 0),
       payment_status: String(order?.payment?.payment_status ?? 'pending'),
       expires_at: order?.payment?.expires_at || null,
       event_id: String(order?.event_id ?? event.id),
       event_name: order?.event_name || event.name,
-      participant_name: firstItem?.participant_name || form.full_name,
-      category_name: firstItem?.category_name || ticketTypeLabel,
-      batch_name: firstItem?.batch_name || pricing?.batch_name || null,
+      participant_name: firstTicket?.participant_name || form.full_name,
+      category_name: firstTicket?.category_name || ticketTypeLabel,
+      batch_name: firstTicket?.batch_name || pricing?.batch_name || null,
       reservation_status: String(order?.order_status ?? 'pending'),
       reservation_expires_at: order?.payment?.expires_at || null,
-      shirt_type: firstItem?.shirt_type || form.shirt_type || null,
-      shirt_size: firstItem?.shirt_size || form.shirt_size || null,
+      shirt_type: firstTicket?.shirt_type || form.shirt_type || null,
+      shirt_size: firstTicket?.shirt_size || form.shirt_size || null,
       payment: {
         payment_id: order?.payment?.payment_id || '',
-        participant_id: firstItem?.participant_id || firstItem?.item_id || order.order_id,
+        participant_id: firstTicket?.participant_id || firstTicket?.order_item_id || order.order_id,
         event_id: String(order?.event_id ?? event.id),
         event_name: order?.event_name || event.name,
         amount: Number(order?.payment?.amount ?? 0),
@@ -742,10 +792,12 @@ export function RegistrationWizard({
         paid_at: order?.payment?.paid_at || (paid ? new Date().toISOString() : null),
       },
       kit_items: [],
-      qr_token: firstItem?.ticket_token || null,
+      qr_token: firstTicket?.ticket_token || null,
       order_id: order.order_id,
       order_number: order.order_number || null,
-      item_count: Number(order.item_count ?? items.length ?? 0),
+      base_amount: Number(order?.base_amount ?? 0),
+      discount_amount: Number(order?.discount_amount ?? 0),
+      applied_coupon_code: order?.applied_coupon_code || null,
       items,
     };
   }
@@ -1291,17 +1343,49 @@ export function RegistrationWizard({
     }, new Map<string, number>()),
   );
 
-  const summaryValues = {
-    event: event.name,
-    category: ticketTypeLabel,
-    batch: batchDisplayLabel,
-    quantity: form.quantity,
-    coupon: form.coupon_code || 'Não selecionado',
-    original: money(itemTotals.original),
-    discount: money(itemTotals.discount),
-    total: money(itemTotals.total),
-    groupedShirts,
-  };
+  // Uma vez que o pedido existe (registration populado depois do carrinho,
+  // em handleCartFinalized/handleSimulatePaid), o resumo lateral passa a
+  // ler os totais canonicos do pedido (registration.base_amount/
+  // discount_amount/payment.final_amount, vindos de get_cart_order_details)
+  // em vez de itemTotals (somado a partir de checkoutItems, estado
+  // client-side de configuracao de ingresso de ANTES do pedido existir --
+  // nunca atualizado pelo que acontece dentro do CartStep). Sem isso o
+  // resumo lateral ficava congelado no total so-ingresso pra sempre a
+  // partir do carrinho em diante, mesmo com produto no pedido. Enquanto o
+  // pedido nao existe (steps 1-2), nada muda aqui -- mesmo calculo de
+  // sempre.
+  const registrationProductLines = registration
+    ? productLines(registration.items).map((item) => ({
+        key: item.order_item_id,
+        label: `${item.quantity}x ${item.store_item_name ?? 'Produto'}${item.variant_name ? ` (${item.variant_name} ${item.variant_value})` : ''}`,
+      }))
+    : [];
+
+  const summaryValues = registration
+    ? {
+        event: registration.event_name || event.name,
+        category: registration.category_name || ticketTypeLabel,
+        batch: registration.batch_name || batchDisplayLabel,
+        quantity: ticketLines(registration.items).length,
+        coupon: registration.applied_coupon_code || 'Não selecionado',
+        original: money(registration.base_amount),
+        discount: money(registration.discount_amount),
+        total: money(registration.payment.final_amount),
+        groupedShirts,
+        productLines: registrationProductLines,
+      }
+    : {
+        event: event.name,
+        category: ticketTypeLabel,
+        batch: batchDisplayLabel,
+        quantity: form.quantity,
+        coupon: form.coupon_code || 'Não selecionado',
+        original: money(itemTotals.original),
+        discount: money(itemTotals.discount),
+        total: money(itemTotals.total),
+        groupedShirts,
+        productLines: registrationProductLines,
+      };
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow),transparent_35%),linear-gradient(180deg,#020617,#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
@@ -1403,6 +1487,9 @@ export function RegistrationWizard({
                   <p>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {summaryValues.batch}</p>
                   {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
                     <p key={`m-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
+                  ))}
+                  {summaryValues.productLines.map((line) => (
+                    <p key={`m-p-${line.key}`} className="text-xs text-slate-400">{line.label}</p>
                   ))}
                   <p>Cupom: {summaryValues.coupon}</p>
                   <p className="mt-3">Valor original: {summaryValues.original}</p>
@@ -2053,7 +2140,7 @@ export function RegistrationWizard({
                     Comprador: <strong>{registration.participant_name}</strong>
                   </p>
                   <p>
-                    Itens no pedido: <strong>{registration.item_count ?? registration.items?.length ?? 1}</strong>
+                    Itens no pedido: <strong>{orderItemsLabel(registration.items)}</strong>
                   </p>
                   <p>
                     Valor: <strong className="text-emerald-300">{money(registration.payment.final_amount)}</strong>
@@ -2092,13 +2179,40 @@ export function RegistrationWizard({
                   <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
                     <p className="font-medium text-slate-100">Itens do pedido</p>
                     <ul className="mt-2 space-y-2">
-                      {registration.items.map((item) => (
-                        <li key={item.item_id} className="rounded-lg border border-slate-700 px-3 py-2">
-                          <p>Ingresso {item.item_position} - {item.category_name || ticketTypeLabel}</p>
-                          <p>Titular: {item.titular_display}</p>
-                          <p>Ingresso: {getStatusLabel(item.item_status)}</p>
-                        </li>
-                      ))}
+                      {registration.items.map((item) => {
+                        // Subtotal e sempre BRUTO (quantidade x preco unitario, antes de
+                        // qualquer desconto) -- final_amount ja vem com o desconto
+                        // subtraido, entao mostrar so ele como "Subtotal" mentiria pro
+                        // comprador (a conta na cabeca -- subtotal - desconto - nao
+                        // bateria com o total final exibido).
+                        const lineSubtotal = item.unit_price * item.quantity;
+                        return item.item_kind === 'ticket' ? (
+                          <li key={item.order_item_id} className="rounded-lg border border-slate-700 px-3 py-2">
+                            <p>Ingresso {item.item_position} - {item.category_name || ticketTypeLabel}</p>
+                            <p>Titular: {item.titular_display}</p>
+                            <p>{getStatusLabel(item.status)}</p>
+                            <p className="font-semibold text-slate-100">{money(lineSubtotal)}</p>
+                            {item.discount_amount > 0 ? (
+                              <>
+                                <p className="text-emerald-300">Desconto: -{money(item.discount_amount)}</p>
+                                <p className="text-slate-300">Total da linha: {money(item.final_amount)}</p>
+                              </>
+                            ) : null}
+                          </li>
+                        ) : (
+                          <li key={item.order_item_id} className="rounded-lg border border-slate-700 px-3 py-2">
+                            <p>{item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ''}</p>
+                            <p>{item.quantity}x {money(item.unit_price)}</p>
+                            <p className="font-semibold text-slate-100">Subtotal: {money(lineSubtotal)}</p>
+                            {item.discount_amount > 0 ? (
+                              <>
+                                <p className="text-emerald-300">Desconto: -{money(item.discount_amount)}</p>
+                                <p className="text-slate-300">Total da linha: {money(item.final_amount)}</p>
+                              </>
+                            ) : null}
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 ) : null}
@@ -2173,7 +2287,7 @@ export function RegistrationWizard({
                   <div className="grid gap-2 sm:grid-cols-2">
                     <p><strong>Evento:</strong> {event.name}</p>
                     {shouldShowCategoryLabel ? <p><strong>Tipo:</strong> {registration.category_name || 'Ingresso único'}</p> : null}
-                    <p><strong>Quantidade:</strong> {registration.item_count ?? registration.items?.length ?? 1}</p>
+                    <p><strong>Itens:</strong> {orderItemsLabel(registration.items)}</p>
                     <p><strong>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}:</strong> {isSingleTicketEvent ? 'Ingresso único' : (registration.batch_name || '-')}</p>
                     <p><strong>Camiseta:</strong> {registration.shirt_type || '-'} / {registration.shirt_size || '-'}</p>
                     <p><strong>Valor original:</strong> {money(registration.payment.amount)}</p>
@@ -2211,13 +2325,28 @@ export function RegistrationWizard({
                     </div>
                   )}
 
-                  {registration.items && registration.items.length > 0 ? (
+                  {ticketLines(registration.items).length > 0 ? (
                     <div className="mt-4">
                       <p className="text-sm font-medium text-slate-100">Ingressos do pedido</p>
                       <ul className="mt-2 list-disc space-y-1 pl-5">
-                        {registration.items.map((item) => (
-                          <li key={item.item_id}>
-                            Ingresso {item.item_position}: {item.titular_display} - {getStatusLabel(item.ticket_status || item.item_status)}
+                        {ticketLines(registration.items).map((item) => (
+                          <li key={item.order_item_id}>
+                            Ingresso {item.item_position}: {item.titular_display} - {getStatusLabel(item.ticket_status || item.status)} - {money(item.unit_price)}
+                            {item.discount_amount > 0 ? ` (desconto -${money(item.discount_amount)}, total ${money(item.final_amount)})` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {productLines(registration.items).length > 0 ? (
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-slate-100">Produtos do pedido</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {productLines(registration.items).map((item) => (
+                          <li key={item.order_item_id}>
+                            {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ''} - {item.quantity}x {money(item.unit_price)} - Subtotal: {money(item.unit_price * item.quantity)}
+                            {item.discount_amount > 0 ? ` (desconto -${money(item.discount_amount)}, total ${money(item.final_amount)})` : ''}
                           </li>
                         ))}
                       </ul>
@@ -2284,6 +2413,9 @@ export function RegistrationWizard({
                   <p>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {summaryValues.batch}</p>
                   {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
                     <p key={`d-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
+                  ))}
+                  {summaryValues.productLines.map((line) => (
+                    <p key={`d-p-${line.key}`} className="text-xs text-slate-400">{line.label}</p>
                   ))}
                   <p>Cupom: {summaryValues.coupon}</p>
                 </div>

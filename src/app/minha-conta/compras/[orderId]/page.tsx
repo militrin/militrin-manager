@@ -155,9 +155,36 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const normalizedOrderStatus = normalizeStatus(String(order.status));
   const normalizedPaymentStatus = normalizeStatus(String(payment?.payment_status));
   const canShowTicket = normalizedOrderStatus === 'confirmed' && aggregate.items.some((item) => item.ticketToken);
-  const receiptItemsSummary = aggregate.items
-    .map((item) => `${item.participantName ?? 'Titular'}${item.categoryName ? ` • ${item.categoryName}` : ''}${item.ticketStatus ? ` • ${getStatusLabel(item.ticketStatus)}` : ''}`)
-    .join('; ');
+
+  // order_items com item_kind='product' -- mesma tabela canonica do
+  // pedido unificado (ingresso + "compre junto"), so filtrando o que essa
+  // tela ainda nao mostrava. Nao reescreve o calculo: quantity/unit_price/
+  // discount_amount/final_amount ja vem prontos de apply_cart_coupon.
+  const { data: productItemsData } = await supabase
+    .from('order_items')
+    .select('id, quantity, unit_price, discount_amount, final_amount, status, store_items(name), store_item_variants(name, value)')
+    .eq('order_id', orderId)
+    .eq('item_kind', 'product');
+  const productItems = (productItemsData ?? [])
+    .filter((row) => !['cancelled', 'expired', 'refunded', 'transferred'].includes(String(row.status ?? '')))
+    .map((row) => {
+      const storeItem = Array.isArray(row.store_items) ? row.store_items[0] : row.store_items;
+      const variant = Array.isArray(row.store_item_variants) ? row.store_item_variants[0] : row.store_item_variants;
+      return {
+        id: String(row.id),
+        name: (storeItem as { name?: string } | null)?.name ?? 'Produto',
+        variantLabel: variant ? `${(variant as { name?: string }).name}: ${(variant as { value?: string }).value}` : null,
+        quantity: Number(row.quantity ?? 1),
+        unitPrice: Number(row.unit_price ?? 0),
+        discountAmount: Number(row.discount_amount ?? 0),
+        finalAmount: Number(row.final_amount ?? 0),
+      };
+    });
+
+  const receiptItemsSummary = [
+    ...aggregate.items.map((item) => `${item.participantName ?? 'Titular'}${item.categoryName ? ` • ${item.categoryName}` : ''}${item.ticketStatus ? ` • ${getStatusLabel(item.ticketStatus)}` : ''}`),
+    ...productItems.map((item) => `${item.quantity}x ${item.name}${item.variantLabel ? ` (${item.variantLabel})` : ''}`),
+  ].join('; ');
 
   // order_item_discounts e o snapshot canonico (imutavel, por item) do
   // desconto realmente aplicado no momento da compra -- coupon_redemptions
@@ -219,6 +246,29 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
           </article>
         </div>
       </MilitrinSection>
+
+      {productItems.length > 0 ? (
+        <MilitrinSection eyebrow="Compre junto" title="Produtos do pedido" description="Itens da loja comprados junto com o ingresso.">
+          <ul className="space-y-2">
+            {productItems.map((item) => {
+              const lineSubtotal = item.unitPrice * item.quantity;
+              return (
+                <li key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
+                  <p className="font-medium text-slate-100">{item.name}{item.variantLabel ? ` · ${item.variantLabel}` : ''}</p>
+                  <p>{item.quantity}x {money(item.unitPrice)}</p>
+                  <p className="font-semibold">Subtotal: {money(lineSubtotal)}</p>
+                  {item.discountAmount > 0 ? (
+                    <>
+                      <p className="text-emerald-300">Desconto: -{money(item.discountAmount)}</p>
+                      <p>Total da linha: {money(item.finalAmount)}</p>
+                    </>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </MilitrinSection>
+      ) : null}
 
       <MilitrinSection eyebrow="Pagamento" title="Pagamento e prazos" description="Acompanhe o pagamento e o status do pedido.">
         <div className="grid gap-3 lg:grid-cols-2">

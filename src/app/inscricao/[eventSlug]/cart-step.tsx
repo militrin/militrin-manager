@@ -402,7 +402,10 @@ export function CartStep({
         {ticketItems.map((item) => (
           <div key={item.order_item_id} className="flex items-center justify-between text-sm text-slate-200">
             <span>1x Ingresso{item.category_name ? ` · ${item.category_name}` : ""}{item.shirt_type ? ` · ${item.shirt_type} / ${item.shirt_size}` : ""}</span>
-            <span>{money(item.final_amount)}</span>
+            <span className="flex flex-col items-end">
+              <span>{money(item.unit_price)}</span>
+              {item.discount_amount > 0 ? <span className="text-xs text-emerald-300">-{money(item.discount_amount)}</span> : null}
+            </span>
           </div>
         ))}
         {productItems.map((item) => (
@@ -417,10 +420,13 @@ export function CartStep({
               <p className="truncate text-sm font-medium text-slate-100">
                 {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ""}
               </p>
-              <p className="text-xs text-slate-400">{money(item.unit_price)} cada</p>
+              <p className="text-xs text-slate-400">{item.quantity}x {money(item.unit_price)}</p>
             </div>
             <QuantityStepper value={item.quantity} onChange={(next) => void handleSetQuantity(item, next)} />
-            <span className="w-20 shrink-0 text-right text-sm font-semibold text-slate-100">{money(item.final_amount)}</span>
+            <span className="w-24 shrink-0 text-right text-sm font-semibold text-slate-100">
+              <span className="block">{money(item.unit_price * item.quantity)}</span>
+              {item.discount_amount > 0 ? <span className="block text-xs font-normal text-emerald-300">-{money(item.discount_amount)}</span> : null}
+            </span>
             <button
               type="button"
               onClick={() => void handleRemoveItem(item.order_item_id)}

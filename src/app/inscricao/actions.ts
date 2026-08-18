@@ -530,6 +530,150 @@ async function getOrderSnapshotByOrderId(
   };
 }
 
+export type UnifiedOrderItem = {
+  order_item_id: string;
+  item_kind: 'ticket' | 'product';
+  status: string;
+  quantity: number;
+  unit_price: number;
+  discount_amount: number;
+  final_amount: number;
+  item_position: number | null;
+  category_name: string | null;
+  batch_name: string | null;
+  shirt_type: string | null;
+  shirt_size: string | null;
+  holder_full_name: string | null;
+  participant_id: string | null;
+  participant_name: string | null;
+  ticket_id: string | null;
+  ticket_status: string | null;
+  ticket_token: string | null;
+  ownership_status: string | null;
+  titular_display: string;
+  store_item_id: string | null;
+  store_item_name: string | null;
+  store_item_image_url: string | null;
+  store_item_variant_id: string | null;
+  variant_name: string | null;
+  variant_value: string | null;
+};
+
+export type UnifiedOrderSnapshot = {
+  order_id: string;
+  order_number: string | null;
+  order_status: string;
+  event_id: string;
+  event_name: string | null;
+  base_amount: number;
+  discount_amount: number;
+  final_amount: number;
+  applied_coupon_code: string | null;
+  payment: {
+    payment_id: string;
+    amount: number;
+    discount_amount: number;
+    final_amount: number;
+    payment_method: string | null;
+    payment_status: string;
+    pix_code: string | null;
+    pix_qrcode: string | null;
+    gateway_payment_id: string | null;
+    expires_at: string | null;
+    paid_at: string | null;
+  };
+  items: UnifiedOrderItem[];
+};
+
+/**
+ * Fonte canonica unica pra ingresso+produto do mesmo pedido: le
+ * get_cart_order_details (o MESMO RPC ja usado pelo CartStep), nunca
+ * recalcula nada aqui -- so remapeia o jsonb pro shape que o wizard usa nas
+ * etapas de Pagamento e Concluido. Substitui getOrderSnapshotByOrderId (que
+ * usa get_order_checkout_snapshot, escopado a item_kind='ticket') nesses dois
+ * pontos -- ver 20260837000000_unified_order_payment_snapshot.sql.
+ */
+async function getUnifiedOrderSnapshot(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  orderId: string,
+) {
+  const { data, error } = await supabase.rpc('get_cart_order_details', { p_order_id: orderId });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+
+  const raw = data as Record<string, unknown>;
+  const rawItems = (Array.isArray(raw.items) ? raw.items : []) as Array<Record<string, unknown>>;
+  const rawPayment = raw.payment as Record<string, unknown> | null;
+
+  const items: UnifiedOrderItem[] = rawItems.map((row, index) => {
+    const participantName = row.participant_name ? String(row.participant_name) : null;
+    const holderName = row.holder_full_name ? String(row.holder_full_name) : null;
+    return {
+      order_item_id: String(row.order_item_id ?? ''),
+      item_kind: row.item_kind === 'product' ? 'product' : 'ticket',
+      status: String(row.status ?? 'reserved'),
+      quantity: Number(row.quantity ?? 1),
+      unit_price: Number(row.unit_price ?? 0),
+      discount_amount: Number(row.discount_amount ?? 0),
+      final_amount: Number(row.final_amount ?? 0),
+      item_position: row.item_position !== null && row.item_position !== undefined ? Number(row.item_position) : index + 1,
+      category_name: row.category_name ? String(row.category_name) : null,
+      batch_name: row.batch_name ? String(row.batch_name) : null,
+      shirt_type: row.shirt_type ? String(row.shirt_type) : null,
+      shirt_size: row.shirt_size ? String(row.shirt_size) : null,
+      holder_full_name: holderName,
+      participant_id: row.participant_id ? String(row.participant_id) : null,
+      participant_name: participantName,
+      ticket_id: row.ticket_id ? String(row.ticket_id) : null,
+      ticket_status: row.ticket_status ? String(row.ticket_status) : null,
+      ticket_token: row.ticket_token ? String(row.ticket_token) : null,
+      ownership_status: row.ownership_status ? String(row.ownership_status) : null,
+      titular_display: participantName || holderName || 'Titular ainda não definido',
+      store_item_id: row.store_item_id ? String(row.store_item_id) : null,
+      store_item_name: row.store_item_name ? String(row.store_item_name) : null,
+      store_item_image_url: row.store_item_image_url ? String(row.store_item_image_url) : null,
+      store_item_variant_id: row.store_item_variant_id ? String(row.store_item_variant_id) : null,
+      variant_name: row.variant_name ? String(row.variant_name) : null,
+      variant_value: row.variant_value ? String(row.variant_value) : null,
+    };
+  });
+
+  const paymentDefaults = {
+    payment_id: '', amount: 0, discount_amount: 0, final_amount: 0, payment_method: null,
+    payment_status: 'pending', pix_code: null, pix_qrcode: null, gateway_payment_id: null, expires_at: null, paid_at: null,
+  };
+
+  return {
+    success: true as const,
+    snapshot: {
+      order_id: String(raw.order_id ?? ''),
+      order_number: raw.order_number ? String(raw.order_number) : null,
+      order_status: String(raw.order_status ?? raw.status ?? 'pending'),
+      event_id: String(raw.event_id ?? ''),
+      event_name: raw.event_name ? String(raw.event_name) : null,
+      base_amount: Number(raw.base_amount ?? 0),
+      discount_amount: Number(raw.discount_amount ?? 0),
+      final_amount: Number(raw.final_amount ?? 0),
+      applied_coupon_code: raw.applied_coupon_code ? String(raw.applied_coupon_code) : null,
+      payment: rawPayment
+        ? {
+            payment_id: String(rawPayment.payment_id ?? ''),
+            amount: Number(rawPayment.amount ?? 0),
+            discount_amount: Number(rawPayment.discount_amount ?? 0),
+            final_amount: Number(rawPayment.final_amount ?? 0),
+            payment_method: rawPayment.payment_method ? String(rawPayment.payment_method) : null,
+            payment_status: String(rawPayment.payment_status ?? 'pending'),
+            pix_code: rawPayment.pix_code ? String(rawPayment.pix_code) : null,
+            pix_qrcode: rawPayment.pix_qrcode ? String(rawPayment.pix_qrcode) : null,
+            gateway_payment_id: rawPayment.gateway_payment_id ? String(rawPayment.gateway_payment_id) : null,
+            expires_at: rawPayment.expires_at ? String(rawPayment.expires_at) : null,
+            paid_at: rawPayment.paid_at ? String(rawPayment.paid_at) : null,
+          }
+        : paymentDefaults,
+      items,
+    } satisfies UnifiedOrderSnapshot,
+  };
+}
+
 function relationName(value: unknown): string | null {
   if (Array.isArray(value)) {
     const first = value[0] as Record<string, unknown> | undefined;
@@ -1953,7 +2097,7 @@ export async function simulatePublicOrderPaymentAction(orderId: string, method: 
 
   if (error) return { success: false as const, message: error.message };
 
-  const snapshot = await getOrderSnapshotByOrderId(supabase, orderId);
+  const snapshot = await getUnifiedOrderSnapshot(supabase, orderId);
   if (!snapshot.success) return snapshot;
 
   return {
@@ -2266,7 +2410,7 @@ export async function finalizeCartOrderAction(orderId: string, paymentMethod: st
   const { error } = await supabase.rpc('finalize_cart_order_payment', { p_order_id: orderId, p_payment_method: paymentMethod });
   if (error) return { success: false as const, message: translateRegistrationErrorMessage(error.message) };
 
-  const snapshot = await getOrderSnapshotByOrderId(supabase, orderId);
+  const snapshot = await getUnifiedOrderSnapshot(supabase, orderId);
   if (!snapshot.success) return snapshot;
   return { success: true as const, order: snapshot.snapshot };
 }
