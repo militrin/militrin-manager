@@ -448,7 +448,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
             <p>QR Codes gerados: {report.qrCodesGenerated}</p>
             <p>Aguardando dados: {report.awaitingData ?? 0}</p>
             <p>Pagamentos confirmados: {report.paymentsConfirmed ?? 0}</p>
-            <p>Pagamentos mantidos pendentes: {(report.awaitingData ?? 0) + (report.paymentsSkipped ?? 0)}</p>
+            <p>Pagamentos mantidos pendentes: {report.awaitingData ?? 0}</p>
           </div>
           {(report.awaitingData ?? 0) > 0 && batchId ? <Link href={`/cadastros?pending=yes&import_batch_id=${encodeURIComponent(batchId)}`} className="mt-5 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Resolver pendências</Link> : null}
         </article>

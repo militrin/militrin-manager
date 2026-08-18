@@ -4,13 +4,15 @@ import { SectionCard } from '@/components/dashboard/SectionCard';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { hasPermission } from '@/lib/admin/permissions';
+import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { ImportacoesClient } from './ImportacoesClient';
 
-async function getEvents() {
+async function getEvents(organizationId: string) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from('events')
     .select('id, name, year')
+    .eq('organization_id', organizationId)
     .order('starts_at', { ascending: false, nullsFirst: false });
 
   if (error) throw error;
@@ -22,13 +24,20 @@ async function getEvents() {
   }));
 }
 
-async function getImportOptions() {
+async function getImportOptions(organizationId: string) {
   const supabase = await createServerSupabaseClient();
-  const [{ data: categories }, { data: batches }, { data: prices }] = await Promise.all([
-    supabase.from('ticket_categories').select('id,event_id,name,is_active').eq('is_active', true).order('name'),
-    supabase.from('registration_batches').select('id,event_id,name,is_active').eq('is_active', true).order('starts_at'),
-    supabase.from('registration_batch_prices').select('batch_id,ticket_category_id'),
+  const { data: orgEvents } = await supabase.from('events').select('id').eq('organization_id', organizationId);
+  const eventIds = (orgEvents ?? []).map((event) => String(event.id));
+  if (!eventIds.length) return { categories: [], batches: [], prices: [] };
+
+  const [{ data: categories }, { data: batches }] = await Promise.all([
+    supabase.from('ticket_categories').select('id,event_id,name,is_active').eq('is_active', true).in('event_id', eventIds).order('name'),
+    supabase.from('registration_batches').select('id,event_id,name,is_active').eq('is_active', true).in('event_id', eventIds).order('starts_at'),
   ]);
+  const batchIds = (batches ?? []).map((batch) => String(batch.id));
+  const { data: prices } = batchIds.length
+    ? await supabase.from('registration_batch_prices').select('batch_id,ticket_category_id').in('batch_id', batchIds)
+    : { data: [] };
   return { categories: categories ?? [], batches: batches ?? [], prices: prices ?? [] };
 }
 
@@ -43,10 +52,15 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
     redirect('/entrar?next=/importacoes');
   }
 
+  const currentOrganization = (await getCurrentOrganizationContext()).organization;
+  if (!currentOrganization?.id) {
+    redirect('/painel');
+  }
+
   const [events, canConfirmPayment, importOptions] = await Promise.all([
-    getEvents(),
+    getEvents(currentOrganization.id),
     hasPermission('finance.confirm_payment'),
-    getImportOptions(),
+    getImportOptions(currentOrganization.id),
   ]);
 
   return (

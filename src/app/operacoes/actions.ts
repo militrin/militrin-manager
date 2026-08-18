@@ -1423,14 +1423,20 @@ async function buildTicketDetails(
 
   const participantForLegacy = baseRow.participant_name;
 
-  const [{ data: issuesRows, error: issuesRowsError }, { data: shirtInventoryRows, error: shirtInventoryRowsError }] = await Promise.all([
+  const [{ data: issuesRows, error: issuesRowsError }, { data: shirtKitItemsForOptions }] = await Promise.all([
     participantId
       ? supabase.from("participant_data_issues").select("id,field_code,issue_type,message,blocks_payment,blocks_ticket_issuance,blocks_checkin,blocks_kit_delivery").eq("participant_id", participantId).eq("status", "open")
       : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
-    supabase.from("shirt_inventory").select("shirt_type,shirt_size").eq("event_id", String(ticketRow.event_id ?? "")).gt("total_quantity", 0),
+    supabase.from("event_kit_items").select("id").eq("event_id", String(ticketRow.event_id ?? "")).eq("item_type", "shirt").eq("is_active", true),
   ]);
   if (issuesRowsError) return { success: false as const, message: issuesRowsError.message };
-  if (shirtInventoryRowsError) return { success: false as const, message: shirtInventoryRowsError.message };
+  // Fonte canonica das variantes -- a legada shirt_inventory nao e mais
+  // populada para eventos configurados com event_kit_items/variants.
+  const shirtKitItemIdsForOptions = (shirtKitItemsForOptions ?? []).map((item) => String(item.id));
+  const { data: shirtVariantRows, error: shirtVariantRowsError } = shirtKitItemIdsForOptions.length
+    ? await supabase.from("event_kit_item_variants").select("name,value").in("kit_item_id", shirtKitItemIdsForOptions).eq("is_active", true)
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (shirtVariantRowsError) return { success: false as const, message: shirtVariantRowsError.message };
 
   const openIssues = ((issuesRows ?? []) as Array<Record<string, unknown>>).map((item) => ({
     id: String(item.id), field_code: String(item.field_code), issue_type: String(item.issue_type), message: String(item.message),
@@ -1439,9 +1445,9 @@ async function buildTicketDetails(
   }));
 
   const shirtOptionsMap = new Map<string, string[]>();
-  for (const item of (shirtInventoryRows ?? []) as Array<Record<string, unknown>>) {
-    const type = String(item.shirt_type ?? "");
-    const size = String(item.shirt_size ?? "");
+  for (const item of (shirtVariantRows ?? []) as Array<Record<string, unknown>>) {
+    const type = String(item.name ?? "");
+    const size = String(item.value ?? "");
     if (!type || !size) continue;
     shirtOptionsMap.set(type, [...(shirtOptionsMap.get(type) ?? []), size]);
   }
@@ -1519,19 +1525,26 @@ export async function getOperationParticipantDetailsAction(participantId: string
     .eq("id", participantId).maybeSingle();
   if (error || !participant?.id) return { success: false as const, message: error?.message ?? "Participante não encontrado." };
 
-  const [{ data: tickets }, { data: payments, error: paymentError }, { data: history, error: historyError }, { data: issues, error: issuesError }, { data: legacyItems, error: legacyError }, { data: orders, error: ordersError }, { data: shirtInventory, error: shirtInventoryError }, { data: eventCategories, error: eventCategoriesError }, { data: eventBatches, error: eventBatchesError }] = await Promise.all([
+  const [{ data: tickets }, { data: payments, error: paymentError }, { data: history, error: historyError }, { data: issues, error: issuesError }, { data: legacyItems, error: legacyError }, { data: orders, error: ordersError }, { data: shirtKitItemsForOptions2, error: shirtKitItemsForOptions2Error }, { data: eventCategories, error: eventCategoriesError }, { data: eventBatches, error: eventBatchesError }] = await Promise.all([
     supabase.from("tickets").select("id").eq("participant_id", participantId).limit(1),
     supabase.from("payments").select("id,payment_status,payment_method,amount,final_amount,created_at").eq("participant_id", participantId),
     supabase.from("participation_history").select("source,import_batch_id,status").eq("participant_id", participantId).eq("event_id", String(participant.event_id)),
     supabase.from("participant_data_issues").select("id,field_code,issue_type,message,blocks_payment,blocks_ticket_issuance,blocks_checkin,blocks_kit_delivery").eq("participant_id", participantId).eq("status", "open"),
     supabase.from("participant_kit_items").select("id,status,delivered_at,legacy_unresolved,event_kit_items(name)").eq("participant_id", participantId),
     supabase.from("orders").select("id,buyer_type,import_batch_id,status").eq("participant_id", participantId).eq("event_id", String(participant.event_id)),
-    supabase.from("shirt_inventory").select("shirt_type,shirt_size").eq("event_id", String(participant.event_id)).gt("total_quantity", 0),
+    supabase.from("event_kit_items").select("id").eq("event_id", String(participant.event_id)).eq("item_type", "shirt").eq("is_active", true),
     supabase.from("ticket_categories").select("id,name").eq("event_id", String(participant.event_id)).eq("is_active", true).order("sort_order"),
     supabase.from("registration_batches").select("id,name,sequence_number").eq("event_id", String(participant.event_id)).order("sequence_number"),
   ]);
-  const queryError = paymentError ?? historyError ?? issuesError ?? legacyError ?? ordersError ?? shirtInventoryError ?? eventCategoriesError ?? eventBatchesError;
+  const queryError = paymentError ?? historyError ?? issuesError ?? legacyError ?? ordersError ?? shirtKitItemsForOptions2Error ?? eventCategoriesError ?? eventBatchesError;
   if (queryError) return { success: false as const, message: queryError.message };
+  // Fonte canonica das variantes -- a legada shirt_inventory nao e mais
+  // populada para eventos configurados com event_kit_items/variants.
+  const shirtKitItemIdsForOptions2 = (shirtKitItemsForOptions2 ?? []).map((item) => String(item.id));
+  const { data: shirtInventory, error: shirtVariantRows2Error } = shirtKitItemIdsForOptions2.length
+    ? await supabase.from("event_kit_item_variants").select("name,value").in("kit_item_id", shirtKitItemIdsForOptions2).eq("is_active", true)
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (shirtVariantRows2Error) return { success: false as const, message: shirtVariantRows2Error.message };
   if ((tickets ?? []).length) return { success: false as const, message: "Este participante já possui ingresso; atualize a lista." };
 
   const row = participant as Record<string, unknown>;
@@ -1557,8 +1570,8 @@ export async function getOperationParticipantDetailsAction(participantId: string
   const hasLegacyUnresolved = ((legacyItems ?? []) as Array<Record<string, unknown>>).some((item) => Boolean(item.legacy_unresolved));
   const shirtOptionsMap = new Map<string, string[]>();
   for (const item of (shirtInventory ?? []) as Array<Record<string, unknown>>) {
-    const type = String(item.shirt_type ?? "");
-    const size = String(item.shirt_size ?? "");
+    const type = String(item.name ?? "");
+    const size = String(item.value ?? "");
     if (!type || !size) continue;
     shirtOptionsMap.set(type, [...(shirtOptionsMap.get(type) ?? []), size]);
   }

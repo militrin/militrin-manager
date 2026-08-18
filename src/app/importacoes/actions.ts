@@ -250,7 +250,7 @@ async function getCurrentEventImportRules(
 
   const [{ data: event }, { data: shirtItems }, { data: batches }, { data: categories }] = await Promise.all([
     supabase.from('events').select('organization_id,starts_at,limit_shirt_selection_to_stock,min_age').eq('id', eventId).maybeSingle(),
-    supabase.from('event_kit_items').select('id').eq('event_id', eventId).eq('item_type', 'shirt').eq('is_active', true).limit(1),
+    supabase.from('event_kit_items').select('id').eq('event_id', eventId).eq('item_type', 'shirt').eq('is_active', true),
     supabase.from('registration_batches').select('id,name,sequence_number').eq('event_id', eventId).eq('is_active', true),
     supabase.from('ticket_categories').select('id,name').eq('event_id', eventId).eq('is_active', true),
   ]);
@@ -261,6 +261,17 @@ async function getCurrentEventImportRules(
     .select('batch_id,ticket_category_id,male_price,female_price')
     .in('batch_id', batchIds) : { data: [] };
 
+  const shirtItemIds = (shirtItems ?? []).map((item) => String(item.id));
+  // Mesmo par name+value que ensure_ticket_kit_items usa pra resolver a
+  // variante na entrega (comparacao exata, sem normalizar caixa) -- validar
+  // aqui com a mesma regra evita que uma linha "pronta" na importacao va
+  // falhar silenciosamente so no dia do evento.
+  const { data: shirtVariantRows } = shirtItemIds.length ? await supabase
+    .from('event_kit_item_variants')
+    .select('name,value')
+    .in('kit_item_id', shirtItemIds)
+    .eq('is_active', true) : { data: [] };
+
   return {
     organizationId: event?.organization_id ? String(event.organization_id) : null,
     genderRequiredForPricing: false,
@@ -270,6 +281,7 @@ async function getCurrentEventImportRules(
     minAge: Number(event?.min_age ?? 0),
     shirtRequiredBeforeCompletion: false,
     shirtRequiredForImport: Boolean(event?.limit_shirt_selection_to_stock && shirtItems?.length),
+    shirtVariantKeys: new Set((shirtVariantRows ?? []).map((variant) => `${String(variant.name).trim()} ${String(variant.value).trim()}`)),
     batches: (batches ?? []).map((batch) => ({
       id: String(batch.id),
       name: String(batch.name),
@@ -324,6 +336,9 @@ export async function parseImportFileAction(formData: FormData) {
         .from('events').select('id,organization_id,archived_at').eq('id', eventId!).maybeSingle();
       if (selectedEventError || !selectedEvent?.id || selectedEvent.archived_at) {
         return { success: false as const, message: 'Evento selecionado inválido ou indisponível para importação.' };
+      }
+      if (String(selectedEvent.organization_id) !== currentOrganization.id) {
+        return { success: false as const, message: 'Evento selecionado não pertence à organização atual.' };
       }
     }
     const { headers, rows } = await parseSpreadsheetFile(file);
@@ -425,6 +440,36 @@ export async function parseImportFileAction(formData: FormData) {
       if (key) normalizedNameMap.set(key, participant);
     }
 
+    // Contatos ja resolvidos (contactsByCpf) que ja possuem order_item vivo
+    // NESTE evento -- sem isso, reimportar um arquivo ja processado cria um
+    // pedido/pagamento/ingresso novo e "sem titular" a cada execucao, pra
+    // cada pessoa, silenciosamente (a checagem de titularidade da RPC so
+    // decide QUEM fica titular, nunca impede a criacao do pedido em si).
+    const contactIdsAlreadyInEvent = new Set<string>();
+    const existingOrderItemByContact = new Map<string, { id: string; shirtType: string | null; shirtSize: string | null }>();
+    if (importType === 'current_event_registrations' && eventId && contactsByCpf?.length) {
+      const contactIds = contactsByCpf.map((contact) => String(contact.id));
+      const { data: existingOrderItems } = await supabase
+        .from('order_items')
+        .select('id,registration_contact_id,shirt_type,shirt_size')
+        .eq('event_id', eventId)
+        .in('registration_contact_id', contactIds)
+        .not('status', 'in', '(cancelled,expired,refunded)');
+      for (const item of existingOrderItems ?? []) {
+        if (!item.registration_contact_id) continue;
+        const contactId = String(item.registration_contact_id);
+        contactIdsAlreadyInEvent.add(contactId);
+        if (!existingOrderItemByContact.has(contactId)) {
+          existingOrderItemByContact.set(contactId, {
+            id: String(item.id),
+            shirtType: item.shirt_type ? String(item.shirt_type) : null,
+            shirtSize: item.shirt_size ? String(item.shirt_size) : null,
+          });
+        }
+      }
+    }
+    const shirtConflictsToFlag: Array<{ rowIndex: number; orderItemId: string; existingType: string; existingSize: string; importedType: string; importedSize: string }> = [];
+
     const historicalIdentitySet = new Set<string>();
     for (const historicalRow of existingHistoricalRows ?? []) {
       const rowCpf = normalizeCpf(String(historicalRow.cpf ?? ''));
@@ -464,6 +509,8 @@ export async function parseImportFileAction(formData: FormData) {
     let duplicateRows = 0;
     let reviewRows = 0;
     const seenHistoricalIdentityKeys = new Set<string>();
+    const seenHistoricalCpfs = new Set<string>();
+    const seenCurrentEventCpfs = new Set<string>();
 
     const rowsToInsert = normalizedRows.map((row, index) => {
       let status = 'ready';
@@ -570,6 +617,12 @@ export async function parseImportFileAction(formData: FormData) {
 
         if (eventRules.shirtRequiredForImport && (!row.shirt_type || !row.shirt_size)) {
           addIssue({ field_code: 'shirt_selection', issue_type: 'missing_required_for_inventory', message: 'Modelo e tamanho da camiseta pendentes para o kit.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: true });
+        } else if (row.shirt_type && row.shirt_size && eventRules.shirtVariantKeys.size
+          && !eventRules.shirtVariantKeys.has(`${row.shirt_type.trim()} ${row.shirt_size.trim()}`)) {
+          // Camiseta preenchida mas o par tipo+tamanho nao corresponde a
+          // nenhuma variante ativa do evento -- sem isso a linha "passa" na
+          // importacao e so falha (silenciosamente) na entrega fisica do kit.
+          addIssue({ field_code: 'shirt_selection', issue_type: 'invalid_variant', message: `Camiseta "${row.shirt_type} ${row.shirt_size}" nao corresponde a nenhuma variante ativa do evento.`, blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: true });
         }
         if (dataIssues.length) {
           status = 'data_pending';
@@ -578,21 +631,47 @@ export async function parseImportFileAction(formData: FormData) {
       }
 
       if (importType === 'historical_participations' && historicalEventKey && status !== 'error') {
-        const identityParts = [
-          row.cpf ? `cpf:${row.cpf}` : null,
-          row.email ? `email:${row.email}` : null,
-          row.normalized_name ? `name:${row.normalized_name}` : null,
-        ].filter(Boolean) as string[];
+        if (row.cpf && seenHistoricalCpfs.has(row.cpf)) {
+          // CPF e a identidade canonica -- duas linhas com o MESMO cpf sao a
+          // mesma pessoa mesmo que o nome varie (apelido, erro de digitacao
+          // etc.), e a chave composta abaixo (que inclui o nome) nao pega
+          // esse caso porque exige as tres partes identicas.
+          status = 'duplicate';
+          resolution = 'pending';
+          errorMessage = 'Participacao historica duplicada para este evento (mesmo CPF ja importado neste arquivo).';
+        } else {
+          if (row.cpf) seenHistoricalCpfs.add(row.cpf);
 
-        if (identityParts.length > 0) {
-          const compoundKey = `${historicalEventKey}::${identityParts.join('|')}`;
-          if (seenHistoricalIdentityKeys.has(compoundKey) || identityParts.some((part) => historicalIdentitySet.has(part))) {
-            status = 'duplicate';
-            resolution = 'pending';
-            errorMessage = 'Participacao historica duplicada para este evento.';
-          } else {
-            seenHistoricalIdentityKeys.add(compoundKey);
+          const identityParts = [
+            row.cpf ? `cpf:${row.cpf}` : null,
+            row.email ? `email:${row.email}` : null,
+            row.normalized_name ? `name:${row.normalized_name}` : null,
+          ].filter(Boolean) as string[];
+
+          if (identityParts.length > 0) {
+            const compoundKey = `${historicalEventKey}::${identityParts.join('|')}`;
+            if (seenHistoricalIdentityKeys.has(compoundKey) || identityParts.some((part) => historicalIdentitySet.has(part))) {
+              status = 'duplicate';
+              resolution = 'pending';
+              errorMessage = 'Participacao historica duplicada para este evento.';
+            } else {
+              seenHistoricalIdentityKeys.add(compoundKey);
+            }
           }
+        }
+      }
+
+      if (importType === 'current_event_registrations' && status !== 'error' && row.cpf) {
+        // CPF repetido dentro do MESMO arquivo (pessoa nova, ainda sem
+        // cadastro no banco) nao aparece em cpfMap (que so reflete o que ja
+        // existia antes do upload) -- sem isso, cada ocorrencia seguia como
+        // "pronta" e virava um pedido/ingresso separado e silencioso.
+        if (seenCurrentEventCpfs.has(row.cpf)) {
+          status = 'duplicate';
+          resolution = 'pending';
+          errorMessage = 'CPF ja aparece em outra linha deste arquivo.';
+        } else {
+          seenCurrentEventCpfs.add(row.cpf);
         }
       }
 
@@ -605,7 +684,33 @@ export async function parseImportFileAction(formData: FormData) {
         }
         matchedUserId = importType === 'historical_participations' && matched.user_id ? String(matched.user_id) : null;
         if (importType === 'current_event_registrations') {
-          resolution = 'link_existing';
+          if (contactIdsAlreadyInEvent.has(String(matched.id ?? ''))) {
+            // Pessoa ja tem pedido/ingresso vivo NESTE evento (import anterior
+            // ja finalizado, ou qualquer outro fluxo) -- exige decisao
+            // explicita em vez de gerar mais um pedido silencioso.
+            status = 'duplicate';
+            resolution = 'pending';
+            errorMessage = 'Esta pessoa ja possui inscricao para este evento.';
+
+            const existing = existingOrderItemByContact.get(String(matched.id ?? ''));
+            const importedType = row.shirt_type?.trim();
+            const importedSize = row.shirt_size?.trim();
+            const existingType = existing?.shirtType?.trim();
+            const existingSize = existing?.shirtSize?.trim();
+            if (existing && importedType && importedSize && existingType && existingSize
+              && (importedType.toLowerCase() !== existingType.toLowerCase() || importedSize.toLowerCase() !== existingSize.toLowerCase())) {
+              // Nao decide sozinho: so registra o conflito (comparavel,
+              // resolvivel pelo mesmo dialogo admin que ja resolve qualquer
+              // pendencia de camiseta) -- nunca sobrescreve nem cria ingresso.
+              errorMessage = `Conflito de camiseta: ja consta "${existingType} ${existingSize}"; a importacao trouxe "${importedType} ${importedSize}".`;
+              shirtConflictsToFlag.push({
+                rowIndex: index, orderItemId: existing.id,
+                existingType, existingSize, importedType, importedSize,
+              });
+            }
+          } else {
+            resolution = 'link_existing';
+          }
         } else {
           status = 'duplicate';
           resolution = 'pending';
@@ -651,6 +756,32 @@ export async function parseImportFileAction(formData: FormData) {
     const insertRowsResult = await supabase.from('import_batch_rows').insert(rowsToInsert);
     if (insertRowsResult.error) {
       throw new Error(insertRowsResult.error.message);
+    }
+
+    if (shirtConflictsToFlag.length) {
+      const rowNumbers = shirtConflictsToFlag.map((conflict) => conflict.rowIndex + 1);
+      const { data: insertedConflictRows } = await supabase
+        .from('import_batch_rows')
+        .select('id,row_number')
+        .eq('import_batch_id', batchId)
+        .in('row_number', rowNumbers);
+      const rowIdByNumber = new Map((insertedConflictRows ?? []).map((row) => [Number(row.row_number), String(row.id)]));
+      for (const conflict of shirtConflictsToFlag) {
+        const rowId = rowIdByNumber.get(conflict.rowIndex + 1);
+        if (!rowId) continue;
+        const { error: flagError } = await supabase.rpc('flag_import_shirt_conflict', {
+          p_import_batch_id: batchId,
+          p_import_batch_row_id: rowId,
+          p_order_item_id: conflict.orderItemId,
+          p_existing_shirt_type: conflict.existingType,
+          p_existing_shirt_size: conflict.existingSize,
+          p_imported_shirt_type: conflict.importedType,
+          p_imported_shirt_size: conflict.importedSize,
+        });
+        if (flagError) {
+          console.error('[IMPORT SHIRT CONFLICT FLAG ERROR]', { batchId, rowId, error: flagError });
+        }
+      }
     }
 
     const pendingRows = rowsToInsert.filter((row) => row.status === 'data_pending').length;

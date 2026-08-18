@@ -9,6 +9,21 @@ import type { UpdatePaymentStatusInput } from "./payment-status.types";
 
 const emailProvider = getEmailProvider();
 
+// Mesmo padrao ja usado em retirada/actions.ts e operacoes/actions.ts:
+// admin_change_ticket_shirt levanta message='SHIRT_OUT_OF_STOCK' (codigo
+// curto) com o texto amigavel dentro de detail (json). Sem isso, o dialogo
+// de pendencias mostrava o codigo cru pro operador.
+function resolveIssueRpcError(error: { message?: string; details?: string | null }) {
+  const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+  if (!serialized.includes("SHIRT_OUT_OF_STOCK")) return error.message ?? "Não foi possível reavaliar o cadastro.";
+  try {
+    const detail = JSON.parse(error.details ?? "{}") as { message?: string; shirt_type?: string; shirt_size?: string };
+    return detail.message ?? `Não há estoque disponível para ${detail.shirt_type ?? "Camiseta"} ${detail.shirt_size ?? ""}. A alteração não foi confirmada.`;
+  } catch {
+    return "Não há estoque disponível para esta camiseta. A alteração não foi confirmada.";
+  }
+}
+
 export type ResolveParticipantDataIssuesInput = {
   participantId: string;
   expectedIssueIds: string[];
@@ -27,14 +42,22 @@ export async function getParticipantIssueOptionsAction(participantId: string) {
   const { data: canonicalItem } = issueOrderItemIds.length
     ? await supabase.from("order_items").select("ticket_category_id,batch_id").eq("id", issueOrderItemIds[0]).single()
     : { data: null };
-  const [categoriesResult, batchesResult, shirtsResult] = await Promise.all([
+  const [categoriesResult, batchesResult, shirtKitItemsResult] = await Promise.all([
     supabase.from("ticket_categories").select("id,name").eq("event_id", eventId).eq("is_active", true).order("name"),
     supabase.from("registration_batches").select("id,name").eq("event_id", eventId).eq("is_active", true).order("starts_at"),
-    supabase.from("shirt_inventory").select("shirt_type,shirt_size").eq("event_id", eventId).order("shirt_type").order("shirt_size"),
+    supabase.from("event_kit_items").select("id").eq("event_id", eventId).eq("item_type", "shirt").eq("is_active", true),
   ]);
-  if (categoriesResult.error || batchesResult.error || shirtsResult.error) {
-    return { success: false as const, message: categoriesResult.error?.message ?? batchesResult.error?.message ?? shirtsResult.error?.message ?? "Falha ao carregar opções." };
+  if (categoriesResult.error || batchesResult.error || shirtKitItemsResult.error) {
+    return { success: false as const, message: categoriesResult.error?.message ?? batchesResult.error?.message ?? shirtKitItemsResult.error?.message ?? "Falha ao carregar opções." };
   }
+  // Fonte canonica das variantes (mesma tabela usada pelo checkout e pela
+  // entrega de kit) -- a legada shirt_inventory nao e mais populada para
+  // eventos configurados com event_kit_items/event_kit_item_variants.
+  const shirtKitItemIds = (shirtKitItemsResult.data ?? []).map((item) => String(item.id));
+  const shirtsResult = shirtKitItemIds.length
+    ? await supabase.from("event_kit_item_variants").select("name,value").in("kit_item_id", shirtKitItemIds).eq("is_active", true).order("name").order("value")
+    : { data: [], error: null };
+  if (shirtsResult.error) return { success: false as const, message: shirtsResult.error.message };
   const batchIds = (batchesResult.data ?? []).map((item) => String(item.id));
   const prices = batchIds.length
     ? await supabase.from("registration_batch_prices").select("batch_id,ticket_category_id,male_price,female_price").in("batch_id", batchIds)
@@ -42,7 +65,7 @@ export async function getParticipantIssueOptionsAction(participantId: string) {
   if (prices.error) return { success: false as const, message: prices.error.message };
   const shirtMap = new Map<string, string[]>();
   for (const item of shirtsResult.data ?? []) {
-    const type = String(item.shirt_type ?? ""); const size = String(item.shirt_size ?? "");
+    const type = String(item.name ?? ""); const size = String(item.value ?? "");
     if (type && size) shirtMap.set(type, [...(shirtMap.get(type) ?? []), size]);
   }
   return { success: true as const, currentCategoryId: canonicalItem?.ticket_category_id ? String(canonicalItem.ticket_category_id) : "", currentBatchId: canonicalItem?.batch_id ? String(canonicalItem.batch_id) : "", categories: categoriesResult.data ?? [], batches: batchesResult.data ?? [], prices: prices.data ?? [], shirts: Array.from(shirtMap, ([type, sizes]) => ({ type, sizes })) };
@@ -60,7 +83,7 @@ export async function resolveMyParticipantDataIssuesAction(input: ResolvePartici
   const { data, error } = await supabase.rpc("resolve_ticket_data_issues", {
     p_order_item_id: issueOrderItemIds[0], p_expected_issue_ids: input.expectedIssueIds, p_values: input.values,
   });
-  if (error) return { success: false as const, message: error.message };
+  if (error) return { success: false as const, message: resolveIssueRpcError(error) };
   const result = data as { success?: boolean; message?: string; remaining_issues?: Array<Record<string, unknown>> } | null;
   if (!result?.success) return { success: false as const, message: result?.message ?? "Não foi possível reavaliar o cadastro." };
   const { data: finalization, error: finalizationError } = await supabase.rpc("finalize_imported_ticket_after_issue_resolution", {
@@ -110,7 +133,7 @@ export async function resolveParticipantDataIssuesAction(input: ResolveParticipa
     p_values: { ...rpcValues, ...(categoryId ? { category: categoryId } : {}), ...(batchId ? { batch: batchId } : {}) },
   });
 
-  if (error) return { success: false as const, message: error.message };
+  if (error) return { success: false as const, message: resolveIssueRpcError(error) };
 
   const result = data as {
     success?: boolean;
