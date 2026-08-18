@@ -137,8 +137,8 @@ test('fluxo integrado contact-first preserva pessoa, ingressos e entidades canon
   assert.equal(kit.data[0].order_item_id, first.order_item_id);
   assert.equal(kit.data[0].variant_data.variant_id, kitVariant.data.id);
 
-  const coupon = await service.from('coupons').insert({ event_id: eventB, code: `COURTESY-${suffix}`, coupon_type: 'courtesy',
-    discount_percent: 100, max_uses: 1, used_count: 0, is_active: true }).select('id').single();
+  const coupon = await service.from('coupons').insert({ organization_id: organizationId, code: `COURTESY-${suffix}`, discount_type: 'percentage',
+    discount_value: 100, applies_to_tickets: true, max_uses: 1, used_count: 0, is_active: true }).select('id').single();
   assert.equal(coupon.error, null, coupon.error?.message);
   const redeemed = await anon.rpc('redeem_coupon', { p_coupon_id: coupon.data.id, p_participant_id: otherEvent.participant_id,
     p_event_id: eventB, p_original_amount: 90 });

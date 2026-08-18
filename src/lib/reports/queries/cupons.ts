@@ -2,29 +2,46 @@ import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "../
 import { dateRangeLabel, money, reportError, reportSuccess, resolveRequiredEvent } from "../helpers";
 import { formatDateTimeBR } from "@/lib/utils/date";
 
-const COUPON_TYPE_LABELS: Record<string, string> = { courtesy: "Cortesia", percentage: "Percentual" };
+const DISCOUNT_TYPE_LABELS: Record<string, string> = { percentage: "Percentual", fixed: "Valor fixo" };
 
+// Cupom agora pertence a organizacao (nao mais a 1 evento) -- "relevante
+// para este evento" significa: sem nenhuma linha de escopo de evento (cupom
+// vale pra toda a organizacao) OU com uma linha de escopo apontando
+// especificamente para este evento. order_item_discounts (nao mais
+// coupon_redemptions, que e legado/orfao e nunca era escrito pelo checkout
+// real) e a fonte canonica de quanto foi de fato descontado.
 export async function cuponsUso(supabase: ReportSupabaseClient, ctx: ReportQueryContext): Promise<ReportResult> {
   const resolved = await resolveRequiredEvent(supabase, ctx.eventId, ctx.organizationId);
   if ("error" in resolved) return reportError(resolved.error);
 
-  const [{ data: coupons, error: couponsError }, { data: redemptions, error: redemptionsError }] = await Promise.all([
-    supabase.from("coupons").select("id,code,coupon_type,max_uses,used_count,is_active").eq("event_id", resolved.event.id).order("code"),
-    supabase.from("coupon_redemptions").select("coupon_id,discount_amount").eq("event_id", resolved.event.id),
+  const [{ data: allCoupons, error: couponsError }, { data: scopedCouponIds, error: scopeError }] = await Promise.all([
+    supabase.from("coupons").select("id,code,discount_type,discount_value,max_uses,used_count,is_active").eq("organization_id", ctx.organizationId).order("code"),
+    supabase.from("coupon_event_scopes").select("coupon_id").eq("event_id", resolved.event.id),
   ]);
   if (couponsError) return reportError(couponsError.message);
-  if (redemptionsError) return reportError(redemptionsError.message);
+  if (scopeError) return reportError(scopeError.message);
+
+  const eventScopedIds = new Set((scopedCouponIds ?? []).map((row) => String(row.coupon_id)));
+  const { data: anyEventScope, error: anyScopeError } = await supabase.from("coupon_event_scopes").select("coupon_id");
+  if (anyScopeError) return reportError(anyScopeError.message);
+  const couponsWithAnyEventScope = new Set((anyEventScope ?? []).map((row) => String(row.coupon_id)));
+  const couponRows = (allCoupons ?? []).filter((coupon) => !couponsWithAnyEventScope.has(String(coupon.id)) || eventScopedIds.has(String(coupon.id)));
+
+  const { data: discountRows, error: discountError } = await supabase
+    .from("order_item_discounts")
+    .select("coupon_id,discount_amount,order_items!inner(event_id)")
+    .eq("order_items.event_id", resolved.event.id);
+  if (discountError) return reportError(discountError.message);
 
   const discountByCoupon = new Map<string, number>();
   let totalDiscount = 0;
-  for (const redemption of redemptions ?? []) {
-    const couponId = String(redemption.coupon_id ?? "");
-    const amount = Number(redemption.discount_amount ?? 0);
+  for (const row of discountRows ?? []) {
+    const couponId = String(row.coupon_id ?? "");
+    const amount = Number(row.discount_amount ?? 0);
     discountByCoupon.set(couponId, (discountByCoupon.get(couponId) ?? 0) + amount);
     totalDiscount += amount;
   }
 
-  const couponRows = coupons ?? [];
   return reportSuccess({
     reportId: "cupons-uso",
     title: "Uso de cupons",
@@ -43,7 +60,7 @@ export async function cuponsUso(supabase: ReportSupabaseClient, ctx: ReportQuery
     ],
     rows: couponRows.map((coupon) => ({
       codigo: String(coupon.code ?? ""),
-      tipo: COUPON_TYPE_LABELS[String(coupon.coupon_type ?? "")] ?? String(coupon.coupon_type ?? ""),
+      tipo: DISCOUNT_TYPE_LABELS[String(coupon.discount_type ?? "")] ?? String(coupon.discount_type ?? ""),
       usos: `${coupon.used_count ?? 0}${coupon.max_uses ? ` / ${coupon.max_uses}` : " (sem limite)"}`,
       desconto: money(discountByCoupon.get(String(coupon.id)) ?? 0),
     })),
@@ -55,26 +72,25 @@ export async function cuponsResgates(supabase: ReportSupabaseClient, ctx: Report
   if ("error" in resolved) return reportError(resolved.error);
 
   let query = supabase
-    .from("coupon_redemptions")
-    .select("original_amount,discount_amount,final_amount,redeemed_at,coupons(code),participants(full_name)")
-    .eq("event_id", resolved.event.id)
-    .order("redeemed_at", { ascending: false })
+    .from("order_item_discounts")
+    .select("coupon_code,base_amount,discount_amount,final_amount,created_at,order_items!inner(event_id,holder_full_name)")
+    .eq("order_items.event_id", resolved.event.id)
+    .order("created_at", { ascending: false })
     .limit(2001);
-  if (ctx.dateFrom) query = query.gte("redeemed_at", `${ctx.dateFrom}T00:00:00`);
-  if (ctx.dateTo) query = query.lte("redeemed_at", `${ctx.dateTo}T23:59:59`);
+  if (ctx.dateFrom) query = query.gte("created_at", `${ctx.dateFrom}T00:00:00`);
+  if (ctx.dateTo) query = query.lte("created_at", `${ctx.dateTo}T23:59:59`);
   const { data, error } = await query;
   if (error) return reportError(error.message);
 
-  const rows = (data ?? []).map((redemption) => {
-    const coupon = Array.isArray(redemption.coupons) ? redemption.coupons[0] : redemption.coupons;
-    const participant = Array.isArray(redemption.participants) ? redemption.participants[0] : redemption.participants;
+  const rows = (data ?? []).map((row) => {
+    const orderItem = Array.isArray(row.order_items) ? row.order_items[0] : row.order_items;
     return {
-      cupom: coupon?.code ? String(coupon.code) : "-",
-      participante: participant?.full_name ? String(participant.full_name) : "-",
-      valor_original: money(Number(redemption.original_amount ?? 0)),
-      desconto: money(Number(redemption.discount_amount ?? 0)),
-      valor_final: money(Number(redemption.final_amount ?? 0)),
-      resgatado_em: formatDateTimeBR(String(redemption.redeemed_at ?? "")),
+      cupom: row.coupon_code ? String(row.coupon_code) : "-",
+      participante: orderItem?.holder_full_name ? String(orderItem.holder_full_name) : "-",
+      valor_original: money(Number(row.base_amount ?? 0)),
+      desconto: money(Number(row.discount_amount ?? 0)),
+      valor_final: money(Number(row.final_amount ?? 0)),
+      resgatado_em: formatDateTimeBR(String(row.created_at ?? "")),
     };
   });
 

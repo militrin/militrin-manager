@@ -292,7 +292,13 @@ export default function NewRegistrationPage() {
     setSubmitState(null);
     setCreatedRegistration(null);
 
-    const result = await createRegistrationAction(selectedEventId, data);
+    if (!pricing?.batch_id) {
+      setIsSubmitting(false);
+      setSubmitState({ type: "error", message: "Calcule o preço (lote) antes de emitir a inscrição." });
+      return;
+    }
+
+    const result = await createRegistrationAction(selectedEventId, data, pricing.batch_id);
     setIsSubmitting(false);
 
     if (!result?.success) {

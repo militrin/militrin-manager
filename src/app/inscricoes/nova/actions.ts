@@ -320,7 +320,7 @@ export async function validateCouponAction(payload: { event_id: string; code: st
   return getPricingPreviewAction({ event_id: payload.event_id, gender: payload.gender, ticket_category_id: payload.ticket_category_id, coupon_code: code });
 }
 
-export async function createRegistrationAction(eventId: string, values: RegistrationFormValues) {
+export async function createRegistrationAction(eventId: string, values: RegistrationFormValues, batchId: string) {
   const supabase = await createServerSupabaseClient();
   const cpf = removeCpfMask(values.cpf);
   const birthDateIso = toISODateFromBR(values.birth_date);
@@ -371,9 +371,14 @@ export async function createRegistrationAction(eventId: string, values: Registra
   }
 
   try {
+    if (!batchId) {
+      return { success: false, message: 'Lote não resolvido. Calcule o preço novamente antes de emitir.' };
+    }
+
     const { data, error: createError } = await supabase.rpc('create_manual_registration_order', {
       p_event_id: activeEvent.id,
       p_ticket_category_id: values.ticket_category_id,
+      p_batch_id: batchId,
       p_full_name: values.full_name.trim(),
       p_cpf: cpf,
       p_birth_date: birthDateIso,
@@ -385,7 +390,6 @@ export async function createRegistrationAction(eventId: string, values: Registra
       p_shirt_size: values.shirt_size?.trim() || null,
       p_notes: values.notes?.trim() || null,
       p_payment_method: values.payment_method,
-      p_coupon_code: couponCode || null,
     });
 
     if (createError) {

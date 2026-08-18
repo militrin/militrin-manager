@@ -7,27 +7,34 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 const couponSchema = z
   .object({
     id: z.string().uuid().optional(),
-    event_id: z.string().uuid(),
+    organization_id: z.string().uuid(),
     code: z.string().trim().min(1, "Informe o código."),
-    coupon_type: z.enum(["courtesy", "percentage"]),
-    discount_percent: z.number().min(0),
+    discount_type: z.enum(["percentage", "fixed"]),
+    discount_value: z.number(),
+    applies_to_tickets: z.boolean(),
+    applies_to_products: z.boolean(),
     max_uses: z.number().int().positive().optional().nullable(),
     valid_from: z.string().optional().nullable(),
     valid_until: z.string().optional().nullable(),
     notes: z.string().optional().nullable(),
     is_active: z.boolean().default(true),
+    event_ids: z.array(z.string().uuid()).default([]),
+    ticket_category_ids: z.array(z.string().uuid()).default([]),
+    store_item_ids: z.array(z.string().uuid()).default([]),
   })
   .superRefine((value, ctx) => {
-    if (value.coupon_type === "courtesy" && value.discount_percent !== 100) {
-      ctx.addIssue({ code: "custom", path: ["discount_percent"], message: "Cortesia deve ter 100%." });
+    if (!value.applies_to_tickets && !value.applies_to_products) {
+      ctx.addIssue({ code: "custom", path: ["applies_to_tickets"], message: "Selecione ao menos um escopo: ingressos e/ou produtos." });
     }
-    if (value.coupon_type === "percentage" && (value.discount_percent <= 0 || value.discount_percent > 100)) {
-      ctx.addIssue({ code: "custom", path: ["discount_percent"], message: "Percentual deve ser maior que 0 e menor ou igual a 100." });
+    if (value.discount_type === "percentage" && (value.discount_value <= 0 || value.discount_value > 100)) {
+      ctx.addIssue({ code: "custom", path: ["discount_value"], message: "Percentual deve ser maior que 0 e menor ou igual a 100." });
+    }
+    if (value.discount_type === "fixed" && value.discount_value <= 0) {
+      ctx.addIssue({ code: "custom", path: ["discount_value"], message: "Valor fixo deve ser maior que zero." });
     }
   });
 
 type CouponPayload = z.infer<typeof couponSchema>;
-
 type ActionResult = { success: boolean; message: string };
 
 function parseTimestamp(value: string | null | undefined) {
@@ -36,87 +43,78 @@ function parseTimestamp(value: string | null | undefined) {
   return trimmed ? new Date(trimmed).toISOString() : null;
 }
 
-async function assertCouponEventAccess(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  eventId: string,
-) {
-  const { data, error } = await supabase.from("events").select("id").eq("id", eventId).is("archived_at", null).maybeSingle();
-  if (error || !data?.id) throw new Error("Evento inválido ou sem acesso para gerenciar cupons.");
-}
-
 export async function createCouponAction(payload: CouponPayload): Promise<ActionResult> {
   const parsed = couponSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
-
-  try {
-    const supabase = await createServerSupabaseClient();
-    await assertCouponEventAccess(supabase, parsed.data.event_id);
-    const { error } = await supabase.rpc("create_coupon", {
-      p_event_id: parsed.data.event_id,
-      p_code: parsed.data.code,
-      p_coupon_type: parsed.data.coupon_type,
-      p_discount_percent: parsed.data.discount_percent,
-      p_max_uses: parsed.data.max_uses ?? null,
-      p_valid_from: parseTimestamp(parsed.data.valid_from),
-      p_valid_until: parseTimestamp(parsed.data.valid_until),
-      p_notes: parsed.data.notes ?? null,
-      p_is_active: parsed.data.is_active,
-    });
-
-    if (error) throw error;
-    revalidatePath("/cupons");
-    return { success: true, message: "Cupom criado com sucesso." };
-  } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao criar cupom." };
-  }
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("create_organization_coupon", {
+    p_organization_id: parsed.data.organization_id,
+    p_code: parsed.data.code,
+    p_discount_type: parsed.data.discount_type,
+    p_discount_value: parsed.data.discount_value,
+    p_applies_to_tickets: parsed.data.applies_to_tickets,
+    p_applies_to_products: parsed.data.applies_to_products,
+    p_max_uses: parsed.data.max_uses ?? null,
+    p_valid_from: parseTimestamp(parsed.data.valid_from),
+    p_valid_until: parseTimestamp(parsed.data.valid_until),
+    p_notes: parsed.data.notes ?? null,
+    p_is_active: parsed.data.is_active,
+    p_event_ids: parsed.data.event_ids,
+    p_ticket_category_ids: parsed.data.ticket_category_ids,
+    p_store_item_ids: parsed.data.store_item_ids,
+  });
+  if (error) return { success: false, message: error.message };
+  revalidatePath("/cupons");
+  return { success: true, message: "Cupom criado com sucesso." };
 }
 
 export async function updateCouponAction(payload: CouponPayload): Promise<ActionResult> {
   const parsed = couponSchema.safeParse(payload);
   if (!parsed.success || !parsed.data.id) {
-    return { success: false, message: "Dados inválidos para atualização." };
+    return { success: false, message: parsed.success ? "Dados inválidos para atualização." : parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
-
-  try {
-    const supabase = await createServerSupabaseClient();
-    await assertCouponEventAccess(supabase, parsed.data.event_id);
-    const { error } = await supabase.rpc("update_coupon", {
-      p_coupon_id: parsed.data.id,
-      p_event_id: parsed.data.event_id,
-      p_code: parsed.data.code,
-      p_coupon_type: parsed.data.coupon_type,
-      p_discount_percent: parsed.data.discount_percent,
-      p_max_uses: parsed.data.max_uses ?? null,
-      p_valid_from: parseTimestamp(parsed.data.valid_from),
-      p_valid_until: parseTimestamp(parsed.data.valid_until),
-      p_notes: parsed.data.notes ?? null,
-      p_is_active: parsed.data.is_active,
-    });
-
-    if (error) throw error;
-    revalidatePath("/cupons");
-    return { success: true, message: "Cupom atualizado com sucesso." };
-  } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao atualizar cupom." };
-  }
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("update_organization_coupon", {
+    p_coupon_id: parsed.data.id,
+    p_code: parsed.data.code,
+    p_discount_type: parsed.data.discount_type,
+    p_discount_value: parsed.data.discount_value,
+    p_applies_to_tickets: parsed.data.applies_to_tickets,
+    p_applies_to_products: parsed.data.applies_to_products,
+    p_max_uses: parsed.data.max_uses ?? null,
+    p_valid_from: parseTimestamp(parsed.data.valid_from),
+    p_valid_until: parseTimestamp(parsed.data.valid_until),
+    p_notes: parsed.data.notes ?? null,
+    p_is_active: parsed.data.is_active,
+    p_event_ids: parsed.data.event_ids,
+    p_ticket_category_ids: parsed.data.ticket_category_ids,
+    p_store_item_ids: parsed.data.store_item_ids,
+  });
+  if (error) return { success: false, message: error.message };
+  revalidatePath("/cupons");
+  return { success: true, message: "Cupom atualizado com sucesso." };
 }
 
-export async function toggleCouponAction(payload: { id: string; event_id: string; is_active: boolean }): Promise<ActionResult> {
-  try {
-    const supabase = await createServerSupabaseClient();
-    await assertCouponEventAccess(supabase, payload.event_id);
-    const { error } = await supabase.rpc("toggle_coupon_active", {
-      p_coupon_id: payload.id,
-      p_event_id: payload.event_id,
-      p_is_active: payload.is_active,
-    });
+export async function toggleCouponAction(payload: { id: string; is_active: boolean }): Promise<ActionResult> {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_coupon_active", { p_coupon_id: payload.id, p_is_active: payload.is_active });
+  if (error) return { success: false, message: error.message };
+  revalidatePath("/cupons");
+  return { success: true, message: payload.is_active ? "Cupom ativado." : "Cupom desativado." };
+}
 
-    if (error) throw error;
-    revalidatePath("/cupons");
-    return { success: true, message: payload.is_active ? "Cupom ativado." : "Cupom desativado." };
-  } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao alterar status do cupom." };
-  }
+export async function getCouponScopeOptionsAction(organizationId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_organization_coupon_scope_options", { p_organization_id: organizationId });
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, options: data as { events: Array<{ id: string; name: string; year: number | null }>; ticket_categories: Array<{ id: string; name: string; event_id: string }>; store_items: Array<{ id: string; name: string; price: number; image_url: string | null; is_active: boolean }> } };
+}
+
+export async function getCouponDetailsAction(couponId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_organization_coupon_details", { p_coupon_id: couponId });
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, coupon: data as Record<string, unknown> };
 }

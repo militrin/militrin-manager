@@ -2196,3 +2196,70 @@ export async function getPublicRegistrationSnapshotAction(participantId: string)
     },
   };
 }
+
+// ============================================================
+// Carrinho: ingresso + "compre junto" (produtos da loja) no mesmo pedido,
+// e cupom com escopo configuravel. O pedido ja existe (criado sem cupom ao
+// sair da etapa Dados, via createPublicMultiOrderAction) -- estas actions
+// operam sobre esse pedido real, nunca sobre um estado hipotetico.
+// ============================================================
+
+function translateCartErrorMessage(error: { message?: string; details?: string | null }) {
+  const serialized = `${error.message ?? ''} ${error.details ?? ''}`;
+  const knownCodes = ['PRODUCT_OUT_OF_STOCK', 'COUPON_INVALID', 'COUPON_INACTIVE', 'COUPON_NOT_YET_VALID', 'COUPON_EXPIRED', 'COUPON_USES_EXHAUSTED', 'COUPON_NO_ELIGIBLE_ITEMS'];
+  const matchedCode = knownCodes.find((code) => serialized.includes(code));
+  if (!matchedCode) return error.message ?? 'Nao foi possivel concluir a operacao.';
+  try {
+    const detail = JSON.parse(error.details ?? '{}') as { message?: string };
+    return detail.message ?? error.message ?? 'Nao foi possivel concluir a operacao.';
+  } catch {
+    return error.message ?? 'Nao foi possivel concluir a operacao.';
+  }
+}
+
+export async function getEligibleCartProductsAction(eventId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('list_store_items_for_event', { p_event_id: eventId });
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, products: (data ?? []) as Array<Record<string, unknown>> };
+}
+
+export async function getCartOrderDetailsAction(orderId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('get_cart_order_details', { p_order_id: orderId });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return { success: true as const, cart: data as Record<string, unknown> };
+}
+
+export async function addProductToCartAction(orderId: string, storeItemId: string, variantId: string | null, quantity: number) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('add_product_to_cart_order', {
+    p_order_id: orderId, p_store_item_id: storeItemId, p_variant_id: variantId, p_quantity: quantity,
+  });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return getCartOrderDetailsAction(orderId);
+}
+
+export async function removeCartOrderItemAction(orderId: string, orderItemId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('remove_cart_order_item', { p_order_item_id: orderItemId });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return getCartOrderDetailsAction(orderId);
+}
+
+export async function applyCartCouponAction(orderId: string, couponCode: string | null) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('apply_cart_coupon', { p_order_id: orderId, p_coupon_code: couponCode ?? '' });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return getCartOrderDetailsAction(orderId);
+}
+
+export async function finalizeCartOrderAction(orderId: string, paymentMethod: string) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('finalize_cart_order_payment', { p_order_id: orderId, p_payment_method: paymentMethod });
+  if (error) return { success: false as const, message: translateRegistrationErrorMessage(error.message) };
+
+  const snapshot = await getOrderSnapshotByOrderId(supabase, orderId);
+  if (!snapshot.success) return snapshot;
+  return { success: true as const, order: snapshot.snapshot };
+}

@@ -1,17 +1,18 @@
+import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
-import { EmptyState } from "@/components/mvp/EmptyState";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { CouponsManager } from "./ui";
-import { EventContextSelector } from "@/components/admin/EventContextSelector";
 
 type CouponRow = {
   id: string;
-  event_id: string;
   code: string;
-  coupon_type: "courtesy" | "percentage";
-  discount_percent: number;
+  discount_type: "percentage" | "fixed";
+  discount_value: number;
+  applies_to_tickets: boolean;
+  applies_to_products: boolean;
   max_uses: number | null;
   used_count: number;
   valid_from: string | null;
@@ -19,70 +20,37 @@ type CouponRow = {
   is_active: boolean;
   notes: string | null;
   created_at: string;
-  updated_at: string;
 };
 
-type CouponRedemptionRow = {
-  id: string;
-  coupon_id: string;
-  participant_id: string;
-  event_id: string;
-  original_amount: number;
-  discount_amount: number;
-  final_amount: number;
-  redeemed_at: string;
-  participants?: { id?: string | null; full_name?: string | null; cpf?: string | null } | null;
-};
-
-async function getCouponsData(eventId: string | null) {
+async function getCouponsData(organizationId: string) {
   const supabase = await createServerSupabaseClient();
-  const { data: events, error: eventError } = await supabase.from("events").select("id,name,is_active").is("archived_at", null).order("starts_at", { ascending: false });
-  const activeEvent = eventId ? (events ?? []).find((event) => event.id === eventId) ?? null : null;
-
-  if (eventError) throw eventError;
-  if (!activeEvent?.id) return { activeEvent: null, events: events ?? [], coupons: [], redemptions: [] };
-
-  const [{ data: coupons, error: couponsError }, { data: redemptions, error: redemptionsError }] = await Promise.all([
-    supabase
-      .from("coupons")
-      .select("id, event_id, code, coupon_type, discount_percent, max_uses, used_count, valid_from, valid_until, is_active, notes, created_at, updated_at")
-      .eq("event_id", activeEvent.id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("coupon_redemptions")
-      .select("id, coupon_id, participant_id, event_id, original_amount, discount_amount, final_amount, redeemed_at, participants(id, full_name, cpf)")
-      .eq("event_id", activeEvent.id)
-      .order("redeemed_at", { ascending: false })
-      .limit(200),
-  ]);
-
-  if (couponsError) throw couponsError;
-  if (redemptionsError) throw redemptionsError;
-
-  return {
-    activeEvent, events: events ?? [],
-    coupons: (coupons ?? []) as CouponRow[],
-    redemptions: (redemptions ?? []) as CouponRedemptionRow[],
-  };
+  const { data: coupons, error } = await supabase
+    .from("coupons")
+    .select("id, code, discount_type, discount_value, applies_to_tickets, applies_to_products, max_uses, used_count, valid_from, valid_until, is_active, notes, created_at")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (coupons ?? []) as CouponRow[];
 }
 
-export default async function CouponsPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
-  const params = await searchParams;
-  const { activeEvent, events, coupons, redemptions } = await getCouponsData(params.eventId ?? null);
+export default async function CouponsPage() {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/entrar?next=/cupons");
+
+  const currentOrganization = (await getCurrentOrganizationContext()).organization;
+  if (!currentOrganization?.id) redirect("/painel");
+
+  const coupons = await getCouponsData(currentOrganization.id);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
-          <TopBar title="Cupons" subtitle="Cortesias e descontos por evento" />
-          <SectionCard title="Gestão de cupons" description="Crie, edite, ative e acompanhe utilizações de códigos promocionais.">
-            <EventContextSelector events={events.map((event) => ({ id: String(event.id), name: String(event.name), is_active: Boolean(event.is_active) }))} selectedEventId={activeEvent?.id ? String(activeEvent.id) : null} pathname="/cupons" />
-            {!activeEvent?.id ? (
-              <EmptyState title="Selecione um evento" description="Escolha explicitamente o evento para gerenciar cupons." />
-            ) : (
-              <CouponsManager eventId={activeEvent.id} coupons={coupons} redemptions={redemptions} />
-            )}
+          <TopBar title="Cupons" subtitle="Descontos e cortesias da organização — ingressos e/ou produtos da loja" />
+          <SectionCard title="Gestão de cupons" description="O cupom pertence à organização. O escopo (quais eventos, categorias e produtos) é configurado em cada cupom.">
+            <CouponsManager organizationId={currentOrganization.id} coupons={coupons} />
           </SectionCard>
         </div>
       </div>

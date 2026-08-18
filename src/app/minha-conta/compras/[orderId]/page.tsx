@@ -159,18 +159,17 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
     .map((item) => `${item.participantName ?? 'Titular'}${item.categoryName ? ` • ${item.categoryName}` : ''}${item.ticketStatus ? ` • ${getStatusLabel(item.ticketStatus)}` : ''}`)
     .join('; ');
 
-  const { data: couponRedemption } = participantId
-    ? await supabase
-        .from('coupon_redemptions')
-        .select('discount_amount, coupons(code, coupon_type, discount_percent)')
-        .eq('participant_id', participantId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-    : { data: null };
+  // order_item_discounts e o snapshot canonico (imutavel, por item) do
+  // desconto realmente aplicado no momento da compra -- coupon_redemptions
+  // e legado/orfao (nunca escrito pelo checkout real) e nao deve mais ser
+  // usado como fonte para esta tela.
+  const { data: orderItemDiscounts } = await supabase
+    .from('order_item_discounts')
+    .select('coupon_code, discount_amount, order_items!inner(order_id)')
+    .eq('order_items.order_id', String(order.id));
 
-  const couponObj = Array.isArray(couponRedemption?.coupons) ? couponRedemption?.coupons[0] : couponRedemption?.coupons;
-  const couponCode = couponObj?.code ? String(couponObj.code) : null;
+  const couponCode = orderItemDiscounts?.[0]?.coupon_code ? String(orderItemDiscounts[0].coupon_code) : null;
+  const couponDiscountTotal = (orderItemDiscounts ?? []).reduce((sum, row) => sum + Number(row.discount_amount ?? 0), 0);
 
   const kitResults = await Promise.all(tickets.map((ticket) => supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })));
   const kitItemsData = kitResults.flatMap((result) => result.data ?? []);
@@ -201,7 +200,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               <p>Valor original: {money(Number(order.base_amount ?? 0))}</p>
               <p>Desconto: {money(Number(order.discount_amount ?? 0))}</p>
               <p>Cupom: {couponCode ?? 'Sem cupom'}</p>
-              <p>Desconto cupom: {money(Number(couponRedemption?.discount_amount ?? 0))}</p>
+              <p>Desconto cupom: {money(couponDiscountTotal)}</p>
               <p>Valor final: {money(Number(order.final_amount ?? 0))}</p>
               <p className="inline-flex items-center gap-2">Pedido: <MilitrinStatusBadge status={normalizedOrderStatus} /></p>
             </div>

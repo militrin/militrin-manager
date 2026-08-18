@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { createCouponAction, toggleCouponAction, updateCouponAction } from "./actions";
-import { formatDateBR, formatDateTimeBR, toDatetimeLocalValue } from "@/lib/utils/date";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { createCouponAction, getCouponDetailsAction, getCouponScopeOptionsAction, toggleCouponAction, updateCouponAction } from "./actions";
+import { formatDateBR, toDatetimeLocalValue } from "@/lib/utils/date";
 import { DateTimeField } from "@/components/forms/DateTimeField";
 
 type CouponRow = {
   id: string;
-  event_id: string;
   code: string;
-  coupon_type: "courtesy" | "percentage";
-  discount_percent: number;
+  discount_type: "percentage" | "fixed";
+  discount_value: number;
+  applies_to_tickets: boolean;
+  applies_to_products: boolean;
   max_uses: number | null;
   used_count: number;
   valid_from: string | null;
@@ -18,127 +19,161 @@ type CouponRow = {
   is_active: boolean;
   notes: string | null;
   created_at: string;
-  updated_at: string;
 };
 
-type CouponRedemptionRow = {
-  id: string;
-  coupon_id: string;
-  participant_id: string;
-  event_id: string;
-  original_amount: number;
-  discount_amount: number;
-  final_amount: number;
-  redeemed_at: string;
-  participants?: { id?: string | null; full_name?: string | null; cpf?: string | null } | null;
+type ScopeOptions = {
+  events: Array<{ id: string; name: string; year: number | null }>;
+  ticket_categories: Array<{ id: string; name: string; event_id: string }>;
+  store_items: Array<{ id: string; name: string; price: number; image_url: string | null; is_active: boolean }>;
 };
 
 type FormState = {
   id?: string;
   code: string;
-  coupon_type: "courtesy" | "percentage";
-  discount_percent: string;
+  discount_type: "percentage" | "fixed";
+  discount_value: string;
+  applies_to_tickets: boolean;
+  applies_to_products: boolean;
   max_uses: string;
   valid_from: string;
   valid_until: string;
   notes: string;
   is_active: boolean;
+  eventScope: "all" | "specific";
+  event_ids: string[];
+  categoryScope: "all" | "specific";
+  ticket_category_ids: string[];
+  productScope: "all" | "specific";
+  store_item_ids: string[];
 };
 
 function initialForm(): FormState {
   return {
-    code: "",
-    coupon_type: "courtesy",
-    discount_percent: "100",
-    max_uses: "",
-    valid_from: "",
-    valid_until: "",
-    notes: "",
-    is_active: true,
+    code: "", discount_type: "percentage", discount_value: "10",
+    applies_to_tickets: true, applies_to_products: false,
+    max_uses: "", valid_from: "", valid_until: "", notes: "", is_active: true,
+    eventScope: "all", event_ids: [],
+    categoryScope: "all", ticket_category_ids: [],
+    productScope: "all", store_item_ids: [],
   };
 }
 
-function toDatetimeLocal(value: string | null) {
-  return toDatetimeLocalValue(value);
+function money(value: number) {
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-export function CouponsManager({
-  eventId,
-  coupons,
-  redemptions,
-}: {
-  eventId: string;
-  coupons: CouponRow[];
-  redemptions: CouponRedemptionRow[];
-}) {
+export function CouponsManager({ organizationId, coupons }: { organizationId: string; coupons: CouponRow[] }) {
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState<FormState>(initialForm());
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [historyCouponId, setHistoryCouponId] = useState<string | null>(null);
+  const [options, setOptions] = useState<ScopeOptions | null>(null);
+  const [loadingOptions, setLoadingOptions] = useState(true);
 
-  const historyItems = useMemo(
-    () => redemptions.filter((item) => item.coupon_id === historyCouponId),
-    [redemptions, historyCouponId],
-  );
-
-  function resetForm() {
-    setForm(initialForm());
-  }
-
-  function loadForEdit(coupon: CouponRow) {
-    setForm({
-      id: coupon.id,
-      code: coupon.code,
-      coupon_type: coupon.coupon_type,
-      discount_percent: String(coupon.discount_percent),
-      max_uses: coupon.max_uses == null ? "" : String(coupon.max_uses),
-      valid_from: toDatetimeLocal(coupon.valid_from),
-      valid_until: toDatetimeLocal(coupon.valid_until),
-      notes: coupon.notes ?? "",
-      is_active: coupon.is_active,
+  useEffect(() => {
+    let active = true;
+    getCouponScopeOptionsAction(organizationId).then((result) => {
+      if (!active) return;
+      if (result.success) setOptions(result.options);
+      setLoadingOptions(false);
     });
-  }
+    return () => { active = false; };
+  }, [organizationId]);
+
+  const eventsById = useMemo(() => new Map((options?.events ?? []).map((event) => [event.id, event])), [options]);
+  const categoriesByEvent = useMemo(() => {
+    const map = new Map<string, Array<{ id: string; name: string }>>();
+    for (const category of options?.ticket_categories ?? []) {
+      const list = map.get(category.event_id) ?? [];
+      list.push({ id: category.id, name: category.name });
+      map.set(category.event_id, list);
+    }
+    return map;
+  }, [options]);
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  function resetForm() {
+    setForm(initialForm());
+  }
+
+  function toggleInArray(key: "event_ids" | "ticket_category_ids" | "store_item_ids", id: string) {
+    setForm((prev) => {
+      const current = prev[key];
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      return { ...prev, [key]: next };
+    });
+  }
+
+  async function loadForEdit(coupon: CouponRow) {
+    setMessage(null);
+    const result = await getCouponDetailsAction(coupon.id);
+    if (!result.success) {
+      setMessage({ type: "error", text: result.message });
+      return;
+    }
+    const details = result.coupon as {
+      event_ids: string[]; ticket_category_ids: string[]; store_item_ids: string[];
+      valid_from: string | null; valid_until: string | null; max_uses: number | null;
+    };
+    setForm({
+      id: coupon.id,
+      code: coupon.code,
+      discount_type: coupon.discount_type,
+      discount_value: String(coupon.discount_value),
+      applies_to_tickets: coupon.applies_to_tickets,
+      applies_to_products: coupon.applies_to_products,
+      max_uses: details.max_uses == null ? "" : String(details.max_uses),
+      valid_from: toDatetimeLocalValue(details.valid_from),
+      valid_until: toDatetimeLocalValue(details.valid_until),
+      notes: coupon.notes ?? "",
+      is_active: coupon.is_active,
+      eventScope: details.event_ids.length ? "specific" : "all",
+      event_ids: details.event_ids,
+      categoryScope: details.ticket_category_ids.length ? "specific" : "all",
+      ticket_category_ids: details.ticket_category_ids,
+      productScope: details.store_item_ids.length ? "specific" : "all",
+      store_item_ids: details.store_item_ids,
+    });
+  }
+
   function submit() {
     setMessage(null);
-    const discount = form.coupon_type === "courtesy" ? 100 : Number(form.discount_percent || 0);
     const payload = {
       id: form.id,
-      event_id: eventId,
+      organization_id: organizationId,
       code: form.code,
-      coupon_type: form.coupon_type,
-      discount_percent: discount,
+      discount_type: form.discount_type,
+      discount_value: Number(form.discount_value || 0),
+      applies_to_tickets: form.applies_to_tickets,
+      applies_to_products: form.applies_to_products,
       max_uses: form.max_uses ? Number(form.max_uses) : null,
       valid_from: form.valid_from || null,
       valid_until: form.valid_until || null,
       notes: form.notes || null,
       is_active: form.is_active,
+      event_ids: form.applies_to_tickets && form.eventScope === "specific" ? form.event_ids : [],
+      ticket_category_ids: form.applies_to_tickets && form.eventScope === "specific" && form.categoryScope === "specific" ? form.ticket_category_ids : [],
+      store_item_ids: form.applies_to_products && form.productScope === "specific" ? form.store_item_ids : [],
     };
 
     startTransition(async () => {
       const result = form.id ? await updateCouponAction(payload) : await createCouponAction(payload);
       setMessage({ type: result.success ? "success" : "error", text: result.message });
-      if (result.success) {
-        resetForm();
-      }
+      if (result.success) resetForm();
     });
   }
 
   function toggle(coupon: CouponRow) {
     setMessage(null);
     startTransition(async () => {
-      const result = await toggleCouponAction({
-        id: coupon.id,
-        event_id: coupon.event_id,
-        is_active: !coupon.is_active,
-      });
+      const result = await toggleCouponAction({ id: coupon.id, is_active: !coupon.is_active });
       setMessage({ type: result.success ? "success" : "error", text: result.message });
     });
   }
+
+  const selectedEventsForCategories = form.event_ids.filter((id) => categoriesByEvent.has(id));
 
   return (
     <div className="space-y-6">
@@ -146,13 +181,7 @@ export function CouponsManager({
         <p className="text-sm font-semibold text-slate-200">{form.id ? "Editar cupom" : "Novo cupom"}</p>
 
         {message ? (
-          <div
-            className={`mt-3 rounded-xl border px-3 py-2 text-sm ${
-              message.type === "success"
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                : "border-red-500/30 bg-red-500/10 text-red-200"
-            }`}
-          >
+          <div className={`mt-3 rounded-xl border px-3 py-2 text-sm ${message.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`}>
             {message.text}
           </div>
         ) : null}
@@ -160,40 +189,129 @@ export function CouponsManager({
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <label className="space-y-1 text-sm">
             <span className="text-slate-300">Código</span>
-            <input value={form.code} onChange={(e) => updateField("code", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+            <input value={form.code} onChange={(e) => updateField("code", e.target.value.toUpperCase())} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" placeholder="FESTA20" />
           </label>
 
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Tipo</span>
-            <select
-              value={form.coupon_type}
-              onChange={(e) => {
-                const type = e.target.value as "courtesy" | "percentage";
-                updateField("coupon_type", type);
-                if (type === "courtesy") updateField("discount_percent", "100");
-              }}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"
-            >
-              <option value="courtesy">Cortesia</option>
-              <option value="percentage">Percentual</option>
-            </select>
-          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="space-y-1 text-sm">
+              <span className="text-slate-300">Desconto</span>
+              <input value={form.discount_value} onChange={(e) => updateField("discount_value", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-slate-300">Tipo</span>
+              <select value={form.discount_type} onChange={(e) => updateField("discount_type", e.target.value as FormState["discount_type"])} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                <option value="percentage">%</option>
+                <option value="fixed">R$</option>
+              </select>
+            </label>
+          </div>
+        </div>
 
-          <label className="space-y-1 text-sm">
-            <span className="text-slate-300">Percentual</span>
-            <input
-              value={form.discount_percent}
-              disabled={form.coupon_type === "courtesy"}
-              onChange={(e) => updateField("discount_percent", e.target.value)}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 disabled:opacity-60"
-            />
-          </label>
+        <div className="mt-4">
+          <span className="text-sm text-slate-300">Aplicar em</span>
+          <div className="mt-1 flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input type="checkbox" checked={form.applies_to_tickets} onChange={(e) => updateField("applies_to_tickets", e.target.checked)} />
+              Ingressos
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input type="checkbox" checked={form.applies_to_products} onChange={(e) => updateField("applies_to_products", e.target.checked)} />
+              Produtos da loja
+            </label>
+          </div>
+        </div>
 
+        {form.applies_to_tickets ? (
+          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ingressos</p>
+            <div className="mt-2 space-y-2 text-sm">
+              <p className="text-slate-300">Quais?</p>
+              <label className="flex items-center gap-2"><input type="radio" name="eventScope" checked={form.eventScope === "all"} onChange={() => updateField("eventScope", "all")} /> Todos os eventos</label>
+              <label className="flex items-center gap-2"><input type="radio" name="eventScope" checked={form.eventScope === "specific"} onChange={() => updateField("eventScope", "specific")} /> Eventos específicos</label>
+            </div>
+            {form.eventScope === "specific" ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {loadingOptions ? <span className="text-xs text-slate-500">Carregando eventos...</span> : null}
+                {(options?.events ?? []).map((event) => {
+                  const selected = form.event_ids.includes(event.id);
+                  return (
+                    <button key={event.id} type="button" onClick={() => toggleInArray("event_ids", event.id)}
+                      className={`rounded-full border px-3 py-1 text-xs ${selected ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-slate-700 text-slate-300"}`}>
+                      {event.name}{event.year ? ` (${event.year})` : ""}{selected ? " ×" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {form.eventScope === "specific" && form.event_ids.length > 0 ? (
+              <div className="mt-3">
+                <p className="text-slate-300 text-sm">Categorias</p>
+                <label className="mt-1 flex items-center gap-2 text-sm"><input type="radio" name="categoryScope" checked={form.categoryScope === "all"} onChange={() => updateField("categoryScope", "all")} /> Todas as categorias dos eventos selecionados</label>
+                <label className="flex items-center gap-2 text-sm"><input type="radio" name="categoryScope" checked={form.categoryScope === "specific"} onChange={() => updateField("categoryScope", "specific")} /> Categorias específicas</label>
+                {form.categoryScope === "specific" ? (
+                  <div className="mt-2 space-y-2">
+                    {selectedEventsForCategories.map((eventId) => (
+                      <div key={eventId}>
+                        <p className="text-xs text-slate-400">{eventsById.get(eventId)?.name ?? eventId}</p>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {(categoriesByEvent.get(eventId) ?? []).map((category) => {
+                            const selected = form.ticket_category_ids.includes(category.id);
+                            return (
+                              <button key={category.id} type="button" onClick={() => toggleInArray("ticket_category_ids", category.id)}
+                                className={`rounded-full border px-3 py-1 text-xs ${selected ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-slate-700 text-slate-300"}`}>
+                                {category.name}{selected ? " ×" : ""}
+                              </button>
+                            );
+                          })}
+                          {(categoriesByEvent.get(eventId) ?? []).length === 0 ? <span className="text-xs text-slate-500">Sem categorias configuradas.</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {form.applies_to_products ? (
+          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Produtos</p>
+            <div className="mt-2 space-y-2 text-sm">
+              <p className="text-slate-300">Quais?</p>
+              <label className="flex items-center gap-2"><input type="radio" name="productScope" checked={form.productScope === "all"} onChange={() => updateField("productScope", "all")} /> Todos</label>
+              <label className="flex items-center gap-2"><input type="radio" name="productScope" checked={form.productScope === "specific"} onChange={() => updateField("productScope", "specific")} /> Produtos específicos</label>
+            </div>
+            {form.productScope === "specific" ? (
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {loadingOptions ? <span className="text-xs text-slate-500">Carregando produtos...</span> : null}
+                {(options?.store_items ?? []).map((item) => {
+                  const selected = form.store_item_ids.includes(item.id);
+                  return (
+                    <button key={item.id} type="button" onClick={() => toggleInArray("store_item_ids", item.id)}
+                      className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs ${selected ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-slate-700 text-slate-300"}`}>
+                      {item.image_url ? <img src={item.image_url} alt="" className="h-8 w-8 rounded object-cover" /> : null}
+                      <span className="flex-1">
+                        <span className="block font-medium">{item.name}{!item.is_active ? " (inativo)" : ""}</span>
+                        <span className="block text-slate-400">{money(Number(item.price))}</span>
+                      </span>
+                      {selected ? "×" : ""}
+                    </button>
+                  );
+                })}
+                {options && options.store_items.length === 0 ? <span className="text-xs text-slate-500">Nenhum produto cadastrado nesta organização.</span> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           <label className="space-y-1 text-sm">
             <span className="text-slate-300">Limite de usos</span>
-            <input value={form.max_uses} onChange={(e) => updateField("max_uses", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
+            <input value={form.max_uses} onChange={(e) => updateField("max_uses", e.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" placeholder="Ilimitado" />
           </label>
-
+          <div />
           <DateTimeField label="Início" value={form.valid_from} onChange={(next) => updateField("valid_from", next)} />
           <DateTimeField label="Fim" value={form.valid_until} onChange={(next) => updateField("valid_until", next)} />
         </div>
@@ -213,22 +331,19 @@ export function CouponsManager({
             {isPending ? "Salvando..." : form.id ? "Atualizar" : "Criar cupom"}
           </button>
           {form.id ? (
-            <button type="button" onClick={resetForm} className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300">
-              Cancelar edição
-            </button>
+            <button type="button" onClick={resetForm} className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancelar edição</button>
           ) : null}
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-800/80">
+      <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
         <table className="min-w-full divide-y divide-slate-800 text-sm">
           <thead className="bg-slate-950/70 text-left text-slate-400">
             <tr>
               <th className="px-4 py-3">Código</th>
-              <th className="px-4 py-3">Tipo</th>
               <th className="px-4 py-3">Desconto</th>
+              <th className="px-4 py-3">Aplica em</th>
               <th className="px-4 py-3">Usos</th>
-              <th className="px-4 py-3">Limite</th>
               <th className="px-4 py-3">Validade</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Ações</th>
@@ -236,29 +351,21 @@ export function CouponsManager({
           </thead>
           <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
             {coupons.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">Nenhum cupom criado para o evento ativo.</td>
-              </tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">Nenhum cupom criado para esta organização.</td></tr>
             ) : (
               coupons.map((coupon) => (
                 <tr key={coupon.id}>
                   <td className="px-4 py-3 font-semibold">{coupon.code}</td>
-                  <td className="px-4 py-3">{coupon.coupon_type === "courtesy" ? "Cortesia" : "Percentual"}</td>
-                  <td className="px-4 py-3">{Number(coupon.discount_percent).toFixed(2)}%</td>
-                  <td className="px-4 py-3">{coupon.used_count}</td>
-                  <td className="px-4 py-3">{coupon.max_uses ?? "Ilimitado"}</td>
-                  <td className="px-4 py-3">
-                    {coupon.valid_from ? formatDateBR(coupon.valid_from) : "-"}
-                    {" -> "}
-                    {coupon.valid_until ? formatDateBR(coupon.valid_until) : "-"}
-                  </td>
+                  <td className="px-4 py-3">{coupon.discount_type === "percentage" ? `${Number(coupon.discount_value).toFixed(0)}%` : money(Number(coupon.discount_value))}</td>
+                  <td className="px-4 py-3">{[coupon.applies_to_tickets ? "Ingressos" : null, coupon.applies_to_products ? "Produtos" : null].filter(Boolean).join(" + ")}</td>
+                  <td className="px-4 py-3">{coupon.used_count}{coupon.max_uses ? ` / ${coupon.max_uses}` : " (sem limite)"}</td>
+                  <td className="px-4 py-3">{coupon.valid_from ? formatDateBR(coupon.valid_from) : "-"} {" -> "} {coupon.valid_until ? formatDateBR(coupon.valid_until) : "-"}</td>
                   <td className="px-4 py-3">{coupon.is_active ? "Ativo" : "Inativo"}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => loadForEdit(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
+                      <button type="button" onClick={() => void loadForEdit(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
                       <button type="button" onClick={() => toggle(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">{coupon.is_active ? "Desativar" : "Ativar"}</button>
                       <button type="button" onClick={() => void navigator.clipboard.writeText(coupon.code)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Copiar código</button>
-                      <button type="button" onClick={() => setHistoryCouponId(historyCouponId === coupon.id ? null : coupon.id)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Utilizações</button>
                     </div>
                   </td>
                 </tr>
@@ -267,28 +374,6 @@ export function CouponsManager({
           </tbody>
         </table>
       </div>
-
-      {historyCouponId ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-          <p className="text-sm font-semibold text-slate-200">Utilizações do cupom</p>
-          <div className="mt-3 space-y-2">
-            {historyItems.length === 0 ? (
-              <p className="text-sm text-slate-400">Sem utilizações registradas.</p>
-            ) : (
-              historyItems.map((item) => (
-                <div key={item.id} className="grid gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm md:grid-cols-6">
-                  <span>{formatDateTimeBR(item.redeemed_at, " às ")}</span>
-                  <span>{item.participants?.id ?? item.participant_id}</span>
-                  <span>{item.participants?.full_name ?? "Participante"}</span>
-                  <span>{item.participants?.cpf ?? "CPF não informado"}</span>
-                  <span>R$ {Number(item.discount_amount).toFixed(2)}</span>
-                  <span>Final: R$ {Number(item.final_amount).toFixed(2)}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

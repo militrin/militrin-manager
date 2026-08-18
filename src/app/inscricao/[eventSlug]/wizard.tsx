@@ -33,6 +33,7 @@ import {
 import { getStatusLabel } from '@/lib/status-labels';
 import { StoreCart } from '@/components/store/StoreCart';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
+import { CartStep } from './cart-step';
 
 type EventData = {
   id: string;
@@ -330,10 +331,8 @@ export function RegistrationWizard({
     lgpd: Boolean(initialBuyer.privacy_policy_accepted),
   });
   const [pricing, setPricing] = useState<PricingState | null>(null);
-  const [couponFeedback, setCouponFeedback] = useState<string | null>(null);
-  const [couponWorking, setCouponWorking] = useState(false);
-  const [couponPanelOpen, setCouponPanelOpen] = useState(false);
   const [registration, setRegistration] = useState<RegistrationSnapshot | null>(null);
+  const [cartOrder, setCartOrder] = useState<{ orderId: string } | null>(null);
   const [shirtType, setShirtType] = useState('');
   const [shirtSize, setShirtSize] = useState('');
   const [kitSelections, setKitSelections] = useState<KitSelectionsState>({
@@ -1033,22 +1032,6 @@ export function RegistrationWizard({
     });
   }
 
-  async function handleApplyCoupon() {
-    if (!categoryChoiceReady) {
-      setErrors(['Escolha uma categoria antes de aplicar cupom.']);
-      return;
-    }
-
-    setCouponWorking(true);
-    setCouponFeedback(null);
-    try {
-      await refreshItemPricingByCoupon(form.coupon_code || undefined);
-      setCouponFeedback('Cupom aplicado com sucesso.');
-    } finally {
-      setCouponWorking(false);
-    }
-  }
-
   async function handleCreateAndContinuePayment() {
     if (submitting || submitLockRef.current) return;
     submitLockRef.current = true;
@@ -1177,17 +1160,26 @@ export function RegistrationWizard({
       return;
     }
 
-    const createdRegistration = mapOrderToRegistration(createdOrder);
+    // Pedido criado (sem cupom e sem pagamento finalizado ainda) -- entra na
+    // etapa Carrinho. A confirmacao real (cupom ja recalculado no backend,
+    // PIX, avanco automatico se ficar R$0) so acontece em
+    // handleCartFinalized, depois que o comprador clicar "Continuar para
+    // pagamento" no carrinho.
+    setLiveMessage('Pedido criado.');
+    setCartOrder({ orderId: String(createdOrder.order_id ?? '') });
+  }
+
+  async function handleCartFinalized(order: OrderSnapshotPayload) {
+    const createdRegistration = mapOrderToRegistration(order);
     setRegistration(createdRegistration);
     const zeroPaymentReason = describeZeroPaymentReason({
       baseAmount: createdRegistration.payment.amount,
       discountAmount: createdRegistration.payment.discount_amount,
       finalAmount: createdRegistration.payment.final_amount,
       paymentMethod: createdRegistration.payment.payment_method,
-      couponApplied: Boolean(form.coupon_code.trim()),
+      couponApplied: createdRegistration.payment.discount_amount > 0,
     });
     setCourtesyMessage(zeroPaymentReason?.message ?? null);
-    setLiveMessage('Pedido criado.');
 
     if ((createdRegistration.final_amount ?? 0) <= 0) {
       unlockAndGoTo(4);
@@ -1706,34 +1698,6 @@ export function RegistrationWizard({
                       Calculando preço...
                     </p>
                   )}
-
-                  <div className="mt-3 border-t border-slate-800 pt-3">
-                    {couponPanelOpen ? (
-                      <div className="space-y-1">
-                        <div className="flex gap-2">
-                          <input
-                            value={form.coupon_code}
-                            onChange={(event_) => setField('coupon_code', event_.target.value.toUpperCase())}
-                            placeholder="Código do cupom"
-                            className="h-9 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleApplyCoupon}
-                            disabled={couponWorking}
-                            className="rounded-xl border border-emerald-500 px-3 text-xs text-emerald-300 disabled:opacity-50"
-                          >
-                            {couponWorking ? '...' : 'Aplicar'}
-                          </button>
-                        </div>
-                        {couponFeedback && <span className="text-xs text-emerald-200">{couponFeedback}</span>}
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => setCouponPanelOpen(true)} className="text-xs text-slate-400 underline underline-offset-2">
-                        Tem um cupom?
-                      </button>
-                    )}
-                  </div>
                 </div>
 
                 {hasKitStep ? (
@@ -1981,9 +1945,9 @@ export function RegistrationWizard({
               </div>
             )}
 
-            {step === 3 && !registration && (
+            {step === 3 && !registration && !cartOrder && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">3. Pagamento</h2>
+                <h2 className="text-lg font-semibold">3. Revisão</h2>
                 <div className="grid gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 sm:grid-cols-2">
                   <p>
                     <strong>Nome:</strong> {form.full_name}
@@ -2013,9 +1977,6 @@ export function RegistrationWizard({
                   </p>
                   <p>
                     <strong>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}:</strong> {batchDisplayLabel}
-                  </p>
-                  <p>
-                    <strong>Cupom:</strong> {form.coupon_code || 'Sem cupom'}
                   </p>
                   <p>
                     <strong>Preco:</strong> {summaryValues.original}
@@ -2068,10 +2029,19 @@ export function RegistrationWizard({
                     disabled={submitting}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
                   >
-                    {submitting ? 'Criando pedido...' : 'Criar pedido'}
+                    {submitting ? 'Criando pedido...' : 'Continuar para o carrinho'}
                   </button>
                 </div>
               </div>
+            )}
+
+            {step === 3 && !registration && cartOrder && (
+              <CartStep
+                orderId={cartOrder.orderId}
+                eventId={event.id}
+                paymentMethod={form.payment_method}
+                onContinue={(order) => void handleCartFinalized(order as OrderSnapshotPayload)}
+              />
             )}
 
             {step === 3 && registration && (

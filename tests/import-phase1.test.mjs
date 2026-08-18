@@ -190,14 +190,41 @@ test('dashboard de público separa participação confirmada de check-in e filtr
   assert.match(page, /participation_history[\s\S]*\.in\("event_id", eventIds\)/);
 });
 
-test('Cupons revalida evento selecionado antes de qualquer mutação', async () => {
-  const actions = await readFile(new URL('../src/app/cupons/actions.ts', import.meta.url), 'utf8');
+test('Cupons pertencem a organizacao e as RPCs de mutacao revalidam permissao/organizacao antes de escrever', async () => {
+  // Evolucao estrutural: cupom deixou de ser preso a um evento selecionado
+  // na tela (EventContextSelector) e passou a pertencer a organizacao, com
+  // escopo configuravel (coupon_event_scopes/coupon_ticket_category_scopes/
+  // coupon_product_scopes). A checagem de acesso deixou de ser um
+  // re-fetch superficial do evento em page.tsx/actions.ts e passou a viver
+  // DENTRO das RPCs SECURITY DEFINER (mesma linha de defesa real usada por
+  // import_current_event_contact_first) -- corrige tambem a falha de
+  // seguranca encontrada na auditoria (create_coupon/update_coupon/
+  // toggle_coupon_active antigas nao verificavam nada e estavam liberadas
+  // ate para "anon").
   const page = await readFile(new URL('../src/app/cupons/page.tsx', import.meta.url), 'utf8');
-  assert.match(actions, /assertCouponEventAccess/);
-  assert.equal((actions.match(/await assertCouponEventAccess/g) ?? []).length, 3);
-  assert.match(actions, /\.eq\("id", eventId\)\.is\("archived_at", null\)\.maybeSingle\(\)/);
-  assert.match(page, /EventContextSelector/);
-  assert.match(page, /Selecione um evento/);
+  const actions = await readFile(new URL('../src/app/cupons/actions.ts', import.meta.url), 'utf8');
+  const rpcs = await readFile(new URL('../supabase/migrations/20260828000000_coupon_admin_rpcs.sql', import.meta.url), 'utf8');
+
+  assert.match(page, /getCurrentOrganizationContext/);
+  assert.doesNotMatch(page, /EventContextSelector/);
+
+  assert.match(actions, /create_organization_coupon/);
+  assert.match(actions, /update_organization_coupon/);
+  assert.match(actions, /set_coupon_active/);
+
+  for (const rpcName of ['create_organization_coupon', 'update_organization_coupon', 'set_coupon_active']) {
+    const start = rpcs.indexOf(`function public.${rpcName}(`);
+    assert.ok(start >= 0, `RPC ${rpcName} deve existir na migration`);
+    const body = rpcs.slice(start, start + 1500);
+    assert.match(body, /current_user_has_permission\('coupons\.view'\)/, `${rpcName} deve exigir a permissao coupons.view`);
+    assert.match(body, /user_can_access_organization/, `${rpcName} deve validar acesso a organizacao`);
+  }
+
+  // As RPCs legadas (event_id-only) ficam explicitamente desativadas, nunca
+  // silenciosamente incompatveis com o schema novo.
+  assert.match(rpcs, /RPC legada desativada: use create_organization_coupon/);
+  assert.match(rpcs, /RPC legada desativada: use update_organization_coupon/);
+  assert.match(rpcs, /RPC legada desativada: use set_coupon_active/);
 });
 
 test('migration 110 cria livro financeiro separado sem backfill de pagamentos', async () => {
