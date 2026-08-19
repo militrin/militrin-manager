@@ -1361,6 +1361,24 @@ export function RegistrationWizard({
       }))
     : [];
 
+  // Mesmo raciocinio de registrationProductLines: uma vez que o pedido
+  // existe, a config de camiseta por ingresso exibida aqui precisa vir de
+  // registration.items (get_cart_order_details, a mesma fonte que o
+  // CartStep usa pra montar "Seu carrinho"), nunca de checkoutItems --
+  // senao os dois lados podem divergir sempre que o backend for a fonte
+  // real da verdade (ex.: apos a correcao de create_multi_ticket_order_checkout_legacy,
+  // que agora grava shirt_type/shirt_size por ingresso individualmente).
+  const registrationGroupedShirts = registration
+    ? Array.from(
+        ticketLines(registration.items).reduce((map, item) => {
+          if (!item.shirt_type || !item.shirt_size) return map;
+          const key = `${item.shirt_type}::${item.shirt_size}`;
+          map.set(key, (map.get(key) ?? 0) + 1);
+          return map;
+        }, new Map<string, number>()),
+      )
+    : groupedShirts;
+
   const summaryValues = registration
     ? {
         event: registration.event_name || event.name,
@@ -1371,7 +1389,7 @@ export function RegistrationWizard({
         original: money(registration.base_amount),
         discount: money(registration.discount_amount),
         total: money(registration.payment.final_amount),
-        groupedShirts,
+        groupedShirts: registrationGroupedShirts,
         productLines: registrationProductLines,
       }
     : {

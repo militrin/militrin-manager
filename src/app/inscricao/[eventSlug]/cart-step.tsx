@@ -66,6 +66,17 @@ function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+/** Rotulo de exibicao da camiseta; "Camiseta"/"Babylook" sao os valores
+ * canonicos gravados no banco (SHIRT_TYPES), aqui so viram um rotulo mais
+ * claro pro comprador -- nunca afeta o valor persistido/enviado ao backend. */
+function shirtDisplayLabel(shirtType: string | null) {
+  if (!shirtType) return null;
+  const normalized = shirtType.trim().toLowerCase();
+  if (normalized === "camiseta") return "Camiseta Masculina";
+  if (normalized === "babylook") return "Babylook Feminina";
+  return shirtType;
+}
+
 function isGroupUnavailable(variants: EligibleProduct[]) {
   const hasStockInfo = variants[0]?.available_quantity !== null;
   const anyAvailable = variants.some((v) => v.available_quantity === null || (v.available_quantity ?? 0) > 0);
@@ -399,44 +410,72 @@ export function CartStep({
 
       <div className="space-y-3 rounded-2xl border border-slate-700 bg-slate-950 p-4">
         <p className="text-sm font-semibold text-slate-200">Seu carrinho</p>
-        {ticketItems.map((item) => (
-          <div key={item.order_item_id} className="flex items-center justify-between text-sm text-slate-200">
-            <span>1x Ingresso{item.category_name ? ` · ${item.category_name}` : ""}{item.shirt_type ? ` · ${item.shirt_type} / ${item.shirt_size}` : ""}</span>
-            <span className="flex flex-col items-end">
-              <span>{money(item.unit_price)}</span>
-              {item.discount_amount > 0 ? <span className="text-xs text-emerald-300">-{money(item.discount_amount)}</span> : null}
-            </span>
+        {ticketItems.length > 0 ? (
+          <div className="space-y-2">
+            {ticketItems.map((item) => {
+              const shirtLabel = shirtDisplayLabel(item.shirt_type);
+              return (
+                <div
+                  key={item.order_item_id}
+                  className="flex items-start justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/40 px-3 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-100">
+                      Ingresso{item.category_name ? ` · ${item.category_name}` : ""}
+                    </p>
+                    {shirtLabel ? (
+                      <p className="mt-0.5 text-xs text-slate-400 break-words">
+                        {shirtLabel}{item.shirt_size ? ` · ${item.shirt_size}` : ""}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-[11px] text-slate-500 break-words">
+                      {item.holder_full_name ? `Titular: ${item.holder_full_name}` : "Titular ainda não definido"}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-slate-100">{money(item.unit_price)}</p>
+                    {item.discount_amount > 0 ? (
+                      <p className="text-xs text-emerald-300">-{money(item.discount_amount)}</p>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ))}
-        {productItems.map((item) => (
-          <div key={item.order_item_id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/50 p-2">
-            {item.store_item_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={item.store_item_image_url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
-            ) : (
-              <div className="h-10 w-10 shrink-0 rounded bg-slate-800" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-slate-100">
-                {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ""}
-              </p>
-              <p className="text-xs text-slate-400">{item.quantity}x {money(item.unit_price)}</p>
-            </div>
-            <QuantityStepper value={item.quantity} onChange={(next) => void handleSetQuantity(item, next)} />
-            <span className="w-24 shrink-0 text-right text-sm font-semibold text-slate-100">
-              <span className="block">{money(item.unit_price * item.quantity)}</span>
-              {item.discount_amount > 0 ? <span className="block text-xs font-normal text-emerald-300">-{money(item.discount_amount)}</span> : null}
-            </span>
-            <button
-              type="button"
-              onClick={() => void handleRemoveItem(item.order_item_id)}
-              disabled={busy}
-              className="shrink-0 text-xs text-rose-300 underline underline-offset-2 disabled:opacity-50"
-            >
-              Remover
-            </button>
+        ) : null}
+        {productItems.length > 0 ? (
+          <div className={`space-y-2 ${ticketItems.length > 0 ? "border-t border-slate-800/70 pt-3" : ""}`}>
+            {productItems.map((item) => (
+              <div key={item.order_item_id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/50 p-2">
+                {item.store_item_image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={item.store_item_image_url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="h-10 w-10 shrink-0 rounded bg-slate-800" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-100">
+                    {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ""}
+                  </p>
+                  <p className="text-xs text-slate-400">{item.quantity}x {money(item.unit_price)}</p>
+                </div>
+                <QuantityStepper value={item.quantity} onChange={(next) => void handleSetQuantity(item, next)} />
+                <span className="w-24 shrink-0 text-right text-sm font-semibold text-slate-100">
+                  <span className="block">{money(item.unit_price * item.quantity)}</span>
+                  {item.discount_amount > 0 ? <span className="block text-xs font-normal text-emerald-300">-{money(item.discount_amount)}</span> : null}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleRemoveItem(item.order_item_id)}
+                  disabled={busy}
+                  className="shrink-0 text-xs text-rose-300 underline underline-offset-2 disabled:opacity-50"
+                >
+                  Remover
+                </button>
+              </div>
+            ))}
           </div>
-        ))}
+        ) : null}
       </div>
 
       {productGroups.length > 0 ? (
