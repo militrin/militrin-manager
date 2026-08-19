@@ -10,6 +10,7 @@ import {
   createPublicMultiOrderAction,
   generatePublicOrderPixAction,
   getPublicBuyerTicketHolderStatusAction,
+  getPublicOrderSnapshotAction,
   getPublicPricingPreviewAction,
   saveCheckoutBuyerProfileAction,
   simulatePublicOrderPaymentAction,
@@ -292,6 +293,32 @@ function sanitizePaymentMethod(method: string | null | undefined, event: EventDa
   return 'pix';
 }
 
+// Extraida do useState inicial de `form` pra ser reutilizada por
+// restartWizard -- iniciar um checkout novo precisa recriar exatamente o
+// mesmo estado de montagem original, nunca so limpar o sessionStorage
+// deixando o form (e o resto do estado em memoria) intactos.
+function buildInitialForm(initialBuyer: WizardProps['initialBuyer'], categories: Category[], event: EventData): FormState {
+  return {
+    full_name: initialBuyer.full_name || '',
+    cpf: initialBuyer.cpf ? formatCpf(initialBuyer.cpf) : '',
+    birth_date: initialBuyer.birth_date ? formatISOToDateBR(initialBuyer.birth_date) : '',
+    gender: initialBuyer.gender || '',
+    phone: initialBuyer.phone ? formatPhone(initialBuyer.phone) : '',
+    email: initialBuyer.email || '',
+    city: initialBuyer.city || '',
+    category_id: (() => {
+      const eligible = categories.filter((category) => category.is_active && (category.available_slots === null || category.available_slots > 0) && category.current_batch_name !== null);
+      return eligible.length === 1 ? eligible[0].id : '';
+    })(),
+    payment_method: sanitizePaymentMethod('pix', event),
+    coupon_code: '',
+    shirt_type: '',
+    shirt_size: '',
+    quantity: 1,
+    lgpd: Boolean(initialBuyer.privacy_policy_accepted),
+  };
+}
+
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
@@ -357,25 +384,7 @@ export function RegistrationWizard({
   const [maxUnlockedStep, setMaxUnlockedStep] = useState(1);
   const [liveMessage, setLiveMessage] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
-  const [form, setForm] = useState<FormState>({
-    full_name: initialBuyer.full_name || '',
-    cpf: initialBuyer.cpf ? formatCpf(initialBuyer.cpf) : '',
-    birth_date: initialBuyer.birth_date ? formatISOToDateBR(initialBuyer.birth_date) : '',
-    gender: initialBuyer.gender || '',
-    phone: initialBuyer.phone ? formatPhone(initialBuyer.phone) : '',
-    email: initialBuyer.email || '',
-    city: initialBuyer.city || '',
-    category_id: (() => {
-      const eligible = categories.filter((category) => category.is_active && (category.available_slots === null || category.available_slots > 0) && category.current_batch_name !== null);
-      return eligible.length === 1 ? eligible[0].id : '';
-    })(),
-    payment_method: sanitizePaymentMethod('pix', event),
-    coupon_code: '',
-    shirt_type: '',
-    shirt_size: '',
-    quantity: 1,
-    lgpd: Boolean(initialBuyer.privacy_policy_accepted),
-  });
+  const [form, setForm] = useState<FormState>(() => buildInitialForm(initialBuyer, categories, event));
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [registration, setRegistration] = useState<RegistrationSnapshot | null>(null);
   const [cartOrder, setCartOrder] = useState<{ orderId: string } | null>(null);
@@ -565,15 +574,60 @@ export function RegistrationWizard({
         setShirtType(restoredShirtType);
         setShirtSize(restoredShirtSize);
         setKitSelections(parsed.kitSelections ?? { shirtType: restoredShirtType, shirtSize: restoredShirtSize });
-        if (parsed.step) setStep(Math.min(totalSteps, Math.max(1, parsed.step)));
-        if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(totalSteps, Math.max(1, parsed.maxUnlockedStep)));
-        if (parsed.pricing && parsed.categoryConfigurationKey === categoryConfigurationKey) setPricing(parsed.pricing);
-        else setPricing(null);
-        if (parsed.registration) setRegistration(parsed.registration);
+
+        const persistedOrderId = parsed.registration?.order_id || null;
+
+        if (!persistedOrderId) {
+          // Nenhum pedido foi criado na sessao anterior (comprador ainda
+          // configurando ingresso/dados) -- so config de rascunho, sem risco
+          // de reaproveitar carrinho de outro pedido/comprador.
+          if (parsed.step) setStep(Math.min(totalSteps, Math.max(1, parsed.step)));
+          if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(totalSteps, Math.max(1, parsed.maxUnlockedStep)));
+          if (parsed.pricing && parsed.categoryConfigurationKey === categoryConfigurationKey) setPricing(parsed.pricing);
+          else setPricing(null);
+          return;
+        }
+
+        // Um order_id existia na sessao anterior -- NUNCA restaurar so por
+        // estar no cache local. O cache nao e fonte de verdade: o status
+        // pode ter mudado via webhook (PIX pago) desde a ultima visita, e o
+        // sessionStorage nao tem vinculo nenhum com QUAL comprador esta
+        // logado agora neste navegador (troca de conta no mesmo browser
+        // reaproveitaria o order_id de outra pessoa se restaurassemos cego).
+        // Revalida no backend e so trata como "carrinho atual" retomavel se
+        // o pedido ainda estiver pendente E dentro da janela de reserva --
+        // qualquer outro caso (pago, confirmado, cancelado, expirado, nao
+        // encontrado ou sem acesso) descarta o cache e comeca um contexto
+        // novo, exatamente como uma nova compra deve comecar.
+        void (async () => {
+          const fresh = await getPublicOrderSnapshotAction(persistedOrderId);
+          const payment = fresh.success ? fresh.snapshot.payment : null;
+          const stillEditable = Boolean(
+            fresh.success
+            && fresh.snapshot.order_status === 'pending'
+            && payment?.payment_status === 'pending'
+            && (!payment?.expires_at || new Date(payment.expires_at).getTime() > Date.now()),
+          );
+
+          if (!stillEditable || !fresh.success) {
+            sessionStorage.removeItem(storageKey);
+            return;
+          }
+
+          setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
+          if (parsed.step) setStep(Math.min(totalSteps, Math.max(1, parsed.step)));
+          if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(totalSteps, Math.max(1, parsed.maxUnlockedStep)));
+        })();
       }, 0);
     } catch {
       sessionStorage.removeItem(storageKey);
     }
+    // mapOrderToRegistration nao entra nas deps de proposito: le closures
+    // (form/pricing/event) so como fallback quando a fonte canonica
+    // (fresh.order) nao tras o dado, e nao e memoizada -- adiciona-la aqui
+    // recriaria o effect a cada render e refaria o fetch de validacao do
+    // pedido persistido repetidamente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategories, categoryConfigurationKey, event, storageKey, syncItemCount, totalSteps]);
 
   useEffect(() => {
@@ -1280,7 +1334,27 @@ export function RegistrationWizard({
   }
 
   function restartWizard() {
+    // Antes so limpava sessionStorage e chamava router.refresh() -- que so
+    // reexecuta Server Components, nunca remonta este client component nem
+    // reseta seu estado em memoria. Resultado: "Nova inscricao" nao tirava o
+    // comprador da tela de conclusao/pagamento do pedido ANTERIOR (registration/
+    // cartOrder continuavam apontando pra ele), entao a proxima interacao
+    // reaproveitava o pedido antigo. Precisa resetar cada state explicitamente
+    // pra um checkout novo ter identidade propria de verdade.
     sessionStorage.removeItem(storageKey);
+    setErrors([]);
+    setLiveMessage('');
+    setCourtesyMessage(null);
+    setRegistration(null);
+    setCartOrder(null);
+    setPricing(null);
+    setForm(buildInitialForm(initialBuyer, categories, event));
+    setCheckoutItems([createCheckoutItem(0, normalizePricingGenderInput(initialBuyer.gender))]);
+    setShirtType('');
+    setShirtSize('');
+    setKitSelections({ shirtType: '', shirtSize: '' });
+    setMaxUnlockedStep(1);
+    setStep(1);
     router.refresh();
   }
 

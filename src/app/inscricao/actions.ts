@@ -674,6 +674,20 @@ async function getUnifiedOrderSnapshot(
   };
 }
 
+// Reveridica um pedido persistido localmente (sessionStorage do wizard)
+// contra o backend antes de ele ser restaurado como "carrinho atual" -- o
+// cache local nunca e a fonte de verdade sobre status (pago/confirmado/
+// cancelado podem ter mudado via webhook desde a ultima visita, e o
+// order_id no localStorage/sessionStorage nao tem nenhum vinculo com QUAL
+// usuario esta logado agora no navegador). get_cart_order_details ja exige
+// v_order.user_id = auth.uid() (ou acesso de organizacao) -- um order_id de
+// outro usuario simplesmente falha aqui com "Sem acesso a este pedido.",
+// nunca vaza dados de outra conta.
+export async function getPublicOrderSnapshotAction(orderId: string) {
+  const supabase = await createServerSupabaseClient();
+  return getUnifiedOrderSnapshot(supabase, orderId);
+}
+
 function relationName(value: unknown): string | null {
   if (Array.isArray(value)) {
     const first = value[0] as Record<string, unknown> | undefined;
