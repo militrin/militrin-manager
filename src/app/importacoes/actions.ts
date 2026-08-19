@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { hasPermission } from '@/lib/admin/permissions';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { inferColumnMapping, type CanonicalField } from '@/lib/imports/columns';
 import { parseSpreadsheetFile } from '@/lib/imports/parse-file';
@@ -830,6 +831,64 @@ export async function parseImportFileAction(formData: FormData) {
   }
 }
 
+// As Server Actions de leitura/escrita de um lote de importacao especifico
+// (abaixo) dependiam so da RLS do banco para autorizacao -- e ate a
+// migration 20260838000000 a RLS dessas tabelas nem existia, deixando-as
+// como endpoint aberto (POST da Server Action e invocavel diretamente,
+// sem passar pelo layout que hoje faz requirePermission('imports.view')).
+// Essa checagem replica explicitamente, no nivel da action, a mesma regra
+// de acesso: usuario autenticado + permissao imports.view (a mesma exigida
+// pelo layout e por import_current_event_contact_first) + organizacao do
+// evento do lote (nunca confiando em nenhum organization_id vindo do
+// cliente -- resolvida aqui a partir do event_id do proprio lote). A RLS
+// continua valendo como segunda camada, nao como substituta desta checagem.
+async function resolveImportBatchAccess(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  batchId: string,
+): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user?.id) {
+    return { ok: false, message: 'Sessao expirada. Entre novamente.' };
+  }
+
+  const allowed = await hasPermission('imports.view', user.id);
+  if (!allowed) {
+    return { ok: false, message: 'Sem permissao para gerenciar importacoes.' };
+  }
+
+  const { data: batch, error: batchError } = await supabase
+    .from('import_batches')
+    .select('event_id')
+    .eq('id', batchId)
+    .maybeSingle();
+  if (batchError || !batch) {
+    return { ok: false, message: 'Lote de importacao invalido.' };
+  }
+
+  if (batch.event_id) {
+    const { data: event, error: eventError } = await supabase
+      .from('events')
+      .select('organization_id')
+      .eq('id', batch.event_id)
+      .maybeSingle();
+    if (eventError || !event) {
+      return { ok: false, message: 'Evento do lote invalido.' };
+    }
+
+    const { data: canAccess } = await supabase.rpc('user_can_access_organization', {
+      p_user_id: user.id,
+      p_organization_id: event.organization_id,
+    });
+    if (!canAccess) {
+      return { ok: false, message: 'Sem acesso a organizacao deste lote.' };
+    }
+  }
+
+  return { ok: true, userId: user.id };
+}
+
 export async function setImportRowResolutionAction(input: {
   batchId: string;
   rowId: string;
@@ -846,6 +905,11 @@ export async function setImportRowResolutionAction(input: {
   }
 
   const supabase = await createServerSupabaseClient();
+  const access = await resolveImportBatchAccess(supabase, parsed.data.batchId);
+  if (!access.ok) {
+    return { success: false as const, message: access.message };
+  }
+
   const { error } = await supabase
     .from('import_batch_rows')
     .update({ resolution: parsed.data.resolution })
@@ -861,6 +925,10 @@ export async function setImportRowResolutionAction(input: {
 
 export async function getImportBatchDetailsAction(batchId: string) {
   const supabase = await createServerSupabaseClient();
+  const access = await resolveImportBatchAccess(supabase, batchId);
+  if (!access.ok) {
+    return { success: false as const, message: access.message };
+  }
 
   const [{ data: batch, error: batchError }, { data: rows, error: rowsError }] = await Promise.all([
     supabase
@@ -1296,6 +1364,11 @@ export async function executeImportBatchAction(
 
 export async function exportImportErrorsCsvAction(batchId: string) {
   const supabase = await createServerSupabaseClient();
+  const access = await resolveImportBatchAccess(supabase, batchId);
+  if (!access.ok) {
+    return { success: false as const, message: access.message };
+  }
+
   const { data, error } = await supabase
     .from('import_batch_rows')
     .select('row_number, status, error_message, normalized_data')
