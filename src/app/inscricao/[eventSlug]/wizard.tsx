@@ -34,7 +34,9 @@ import {
 import { getStatusLabel } from '@/lib/status-labels';
 import { StoreCart } from '@/components/store/StoreCart';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
+import { isOrderStillEditable } from '@/lib/orders/order-editability';
 import { CartStep } from './cart-step';
+import { EditTicketsStep } from './edit-tickets-step';
 
 type EventData = {
   id: string;
@@ -270,6 +272,7 @@ type KitSelectionsState = {
 
 const STORAGE_VERSION = 'v5';
 const CHECKOUT_JOURNEY_PARAM = 'checkout';
+const EDIT_ORDER_PARAM = 'editOrder';
 
 function paymentMethodLabel(method: CheckoutPaymentMethod) {
   if (method === 'credit_card_single') return 'Credito a vista';
@@ -399,6 +402,13 @@ export function RegistrationWizard({
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [registration, setRegistration] = useState<RegistrationSnapshot | null>(null);
   const [cartOrder, setCartOrder] = useState<{ orderId: string } | null>(null);
+  // Setado (uma vez, pelo effect de ?editOrder=) quando esta jornada esta
+  // editando um pedido ja existente -- nunca um order_id gerado por
+  // createPublicMultiOrderAction. Enquanto truthy, a Etapa 1 renderiza
+  // EditTicketsStep (edita ingressos do MESMO pedido) em vez do fluxo normal
+  // de criacao, e goTo()/handleCreateAndContinuePayment nunca tentam criar
+  // um pedido novo.
+  const [editModeOrderId, setEditModeOrderId] = useState<string | null>(null);
   const [shirtType, setShirtType] = useState('');
   const [shirtSize, setShirtSize] = useState('');
   const [kitSelections, setKitSelections] = useState<KitSelectionsState>({
@@ -561,6 +571,58 @@ export function RegistrationWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  // Modo de edicao: /inscricao/[eventSlug]?editOrder=<orderId> (com ou sem
+  // ?checkout= -- se faltar, o effect acima ja gera um journeyId novo e
+  // preserva editOrder na URL reescrita). "Editar pedido" (pagina de detalhe
+  // do pedido) usa esse link -- NUNCA cria um pedido novo, so hidrata o
+  // wizard com o order_id que ja existe, revalidado contra o backend (nunca
+  // confia no orderId da URL: get_cart_order_details/getPublicOrderSnapshotAction
+  // ja exigem orders.user_id = auth.uid()). Reaproveita a MESMA regra
+  // deterministica pix_code-presente->Pagamento / ausente->CartStep ja usada
+  // pra restaurar uma jornada via F5 -- edicao nao e um motor de checkout
+  // paralelo, e so outra forma de chegar no mesmo estado.
+  useEffect(() => {
+    if (!journeyId || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const editOrderId = params.get(EDIT_ORDER_PARAM);
+    if (!editOrderId) return;
+
+    void (async () => {
+      const fresh = await getPublicOrderSnapshotAction(editOrderId);
+      const payment = fresh.success ? fresh.snapshot.payment : null;
+      const editable = fresh.success && isOrderStillEditable({
+        orderStatus: fresh.snapshot.order_status,
+        paymentStatus: payment?.payment_status,
+        paymentExpiresAt: payment?.expires_at,
+      });
+
+      if (!editable) {
+        // Pedido pago/confirmado/cancelado/expirado, nao encontrado ou de
+        // outro usuario: nunca abre como carrinho editavel. Manda pro
+        // detalhe do pedido, que mostra "Este pedido nao pode mais ser
+        // alterado." (?cannotEdit=1) em vez de deixar o wizard preso aqui.
+        router.replace(`/minha-conta/compras/${editOrderId}?cannotEdit=1`);
+        return;
+      }
+
+      setEditModeOrderId(editOrderId);
+
+      const hasPixGenerated = Boolean(payment?.pix_code);
+      if (hasPixGenerated) {
+        setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
+        setCartOrder(null);
+      } else {
+        setCartOrder({ orderId: editOrderId });
+        setRegistration(null);
+      }
+      setMaxUnlockedStep((prev) => Math.max(prev, 3));
+      setStep(3);
+    })();
+    // mapOrderToRegistration nao entra nas deps pelo mesmo motivo do effect
+    // de hidratacao: nao e memoizada, so le closures como fallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journeyId, router]);
+
   // Retorna o array sincronizado (nao so grava no estado): quem chama e precisa
   // repassar o resultado ao pipeline de precificacao no mesmo instante (evitando
   // ler checkoutItems por closure, que ainda estaria desatualizado ate o proximo
@@ -705,12 +767,11 @@ export function RegistrationWizard({
         void (async () => {
           const fresh = await getPublicOrderSnapshotAction(persistedOrderId);
           const payment = fresh.success ? fresh.snapshot.payment : null;
-          const stillEditable = Boolean(
-            fresh.success
-            && fresh.snapshot.order_status === 'pending'
-            && payment?.payment_status === 'pending'
-            && (!payment?.expires_at || new Date(payment.expires_at).getTime() > Date.now()),
-          );
+          const stillEditable = fresh.success && isOrderStillEditable({
+            orderStatus: fresh.snapshot.order_status,
+            paymentStatus: payment?.payment_status,
+            paymentExpiresAt: payment?.expires_at,
+          });
 
           if (!stillEditable || !fresh.success) {
             sessionStorage.removeItem(storageKey);
@@ -890,7 +951,12 @@ export function RegistrationWizard({
     // "Pagamento" pulando toda validacao (handleChooseTicketNext so roda no
     // botao "Avancar" da propria Etapa 1). So valida ao AVANCAR (next >
     // step); indo pra tras o comprador sempre pode corrigir livremente.
-    if (next > step) {
+    // Em modo edicao (editModeOrderId), a Etapa 1 nunca e o fluxo de criacao
+    // -- checkoutItems nem representa os ingressos reais desta jornada (sao
+    // os do pedido existente, editados via EditTicketsStep/RPC propria).
+    // Validar contra checkoutItems aqui bloquearia a navegacao com erros que
+    // nao fazem sentido nesse modo.
+    if (next > step && !editModeOrderId) {
       const { errors: itemErrors, firstInvalidIndex } = validateCheckoutItems();
       if (itemErrors.length > 0) {
         setErrors(itemErrors);
@@ -1310,6 +1376,15 @@ export function RegistrationWizard({
 
   async function handleCreateAndContinuePayment() {
     if (submitting || submitLockRef.current) return;
+    // Guarda explicita (defesa em profundidade): em modo edicao a UI nunca
+    // deveria oferecer um caminho ate aqui (a tela de Revisao so renderiza
+    // quando nem cartOrder nem registration existem, e em edicao um dos dois
+    // ja esta setado desde o mount) -- mas nunca cria um pedido novo pros
+    // ingressos que estao sendo editados, mesmo que algo mude isso no futuro.
+    if (editModeOrderId) {
+      setErrors(['Este pedido já existe e está em edição — não é possível criar um novo.']);
+      return;
+    }
     submitLockRef.current = true;
     setSubmitting(true);
     setErrors([]);
@@ -1525,12 +1600,18 @@ export function RegistrationWizard({
     setJourneyId(nextJourneyId);
     const params = new URLSearchParams(window.location.search);
     params.set(CHECKOUT_JOURNEY_PARAM, nextJourneyId);
+    // editOrder precisa sumir da URL aqui -- sem isso, o effect de edicao
+    // (deps: [journeyId, router]) reagiria a troca de journeyId e re-
+    // hidrataria o MESMO pedido antigo de novo, anulando silenciosamente o
+    // "Nova inscricao" que acabou de rodar.
+    params.delete(EDIT_ORDER_PARAM);
     router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     setErrors([]);
     setLiveMessage('');
     setCourtesyMessage(null);
     setRegistration(null);
     setCartOrder(null);
+    setEditModeOrderId(null);
     setPricing(null);
     setForm(buildInitialForm(initialBuyer, categories, event));
     setCheckoutItems([createCheckoutItem(0, normalizePricingGenderInput(initialBuyer.gender))]);
@@ -1545,7 +1626,7 @@ export function RegistrationWizard({
   const progress = (stepShown / totalSteps) * 100;
   const visibleTotalSteps = totalSteps;
   const trail = [
-    { id: 1, label: 'Escolha seu ingresso' },
+    { id: 1, label: editModeOrderId ? 'Editar ingressos' : 'Escolha seu ingresso' },
     { id: 2, label: 'Seus dados' },
     { id: 3, label: 'Pagamento' },
     { id: 4, label: 'Concluído' },
@@ -1785,7 +1866,16 @@ export function RegistrationWizard({
               </div>
               )}
 
-            {step === 1 && (
+            {step === 1 && editModeOrderId && (
+              <EditTicketsStep
+                orderId={editModeOrderId}
+                inventory={inventory}
+                enforcePhysicalStock={enforcePhysicalStock}
+                onContinue={() => setStep(3)}
+              />
+            )}
+
+            {step === 1 && !editModeOrderId && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">1. Escolha seu ingresso</h2>
                 {categorySelectionRequired ? (
@@ -1995,7 +2085,7 @@ export function RegistrationWizard({
               </div>
             )}
 
-            {step === 1 && categoryChoiceReady && (
+            {step === 1 && !editModeOrderId && categoryChoiceReady && (
               <div className="space-y-4">
                 {/* Preco e lote em destaque: o comprador ve o que importa primeiro. */}
                 <div className="rounded-2xl border border-emerald-500/20 bg-slate-950 p-4">

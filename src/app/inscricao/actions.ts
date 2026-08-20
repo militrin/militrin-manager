@@ -2412,6 +2412,15 @@ export async function setCartOrderItemQuantityAction(orderId: string, orderItemI
   return getCartOrderDetailsAction(orderId);
 }
 
+export async function changePendingOrderItemShirtAction(orderId: string, orderItemId: string, shirtType: string, shirtSize: string) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('change_pending_order_item_shirt', {
+    p_order_id: orderId, p_order_item_id: orderItemId, p_shirt_type: shirtType, p_shirt_size: shirtSize,
+  });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return getCartOrderDetailsAction(orderId);
+}
+
 export async function applyCartCouponAction(orderId: string, couponCode: string | null) {
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc('apply_cart_coupon', { p_order_id: orderId, p_coupon_code: couponCode ?? '' });

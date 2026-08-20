@@ -17,14 +17,36 @@ export function isSoldOut(item: StoreItemForPurchase) {
     : item.availableQuantity !== null && item.availableQuantity <= 0;
 }
 
-export function QuantityStepper({ value, onChange }: { value: number; onChange: (next: number) => void }) {
+export function QuantityStepper({
+  value,
+  onChange,
+  max,
+  onExceedMax,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  /** Estoque conhecido; null/undefined = sem limite conhecido (por encomenda). */
+  max?: number | null;
+  /** Chamado ao clicar em "+" já no limite, em vez de silenciosamente nao fazer nada. */
+  onExceedMax?: () => void;
+}) {
+  const atMax = typeof max === 'number' && value >= max;
   return (
     <div className="flex h-8 items-center overflow-hidden rounded-lg border border-slate-700 bg-slate-950 text-xs text-slate-100">
       <button type="button" onClick={() => onChange(Math.max(1, value - 1))} className="flex h-full w-7 items-center justify-center text-slate-300 hover:bg-slate-800" aria-label="Diminuir quantidade">
         −
       </button>
       <span className="flex h-full w-8 items-center justify-center border-x border-slate-700">{value}</span>
-      <button type="button" onClick={() => onChange(value + 1)} className="flex h-full w-7 items-center justify-center text-slate-300 hover:bg-slate-800" aria-label="Aumentar quantidade">
+      <button
+        type="button"
+        onClick={() => (atMax ? onExceedMax?.() : onChange(value + 1))}
+        aria-disabled={atMax || undefined}
+        // Nao usa o atributo disabled: o clique continua sendo respondido pra
+        // avisar o motivo (onExceedMax), so o estilo fica desabilitado -- um
+        // botao inerte, sem nenhum feedback, e o que faz parecer quebrado.
+        className={`flex h-full w-7 items-center justify-center ${atMax ? 'cursor-not-allowed text-slate-600' : 'text-slate-300 hover:bg-slate-800'}`}
+        aria-label="Aumentar quantidade"
+      >
         +
       </button>
     </div>

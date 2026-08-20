@@ -10,6 +10,18 @@ export const SHIRT_SIZES = {
 export type ShirtType = (typeof SHIRT_TYPES)[number];
 export type ShirtSize = (typeof SHIRT_SIZES)[ShirtType][number];
 
+/** Rotulo de exibicao da camiseta; "Camiseta"/"Babylook" sao os valores
+ * canonicos gravados no banco (SHIRT_TYPES), aqui so viram um rotulo mais
+ * claro pro comprador -- nunca afeta o valor persistido/enviado ao backend.
+ * Compartilhado entre CartStep e a pagina de detalhe do pedido. */
+export function shirtDisplayLabel(shirtType: string | null | undefined): string | null {
+  if (!shirtType) return null;
+  const normalized = shirtType.trim().toLowerCase();
+  if (normalized === "camiseta") return "Camiseta Masculina";
+  if (normalized === "babylook") return "Babylook Feminina";
+  return shirtType;
+}
+
 export type ShirtInventorySourceRow = {
   id?: string | null | undefined;
   shirt_type: string | null | undefined;

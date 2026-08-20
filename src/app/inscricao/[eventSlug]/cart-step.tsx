@@ -12,6 +12,7 @@ import {
 } from "../actions";
 import { ProductImageGallery, type GalleryImage } from "@/components/store/product-image-gallery";
 import { QuantityStepper } from "@/components/store/store-item-controls";
+import { shirtDisplayLabel } from "@/lib/constants/shirts";
 
 type CartItem = {
   order_item_id: string;
@@ -66,21 +67,31 @@ function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-/** Rotulo de exibicao da camiseta; "Camiseta"/"Babylook" sao os valores
- * canonicos gravados no banco (SHIRT_TYPES), aqui so viram um rotulo mais
- * claro pro comprador -- nunca afeta o valor persistido/enviado ao backend. */
-function shirtDisplayLabel(shirtType: string | null) {
-  if (!shirtType) return null;
-  const normalized = shirtType.trim().toLowerCase();
-  if (normalized === "camiseta") return "Camiseta Masculina";
-  if (normalized === "babylook") return "Babylook Feminina";
-  return shirtType;
-}
-
 function isGroupUnavailable(variants: EligibleProduct[]) {
   const hasStockInfo = variants[0]?.available_quantity !== null;
   const anyAvailable = variants.some((v) => v.available_quantity === null || (v.available_quantity ?? 0) > 0);
   return hasStockInfo && !anyAvailable;
+}
+
+const EXCEEDED_STOCK_MESSAGE = "Você já adicionou todas as unidades disponíveis deste produto.";
+
+/** null = sem limite conhecido (por encomenda) -- nunca mostra aviso de urgencia. */
+function stockUrgencyLabel(availableQuantity: number | null): string | null {
+  if (availableQuantity === null) return null;
+  if (availableQuantity <= 0) return "Esgotado";
+  if (availableQuantity === 1) return "Última unidade disponível";
+  if (availableQuantity <= 3) return `Restam apenas ${availableQuantity} unidades`;
+  return null;
+}
+
+/** Cruza uma linha do carrinho com a mesma fonte canonica de estoque
+ * (list_store_items_for_event, ja carregada como `products` pro "Compre
+ * junto") pra saber o estoque atual do que ja esta no carrinho. */
+function findEligibleProductForCartItem(products: EligibleProduct[], item: CartItem): EligibleProduct | null {
+  return products.find((p) =>
+    p.store_item_id === item.store_item_id
+    && (p.variant_id ?? null) === (item.store_item_variant_id ?? null)
+  ) ?? null;
 }
 
 /** Clampa pra um inteiro >= 1 e, se houver limite de estoque conhecido, <= max. */
@@ -107,6 +118,12 @@ function ProductCard({
   const [quantity, setQuantity] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // So mostra urgencia por estoque pro card inteiro quando o produto NAO tem
+  // variantes: com variante, cada opcao pode ter estoque diferente -- essa
+  // granularidade aparece no modal, por variante, nao aqui.
+  const cardAvailableQuantity = base.requires_variant ? null : base.available_quantity;
+  const urgencyLabel = stockUrgencyLabel(cardAvailableQuantity);
 
   async function handleAddClick() {
     if (base.requires_variant) {
@@ -140,7 +157,11 @@ function ProductCard({
           <p className="text-sm font-medium text-slate-100">{base.name}</p>
           <p className="text-xs text-slate-400">{money(Number(base.price))}</p>
           {base.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-500">{base.description}</p> : null}
-          {outOfStock ? <p className="mt-1 text-xs font-medium text-rose-400">Sem estoque</p> : null}
+          {outOfStock ? (
+            <p className="mt-1 text-xs font-medium text-rose-400">Esgotado</p>
+          ) : urgencyLabel ? (
+            <p className={`mt-1 text-xs font-medium ${cardAvailableQuantity === 1 ? "text-rose-400" : "text-amber-400"}`}>{urgencyLabel}</p>
+          ) : null}
         </div>
       </div>
 
@@ -148,7 +169,9 @@ function ProductCard({
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <QuantityStepper
             value={quantity}
-            onChange={(next) => setQuantity(clampQuantity(next, base.requires_variant ? null : base.available_quantity))}
+            max={cardAvailableQuantity}
+            onChange={(next) => setQuantity(clampQuantity(next, cardAvailableQuantity))}
+            onExceedMax={() => setError(EXCEEDED_STOCK_MESSAGE)}
           />
           <button
             type="button"
@@ -237,6 +260,11 @@ function ProductDetailModal({
         <div className="mt-4 space-y-1">
           <p className="text-lg font-semibold text-slate-100">{base.name}</p>
           <p className="text-base text-emerald-300">{money(Number(base.price))}</p>
+          {stockUrgencyLabel(availableQuantity) ? (
+            <p className={`text-xs font-medium ${availableQuantity === 1 ? "text-rose-400" : "text-amber-400"}`}>
+              {stockUrgencyLabel(availableQuantity)}
+            </p>
+          ) : null}
           {base.description ? <p className="text-sm text-slate-400">{base.description}</p> : null}
         </div>
 
@@ -274,7 +302,12 @@ function ProductDetailModal({
         {!unavailable ? (
           <div className="mt-4">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Quantidade</p>
-            <QuantityStepper value={quantity} onChange={(next) => setQuantity(clampQuantity(next, availableQuantity))} />
+            <QuantityStepper
+              value={quantity}
+              max={availableQuantity}
+              onChange={(next) => setQuantity(clampQuantity(next, availableQuantity))}
+              onExceedMax={() => setError(EXCEEDED_STOCK_MESSAGE)}
+            />
           </div>
         ) : null}
 
@@ -445,7 +478,16 @@ export function CartStep({
         ) : null}
         {productItems.length > 0 ? (
           <div className={`space-y-2 ${ticketItems.length > 0 ? "border-t border-slate-800/70 pt-3" : ""}`}>
-            {productItems.map((item) => (
+            {productItems.map((item) => {
+              const matchedProduct = findEligibleProductForCartItem(products, item);
+              const availableQuantity = matchedProduct?.available_quantity ?? null;
+              // Quanto ainda cabe nesta linha: o que ja esta reservado aqui
+              // (item.quantity) + o que ainda esta livre no estoque global
+              // (available_quantity ja exclui a propria reserva desta linha,
+              // conferido em list_store_items_for_event).
+              const maxSettable = availableQuantity === null ? null : item.quantity + availableQuantity;
+              const urgencyLabel = stockUrgencyLabel(availableQuantity);
+              return (
               <div key={item.order_item_id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/50 p-2">
                 {item.store_item_image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -458,8 +500,16 @@ export function CartStep({
                     {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ""}
                   </p>
                   <p className="text-xs text-slate-400">{item.quantity}x {money(item.unit_price)}</p>
+                  {urgencyLabel ? (
+                    <p className={`text-[11px] font-medium ${availableQuantity === 1 ? "text-rose-400" : "text-amber-400"}`}>{urgencyLabel}</p>
+                  ) : null}
                 </div>
-                <QuantityStepper value={item.quantity} onChange={(next) => void handleSetQuantity(item, next)} />
+                <QuantityStepper
+                  value={item.quantity}
+                  max={maxSettable}
+                  onChange={(next) => void handleSetQuantity(item, next)}
+                  onExceedMax={() => setMessage({ type: "error", text: EXCEEDED_STOCK_MESSAGE })}
+                />
                 <span className="w-24 shrink-0 text-right text-sm font-semibold text-slate-100">
                   <span className="block">{money(item.unit_price * item.quantity)}</span>
                   {item.discount_amount > 0 ? <span className="block text-xs font-normal text-emerald-300">-{money(item.discount_amount)}</span> : null}
@@ -473,7 +523,8 @@ export function CartStep({
                   Remover
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </div>
