@@ -331,11 +331,19 @@ export function CartStep({
   eventId,
   paymentMethod,
   onContinue,
+  onEditTicket,
 }: {
   orderId: string;
   eventId: string;
   paymentMethod: string;
   onContinue: (order: unknown) => void;
+  /** Presente somente em modo edicao de pedido (?editOrder=) -- clicar num
+   * card de ingresso navega direto pra Etapa 1 com aquele ingresso em
+   * evidencia (order_item_id, nunca indice visual). Ausente no fluxo normal
+   * de criacao: nesse caso a Etapa 1 nem representa os ingressos deste
+   * pedido (ver comentario de editModeOrderId em wizard.tsx), entao os
+   * cards ficam nao-clicaveis. */
+  onEditTicket?: (orderItemId: string) => void;
 }) {
   const [cart, setCart] = useState<CartDetails | null>(null);
   const [products, setProducts] = useState<EligibleProduct[]>([]);
@@ -447,10 +455,23 @@ export function CartStep({
           <div className="space-y-2">
             {ticketItems.map((item) => {
               const shirtLabel = shirtDisplayLabel(item.shirt_type);
+              const editable = Boolean(onEditTicket);
               return (
                 <div
                   key={item.order_item_id}
-                  className="flex items-start justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/40 px-3 py-3"
+                  role={editable ? "button" : undefined}
+                  tabIndex={editable ? 0 : undefined}
+                  onClick={editable ? () => onEditTicket?.(item.order_item_id) : undefined}
+                  onKeyDown={editable ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onEditTicket?.(item.order_item_id);
+                    }
+                  } : undefined}
+                  aria-label={editable ? `Editar ingresso${item.category_name ? ` · ${item.category_name}` : ""}` : undefined}
+                  className={`flex items-start justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/40 px-3 py-3 ${
+                    editable ? "cursor-pointer transition hover:border-emerald-500/50 hover:bg-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60" : ""
+                  }`}
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-100">
@@ -464,6 +485,9 @@ export function CartStep({
                     <p className="mt-1 text-[11px] text-slate-500 break-words">
                       {item.holder_full_name ? `Titular: ${item.holder_full_name}` : "Titular ainda não definido"}
                     </p>
+                    {editable ? (
+                      <p className="mt-1 text-[11px] font-medium text-emerald-300 underline underline-offset-2">Editar</p>
+                    ) : null}
                   </div>
                   <div className="shrink-0 text-right">
                     <p className="text-sm font-semibold text-slate-100">{money(item.unit_price)}</p>

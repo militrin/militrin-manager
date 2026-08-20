@@ -10,16 +10,20 @@ export const SHIRT_SIZES = {
 export type ShirtType = (typeof SHIRT_TYPES)[number];
 export type ShirtSize = (typeof SHIRT_SIZES)[ShirtType][number];
 
-/** Rotulo de exibicao da camiseta; "Camiseta"/"Babylook" sao os valores
- * canonicos gravados no banco (SHIRT_TYPES), aqui so viram um rotulo mais
- * claro pro comprador -- nunca afeta o valor persistido/enviado ao backend.
- * Compartilhado entre CartStep e a pagina de detalhe do pedido. */
+/** Rotulo de exibicao do TIPO/MODELO da camiseta -- "Camiseta"/"Babylook" sao
+ * os valores canonicos gravados no banco (SHIRT_TYPES) e sao devolvidos
+ * literalmente (so trim), nunca com genero embutido ("Masculina"/"Feminina"
+ * apendado). Tipo de peca e genero de precificacao sao conceitos
+ * independentes neste schema (ver order_items.pricing_gender, coluna propria
+ * -- migration 20260846000000): uma Babylook pode pertencer a um ingresso
+ * masculino e vice-versa, entao inferir genero a partir do nome do tipo aqui
+ * seria uma inferencia silenciosa incorreta. Se a UI precisar mostrar genero,
+ * deve ler pricing_gender explicitamente, nunca derivar deste rotulo.
+ * Compartilhado entre CartStep, EditTicketsStep e a pagina de detalhe do
+ * pedido. */
 export function shirtDisplayLabel(shirtType: string | null | undefined): string | null {
   if (!shirtType) return null;
-  const normalized = shirtType.trim().toLowerCase();
-  if (normalized === "camiseta") return "Camiseta Masculina";
-  if (normalized === "babylook") return "Babylook Feminina";
-  return shirtType;
+  return shirtType.trim() || null;
 }
 
 export type ShirtInventorySourceRow = {

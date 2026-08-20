@@ -273,6 +273,12 @@ type KitSelectionsState = {
 const STORAGE_VERSION = 'v5';
 const CHECKOUT_JOURNEY_PARAM = 'checkout';
 const EDIT_ORDER_PARAM = 'editOrder';
+// Ingresso especifico a focar dentro da Etapa 1 em modo edicao -- identidade
+// SEMPRE order_item_id (nunca indice visual: a mesma regra ja usada por
+// change_pending_order_item_shirt). Preenchido quando o comprador clica no
+// card de um ingresso no carrinho (CartStep) e quer editar aquele item
+// especifico sem precisar procura-lo entre os demais.
+const EDIT_TICKET_ITEM_PARAM = 'editTicketItem';
 
 function paymentMethodLabel(method: CheckoutPaymentMethod) {
   if (method === 'credit_card_single') return 'Credito a vista';
@@ -409,6 +415,11 @@ export function RegistrationWizard({
   // de criacao, e goTo()/handleCreateAndContinuePayment nunca tentam criar
   // um pedido novo.
   const [editModeOrderId, setEditModeOrderId] = useState<string | null>(null);
+  // Ingresso em evidencia dentro da Etapa 1 quando editModeOrderId esta
+  // ativo -- espelha ?editTicketItem=<order_item_id> na URL (ver
+  // EDIT_TICKET_ITEM_PARAM). null = nenhum foco especifico (Etapa 1 mostra
+  // todos os ingressos igualmente, comportamento anterior).
+  const [editFocusItemId, setEditFocusItemId] = useState<string | null>(null);
   const [shirtType, setShirtType] = useState('');
   const [shirtSize, setShirtSize] = useState('');
   const [kitSelections, setKitSelections] = useState<KitSelectionsState>({
@@ -586,6 +597,12 @@ export function RegistrationWizard({
     const params = new URLSearchParams(window.location.search);
     const editOrderId = params.get(EDIT_ORDER_PARAM);
     if (!editOrderId) return;
+    // Lido junto com editOrderId (mesma URL, mesmo carregamento) -- se um
+    // link externo (ou o proprio handleEditTicketItem, via router.replace)
+    // ja aponta pro ingresso especifico, pousa direto na Etapa 1 com aquele
+    // card em evidencia em vez do Carrinho (Etapa 3), que e o destino padrao
+    // sem esse param.
+    const editTicketItemId = params.get(EDIT_TICKET_ITEM_PARAM);
 
     void (async () => {
       const fresh = await getPublicOrderSnapshotAction(editOrderId);
@@ -616,7 +633,12 @@ export function RegistrationWizard({
         setRegistration(null);
       }
       setMaxUnlockedStep((prev) => Math.max(prev, 3));
-      setStep(3);
+      if (editTicketItemId) {
+        setEditFocusItemId(editTicketItemId);
+        setStep(1);
+      } else {
+        setStep(3);
+      }
     })();
     // mapOrderToRegistration nao entra nas deps pelo mesmo motivo do effect
     // de hidratacao: nao e memoizada, so le closures como fallback.
@@ -672,6 +694,30 @@ export function RegistrationWizard({
     // storageKey so existe depois que journeyId e resolvido (ver effect de
     // mount acima) -- nada pra restaurar antes disso.
     if (!storageKey) return;
+
+    // Causa raiz do bug "Etapa 1 focada volta sozinha pro Carrinho": este
+    // effect existe pra restaurar uma jornada de CRIACAO (pre-pedido) via
+    // sessionStorage apos um F5 -- mas suas deps incluem syncItemCount, cuja
+    // IDENTIDADE muda quando buyerAlreadyHoldsActiveTicket resolve de null
+    // pra true/false (effect separado, assincrono, ver useCallback de
+    // syncItemCount). Isso faz o React re-executar ESTE effect uma segunda
+    // vez depois do mount -- momento em que sessionStorage ja tem
+    // cartOrderId persistido (o effect de escrita, mais abaixo, roda a cada
+    // mudanca de estado) porque o comprador ja esta em modo edicao havia
+    // alguns segundos. A segunda execucao entao disparava
+    // getPublicOrderSnapshotAction de novo e, ao resolver (por isso o atraso
+    // perceptivel, sem nenhuma acao do usuario), chamava setStep(3)
+    // incondicionalmente -- sobrescrevendo o setStep(1) que
+    // handleEditTicketItem tinha acabado de fazer ao focar um ingresso.
+    //
+    // Em modo edicao (?editOrder= na URL) quem decide step/cartOrder/
+    // registration e SEMPRE o effect dedicado logo abaixo (que ja respeita
+    // ?editTicketItem=) -- nunca este. Le a URL diretamente (nao o estado
+    // editModeOrderId: esse so e setado assincronamente por aquele outro
+    // effect e ainda pode estar null na primeira renderizacao depois de um
+    // F5, quando este effect tambem roda) pra bloquear esta restauracao
+    // generica em QUALQUER execucao, nao so a primeira.
+    if (new URLSearchParams(window.location.search).get(EDIT_ORDER_PARAM)) return;
 
     // A chave ja carrega o journeyId (militrin:wizard:{eventId}:{journeyId}:v5):
     // so existe conteudo aqui se ESTA MESMA jornada (mesma URL/mesmo uuid em
@@ -944,6 +990,15 @@ export function RegistrationWizard({
     const next = Math.min(totalSteps, Math.max(1, target));
     if (next > maxUnlockedStep) return;
 
+    // Navegacao generica (trail, Avancar/Voltar) nunca deve carregar um foco
+    // de ingresso de uma interacao anterior -- so handleEditTicketItem, que
+    // seta o foco e chama setStep diretamente (nunca goTo), representa uma
+    // intencao explicita de focar um ingresso especifico.
+    if (editFocusItemId) {
+      setEditFocusItemId(null);
+      setEditTicketItemUrlParam(null);
+    }
+
     // Bug: a navegacao por abas (trail) so checava maxUnlockedStep, nunca
     // revalidava checkoutItems -- uma vez que a Etapa 3 (Revisao) ja tinha
     // sido desbloqueada uma vez, dava pra voltar pra Etapa 1, mudar
@@ -975,6 +1030,41 @@ export function RegistrationWizard({
     setMaxUnlockedStep((prev) => Math.max(prev, normalized));
     setStep(normalized);
     setErrors([]);
+  }
+
+  // Escreve/remove ?editTicketItem=<order_item_id> na URL sem empurrar
+  // entrada de historico (mesmo padrao de router.replace ja usado por
+  // journeyId/editOrder) -- garante que um F5 dentro da Etapa 1 focada
+  // reabra no MESMO ingresso, sem depender do sessionStorage.
+  function setEditTicketItemUrlParam(orderItemId: string | null) {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (orderItemId) params.set(EDIT_TICKET_ITEM_PARAM, orderItemId);
+    else params.delete(EDIT_TICKET_ITEM_PARAM);
+    router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+  }
+
+  // Chamado pelo clique num card de ingresso do CartStep (Etapa 3): navega
+  // pra Etapa 1 (EditTicketsStep, ja que editModeOrderId esta ativo nesse
+  // fluxo) com o ingresso clicado em evidencia -- por order_item_id, nunca
+  // indice visual. Nao perde os demais ingressos, so ajuda a localizar este.
+  function handleEditTicketItem(orderItemId: string) {
+    // Nunca via goTo(1): goTo() limpa qualquer foco pendente por representar
+    // navegacao generica (ver comentario la) -- aqui a intencao e
+    // exatamente o oposto, focar ESTE ingresso especifico.
+    setEditFocusItemId(orderItemId);
+    setEditTicketItemUrlParam(orderItemId);
+    setStep(1);
+    setErrors([]);
+  }
+
+  // "Voltar ao carrinho" da Etapa 1 em modo edicao: volta pra Etapa 3 e
+  // limpa o foco (URL + estado), pra uma proxima entrada na Etapa 1 (aba do
+  // trail, por exemplo) mostrar todos os ingressos sem highlight residual.
+  function handleReturnToCartFromEdit() {
+    setEditFocusItemId(null);
+    setEditTicketItemUrlParam(null);
+    setStep(3);
   }
 
   function canBack() {
@@ -1605,6 +1695,7 @@ export function RegistrationWizard({
     // hidrataria o MESMO pedido antigo de novo, anulando silenciosamente o
     // "Nova inscricao" que acabou de rodar.
     params.delete(EDIT_ORDER_PARAM);
+    params.delete(EDIT_TICKET_ITEM_PARAM);
     router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     setErrors([]);
     setLiveMessage('');
@@ -1612,6 +1703,7 @@ export function RegistrationWizard({
     setRegistration(null);
     setCartOrder(null);
     setEditModeOrderId(null);
+    setEditFocusItemId(null);
     setPricing(null);
     setForm(buildInitialForm(initialBuyer, categories, event));
     setCheckoutItems([createCheckoutItem(0, normalizePricingGenderInput(initialBuyer.gender))]);
@@ -1871,7 +1963,8 @@ export function RegistrationWizard({
                 orderId={editModeOrderId}
                 inventory={inventory}
                 enforcePhysicalStock={enforcePhysicalStock}
-                onContinue={() => setStep(3)}
+                focusItemId={editFocusItemId}
+                onContinue={handleReturnToCartFromEdit}
               />
             )}
 
@@ -2499,6 +2592,7 @@ export function RegistrationWizard({
                 eventId={event.id}
                 paymentMethod={form.payment_method}
                 onContinue={(order) => void handleCartFinalized(order as OrderSnapshotPayload)}
+                onEditTicket={editModeOrderId ? handleEditTicketItem : undefined}
               />
             )}
 

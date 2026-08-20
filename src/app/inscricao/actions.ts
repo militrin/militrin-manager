@@ -2421,6 +2421,20 @@ export async function changePendingOrderItemShirtAction(orderId: string, orderIt
   return getCartOrderDetailsAction(orderId);
 }
 
+// Genero de precificacao e independente de shirt_type/shirt_size (RPC
+// propria, change_pending_order_item_gender -- migration 20260846000000):
+// muda unit_price/discount_amount/final_amount do item e recalcula o
+// pedido inteiro via apply_cart_coupon, o que change_pending_order_item_shirt
+// nunca faz.
+export async function changePendingOrderItemGenderAction(orderId: string, orderItemId: string, gender: 'male' | 'female') {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc('change_pending_order_item_gender', {
+    p_order_id: orderId, p_order_item_id: orderItemId, p_gender: gender,
+  });
+  if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  return getCartOrderDetailsAction(orderId);
+}
+
 export async function applyCartCouponAction(orderId: string, couponCode: string | null) {
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc('apply_cart_coupon', { p_order_id: orderId, p_coupon_code: couponCode ?? '' });
