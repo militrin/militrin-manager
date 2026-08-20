@@ -268,7 +268,8 @@ type KitSelectionsState = {
   shirtSize: string;
 };
 
-const STORAGE_VERSION = 'v4';
+const STORAGE_VERSION = 'v5';
+const CHECKOUT_JOURNEY_PARAM = 'checkout';
 
 function paymentMethodLabel(method: CheckoutPaymentMethod) {
   if (method === 'credit_card_single') return 'Credito a vista';
@@ -380,6 +381,16 @@ export function RegistrationWizard({
   const canSimulatePayment = process.env.NODE_ENV === 'development';
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // Identidade explicita da jornada de checkout -- nunca o order_id (a
+  // jornada existe ANTES do pedido ser criado, nas Etapas 1-2). Comeca vazia
+  // nos dois lados (SSR nunca tem window/URL do browser; hidratacao do
+  // client tambem comeca vazia de proposito, pra nao divergir do HTML do
+  // servidor) e e resolvida em um effect de mount: le ?checkout=<uuid> da
+  // URL se existir (F5 ou retorno dentro da MESMA jornada, que carrega essa
+  // URL de volta), ou gera um crypto.randomUUID() novo e grava na URL via
+  // router.replace (sem empurrar entrada no historico). Ver storageKey logo
+  // abaixo -- so passa a existir depois que journeyId esta resolvido.
+  const [journeyId, setJourneyId] = useState('');
   const [step, setStep] = useState(1);
   const [maxUnlockedStep, setMaxUnlockedStep] = useState(1);
   const [liveMessage, setLiveMessage] = useState('');
@@ -400,6 +411,9 @@ export function RegistrationWizard({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
   const submitLockRef = useRef(false);
+  // Um ref por indice de ingresso (Etapa 1), pra rolar/focar o primeiro card
+  // incompleto quando a validacao por item bloquear o avanco.
+  const ticketItemRefs = useRef<Array<HTMLDivElement | null>>([]);
   const [checkoutItems, setCheckoutItems] = useState<CheckoutItemConfig[]>([
     createCheckoutItem(0, normalizePricingGenderInput(initialBuyer.gender)),
   ]);
@@ -486,12 +500,66 @@ export function RegistrationWizard({
 
   const activeCheckoutItems = useMemo(() => checkoutItems.slice(0, form.quantity), [checkoutItems, form.quantity]);
 
-  const storageKey = useMemo(() => `militrin:wizard:${event.id}:${STORAGE_VERSION}`, [event.id]);
+  // Vazio ate o effect de mount resolver journeyId -- os effects de
+  // hidratacao/persistencia do sessionStorage (abaixo) ficam parados
+  // enquanto isso (storageKey === ''), entao nada e lido/escrito com uma
+  // chave que ainda nao representa a jornada real.
+  const storageKey = useMemo(
+    () => (journeyId ? `militrin:wizard:${event.id}:${journeyId}:${STORAGE_VERSION}` : ''),
+    [event.id, journeyId],
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.sessionStorage.setItem('militrin:last-wizard-next', `/inscricao/${event.slug}`);
   }, [event.slug]);
+
+  // Resolve a identidade da jornada uma unica vez por montagem. So roda no
+  // client (window so existe ai) -- por isso journeyId comeca vazio tanto no
+  // SSR quanto na primeira renderizacao de hidratacao, evitando qualquer
+  // divergencia entre o HTML do servidor e o do client (journeyId nunca e
+  // renderizado em texto visivel, entao mesmo a troca de '' pro uuid real
+  // logo depois da hidratacao nao produz warning).
+  //
+  // ?checkout=<uuid> na URL = "continue esta jornada especifica": chega
+  // assim depois do proprio router.replace abaixo (F5 recarrega a MESMA URL,
+  // com o mesmo uuid) -- nunca clicando em "Comprar ingresso"/"Nova
+  // inscricao" de novo, cujos links apontam pra /inscricao/[eventSlug] sem
+  // nenhum query param. Sem o param, gera um uuid novo (crypto.randomUUID(),
+  // API do browser -- nunca o order_id, que ainda nem existe nas Etapas 1-2)
+  // e grava na URL com router.replace (nao push: nao queremos uma entrada de
+  // historico so pra isso), pra sobreviver a um F5 seguinte.
+  //
+  // Roda so uma vez (deps: so router, identidade estavel) -- o proprio
+  // router.replace muda a query string mas NAO desmonta este client
+  // component (mesma rota, so a URL), entao o effect nao re-executa e nao ha
+  // risco de gerar um segundo uuid por engano.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // setState adiado pra macrotask (mesmo padrao ja usado no effect de
+    // hidratacao logo abaixo): setState sincrono direto no corpo do effect
+    // aciona o lint react-hooks/set-state-in-effect (cascading render).
+    window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const fromUrl = params.get(CHECKOUT_JOURNEY_PARAM);
+      if (fromUrl) {
+        setJourneyId(fromUrl);
+        return;
+      }
+
+      const generated = crypto.randomUUID();
+      setJourneyId(generated);
+      params.set(CHECKOUT_JOURNEY_PARAM, generated);
+      router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+
+      // Chave antiga (militrin:wizard:{eventId}:v4, sem journeyId) nunca deve
+      // ser restaurada como se fosse a jornada nova -- so remove, de forma
+      // conservadora (nunca migra o conteudo pra jornada nova: seria o mesmo
+      // anti-padrao que este ajuste esta corrigindo).
+      window.sessionStorage.removeItem(`militrin:wizard:${event.id}:v4`);
+    }, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
 
   // Retorna o array sincronizado (nao so grava no estado): quem chama e precisa
   // repassar o resultado ao pipeline de precificacao no mesmo instante (evitando
@@ -539,8 +607,26 @@ export function RegistrationWizard({
   }, [event.id]);
 
   useEffect(() => {
+    // storageKey so existe depois que journeyId e resolvido (ver effect de
+    // mount acima) -- nada pra restaurar antes disso.
+    if (!storageKey) return;
+
+    // A chave ja carrega o journeyId (militrin:wizard:{eventId}:{journeyId}:v5):
+    // so existe conteudo aqui se ESTA MESMA jornada (mesma URL/mesmo uuid em
+    // ?checkout=) ja escreveu algo antes -- ou seja, um F5 na mesma pagina.
+    // "Comprar ingresso"/"Nova inscricao" sempre levam a uma URL sem
+    // ?checkout=, o effect de mount gera um journeyId novo, e a chave
+    // resultante e outra -- sessionStorage.getItem simplesmente nao encontra
+    // nada, sem precisar de nenhum sinal adicional (tempo, tipo de
+    // navegacao, etc.) pra decidir isso. Retomar um pedido pendente de
+    // verdade continua possivel, so nao mais por aqui: os botoes "Continuar
+    // pagamento" (Minha Conta/Compras, Minha Conta/Ingressos) levam a
+    // /minha-conta/compras/[orderId], pagina dedicada que le o pedido direto
+    // do banco por id, sem depender deste sessionStorage nem passar pelo
+    // wizard.
     const persisted = sessionStorage.getItem(storageKey);
     if (!persisted) return;
+
     try {
       const parsed = JSON.parse(persisted) as {
         step: number;
@@ -552,6 +638,7 @@ export function RegistrationWizard({
         checkoutItems?: CheckoutItemConfig[];
         pricing: PricingState | null;
         registration: RegistrationSnapshot | null;
+        cartOrderId?: string | null;
         categoryConfigurationKey?: string;
       };
       window.setTimeout(() => {
@@ -575,7 +662,16 @@ export function RegistrationWizard({
         setShirtSize(restoredShirtSize);
         setKitSelections(parsed.kitSelections ?? { shirtType: restoredShirtType, shirtSize: restoredShirtSize });
 
-        const persistedOrderId = parsed.registration?.order_id || null;
+        // registration.order_id (pedido ja finalizado, na tela de pagamento)
+        // e cartOrderId (pedido criado mas ainda sendo editado dentro do
+        // CartStep -- produto/cupom adicionados, "Continuar para pagamento"
+        // ainda nao clicado) sao os dois ponteiros possiveis pra um pedido
+        // real desta jornada. Faltava persistir o segundo: cartOrder nunca
+        // entrava neste blob, entao um F5 dentro do CartStep perdia a unica
+        // referencia ao order_id e caia no branch "!registration && !cartOrder"
+        // (tela de Revisao, pre-pedido) -- os produtos nunca sumiam do
+        // PEDIDO, so a UI esquecia qual pedido reabrir.
+        const persistedOrderId = parsed.registration?.order_id || parsed.cartOrderId || null;
 
         if (!persistedOrderId) {
           // Nenhum pedido foi criado na sessao anterior (comprador ainda
@@ -599,6 +695,13 @@ export function RegistrationWizard({
         // qualquer outro caso (pago, confirmado, cancelado, expirado, nao
         // encontrado ou sem acesso) descarta o cache e comeca um contexto
         // novo, exatamente como uma nova compra deve comecar.
+        //
+        // get_cart_order_details (via getPublicOrderSnapshotAction) e a
+        // MESMA fonte que o CartStep e a tela de Pagamento ja usam pra ler
+        // produtos/quantidade/cupom/desconto/total -- nao reconstruimos nada
+        // disso aqui a partir de checkoutItems/estado pre-pedido; so
+        // decidimos qual COMPONENTE reabrir, e cada um busca o que precisa
+        // sozinho assim que recebe o orderId certo.
         void (async () => {
           const fresh = await getPublicOrderSnapshotAction(persistedOrderId);
           const payment = fresh.success ? fresh.snapshot.payment : null;
@@ -614,9 +717,28 @@ export function RegistrationWizard({
             return;
           }
 
-          setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
-          if (parsed.step) setStep(Math.min(totalSteps, Math.max(1, parsed.step)));
-          if (parsed.maxUnlockedStep) setMaxUnlockedStep(Math.min(totalSteps, Math.max(1, parsed.maxUnlockedStep)));
+          // Regra deterministica entre estado salvo x status do pedido x
+          // status do pagamento: o step/registration salvos no browser NUNCA
+          // decidem sozinhos. payment.pix_code so existe depois que
+          // finalize_cart_order_payment + generatePublicOrderPixAction
+          // rodaram (handleCartFinalized) -- ou seja, so depois que o
+          // comprador realmente saiu do CartStep e avancou pro pagamento.
+          // Sem PIX gerado, o pedido pode ate ja ter sido "finalizado" no
+          // banco (raro: finalize rodou mas a chamada de PIX falhou/nao
+          // completou) -- reabrir no CartStep e seguro mesmo nesse caso,
+          // porque finalize_cart_order_payment e idempotente pra pedido
+          // ainda pending (reafirma os mesmos valores) se o comprador clicar
+          // "Continuar para pagamento" de novo.
+          const hasPixGenerated = Boolean(payment?.pix_code);
+          if (hasPixGenerated) {
+            setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
+            setCartOrder(null);
+          } else {
+            setCartOrder({ orderId: persistedOrderId });
+            setRegistration(null);
+          }
+          setStep(3);
+          setMaxUnlockedStep((prev) => Math.max(prev, 3));
         })();
       }, 0);
     } catch {
@@ -631,6 +753,10 @@ export function RegistrationWizard({
   }, [activeCategories, categoryConfigurationKey, event, storageKey, syncItemCount, totalSteps]);
 
   useEffect(() => {
+    // Nao grava nada sob uma chave vazia enquanto journeyId ainda nao foi
+    // resolvido (ver effect de mount) -- evitaria uma entrada orfa sob
+    // "militrin:wizard:{eventId}::v5".
+    if (!storageKey) return;
     sessionStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -643,10 +769,11 @@ export function RegistrationWizard({
         checkoutItems,
         pricing,
         registration,
+        cartOrderId: cartOrder?.orderId ?? null,
         categoryConfigurationKey,
       }),
     );
-  }, [categoryConfigurationKey, form, shirtType, shirtSize, kitSelections, checkoutItems, pricing, registration, step, maxUnlockedStep, storageKey]);
+  }, [categoryConfigurationKey, form, shirtType, shirtSize, kitSelections, checkoutItems, pricing, registration, cartOrder, step, maxUnlockedStep, storageKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -755,6 +882,24 @@ export function RegistrationWizard({
   function goTo(target: number) {
     const next = Math.min(totalSteps, Math.max(1, target));
     if (next > maxUnlockedStep) return;
+
+    // Bug: a navegacao por abas (trail) so checava maxUnlockedStep, nunca
+    // revalidava checkoutItems -- uma vez que a Etapa 3 (Revisao) ja tinha
+    // sido desbloqueada uma vez, dava pra voltar pra Etapa 1, mudar
+    // quantidade/apagar camiseta de um ingresso, e clicar direto na aba
+    // "Pagamento" pulando toda validacao (handleChooseTicketNext so roda no
+    // botao "Avancar" da propria Etapa 1). So valida ao AVANCAR (next >
+    // step); indo pra tras o comprador sempre pode corrigir livremente.
+    if (next > step) {
+      const { errors: itemErrors, firstInvalidIndex } = validateCheckoutItems();
+      if (itemErrors.length > 0) {
+        setErrors(itemErrors);
+        setStep(1);
+        focusFirstInvalidTicketItem(firstInvalidIndex);
+        return;
+      }
+    }
+
     setStep(next);
     setErrors([]);
   }
@@ -981,9 +1126,16 @@ export function RegistrationWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveCategoryId, categoryChoiceReady]);
 
+  // Roda a validacao por item de forma SINCRONA (nunca dentro do updater do
+  // setCheckoutItems -- calcular ali dependeria de quando/se React decide
+  // chamar essa funcao, e o chamador precisa do indice do primeiro ingresso
+  // invalido na hora, pra rolar/focar nele). setCheckoutItems so recebe o
+  // array ja calculado, so pra persistir validationErrors/visualStatus por
+  // item na UI.
   function validateCheckoutItems() {
     const visibleItems = checkoutItems.slice(0, form.quantity);
     const allErrors: string[] = [];
+    let firstInvalidIndex: number | null = null;
 
     const stockDemand = new Map<string, number>();
     visibleItems.forEach((item) => {
@@ -1002,44 +1154,61 @@ export function RegistrationWizard({
       });
     }
 
-    setCheckoutItems((prev) =>
-      prev.map((item, index) => {
-        if (index >= form.quantity) return item;
+    const nextItems: CheckoutItemConfig[] = checkoutItems.map((item, index) => {
+      if (index >= form.quantity) return item;
 
-        const itemErrors: string[] = [];
-        // Um preco que falhou ao calcular nunca pode ser tratado como R$ 0,00:
-        // bloqueia o avanco ate que a precificacao seja recalculada com sucesso.
-        if (item.pricingError) itemErrors.push(item.pricingError);
-        if (shouldShowItemConfiguration && !item.pricingGender) itemErrors.push('Selecione genero.');
-        if (shouldShowItemConfiguration && item.ownershipMode === 'named' && !item.holder_full_name.trim()) itemErrors.push('Informe o titular.');
-        if (shouldShowItemConfiguration && hasRequiredShirt) {
-          if (!item.shirtType) itemErrors.push('Selecione modelo da camiseta.');
-          if (!item.shirtSize) itemErrors.push('Selecione tamanho da camiseta.');
-        }
+      const itemErrors: string[] = [];
+      // Um preco que falhou ao calcular nunca pode ser tratado como R$ 0,00:
+      // bloqueia o avanco ate que a precificacao seja recalculada com sucesso.
+      if (item.pricingError) itemErrors.push(item.pricingError);
+      if (shouldShowItemConfiguration && !item.pricingGender) itemErrors.push('Selecione genero.');
+      if (shouldShowItemConfiguration && item.ownershipMode === 'named' && !item.holder_full_name.trim()) itemErrors.push('Informe o titular.');
+      if (shouldShowItemConfiguration && hasRequiredShirt) {
+        if (!item.shirtType) itemErrors.push('Selecione modelo da camiseta.');
+        if (!item.shirtSize) itemErrors.push('Selecione tamanho da camiseta.');
+      }
 
-        const stockKey = `${item.shirtType}::${item.shirtSize}`;
-        if (item.shirtType && item.shirtSize && outOfStockKeys.has(stockKey)) {
-          itemErrors.push('Nao ha unidades suficientes deste tamanho para todos os ingressos selecionados.');
-        }
+      const stockKey = `${item.shirtType}::${item.shirtSize}`;
+      if (item.shirtType && item.shirtSize && outOfStockKeys.has(stockKey)) {
+        itemErrors.push('Nao ha unidades suficientes deste tamanho para todos os ingressos selecionados.');
+      }
 
+      if (itemErrors.length > 0) {
         allErrors.push(...itemErrors.map((message) => `Ingresso ${index + 1}: ${message}`));
+        if (firstInvalidIndex === null) firstInvalidIndex = index;
+      }
 
-        const resolvedGender = item.pricingGender ?? normalizePricingGenderInput(form.gender);
+      const resolvedGender = item.pricingGender ?? normalizePricingGenderInput(form.gender);
 
-        return {
-          ...item,
-          pricingGender: resolvedGender,
-          validationErrors: itemErrors,
-          visualStatus: item.pricingError
-            ? 'pricing_error'
-            : itemErrors.length > 0
-              ? (itemErrors.some((msg) => msg.includes('estoque')) ? 'out_of_stock' : 'missing')
-              : 'complete',
-        };
-      }),
-    );
+      return {
+        ...item,
+        pricingGender: resolvedGender,
+        validationErrors: itemErrors,
+        visualStatus: item.pricingError
+          ? 'pricing_error'
+          : itemErrors.length > 0
+            ? (itemErrors.some((msg) => msg.includes('estoque')) ? 'out_of_stock' : 'missing')
+            : 'complete',
+      };
+    });
 
-    return allErrors;
+    setCheckoutItems(nextItems);
+
+    return { errors: allErrors, firstInvalidIndex };
+  }
+
+  // Rola/foca o card do primeiro ingresso incompleto na Etapa 1. Adiado pra
+  // macrotask porque, quando chamado depois de um setStep(1) (goTo/submit
+  // bloqueados fora da Etapa 1), os cards so existem no DOM depois do
+  // proximo render.
+  function focusFirstInvalidTicketItem(index: number | null) {
+    if (index === null) return;
+    window.setTimeout(() => {
+      const node = ticketItemRefs.current[index];
+      if (!node) return;
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      node.focus({ preventScroll: true });
+    }, 0);
   }
 
   function selectCategory(categoryId: string) {
@@ -1064,9 +1233,10 @@ export function RegistrationWizard({
       return;
     }
 
-    const itemErrors = validateCheckoutItems();
+    const { errors: itemErrors, firstInvalidIndex } = validateCheckoutItems();
     if (itemErrors.length > 0) {
       setErrors(itemErrors);
+      focusFirstInvalidTicketItem(firstInvalidIndex);
       return;
     }
 
@@ -1144,13 +1314,19 @@ export function RegistrationWizard({
     setSubmitting(true);
     setErrors([]);
 
-    const validationErrors = validateCheckoutItems();
+    const { errors: validationErrors, firstInvalidIndex } = validateCheckoutItems();
     const localItems = checkoutItems.slice(0, form.quantity);
 
     if (validationErrors.length > 0) {
       setSubmitting(false);
       submitLockRef.current = false;
       setErrors(validationErrors);
+      // Defesa extra: se isto disparar, e porque algo alem do trail (ja
+      // corrigido em goTo) deixou a Revisao ser alcancada com item
+      // incompleto. Os seletores de camiseta so existem na Etapa 1 -- manda
+      // o comprador de volta pra la, no ingresso exato que falta.
+      setStep(1);
+      focusFirstInvalidTicketItem(firstInvalidIndex);
       return;
     }
 
@@ -1340,8 +1516,16 @@ export function RegistrationWizard({
     // comprador da tela de conclusao/pagamento do pedido ANTERIOR (registration/
     // cartOrder continuavam apontando pra ele), entao a proxima interacao
     // reaproveitava o pedido antigo. Precisa resetar cada state explicitamente
-    // pra um checkout novo ter identidade propria de verdade.
-    sessionStorage.removeItem(storageKey);
+    // pra um checkout novo ter identidade propria de verdade -- incluindo
+    // journeyId: gera um uuid novo e escreve na URL (mesma mecanica do effect
+    // de mount), pra a chave de sessionStorage da PROXIMA jornada nunca
+    // colidir com a desta.
+    if (storageKey) sessionStorage.removeItem(storageKey);
+    const nextJourneyId = crypto.randomUUID();
+    setJourneyId(nextJourneyId);
+    const params = new URLSearchParams(window.location.search);
+    params.set(CHECKOUT_JOURNEY_PARAM, nextJourneyId);
+    router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     setErrors([]);
     setLiveMessage('');
     setCourtesyMessage(null);
@@ -1908,7 +2092,12 @@ export function RegistrationWizard({
                         const selfOwnershipBlocked = buyerAlreadyHoldsActiveTicket !== false;
                         const selfOptionDisabled = item.ownershipMode !== 'self' && (selfOwnershipBlocked || anotherItemIsSelf);
                         return (
-                        <div key={item.clientId} className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
+                        <div
+                          key={item.clientId}
+                          ref={(el) => { ticketItemRefs.current[index] = el; }}
+                          tabIndex={-1}
+                          className={`rounded-xl border p-3 ${item.validationErrors.length > 0 ? 'border-rose-500/60 bg-rose-950/10' : 'border-slate-700 bg-slate-900/60'}`}
+                        >
                           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Ingresso {index + 1}</p>
                           <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${item.visualStatus === 'pricing_error' ? 'border-rose-500/30 bg-rose-500/10 text-rose-100' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
                             {item.visualStatus === 'complete'

@@ -66,9 +66,10 @@ test('action de inscricao unica usa a mesma semantica compartilhada de pagamento
   assert.match(source, /couponApplied: Boolean\(input\.coupon_code\?\.trim\(\)\)/);
 });
 
-test('sessao do wizard e isolada por evento (troca de evento nao reaproveita estado comercial)', async () => {
+test('sessao do wizard e isolada por evento e por jornada de checkout (troca de evento ou nova compra nao reaproveita estado comercial)', async () => {
   const source = await readFile(wizardPath, 'utf8');
-  assert.match(source, /const storageKey = useMemo\(\(\) => `militrin:wizard:\$\{event\.id\}:\$\{STORAGE_VERSION\}`/);
+  assert.match(source, /`militrin:wizard:\$\{event\.id\}:\$\{journeyId\}:\$\{STORAGE_VERSION\}`/);
+  assert.match(source, /journeyId \? `militrin:wizard:/);
 });
 
 test('refresh so reaplica preco/lote persistidos se a configuracao de categorias nao mudou', async () => {
