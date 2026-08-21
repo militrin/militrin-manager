@@ -53,6 +53,7 @@ export async function getParticipantEditContext(participantId: string) {
 
   let shirtOptions: Array<Record<string, unknown>> = [];
   let shirtDelivered = false;
+  let shirtCheckinDone = false;
   if (ticket?.id && canChangeShirt) {
     const [{ data: options, error: optionError }, { data: kitItems, error: kitError }] = await Promise.all([
       supabase.rpc("get_admin_ticket_shirt_options", { p_ticket_id: ticket.id }),
@@ -64,6 +65,7 @@ export async function getParticipantEditContext(participantId: string) {
     shirtDelivered = ((kitItems ?? []) as Array<Record<string, unknown>>).some(
       (item) => item.item_type === "shirt" && item.status === "delivered",
     );
+    shirtCheckinDone = ticket.status === "used";
   }
 
   return {
@@ -72,6 +74,10 @@ export async function getParticipantEditContext(participantId: string) {
     ticketId: ticket?.id ?? null,
     shirtOptions,
     shirtDelivered,
+    // Tamanho trava no fluxo normal apos kit entregue OU check-in realizado
+    // -- espelha exatamente o que admin_change_ticket_shirt valida no
+    // backend (SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION), nunca so o kit.
+    shirtLocked: shirtDelivered || shirtCheckinDone,
     canConfirmPayment,
     canChangeShirt,
   };
@@ -113,13 +119,23 @@ export async function confirmParticipantPaymentFromEditAction(participantId: str
   });
 }
 
+function friendlyShirtRpcError(error: { message: string }): Error {
+  if (error.message.includes("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION")) {
+    return new Error("O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.");
+  }
+  if (error.message.includes("SHIRT_OUT_OF_STOCK")) {
+    return new Error("Não há estoque disponível para este modelo e tamanho.");
+  }
+  return new Error(error.message);
+}
+
 export async function changeParticipantShirtFromEditAction(input: {
   participantId: string; ticketId: string; shirtType: string; shirtSize: string;
 }) {
   await assertPermission("inventory.change_participant_shirt");
   const context = await getParticipantEditContext(input.participantId);
   if (context.ticketId !== input.ticketId) throw new Error("Ingresso não corresponde ao cadastro.");
-  if (context.shirtDelivered) throw new Error("Camiseta já entregue. Use uma operação explícita de troca ou estorno.");
+  if (context.shirtLocked) throw new Error("O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.");
   const allowed = context.shirtOptions.some((option) => option.shirt_type === input.shirtType && option.shirt_size === input.shirtSize);
   if (!allowed) throw new Error("Combinação de modelo e tamanho não habilitada para o evento.");
   const { supabase } = await requireParticipantContext(input.participantId);
@@ -128,8 +144,34 @@ export async function changeParticipantShirtFromEditAction(input: {
     p_new_shirt_type: input.shirtType,
     p_new_shirt_size: input.shirtSize,
   });
-  if (error) throw error;
+  if (error) throw friendlyShirtRpcError(error);
   revalidatePath(`/inscricoes/${input.participantId}/editar`);
   revalidatePath(`/ingressos/${input.ticketId}`);
   return { success: true as const, message: "Camiseta atualizada." };
+}
+
+// Unico caminho valido pra corrigir tamanho depois de kit entregue ou
+// check-in realizado (context.shirtLocked=true). Exige motivo -- mesmo
+// catalogo REASON_CODES ja usado pelas RPCs de undo do modulo operacional.
+export async function correctParticipantShirtAfterOperationAction(input: {
+  participantId: string; ticketId: string; shirtType: string; shirtSize: string;
+  reasonCode: string; reasonText?: string;
+}) {
+  await assertPermission("inventory.change_participant_shirt");
+  const context = await getParticipantEditContext(input.participantId);
+  if (context.ticketId !== input.ticketId) throw new Error("Ingresso não corresponde ao cadastro.");
+  if (!context.shirtLocked) throw new Error("Este ingresso ainda não teve kit entregue nem check-in; use a troca normal de tamanho.");
+  if (!input.reasonCode.trim()) throw new Error("Motivo obrigatório.");
+  const { supabase } = await requireParticipantContext(input.participantId);
+  const { error } = await supabase.rpc("admin_correct_ticket_shirt_after_operation", {
+    p_ticket_id: input.ticketId,
+    p_new_shirt_type: input.shirtType,
+    p_new_shirt_size: input.shirtSize,
+    p_reason_code: input.reasonCode,
+    p_reason_text: input.reasonText?.trim() || null,
+  });
+  if (error) throw friendlyShirtRpcError(error);
+  revalidatePath(`/inscricoes/${input.participantId}/editar`);
+  revalidatePath(`/ingressos/${input.ticketId}`);
+  return { success: true as const, message: "Tamanho corrigido com sucesso." };
 }

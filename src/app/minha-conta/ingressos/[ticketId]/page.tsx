@@ -261,7 +261,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
                 {ticket.issued_at ? <p>Emissão: {formatDateTimeBR(String(ticket.issued_at), ' às ')}</p> : null}
               </div>
               {shirtConfigurationIssue ? <p className="mt-3 rounded-xl border border-amber-600/30 bg-amber-950/20 p-3 text-xs text-amber-100">{shirtConfigurationIssue}</p> : null}
-              {participantId && canManageOperationalFlow ? <div className="mt-4 border-t border-slate-800 pt-4"><p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p><TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/></div> : null}
+              {participantId && canManageOperationalFlow ? <div className="mt-4 border-t border-slate-800 pt-4"><p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p><TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} hasActiveWristband={false} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/></div> : null}
             </div>
 
             {canShowTicket ? (

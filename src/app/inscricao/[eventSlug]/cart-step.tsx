@@ -332,6 +332,7 @@ export function CartStep({
   paymentMethod,
   onContinue,
   onEditTicket,
+  onSnapshotChange,
 }: {
   orderId: string;
   eventId: string;
@@ -344,6 +345,11 @@ export function CartStep({
    * pedido (ver comentario de editModeOrderId em wizard.tsx), entao os
    * cards ficam nao-clicaveis. */
   onEditTicket?: (orderItemId: string) => void;
+  /** Chamado toda vez que este componente busca ou muta o carrinho (mount,
+   * add/remover produto, quantidade, cupom) -- deixa o wizard pai espelhar
+   * o MESMO snapshot canonico (get_cart_order_details) pro resumo lateral,
+   * que nunca deve calcular nada por conta propria. */
+  onSnapshotChange?: (cart: unknown) => void;
 }) {
   const [cart, setCart] = useState<CartDetails | null>(null);
   const [products, setProducts] = useState<EligibleProduct[]>([]);
@@ -353,6 +359,14 @@ export function CartStep({
   const [busy, setBusy] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<{ storeItemId: string; initialQuantity: number } | null>(null);
 
+  // Ponto unico: qualquer `cart` novo (fetch inicial ou apos mutacao) passa
+  // por aqui, que atualiza o estado local E notifica o wizard pai -- nunca
+  // um `setCart` direto que deixaria o pai com um snapshot desatualizado.
+  function updateCart(next: CartDetails) {
+    setCart(next);
+    onSnapshotChange?.(next);
+  }
+
   useEffect(() => {
     let active = true;
     (async () => {
@@ -361,11 +375,12 @@ export function CartStep({
         getEligibleCartProductsAction(eventId),
       ]);
       if (!active) return;
-      if (cartResult.success) setCart(cartResult.cart as unknown as CartDetails);
+      if (cartResult.success) updateCart(cartResult.cart as unknown as CartDetails);
       if (productsResult.success) setProducts(productsResult.products as unknown as EligibleProduct[]);
       setLoading(false);
     })();
     return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId, eventId]);
 
   // Um produto pode ter varias variantes (linhas separadas vindas de
@@ -387,7 +402,7 @@ export function CartStep({
     const result = await addProductToCartAction(orderId, storeItemId, variantId, quantity);
     setBusy(false);
     if (!result.success) { setMessage({ type: "error", text: result.message }); return result; }
-    setCart(result.cart as unknown as CartDetails);
+    updateCart(result.cart as unknown as CartDetails);
     return result;
   }
 
@@ -397,7 +412,7 @@ export function CartStep({
     const result = await removeCartOrderItemAction(orderId, orderItemId);
     setBusy(false);
     if (!result.success) { setMessage({ type: "error", text: result.message }); return; }
-    setCart(result.cart as unknown as CartDetails);
+    updateCart(result.cart as unknown as CartDetails);
   }
 
   async function handleSetQuantity(item: CartItem, nextQuantity: number) {
@@ -407,7 +422,7 @@ export function CartStep({
     const result = await setCartOrderItemQuantityAction(orderId, item.order_item_id, nextQuantity);
     setBusy(false);
     if (!result.success) { setMessage({ type: "error", text: result.message }); return; }
-    setCart(result.cart as unknown as CartDetails);
+    updateCart(result.cart as unknown as CartDetails);
   }
 
   async function handleApplyCoupon() {
@@ -416,7 +431,7 @@ export function CartStep({
     const result = await applyCartCouponAction(orderId, couponCode.trim() || null);
     setBusy(false);
     if (!result.success) { setMessage({ type: "error", text: result.message }); return; }
-    setCart(result.cart as unknown as CartDetails);
+    updateCart(result.cart as unknown as CartDetails);
     setMessage({ type: "success", text: couponCode.trim() ? "Cupom aplicado." : "Cupom removido." });
   }
 

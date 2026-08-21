@@ -15,6 +15,9 @@ const emailProvider = getEmailProvider();
 // de pendencias mostrava o codigo cru pro operador.
 function resolveIssueRpcError(error: { message?: string; details?: string | null }) {
   const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+  if (serialized.includes("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION")) {
+    return "O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.";
+  }
   if (!serialized.includes("SHIRT_OUT_OF_STOCK")) return error.message ?? "Não foi possível reavaliar o cadastro.";
   try {
     const detail = JSON.parse(error.details ?? "{}") as { message?: string; shirt_type?: string; shirt_size?: string };

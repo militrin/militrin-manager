@@ -558,7 +558,7 @@ test('edicao carrega variantes 104, reage ao modelo e bloqueia camiseta entregue
   assert.match(actions, /admin_change_ticket_shirt/);
   assert.match(actions, /inventory\.change_participant_shirt/);
   assert.match(actions, /item\.item_type === "shirt" && item\.status === "delivered"/);
-  assert.match(actions, /Camiseta já entregue/);
+  assert.match(actions, /O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado\./);
   assert.match(page, /shirtOptions\.filter\(option=>option\.shirt_type===shirtType\)/);
   assert.match(page, /setShirtType\(event\.target\.value\);setShirtSize\(""\)/);
   assert.match(page, /Sob encomenda/);

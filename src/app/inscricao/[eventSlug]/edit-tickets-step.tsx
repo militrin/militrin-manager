@@ -69,6 +69,7 @@ export function EditTicketsStep({
   inventory,
   enforcePhysicalStock,
   focusItemId,
+  onSnapshotChange,
   onContinue,
 }: {
   orderId: string;
@@ -78,6 +79,10 @@ export function EditTicketsStep({
    * setado pelo wizard quando o comprador clica num card de ingresso no
    * carrinho (CartStep). null = nenhum foco especifico. */
   focusItemId?: string | null;
+  /** Mesmo contrato do CartStep: chamado a cada fetch/mutacao bem-sucedida
+   * do carrinho, pra o wizard pai espelhar o snapshot canonico no resumo
+   * lateral (nunca calculado por conta propria aqui ou la). */
+  onSnapshotChange?: (cart: unknown) => void;
   onContinue: () => void;
 }) {
   const [cart, setCart] = useState<CartDetails | null>(null);
@@ -95,15 +100,26 @@ export function EditTicketsStep({
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+  // Ponto unico: qualquer `cart` novo (fetch inicial ou apos salvar
+  // camiseta/genero) passa por aqui, que atualiza o estado local E notifica
+  // o wizard pai -- nunca um `setCart` direto que deixaria o pai com um
+  // snapshot desatualizado (era exatamente esse o bug do resumo lateral
+  // mostrando 1 ingresso/valor antigo durante a edicao).
+  function updateCart(next: CartDetails) {
+    setCart(next);
+    onSnapshotChange?.(next);
+  }
+
   useEffect(() => {
     let active = true;
     (async () => {
       const result = await getCartOrderDetailsAction(orderId);
       if (!active) return;
-      if (result.success) setCart(result.cart as unknown as CartDetails);
+      if (result.success) updateCart(result.cart as unknown as CartDetails);
       setLoading(false);
     })();
     return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
   // Inicializa a selecao pendente de cada ingresso a partir do valor
@@ -174,7 +190,7 @@ export function EditTicketsStep({
     const result = await changePendingOrderItemShirtAction(orderId, item.order_item_id, pending.type, pending.size);
     setBusyItemId(null);
     if (!result.success) { setMessage({ type: 'error', text: result.message }); return; }
-    setCart(result.cart as unknown as CartDetails);
+    updateCart(result.cart as unknown as CartDetails);
     setMessage({ type: 'success', text: 'Camiseta atualizada.' });
   }
 
@@ -186,7 +202,7 @@ export function EditTicketsStep({
     const result = await changePendingOrderItemGenderAction(orderId, item.order_item_id, pending);
     setBusyItemId(null);
     if (!result.success) { setMessage({ type: 'error', text: result.message }); return; }
-    setCart(result.cart as unknown as CartDetails);
+    updateCart(result.cart as unknown as CartDetails);
     setMessage({ type: 'success', text: 'Genero atualizado e preco recalculado.' });
   }
 

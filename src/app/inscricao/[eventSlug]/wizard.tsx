@@ -408,6 +408,19 @@ export function RegistrationWizard({
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [registration, setRegistration] = useState<RegistrationSnapshot | null>(null);
   const [cartOrder, setCartOrder] = useState<{ orderId: string } | null>(null);
+  // Snapshot canonico do pedido ENQUANTO ele existe mas ainda nao tem PIX
+  // gerado (cartOrder truthy, registration ainda null) -- mesmo shape de
+  // OrderSnapshotPayload/registration, so que alimentado por
+  // get_cart_order_details a cada vez que CartStep/EditTicketsStep buscam ou
+  // mutam o carrinho (onSnapshotChange). Bug corrigido por isto: o resumo
+  // lateral (summaryValues) so tinha DOIS estados -- registration (com PIX)
+  // ou o rascunho pre-pedido (checkoutItems/form.quantity) -- e caia no
+  // rascunho pre-pedido (congelado, ex.: "Quantidade: 1") o tempo TODO em
+  // que o comprador estava no Carrinho ou editando ingressos de um pedido
+  // JA EXISTENTE, so porque PIX ainda nao tinha sido gerado. cartSnapshot
+  // preenche exatamente essa lacuna -- nunca e uma segunda fonte de calculo
+  // financeiro, so espelha o que get_cart_order_details ja devolveu.
+  const [cartSnapshot, setCartSnapshot] = useState<OrderSnapshotPayload | null>(null);
   // Setado (uma vez, pelo effect de ?editOrder=) quando esta jornada esta
   // editando um pedido ja existente -- nunca um order_id gerado por
   // createPublicMultiOrderAction. Enquanto truthy, a Etapa 1 renderiza
@@ -628,8 +641,14 @@ export function RegistrationWizard({
       if (hasPixGenerated) {
         setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
         setCartOrder(null);
+        setCartSnapshot(null);
       } else {
         setCartOrder({ orderId: editOrderId });
+        // Ja temos o snapshot canonico desta mesma chamada -- usa direto,
+        // sem esperar CartStep/EditTicketsStep buscarem de novo. Sem isso o
+        // resumo lateral mostraria o rascunho pre-pedido (errado) entre o
+        // momento em que a Etapa muda e o filho terminar seu proprio fetch.
+        setCartSnapshot(fresh.snapshot as OrderSnapshotPayload);
         setRegistration(null);
       }
       setMaxUnlockedStep((prev) => Math.max(prev, 3));
@@ -840,8 +859,10 @@ export function RegistrationWizard({
           if (hasPixGenerated) {
             setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
             setCartOrder(null);
+            setCartSnapshot(null);
           } else {
             setCartOrder({ orderId: persistedOrderId });
+            setCartSnapshot(fresh.snapshot as OrderSnapshotPayload);
             setRegistration(null);
           }
           setStep(3);
@@ -1702,6 +1723,7 @@ export function RegistrationWizard({
     setCourtesyMessage(null);
     setRegistration(null);
     setCartOrder(null);
+    setCartSnapshot(null);
     setEditModeOrderId(null);
     setEditFocusItemId(null);
     setPricing(null);
@@ -1810,6 +1832,40 @@ export function RegistrationWizard({
       )
     : groupedShirts;
 
+  // Mesmo papel de registrationProductLines/registrationGroupedShirts, so
+  // que pra quando o pedido EXISTE mas ainda nao tem PIX gerado (cartOrder
+  // truthy, registration ainda null -- comprador no Carrinho ou editando
+  // ingressos de um pedido ja existente). Bug corrigido por isto: sem
+  // cartSnapshot, o resumo lateral so tinha dois estados (registration com
+  // PIX, ou o rascunho pre-pedido de checkoutItems/form.quantity) -- e caia
+  // no rascunho o tempo TODO em que havia um pedido real sem PIX ainda,
+  // mostrando quantidade/valor completamente desatualizados (ex.: "1
+  // ingresso, R$180" com o pedido real tendo 2 ingressos + produto).
+  // cartSnapshot.items tem exatamente o mesmo shape de registration.items
+  // (as duas vem de get_cart_order_details) -- nunca um segundo calculo.
+  const cartSnapshotProductLines = cartSnapshot
+    ? productLines(cartSnapshot.items).map((item) => ({
+        key: item.order_item_id,
+        label: `${item.quantity}x ${item.store_item_name ?? 'Produto'}${item.variant_name ? ` (${item.variant_name} ${item.variant_value})` : ''}`,
+      }))
+    : [];
+  const cartSnapshotGroupedShirts = cartSnapshot
+    ? Array.from(
+        ticketLines(cartSnapshot.items).reduce((map, item) => {
+          if (!item.shirt_type || !item.shirt_size) return map;
+          const key = `${item.shirt_type}::${item.shirt_size}`;
+          map.set(key, (map.get(key) ?? 0) + 1);
+          return map;
+        }, new Map<string, number>()),
+      )
+    : [];
+  const firstCartSnapshotTicket = cartSnapshot ? ticketLines(cartSnapshot.items)[0] ?? null : null;
+
+  // Regra unica: registration (pedido com PIX/confirmado) > cartSnapshot
+  // (pedido real existente, ainda sem PIX) > rascunho pre-pedido
+  // (checkoutItems/form.quantity, so enquanto nenhum order_id existe ainda).
+  // Nunca o contrario -- o rascunho pre-pedido so alimenta este resumo
+  // antes de cartOrder/registration existirem.
   const summaryValues = registration
     ? {
         event: registration.event_name || event.name,
@@ -1823,18 +1879,31 @@ export function RegistrationWizard({
         groupedShirts: registrationGroupedShirts,
         productLines: registrationProductLines,
       }
-    : {
-        event: event.name,
-        category: ticketTypeLabel,
-        batch: batchDisplayLabel,
-        quantity: form.quantity,
-        coupon: form.coupon_code || 'Não selecionado',
-        original: money(itemTotals.original),
-        discount: money(itemTotals.discount),
-        total: money(itemTotals.total),
-        groupedShirts,
-        productLines: registrationProductLines,
-      };
+    : cartSnapshot
+      ? {
+          event: cartSnapshot.event_name || event.name,
+          category: firstCartSnapshotTicket?.category_name || ticketTypeLabel,
+          batch: firstCartSnapshotTicket?.batch_name || batchDisplayLabel,
+          quantity: ticketLines(cartSnapshot.items).length,
+          coupon: cartSnapshot.applied_coupon_code || 'Não selecionado',
+          original: money(cartSnapshot.base_amount),
+          discount: money(cartSnapshot.discount_amount),
+          total: money(cartSnapshot.final_amount),
+          groupedShirts: cartSnapshotGroupedShirts,
+          productLines: cartSnapshotProductLines,
+        }
+      : {
+          event: event.name,
+          category: ticketTypeLabel,
+          batch: batchDisplayLabel,
+          quantity: form.quantity,
+          coupon: form.coupon_code || 'Não selecionado',
+          original: money(itemTotals.original),
+          discount: money(itemTotals.discount),
+          total: money(itemTotals.total),
+          groupedShirts,
+          productLines: registrationProductLines,
+        };
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow),transparent_35%),linear-gradient(180deg,#020617,#0b1220)] px-4 py-5 text-slate-100 sm:px-6">
@@ -1964,6 +2033,7 @@ export function RegistrationWizard({
                 inventory={inventory}
                 enforcePhysicalStock={enforcePhysicalStock}
                 focusItemId={editFocusItemId}
+                onSnapshotChange={(cart) => setCartSnapshot(cart as unknown as OrderSnapshotPayload)}
                 onContinue={handleReturnToCartFromEdit}
               />
             )}
@@ -2593,6 +2663,7 @@ export function RegistrationWizard({
                 paymentMethod={form.payment_method}
                 onContinue={(order) => void handleCartFinalized(order as OrderSnapshotPayload)}
                 onEditTicket={editModeOrderId ? handleEditTicketItem : undefined}
+                onSnapshotChange={(cart) => setCartSnapshot(cart as unknown as OrderSnapshotPayload)}
               />
             )}
 

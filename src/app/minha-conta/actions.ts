@@ -243,7 +243,13 @@ export async function adminChangeTicketShirtAction(ticketId: string, shirtOption
   const { error } = await supabase.rpc('admin_change_ticket_shirt', {
     p_ticket_id: ticketId, p_new_shirt_type: shirtType, p_new_shirt_size: shirtSize,
   });
-  if (error) return { success: false, message: error.message.includes('SHIRT_OUT_OF_STOCK') ? 'Esta camiseta nao esta disponivel no estoque.' : error.message };
+  if (error) {
+    if (error.message.includes('SHIRT_OUT_OF_STOCK')) return { success: false, message: 'Esta camiseta nao esta disponivel no estoque.' };
+    if (error.message.includes('SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION')) {
+      return { success: false, message: 'O tamanho nao pode mais ser alterado porque este ingresso ja teve kit entregue ou check-in realizado.' };
+    }
+    return { success: false, message: error.message };
+  }
   revalidatePath('/operacoes');
   revalidatePath(`/minha-conta/ingressos/${ticketId}`);
   return { success: true, message: 'Camiseta atualizada.' };

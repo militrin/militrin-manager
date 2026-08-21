@@ -34,12 +34,36 @@ export async function setEventParticipantItemChangesAction(eventId: string, enab
   return { success: true, message: "Configuração salva." };
 }
 
-export async function setEventKitItemChangeRulesAction(itemId: string, allowChange: boolean, trackInventory: boolean) {
+export async function updateEventWristbandSettingsAction(payload: {
+  eventId: string;
+  enabled: boolean;
+  requiredForCheckin: boolean;
+  requiredForKit: boolean;
+}) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_event_wristband_settings", {
+    p_event_id: payload.eventId,
+    p_enabled: payload.enabled,
+    p_required_for_checkin: payload.requiredForCheckin,
+    p_required_for_kit: payload.requiredForKit,
+  });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath(`/painel/eventos/${payload.eventId}`);
+  return { success: true as const, message: "Configuração de pulseiras salva." };
+}
+
+export async function setEventKitItemChangeRulesAction(
+  itemId: string,
+  allowChange: boolean,
+  trackInventory: boolean,
+  requireStockForChoice?: boolean,
+) {
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_event_kit_item_change_rules", {
     p_kit_item_id: itemId,
     p_allow_change: allowChange,
     p_track_inventory: trackInventory,
+    p_require_stock_for_choice: requireStockForChoice ?? null,
   });
   if (error) return { success: false, message: error.message };
   return { success: true, message: "Regra do item salva." };
