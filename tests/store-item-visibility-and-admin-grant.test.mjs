@@ -229,7 +229,7 @@ test('GrantStoreItemModal: fluxo produto -> variante -> quantidade -> cortesia\\
   assert.match(tsx, /getGrantableStoreItemsAction/);
   assert.match(tsx, /Cortesia — sem cobrança/);
   assert.match(tsx, /Cobrar — preço normal do produto/);
-  assert.match(tsx, /disabled=\{submitting \|\| loading \|\| items\.length === 0 \|\| outOfStock\}/);
+  assert.match(tsx, /disabled=\{submitting \|\| loading \|\| !selectedEventId \|\| items\.length === 0 \|\| outOfStock\}/);
 });
 
 // Permissoes

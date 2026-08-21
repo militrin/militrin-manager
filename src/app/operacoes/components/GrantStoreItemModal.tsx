@@ -32,14 +32,17 @@ const VISIBILITY_LABEL: Record<GrantableItem["visibility"], string> = {
 
 export function GrantStoreItemModal({
   eventId,
+  events,
   onSubmit,
   onClose,
 }: {
-  eventId: string;
-  onSubmit: (payload: { storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string }) => Promise<ActionResult>;
+  eventId?: string;
+  events?: Array<{ id: string; name: string }>;
+  onSubmit: (payload: { eventId: string; storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string }) => Promise<ActionResult>;
   onClose: () => void;
 }) {
-  const [loading, setLoading] = useState(true);
+  const [selectedEventId, setSelectedEventId] = useState(eventId ?? "");
+  const [loading, setLoading] = useState(Boolean(eventId));
   const [items, setItems] = useState<GrantableItem[]>([]);
   const [storeItemId, setStoreItemId] = useState("");
   const [variantId, setVariantId] = useState("");
@@ -50,13 +53,26 @@ export function GrantStoreItemModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!selectedEventId) return;
+    let cancelled = false;
     void (async () => {
-      const result = await getGrantableStoreItemsAction(eventId);
+      const result = await getGrantableStoreItemsAction(selectedEventId);
+      if (cancelled) return;
       setItems(result.success ? (result.items as GrantableItem[]) : []);
       if (!result.success) setError(result.message);
       setLoading(false);
     })();
-  }, [eventId]);
+    return () => { cancelled = true; };
+  }, [selectedEventId]);
+
+  function selectEvent(nextEventId: string) {
+    setSelectedEventId(nextEventId);
+    setItems([]);
+    setStoreItemId("");
+    setVariantId("");
+    setError(null);
+    setLoading(Boolean(nextEventId));
+  }
 
   const selectedItem = items.find((item) => item.id === storeItemId) ?? null;
   const selectedVariant = selectedItem?.variants.find((variant) => variant.id === variantId) ?? null;
@@ -64,11 +80,13 @@ export function GrantStoreItemModal({
   const outOfStock = availableQuantity !== null && availableQuantity <= 0;
 
   async function handleSubmit() {
+    if (!selectedEventId) { setError("Selecione um evento."); return; }
     if (!storeItemId) { setError("Selecione um produto."); return; }
     if (selectedItem?.requiresVariant && !variantId) { setError("Selecione a variante/tamanho."); return; }
     setSubmitting(true);
     setError(null);
     const result = await onSubmit({
+      eventId: selectedEventId,
       storeItemId,
       variantId: selectedItem?.requiresVariant ? variantId : null,
       quantity,
@@ -89,7 +107,23 @@ export function GrantStoreItemModal({
         <h3 className="text-base font-semibold text-slate-100">Adicionar item</h3>
         <p className="mt-1 text-sm text-slate-400">Concede um produto da loja para este participante, separado do kit do ingresso.</p>
 
-        {loading ? (
+        {events ? (
+          <label className="mt-4 block space-y-1">
+            <span className="text-xs text-slate-300">Evento</span>
+            <select
+              value={selectedEventId}
+              onChange={(e) => selectEvent(e.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100"
+            >
+              <option value="">Selecione</option>
+              {events.map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}
+            </select>
+          </label>
+        ) : null}
+
+        {!selectedEventId ? (
+          <p className="mt-4 text-sm text-slate-400">Selecione um evento para carregar os produtos.</p>
+        ) : loading ? (
           <p className="mt-4 text-sm text-slate-400">Carregando produtos...</p>
         ) : items.length === 0 ? (
           <p className="mt-4 text-sm text-amber-300">Nenhum produto cadastrado para este evento.</p>
@@ -186,7 +220,7 @@ export function GrantStoreItemModal({
           <button
             type="button"
             onClick={() => void handleSubmit()}
-            disabled={submitting || loading || items.length === 0 || outOfStock}
+            disabled={submitting || loading || !selectedEventId || items.length === 0 || outOfStock}
             className="h-10 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950 disabled:opacity-50"
           >
             {submitting ? "Concedendo..." : "Conceder item"}

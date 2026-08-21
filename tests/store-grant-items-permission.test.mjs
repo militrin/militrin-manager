@@ -40,6 +40,9 @@ test("RPC rejeita chamada direta sem grant_items nem manage", () => {
   assert.doesNotMatch(rpc, /current_user_has_permission\('store\.deliver'\)/);
 });
 
-test("Ficha Global ainda nao expoe botao sem o backend contact-first aprovado", () => {
-  assert.doesNotMatch(cadastro, /Adicionar item/);
+test("Ficha Global expoe o botao somente pela capacidade de concessao", () => {
+  assert.match(cadastro, /canGrantStoreItems \? <ContactGrantStoreItemButton/);
+  assert.match(cadastro, /hasPermission\("store\.grant_items"\)/);
+  assert.match(cadastro, /hasPermission\("store\.manage"\)/);
+  assert.doesNotMatch(cadastro, /hasPermission\("store\.deliver"\)/);
 });

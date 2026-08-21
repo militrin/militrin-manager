@@ -1,10 +1,53 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { assertPermission } from "@/lib/admin/permissions";
+import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { resendParticipantTicketAction } from "@/app/inscricoes/actions";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function assertStoreGrantPermission() {
+  if (await hasPermission("store.grant_items")) return;
+  await assertPermission("store.manage");
+}
+
+export async function grantStoreItemToContactAction(payload: {
+  contactId: string;
+  eventId: string;
+  storeItemId: string;
+  variantId: string | null;
+  quantity: number;
+  isCourtesy: boolean;
+  reason?: string;
+}) {
+  await assertStoreGrantPermission();
+  if (![payload.contactId, payload.eventId, payload.storeItemId].every((value) => UUID_PATTERN.test(value))) {
+    return { success: false as const, message: "Cadastro, evento ou produto inválido." };
+  }
+  if (payload.variantId && !UUID_PATTERN.test(payload.variantId)) {
+    return { success: false as const, message: "Variante inválida." };
+  }
+  if (!Number.isInteger(payload.quantity) || payload.quantity <= 0) {
+    return { success: false as const, message: "Quantidade inválida." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("admin_grant_store_item_to_contact", {
+    p_contact_id: payload.contactId,
+    p_event_id: payload.eventId,
+    p_store_item_id: payload.storeItemId,
+    p_variant_id: payload.variantId,
+    p_quantity: payload.quantity,
+    p_is_courtesy: payload.isCourtesy,
+    p_reason: payload.reason?.trim() || null,
+  });
+  if (error) return { success: false as const, message: error.message };
+
+  revalidatePath(`/cadastros/${payload.contactId}`);
+  return { success: true as const, message: "Item concedido com sucesso." };
+}
 
 function firstAccessInviteRedirect(inviteId: string) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
