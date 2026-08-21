@@ -8,12 +8,19 @@ import {
   deliverFullKitAction,
   deliverKitAndCheckinAction,
   deliverKitItemAction,
+  deliverAdditionalStoreItemAction,
+  grantStoreItemAction,
   getPickupEventsAction,
   getOperationTicketDetailsAction,
   getOperationParticipantDetailsAction,
   getRetiradaCapabilitiesAction,
+  linkWristbandAction,
   listOperationTicketsAction,
+  replaceWristbandAction,
   searchPickupParticipantByQrAction,
+  undoCheckinEntryAction,
+  undoFullKitDeliveryAction,
+  unlinkWristbandAction,
 } from "./actions";
 import { confirmParticipantPaymentAction } from "@/app/inscricoes/actions";
 import { OperationsDashboard } from "./components/OperationsDashboard";
@@ -22,6 +29,8 @@ import { OperationsHeader } from "./components/OperationsHeader";
 import { OperationsTable } from "./components/OperationsTable";
 import { QrScannerModal } from "./components/QrScannerModal";
 import { BatchMaterializeItemsDialog } from "./components/MaterializeItemsDialog";
+import { OperationalErrorDialog } from "./components/OperationalErrorDialog";
+import { getOperationalErrorTitle } from "./error-messages";
 import {
   EMPTY_PICKUP_FILTERS,
   type PickupCapabilities,
@@ -285,12 +294,21 @@ export default function KitPickupPage() {
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [capabilities, setCapabilities] = useState<PickupCapabilities>({
     canDeliverKit: false,
     canCheckin: false,
     canCombined: false,
     canChangeShirt: false,
+    canUndoKit: false,
+    canUndoCheckin: false,
+    canViewWristband: false,
+    canLinkWristband: false,
+    canUnlinkWristband: false,
+    canReplaceWristband: false,
+    canGrantStoreItems: false,
+    canDeliverStoreItems: false,
   });
 
   const shirtTypes = useMemo(
@@ -616,13 +634,27 @@ export default function KitPickupPage() {
     setGroups((current) => upsertTicketInGroups(current, row));
   }
 
+  // Toda acao operacional disparada por botao manual na ficha/linha (nunca
+  // pelo fluxo automatico de QR, que nao passa por aqui) continua jogando a
+  // mensagem no banner global (setMessage, tratamento existente, preservado)
+  // E, adicionalmente, abre um popup local/imediato pro erro -- exceto
+  // WRISTBAND_REQUIRED, que ja abre o proprio WristbandCodeModal (mais util
+  // que um popup so informativo) no componente que chamou runAction.
+  function openErrorDialogFor(response: { success: boolean; message?: string; code?: string }) {
+    if (response.success || response.code === "WRISTBAND_REQUIRED") return;
+    const message = response.message ?? "Não foi possível concluir a operação.";
+    setErrorDialog({ title: getOperationalErrorTitle(response.code, message), message });
+  }
+
   async function runAction(
     ticketId: string,
     action: () => Promise<{ success: boolean; message?: string; code?: string }>,
   ) {
     if (!UUID_PATTERN.test(ticketId)) {
-      setMessage("Identificador de ingresso inválido.");
-      return;
+      const failure = { success: false as const, message: "Identificador de ingresso inválido." };
+      setMessage(failure.message);
+      openErrorDialogFor(failure);
+      return failure;
     }
     setActionId(ticketId);
     setMessage(null);
@@ -630,12 +662,20 @@ export default function KitPickupPage() {
     try {
       const response = await action();
       setMessage(response.message ?? (response.success ? "Operação concluída." : "Operação não concluída."));
+      openErrorDialogFor(response);
 
+      // WRISTBAND_REQUIRED nunca atualiza a lista -- nada mudou no banco
+      // ainda, o frontend so vai abrir o modal obrigatorio e tentar de novo
+      // com o codigo.
       if (response.success || response.code === "SHIRT_OUT_OF_STOCK") {
         await refreshTicket(ticketId);
       }
+      return response;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Falha inesperada.");
+      const failure = { success: false as const, message: error instanceof Error ? error.message : "Falha inesperada." };
+      setMessage(failure.message);
+      openErrorDialogFor(failure);
+      return failure;
     } finally {
       setActionId(null);
     }
@@ -754,38 +794,79 @@ export default function KitPickupPage() {
     applyView(items, cleared, sortField, sortDirection);
   }
 
-  async function handleDeliverFullKit(ticketId: string, _participantId: string | null) {
+  async function handleDeliverFullKit(ticketId: string, _participantId: string | null, wristbandCode?: string) {
     void _participantId;
-    await runAction(ticketId, () =>
-      deliverFullKitAction({ ticket_id: ticketId }),
+    return runAction(ticketId, () =>
+      deliverFullKitAction({ ticket_id: ticketId, wristband_code: wristbandCode }),
     );
   }
 
-  async function handleDeliverKitAndCheckin(ticketId: string, participantId: string | null) {
+  async function handleDeliverKitAndCheckin(ticketId: string, participantId: string | null, wristbandCode?: string) {
     void participantId;
-    await runAction(ticketId, () =>
-      deliverKitAndCheckinAction({ ticket_id: ticketId }),
+    return runAction(ticketId, () =>
+      deliverKitAndCheckinAction({ ticket_id: ticketId, wristband_code: wristbandCode }),
     );
   }
 
-  async function handleCheckin(ticketId: string) {
-    await runAction(ticketId, () =>
-      checkinEntryAction({ ticket_id: ticketId }),
+  async function handleCheckin(ticketId: string, wristbandCode?: string) {
+    return runAction(ticketId, () =>
+      checkinEntryAction({ ticket_id: ticketId, wristband_code: wristbandCode }),
     );
+  }
+
+  async function handleUndoCheckin(ticketId: string, payload: { reasonCode: string; reasonText: string; alsoUnlinkWristband: boolean }) {
+    return runAction(ticketId, () =>
+      undoCheckinEntryAction({
+        ticket_id: ticketId,
+        reason_code: payload.reasonCode,
+        reason_text: payload.reasonText,
+        also_unlink_wristband: payload.alsoUnlinkWristband,
+      }),
+    );
+  }
+
+  async function handleUndoKitDelivery(ticketId: string, payload: { reasonCode: string; reasonText: string }) {
+    return runAction(ticketId, () =>
+      undoFullKitDeliveryAction({ ticket_id: ticketId, reason_code: payload.reasonCode, reason_text: payload.reasonText }),
+    );
+  }
+
+  async function handleLinkWristband(ticketId: string, code: string) {
+    return runAction(ticketId, () => linkWristbandAction({ ticket_id: ticketId, code }));
+  }
+
+  async function handleUnlinkWristband(ticketId: string) {
+    return runAction(ticketId, () => unlinkWristbandAction({ ticket_id: ticketId }));
+  }
+
+  async function handleReplaceWristband(ticketId: string, code: string) {
+    return runAction(ticketId, () => replaceWristbandAction({ ticket_id: ticketId, new_code: code }));
   }
 
   async function handleConfirmPayment(ticketId: string, participantId: string) {
     await runAction(ticketId, () => confirmParticipantPaymentAction(participantId));
   }
 
-  async function handleDeliverKitItem(ticketId: string, _participantId: string | null, kitItemId: string) {
+  async function handleDeliverKitItem(ticketId: string, _participantId: string | null, kitItemId: string, wristbandCode?: string) {
     void _participantId;
-    await runAction(ticketId, () =>
+    return runAction(ticketId, () =>
       deliverKitItemAction({
         ticket_id: ticketId,
         kit_item_id: kitItemId,
+        wristband_code: wristbandCode,
       }),
     );
+  }
+
+  async function handleGrantStoreItem(
+    ticketId: string,
+    payload: { storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string },
+  ) {
+    return runAction(ticketId, () => grantStoreItemAction({ ticketId, ...payload }));
+  }
+
+  async function handleDeliverAdditionalItem(ticketId: string, storeOrderItemId: string) {
+    return runAction(ticketId, () => deliverAdditionalStoreItemAction(storeOrderItemId));
   }
 
   async function handleParticipantResolved(
@@ -821,6 +902,14 @@ export default function KitPickupPage() {
         <QrScannerModal
           onClose={() => setShowScanner(false)}
           onRead={handleQrRead}
+        />
+      ) : null}
+
+      {errorDialog ? (
+        <OperationalErrorDialog
+          title={errorDialog.title}
+          message={errorDialog.message}
+          onClose={() => setErrorDialog(null)}
         />
       ) : null}
 
@@ -880,9 +969,16 @@ export default function KitPickupPage() {
                 onDeliverKitAndCheckin={handleDeliverKitAndCheckin}
                 onCheckin={handleCheckin}
                 onDeliverKitItem={handleDeliverKitItem}
+                onUndoCheckin={handleUndoCheckin}
+                onUndoKitDelivery={handleUndoKitDelivery}
+                onLinkWristband={handleLinkWristband}
+                onUnlinkWristband={handleUnlinkWristband}
+                onReplaceWristband={handleReplaceWristband}
                 onItemsMaterialized={handleItemsMaterialized}
                 onParticipantResolved={handleParticipantResolved}
                 onConfirmPayment={handleConfirmPayment}
+                onGrantStoreItem={handleGrantStoreItem}
+                onDeliverAdditionalItem={handleDeliverAdditionalItem}
               />
             </OperationsDashboard>
           </SectionCard>

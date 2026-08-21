@@ -21,6 +21,7 @@ import { TicketRules } from "./ticket-rules";
 import { DeliveryScheduleManager, type EventScheduleRow } from "./delivery-schedule-manager";
 import { EventDataForm } from "./event-data-form";
 import { AttractionsManager } from "./attractions-manager";
+import { EventWristbandSettings } from "./wristband-settings";
 
 type Params = Promise<{ id: string }>;
 type SearchParams = Promise<{ etapa?: string }>;
@@ -53,12 +54,12 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   const currentStep = Number.isFinite(etapaValue) ? Math.min(8, Math.max(1, Math.trunc(etapaValue))) : 1;
 
   const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }, { count: ticketsCount, error: ticketsCountError }] = await Promise.all([
-    supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer").eq("id", id).maybeSingle(),
+    supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer, wristband_enabled, wristband_required_for_checkin, wristband_required_for_kit").eq("id", id).maybeSingle(),
     supabase.rpc("get_event_kit_items", { p_event_id: id }),
     supabase.rpc("get_event_ticket_categories", { p_event_id: id }),
     supabase.rpc("get_event_addons_dynamic_setup", { p_event_id: id }),
     supabase.rpc("get_event_payment_methods_setup", { p_event_id: id }),
-    supabase.from("event_kit_items").select("id,name,requires_variant,allow_participant_change,track_variant_inventory").eq("event_id", id).order("sort_order"),
+    supabase.from("event_kit_items").select("id,name,item_type,requires_variant,allow_participant_change,track_variant_inventory,shirt_supply_mode").eq("event_id", id).order("sort_order"),
     supabase.from('kit_delivery_schedule').select('id,event_id,delivery_at,title,location,description,schedule_type,sort_order,is_active,is_visible_to_users').eq('event_id', id).order('delivery_at'),
     supabase.from('event_attractions').select('id,event_id,name,description,banner_url,is_active,sort_order').eq('event_id', id).order('sort_order'),
     supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('event_id', id).neq('status', 'cancelled'),
@@ -94,6 +95,9 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     allow_participant_item_changes: Boolean(eventData.allow_participant_item_changes),
     allow_holder_change: Boolean(eventData.allow_holder_change),
     allow_ticket_transfer: Boolean(eventData.allow_ticket_transfer),
+    wristband_enabled: Boolean(eventData.wristband_enabled),
+    wristband_required_for_checkin: Boolean(eventData.wristband_required_for_checkin),
+    wristband_required_for_kit: Boolean(eventData.wristband_required_for_kit),
   };
 
   const items = (kitData ?? []).map((row: {
@@ -447,7 +451,15 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
 
           {currentStep === 6 ? (
             <SectionCard title="Etapa 6: Itens e variações de kit" description="Opcional: detalhar itens, variações e regras de alteração do kit utilizado no evento.">
-              <ItemChangeRules eventId={event.id} initialEnabled={event.allow_participant_item_changes} items={(itemRulesData ?? []).map((item) => ({ id: String(item.id), name: String(item.name), requires_variant: Boolean(item.requires_variant), allow_participant_change: Boolean(item.allow_participant_change), track_variant_inventory: Boolean(item.track_variant_inventory) }))} />
+              <EventWristbandSettings
+                eventId={event.id}
+                initial={{
+                  enabled: event.wristband_enabled,
+                  requiredForCheckin: event.wristband_required_for_checkin,
+                  requiredForKit: event.wristband_required_for_kit,
+                }}
+              />
+              <ItemChangeRules eventId={event.id} initialEnabled={event.allow_participant_item_changes} items={(itemRulesData ?? []).map((item) => ({ id: String(item.id), name: String(item.name), item_type: String(item.item_type), requires_variant: Boolean(item.requires_variant), allow_participant_change: Boolean(item.allow_participant_change), track_variant_inventory: Boolean(item.track_variant_inventory), require_stock_for_choice: item.shirt_supply_mode === "stock" }))} />
               {!event.kit_enabled ? (
                 <EmptyState title="Kit desabilitado" description="Ative 'Possui kit' no cadastro do evento para usar itens de kit." />
               ) : (

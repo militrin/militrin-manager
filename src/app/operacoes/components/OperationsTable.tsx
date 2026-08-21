@@ -5,6 +5,7 @@ import { ExpandedParticipantDetails } from "./ExpandedParticipantDetails";
 import { OperationRow } from "./OperationRow";
 import { getOperationsGridConfig } from "./tableGrid";
 import type {
+  ActionResult,
   PickupCapabilities,
   PickupDetails,
   PickupEvent,
@@ -12,6 +13,7 @@ import type {
   PickupListItem,
   PickupSortDirection,
   PickupSortField,
+  ReasonPayload,
 } from "../types";
 
 const SORT_PRESETS: Array<{ field: PickupSortField; direction: PickupSortDirection; label: string }> = [
@@ -79,9 +81,16 @@ export function OperationsTable({
   onDeliverKitAndCheckin,
   onCheckin,
   onDeliverKitItem,
+  onUndoCheckin,
+  onUndoKitDelivery,
+  onLinkWristband,
+  onUnlinkWristband,
+  onReplaceWristband,
   onItemsMaterialized,
   onParticipantResolved,
   onConfirmPayment,
+  onGrantStoreItem,
+  onDeliverAdditionalItem,
   onSort,
   onSortPreset,
 }: {
@@ -96,13 +105,23 @@ export function OperationsTable({
   sortField: PickupSortField;
   sortDirection: PickupSortDirection;
   onToggleDetails: (entry: PickupListItem) => Promise<void>;
-  onDeliverFullKit: (ticketId: string, participantId: string | null) => Promise<void>;
-  onDeliverKitAndCheckin: (ticketId: string, participantId: string | null) => Promise<void>;
-  onCheckin: (ticketId: string) => Promise<void>;
-  onDeliverKitItem: (ticketId: string, participantId: string | null, kitItemId: string) => Promise<void>;
+  onDeliverFullKit: (ticketId: string, participantId: string | null, wristbandCode?: string) => Promise<ActionResult>;
+  onDeliverKitAndCheckin: (ticketId: string, participantId: string | null, wristbandCode?: string) => Promise<ActionResult>;
+  onCheckin: (ticketId: string, wristbandCode?: string) => Promise<ActionResult>;
+  onDeliverKitItem: (ticketId: string, participantId: string | null, kitItemId: string, wristbandCode?: string) => Promise<ActionResult>;
+  onUndoCheckin: (ticketId: string, payload: ReasonPayload) => Promise<ActionResult>;
+  onUndoKitDelivery: (ticketId: string, payload: ReasonPayload) => Promise<ActionResult>;
+  onLinkWristband: (ticketId: string, code: string) => Promise<ActionResult>;
+  onUnlinkWristband: (ticketId: string) => Promise<ActionResult>;
+  onReplaceWristband: (ticketId: string, code: string) => Promise<ActionResult>;
   onItemsMaterialized: (ticketId: string) => Promise<void>;
   onParticipantResolved: (participantId: string, result: { ticketId: string | null; finalization: string | null; message: string }) => Promise<void>;
   onConfirmPayment: (ticketId: string, participantId: string) => Promise<void>;
+  onGrantStoreItem: (
+    ticketId: string,
+    payload: { storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string },
+  ) => Promise<ActionResult>;
+  onDeliverAdditionalItem: (ticketId: string, storeOrderItemId: string) => Promise<ActionResult>;
   onSort: (field: PickupSortField) => void;
   onSortPreset: (field: PickupSortField, direction: PickupSortDirection) => void;
 }) {
@@ -206,8 +225,15 @@ export function OperationsTable({
                             onCheckin={onCheckin}
                             onDeliverKitAndCheckin={onDeliverKitAndCheckin}
                             onDeliverKitItem={onDeliverKitItem}
+                            onUndoCheckin={onUndoCheckin}
+                            onUndoKitDelivery={onUndoKitDelivery}
+                            onLinkWristband={onLinkWristband}
+                            onUnlinkWristband={onUnlinkWristband}
+                            onReplaceWristband={onReplaceWristband}
                             onConfirmPayment={(participantId) => onConfirmPayment(item.ticket_id, participantId)}
                             onIssueResolved={(result) => onParticipantResolved(item.participant_id ?? "", result)}
+                            onGrantStoreItem={(payload) => onGrantStoreItem(item.ticket_id, payload)}
+                            onDeliverAdditionalItem={(storeOrderItemId) => onDeliverAdditionalItem(item.ticket_id, storeOrderItemId)}
                           /> : <ExpandedParticipantDetails
                             detail={detail?.kind === "participant_without_ticket" ? detail : undefined}
                             busy={busy}

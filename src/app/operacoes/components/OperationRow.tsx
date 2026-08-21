@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { getOperationsGridConfig } from "./tableGrid";
-import type { PickupCapabilities, PickupEvent, PickupListItem } from "../types";
+import type { ActionResult, PickupCapabilities, PickupEvent, PickupListItem } from "../types";
 import { MaterializeItemsDialog } from "./MaterializeItemsDialog";
+import { ConfirmDeliverAndCheckinDialog } from "./ConfirmDeliverAndCheckinDialog";
 
 function maskCpf(cpf: string) {
   const digits = cpf.replace(/\D/g, "");
@@ -71,9 +73,9 @@ export function OperationRow({
   busy: boolean;
   capabilities: PickupCapabilities;
   onToggleDetails: (entry: PickupListItem) => void;
-  onDeliverFullKit: (ticketId: string, participantId: string | null) => Promise<void>;
-  onDeliverKitAndCheckin: (ticketId: string, participantId: string | null) => Promise<void>;
-  onCheckin: (ticketId: string) => Promise<void>;
+  onDeliverFullKit: (ticketId: string, participantId: string | null, wristbandCode?: string) => Promise<ActionResult>;
+  onDeliverKitAndCheckin: (ticketId: string, participantId: string | null, wristbandCode?: string) => Promise<ActionResult>;
+  onCheckin: (ticketId: string, wristbandCode?: string) => Promise<ActionResult>;
   onItemsMaterialized: (ticketId: string) => Promise<void>;
 }) {
   const grid = getOperationsGridConfig(selectedEvent);
@@ -81,12 +83,24 @@ export function OperationRow({
   const gender = formatGender(item.gender);
   const shirtLabel = [item.shirt_type, item.shirt_size].filter(Boolean).join(" ").trim();
   const hasTicket = item.kind === "ticket";
+  const [showCombinedConfirm, setShowCombinedConfirm] = useState(false);
+  const hasActiveWristband = item.wristband?.status === "active";
+  const wristbandWillBeRequested = Boolean(
+    selectedEvent?.wristband_enabled &&
+      (selectedEvent?.wristband_required_for_kit || selectedEvent?.wristband_required_for_checkin) &&
+      !hasActiveWristband,
+  );
 
   function toggle() {
     onToggleDetails(item);
   }
 
+  async function handleCombinedConfirmed() {
+    if (item.kind === "ticket") await onDeliverKitAndCheckin(item.ticket_id, item.participant_id);
+  }
+
   return (
+    <>
     <div
       role="button"
       tabIndex={0}
@@ -206,7 +220,7 @@ export function OperationRow({
               aria-label="Entregar itens pendentes e realizar check-in"
               type="button"
               disabled={busy || !capabilities.canCombined || !hasTicket || !item.can_operate}
-              onClick={() => void onDeliverKitAndCheckin(item.ticket_id, item.participant_id)}
+              onClick={() => setShowCombinedConfirm(true)}
               className="rounded-lg bg-cyan-500 px-2 py-1 text-[11px] font-semibold text-cyan-950 disabled:opacity-40"
             >
               Entregar + check-in
@@ -227,5 +241,19 @@ export function OperationRow({
         )}
       </div>
     </div>
+
+    {showCombinedConfirm ? (
+      <ConfirmDeliverAndCheckinDialog
+        participantName={item.participant_name || "Titular não informado"}
+        categoryName={item.category_name}
+        kitItemLabels={shirtLabel ? [shirtLabel] : []}
+        hasKit={Boolean(selectedEvent?.has_kit)}
+        wristbandCode={hasActiveWristband ? (item.wristband?.code ?? null) : null}
+        wristbandWillBeRequested={wristbandWillBeRequested}
+        onConfirm={handleCombinedConfirmed}
+        onClose={() => setShowCombinedConfirm(false)}
+      />
+    ) : null}
+    </>
   );
 }

@@ -1,3 +1,11 @@
+/** Shape comum devolvido pelos handlers de acao (page.tsx, via runAction) --
+ * usado pelos componentes pra decidir se abrem o modal obrigatorio de
+ * pulseira (code === 'WRISTBAND_REQUIRED') sem precisar conhecer o formato
+ * exato de cada server action. */
+export type ActionResult = { success: boolean; message?: string; code?: string } | void;
+
+export type ReasonPayload = { reasonCode: string; reasonText: string; alsoUnlinkWristband: boolean };
+
 export type OperationMode = 'kit' | 'checkin' | 'both';
 export type SortField =
   | 'name'
@@ -321,6 +329,7 @@ export type OperationTicketDetails = TicketBackedOperationEntry & {
     shirt_size: string;
     category_name: string;
   }>;
+  additional_items: AdditionalItem[];
 };
 
 export type OperationParticipantDetails = ParticipantOnlyLegacyOperationEntry & {
@@ -386,6 +395,60 @@ export type PickupCapabilities = {
   canCheckin: boolean;
   canCombined: boolean;
   canChangeShirt: boolean;
+  canUndoKit: boolean;
+  canUndoCheckin: boolean;
+  canViewWristband: boolean;
+  canLinkWristband: boolean;
+  canUnlinkWristband: boolean;
+  canReplaceWristband: boolean;
+  canGrantStoreItems: boolean;
+  canDeliverStoreItems: boolean;
+};
+
+// Itens adicionais (loja) concedidos/comprados por um participante -- NUNCA
+// somados ao kit do ingresso. "origin" distingue quem colocou o item ali:
+// autoatendimento na loja/compre-junto ("loja") ou concessao administrativa
+// ("admin"); "codigo" fica reservado para quando code_required for
+// implementado.
+export type AdditionalItem = {
+  id: string;
+  store_item_id: string;
+  store_item_name: string;
+  variant_label: string | null;
+  quantity: number;
+  status: "reserved" | "confirmed" | "delivered" | "cancelled";
+  delivered_at: string | null;
+  origin: "admin" | "loja" | "codigo";
+  is_courtesy: boolean;
+};
+
+export const REASON_CODES = [
+  'operational_error',
+  'wrong_person',
+  'accidental_scan',
+  'administrative_correction',
+  'system_test',
+  'other',
+] as const;
+
+export type ReasonCode = (typeof REASON_CODES)[number];
+
+export const REASON_CODE_LABELS: Record<ReasonCode, string> = {
+  operational_error: 'Erro operacional',
+  wrong_person: 'Pessoa errada',
+  accidental_scan: 'Leitura acidental',
+  administrative_correction: 'Correção administrativa',
+  system_test: 'Teste de sistema',
+  other: 'Outro',
+};
+
+export type WristbandHistoryEntry = {
+  id: string;
+  action: string;
+  code: string | null;
+  reason: string | null;
+  actor_email: string | null;
+  created_at: string;
 };
 
 export const EMPTY_PICKUP_FILTERS: PickupFilters = {

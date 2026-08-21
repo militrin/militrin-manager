@@ -12,12 +12,18 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 async function loadWristbandOperators(supabase: ReportSupabaseClient, eventId: string) {
-  const { data } = await supabase.from("audit_logs").select("entity_id,actor,created_at").eq("event_id", eventId).in("action", WRISTBAND_ACTIONS);
+  // Fix: audit_logs nao tem coluna "actor" (ver 20260815006100_fix_active_db_lint_contracts.sql)
+  // -- o ator de toda RPC deste modulo vai em details->>'actor_email', nunca
+  // numa coluna top-level. Selecionar "actor" direto sempre falhava/voltava
+  // vazio; corrigido pra ler do jsonb correto.
+  const { data } = await supabase.from("audit_logs").select("entity_id,details,created_at").eq("event_id", eventId).in("action", WRISTBAND_ACTIONS);
   const map = new Map<string, string>();
   for (const row of data ?? []) {
     const entityId = String(row.entity_id ?? "");
     if (!entityId) continue;
-    map.set(entityId, String(row.actor ?? "Não informado"));
+    const details = row.details && typeof row.details === "object" && !Array.isArray(row.details) ? row.details as Record<string, unknown> : null;
+    const actor = details?.actor_email ?? details?.actor_user_id ?? null;
+    map.set(entityId, actor ? String(actor) : "Não informado");
   }
   return map;
 }

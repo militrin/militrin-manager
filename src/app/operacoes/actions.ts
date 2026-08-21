@@ -13,7 +13,10 @@ import type {
   TicketBackedOperationEntry,
   PickupCapabilities,
   PickupEvent,
+  ReasonCode,
+  WristbandHistoryEntry,
 } from "./types";
+import { REASON_CODES } from "./types";
 
 type OperationFiltersInput = {
   eventId?: string | null;
@@ -48,6 +51,36 @@ function operationRpcError(error: { message?: string; details?: string | null } 
 } {
   if (!error) return { code: "OPERATION_FAILED", message: "Operação não concluída." };
   const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+  if (serialized.includes("WRISTBAND_REQUIRED")) {
+    try {
+      const detail = JSON.parse(error.details ?? "{}") as { message?: string };
+      return { code: "WRISTBAND_REQUIRED", message: detail.message ?? "Este evento exige pulseira vinculada para esta operação." };
+    } catch {
+      return { code: "WRISTBAND_REQUIRED", message: "Este evento exige pulseira vinculada para esta operação." };
+    }
+  }
+  if (serialized.includes("HOLDER_ALREADY_HAS_TICKET_FOR_EVENT")) {
+    try {
+      const detail = JSON.parse(error.details ?? "{}") as { message?: string };
+      return { code: "HOLDER_ALREADY_HAS_TICKET_FOR_EVENT", message: detail.message ?? "Esta pessoa já é titular de outro ingresso neste evento." };
+    } catch {
+      return { code: "HOLDER_ALREADY_HAS_TICKET_FOR_EVENT", message: "Esta pessoa já é titular de outro ingresso neste evento." };
+    }
+  }
+  if (serialized.includes("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION")) {
+    try {
+      const detail = JSON.parse(error.details ?? "{}") as { message?: string };
+      return {
+        code: "SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION",
+        message: detail.message ?? "O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.",
+      };
+    } catch {
+      return {
+        code: "SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION",
+        message: "O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.",
+      };
+    }
+  }
   if (!serialized.includes("SHIRT_OUT_OF_STOCK")) {
     return { code: "OPERATION_FAILED", message: error.message ?? "Operação não concluída." };
   }
@@ -439,31 +472,41 @@ function mapTicketRow(params: {
   };
 }
 
+async function hasPermission(code: string) {
+  try {
+    await assertPermission(code);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getRetiradaCapabilitiesAction() {
-  let canDeliverKit = false;
-  let canCheckin = false;
-  let canChangeShirt = false;
-
-  try {
-    await assertPermission("kits.deliver");
-    canDeliverKit = true;
-  } catch {
-    canDeliverKit = false;
-  }
-
-  try {
-    await assertPermission("checkin.scan");
-    canCheckin = true;
-  } catch {
-    canCheckin = false;
-  }
-
-  try {
-    await assertPermission("inventory.change_participant_shirt");
-    canChangeShirt = true;
-  } catch {
-    canChangeShirt = false;
-  }
+  const [
+    canDeliverKit,
+    canCheckin,
+    canChangeShirt,
+    canUndoKit,
+    canUndoCheckin,
+    canViewWristband,
+    canLinkWristband,
+    canUnlinkWristband,
+    canReplaceWristband,
+    canGrantStoreItems,
+    canDeliverStoreItems,
+  ] = await Promise.all([
+    hasPermission("kits.deliver"),
+    hasPermission("checkin.scan"),
+    hasPermission("inventory.change_participant_shirt"),
+    hasPermission("kits.undo_delivery"),
+    hasPermission("checkin.undo"),
+    hasPermission("wristbands.view"),
+    hasPermission("wristbands.link"),
+    hasPermission("wristbands.unlink"),
+    hasPermission("wristbands.replace"),
+    Promise.all([hasPermission("store.grant_items"), hasPermission("store.manage")]).then((permissions) => permissions.some(Boolean)),
+    hasPermission("store.deliver"),
+  ]);
 
   return {
     success: true,
@@ -472,6 +515,14 @@ export async function getRetiradaCapabilitiesAction() {
       canCheckin,
       canCombined: canDeliverKit && canCheckin,
       canChangeShirt,
+      canUndoKit,
+      canUndoCheckin,
+      canViewWristband,
+      canLinkWristband,
+      canUnlinkWristband,
+      canReplaceWristband,
+      canGrantStoreItems,
+      canDeliverStoreItems,
     } satisfies PickupCapabilities,
   };
 }
@@ -1235,6 +1286,40 @@ async function buildTicketDetails(
   if (checkinError) return { success: false as const, message: checkinError.message };
   if (buyerError) return { success: false as const, message: buyerError.message };
 
+  // Itens adicionais (loja) concedidos/comprados por este participante --
+  // reaproveita store_orders.participant_id (coluna ja existente, nunca
+  // relacionada ao kit do ingresso). Fica FORA de participant_kit_items de
+  // proposito: nunca deve ser contado como parte do kit principal.
+  const { data: additionalItemRows, error: additionalItemsError } = participantId
+    ? await supabase
+        .from("store_order_items")
+        .select(
+          "id, store_item_id, variant_id, quantity, status, delivered_at, store_items(name), store_item_variants(name,value), store_orders!inner(participant_id,event_id,payment_method)",
+        )
+        .eq("store_orders.participant_id", participantId)
+        .eq("store_orders.event_id", String(ticketRow.event_id ?? ""))
+        .neq("status", "cancelled")
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (additionalItemsError) return { success: false as const, message: additionalItemsError.message };
+
+  const additionalItems = ((additionalItemRows ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const storeItem = getRelation(row.store_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    const variant = getRelation(row.store_item_variants as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    const order = getRelation(row.store_orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    const paymentMethod = String(order?.payment_method ?? "");
+    return {
+      id: String(row.id),
+      store_item_id: String(row.store_item_id ?? ""),
+      store_item_name: String(storeItem?.name ?? "Item"),
+      variant_label: variant ? [variant.name, variant.value].filter(Boolean).join(" ") || null : null,
+      quantity: Number(row.quantity ?? 1),
+      status: String(row.status ?? "reserved") as "reserved" | "confirmed" | "delivered" | "cancelled",
+      delivered_at: row.delivered_at ? String(row.delivered_at) : null,
+      origin: paymentMethod.startsWith("admin_") ? ("admin" as const) : ("loja" as const),
+      is_courtesy: paymentMethod === "admin_courtesy",
+    };
+  });
+
   const eventRelation = getRelation(
     ticketRow.events as Record<string, unknown> | Array<Record<string, unknown>> | null,
   );
@@ -1500,6 +1585,7 @@ async function buildTicketDetails(
     can_finalize_ticket: canFinalizeTicket,
     can_issue_ticket: canIssueTicket,
     registration_contact_pin: registrationContactPin,
+    additional_items: additionalItems,
   };
 
   return {
@@ -1514,6 +1600,49 @@ export async function getOperationTicketDetailsAction(ticketId: string) {
 
   const supabase = await createServerSupabaseClient();
   return buildTicketDetails(supabase, ticketId);
+}
+
+// "Ver ingresso" (somente leitura, ficha operacional) -- reusa a MESMA fonte
+// de dados (tabela tickets + relacoes) da ficha de conta/administrativa em
+// minha-conta/ingressos/[ticketId], mas sem a gate de "canShowTicket" de la
+// (pedido confirmado + ingresso ativo/usado): aqui e uma consulta
+// administrativa, ingresso cancelado ou ja utilizado tambem precisa aparecer
+// (o operador as vezes so quer conferir o QR/token de um ingresso ja usado).
+export async function getOperationTicketViewAction(ticketId: string) {
+  await assertPermission("participants.view");
+  if (!isUuid(ticketId)) return { success: false as const, message: "Identificador de ingresso inválido.", ticket: null };
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("id, token, status, events(name, location, starts_at), orders(order_number), order_items(ticket_categories(name)), participants(full_name)")
+    .eq("id", ticketId)
+    .maybeSingle();
+
+  if (error) return { success: false as const, message: error.message, ticket: null };
+  if (!data) return { success: false as const, message: "Ingresso não encontrado.", ticket: null };
+
+  const row = data as Record<string, unknown>;
+  const event = getRelation(row.events as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const order = getRelation(row.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const orderItem = getRelation(row.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const participant = getRelation(row.participants as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const category = getRelation(orderItem?.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null | undefined);
+
+  return {
+    success: true as const,
+    message: null,
+    ticket: {
+      eventName: String(event?.name ?? "Evento"),
+      participantName: String(participant?.full_name ?? "Titular não informado"),
+      status: String(row.status ?? "pending"),
+      categoryName: category?.name ? String(category.name) : null,
+      eventDate: event?.starts_at ? String(event.starts_at) : null,
+      eventLocation: event?.location ? String(event.location) : null,
+      token: String(row.token ?? ""),
+      orderNumber: order?.order_number ? String(order.order_number) : null,
+    },
+  };
 }
 
 export async function getOperationParticipantDetailsAction(participantId: string) {
@@ -1804,7 +1933,17 @@ export async function searchPickupParticipantByQrAction(rawValue: string) {
   return getOperationTicketDetailsAction(String(ticket.id));
 }
 
-export async function deliverKitItemAction(payload: { ticket_id: string; kit_item_id: string }) {
+function validateReasonPayload(payload: { reason_code: string; reason_text?: string }) {
+  if (!REASON_CODES.includes(payload.reason_code as ReasonCode)) {
+    return "Selecione um motivo válido.";
+  }
+  if (payload.reason_code === "other" && !payload.reason_text?.trim()) {
+    return 'Descreva o motivo quando selecionar "Outro".';
+  }
+  return null;
+}
+
+export async function deliverKitItemAction(payload: { ticket_id: string; kit_item_id: string; wristband_code?: string }) {
   await assertPermission("kits.deliver");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
   const supabase = await createServerSupabaseClient();
@@ -1813,16 +1952,19 @@ export async function deliverKitItemAction(payload: { ticket_id: string; kit_ite
   const { error } = await supabase.rpc("deliver_ticket_kit_item", {
     p_ticket_id: payload.ticket_id,
     p_kit_item_id: payload.kit_item_id,
+    p_wristband_code: payload.wristband_code?.trim() || null,
   });
 
   if (error) {
     return { success: false, ...operationRpcError(error) };
   }
 
+  revalidatePath("/operacoes");
+  revalidatePath(`/ingressos/${payload.ticket_id}`);
   return { success: true, message: "Item entregue com sucesso." };
 }
 
-export async function deliverFullKitAction(payload: { ticket_id: string }) {
+export async function deliverFullKitAction(payload: { ticket_id: string; wristband_code?: string }) {
   await assertPermission("kits.deliver");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
   const supabase = await createServerSupabaseClient();
@@ -1845,6 +1987,7 @@ export async function deliverFullKitAction(payload: { ticket_id: string }) {
 
   const { error } = await supabase.rpc("deliver_ticket_full_kit", {
     p_ticket_id: payload.ticket_id,
+    p_wristband_code: payload.wristband_code?.trim() || null,
   });
 
   if (error) {
@@ -1856,12 +1999,16 @@ export async function deliverFullKitAction(payload: { ticket_id: string }) {
   return { success: true, message: "Kit completo entregue com sucesso." };
 }
 
-export async function undoFullKitDeliveryAction(payload: { ticket_id: string }) {
+export async function undoFullKitDeliveryAction(payload: { ticket_id: string; reason_code: string; reason_text?: string }) {
   await assertPermission("kits.undo_delivery");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
+  const reasonError = validateReasonPayload(payload);
+  if (reasonError) return { success: false, message: reasonError };
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("undo_ticket_full_kit", {
     p_ticket_id: payload.ticket_id,
+    p_reason_code: payload.reason_code,
+    p_reason_text: payload.reason_text?.trim() || null,
   });
   if (error || data !== true) return { success: false, message: error?.message ?? "Não foi possível reverter a entrega do kit." };
   revalidatePath("/operacoes");
@@ -1878,12 +2025,185 @@ export async function changeShirtAction(payload: { ticketId: string; shirtType: 
     p_new_shirt_type: payload.shirtType,
     p_new_shirt_size: payload.shirtSize,
   });
-  if (error) return { success: false, message: error.message };
+  if (error) return { success: false, ...operationRpcError(error) };
   revalidatePath("/operacoes");
   return { success: true, message: "Camiseta alterada com sucesso." };
 }
 
-export async function checkinEntryAction(payload: { ticket_id: string }) {
+// Unico caminho valido pra trocar tamanho depois de kit entregue ou
+// check-in realizado -- changeShirtAction/admin_change_ticket_shirt ficam
+// travados nesse caso (SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION). Exige
+// motivo (mesmo catalogo de REASON_CODES do resto do modulo).
+export async function correctShirtAfterOperationAction(payload: {
+  ticketId: string;
+  shirtType: string;
+  shirtSize: string;
+  reasonCode: ReasonCode;
+  reasonText?: string;
+}) {
+  await assertPermission("inventory.change_participant_shirt");
+  if (!isUuid(payload.ticketId)) return invalidTicketId();
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("admin_correct_ticket_shirt_after_operation", {
+    p_ticket_id: payload.ticketId,
+    p_new_shirt_type: payload.shirtType,
+    p_new_shirt_size: payload.shirtSize,
+    p_reason_code: payload.reasonCode,
+    p_reason_text: payload.reasonText?.trim() || null,
+  });
+  if (error) return { success: false, ...operationRpcError(error) };
+  revalidatePath("/operacoes");
+  revalidatePath(`/ingressos/${payload.ticketId}`);
+  return { success: true, message: "Tamanho corrigido com sucesso." };
+}
+
+// ============================================================
+// Itens adicionais (loja) -- camiseta extra / produto restrito. Reaproveita
+// integralmente store_items/store_item_variants/store_item_inventory/
+// store_orders/store_order_items; nunca cria ingresso, nunca mexe em
+// participant_kit_items (kit principal), check-in, pulseira ou titularidade.
+// ============================================================
+
+async function assertStoreGrantPermission() {
+  if (await hasPermission("store.grant_items")) return;
+  await assertPermission("store.manage");
+}
+
+export async function getGrantableStoreItemsAction(eventId: string) {
+  await assertStoreGrantPermission();
+  if (!isUuid(eventId)) return { success: false as const, message: "Evento inválido.", items: [] };
+  const supabase = await createServerSupabaseClient();
+  // Consulta direta em store_items (nunca list_store_items_for_event): o
+  // admin precisa ver e conceder itens em QUALQUER visibilidade, inclusive
+  // admin_only/code_required -- e exatamente o caso de uso desta tela.
+  const { data, error } = await supabase
+    .from("store_items")
+    .select(
+      "id, name, requires_variant, price, discount_type, discount_value, supply_mode, visibility, linked_event_kit_item_id, event_kit_items(shirt_supply_mode), store_item_variants(id, name, value, price_adjustment, is_active, linked_event_kit_item_variant_id), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity)",
+    )
+    .or(`event_id.eq.${eventId},event_id.is.null`)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+  if (error) return { success: false as const, message: error.message, items: [] };
+
+  const linkedKitItemIds = (data ?? []).map((row) => row.linked_event_kit_item_id).filter((id): id is string => Boolean(id));
+  const { data: kitInvRows, error: kitInvError } = linkedKitItemIds.length
+    ? await supabase.from("event_kit_item_variant_inventory").select("kit_item_id, variant_id, total_quantity, reserved_quantity, delivered_quantity").in("kit_item_id", linkedKitItemIds)
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (kitInvError) return { success: false as const, message: kitInvError.message, items: [] };
+  const kitInvByKey = new Map<string, Record<string, unknown>>();
+  for (const inv of kitInvRows ?? []) kitInvByKey.set(`${inv.kit_item_id}:${inv.variant_id}`, inv);
+
+  const items = (data ?? []).map((row) => {
+    const linkedKitItemId = row.linked_event_kit_item_id ? String(row.linked_event_kit_item_id) : null;
+    const linkedShirtSupplyMode = String((row.event_kit_items as { shirt_supply_mode?: string } | null)?.shirt_supply_mode ?? "stock");
+    const supplyMode = linkedKitItemId
+      ? (linkedShirtSupplyMode === "made_to_order" ? "made_to_order" : "stock")
+      : row.supply_mode === "made_to_order" ? "made_to_order" : "stock";
+    const invRows = (Array.isArray(row.store_item_inventory) ? row.store_item_inventory : []) as Array<Record<string, unknown>>;
+    const invByVariant = new Map<string | null, Record<string, unknown>>();
+    for (const inv of invRows) invByVariant.set(inv.variant_id ? String(inv.variant_id) : null, inv);
+    const availableFor = (variantId: string | null, linkedKitVariantId: string | null) => {
+      if (supplyMode === "made_to_order") return null;
+      const inv = linkedKitItemId
+        ? (linkedKitVariantId ? kitInvByKey.get(`${linkedKitItemId}:${linkedKitVariantId}`) : undefined)
+        : invByVariant.get(variantId);
+      const total = Number(inv?.total_quantity ?? 0);
+      const reserved = Number(inv?.reserved_quantity ?? 0);
+      const delivered = Number(inv?.delivered_quantity ?? 0);
+      return Math.max(total - reserved - delivered, 0);
+    };
+    const variants = ((Array.isArray(row.store_item_variants) ? row.store_item_variants : []) as Array<Record<string, unknown>>)
+      .filter((v) => v.is_active !== false)
+      .map((v) => ({
+        id: String(v.id),
+        name: String(v.name ?? ""),
+        value: String(v.value ?? ""),
+        priceAdjustment: Number(v.price_adjustment ?? 0),
+        availableQuantity: availableFor(String(v.id), v.linked_event_kit_item_variant_id ? String(v.linked_event_kit_item_variant_id) : null),
+      }));
+    const discountType = row.discount_type === "percentage" || row.discount_type === "fixed" ? row.discount_type : null;
+    const discountValue = Number(row.discount_value ?? 0);
+    const price = Number(row.price ?? 0);
+    const finalPrice = discountType === "percentage" ? Math.max(price * (1 - Math.min(discountValue, 100) / 100), 0)
+      : discountType === "fixed" ? Math.max(price - discountValue, 0)
+      : price;
+    return {
+      id: String(row.id),
+      name: String(row.name ?? ""),
+      price,
+      discountType,
+      discountValue,
+      finalPrice,
+      requiresVariant: Boolean(row.requires_variant),
+      supplyMode,
+      visibility: (row.visibility === "code_required" || row.visibility === "admin_only" ? row.visibility : "public") as "public" | "code_required" | "admin_only",
+      linkedToEventKit: Boolean(linkedKitItemId),
+      variants,
+      availableQuantity: availableFor(null, null),
+    };
+  });
+
+  return { success: true as const, message: null, items };
+}
+
+export async function grantStoreItemAction(payload: {
+  ticketId: string;
+  storeItemId: string;
+  variantId: string | null;
+  quantity: number;
+  isCourtesy: boolean;
+  reason?: string;
+}) {
+  await assertStoreGrantPermission();
+  if (!isUuid(payload.ticketId) || !isUuid(payload.storeItemId)) return invalidTicketId();
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("admin_grant_store_item", {
+    p_ticket_id: payload.ticketId,
+    p_store_item_id: payload.storeItemId,
+    p_variant_id: payload.variantId,
+    p_quantity: payload.quantity,
+    p_is_courtesy: payload.isCourtesy,
+    p_reason: payload.reason?.trim() || null,
+  });
+  if (error) {
+    const serialized = `${error.message ?? ""} ${(error as { details?: string }).details ?? ""}`;
+    if (serialized.includes("PRODUCT_OUT_OF_STOCK")) {
+      try {
+        const detail = JSON.parse((error as { details?: string }).details ?? "{}") as { message?: string };
+        return { success: false, message: detail.message ?? "Estoque insuficiente para este item." };
+      } catch {
+        return { success: false, message: "Estoque insuficiente para este item." };
+      }
+    }
+    return { success: false, message: error.message };
+  }
+  revalidatePath("/operacoes");
+  return { success: true, message: "Item concedido com sucesso." };
+}
+
+export async function deliverAdditionalStoreItemAction(storeOrderItemId: string) {
+  await assertPermission("store.deliver");
+  if (!isUuid(storeOrderItemId)) return { success: false, message: "Identificador inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("deliver_store_order_item", { p_store_order_item_id: storeOrderItemId });
+  if (error) {
+    const serialized = `${error.message ?? ""} ${(error as { details?: string }).details ?? ""}`;
+    if (serialized.includes("PRODUCT_OUT_OF_STOCK")) {
+      try {
+        const detail = JSON.parse((error as { details?: string }).details ?? "{}") as { message?: string };
+        return { success: false, message: detail.message ?? "Estoque insuficiente. A entrega não foi confirmada." };
+      } catch {
+        return { success: false, message: "Estoque insuficiente. A entrega não foi confirmada." };
+      }
+    }
+    return { success: false, message: error.message };
+  }
+  revalidatePath("/operacoes");
+  return { success: true, message: "Item adicional entregue com sucesso." };
+}
+
+export async function checkinEntryAction(payload: { ticket_id: string; wristband_code?: string }) {
   await assertPermission("checkin.scan");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
 
@@ -1893,16 +2213,13 @@ export async function checkinEntryAction(payload: { ticket_id: string }) {
 
   const ticketId = payload.ticket_id;
 
-  if (!ticketId) {
-    return { success: false, message: "Ingresso não encontrado para check-in." };
-  }
-
   const { data, error } = await supabase.rpc("checkin_ticket_entry", {
     p_ticket_id: ticketId,
+    p_wristband_code: payload.wristband_code?.trim() || null,
   });
 
   if (error) {
-    return { success: false, message: error.message };
+    return { success: false, ...operationRpcError(error) };
   }
 
   if (data !== true) {
@@ -1917,12 +2234,22 @@ export async function checkinEntryAction(payload: { ticket_id: string }) {
   };
 }
 
-export async function undoCheckinEntryAction(payload: { ticket_id: string }) {
+export async function undoCheckinEntryAction(payload: {
+  ticket_id: string;
+  reason_code: string;
+  reason_text?: string;
+  also_unlink_wristband?: boolean;
+}) {
   await assertPermission("checkin.undo");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
+  const reasonError = validateReasonPayload(payload);
+  if (reasonError) return { success: false, message: reasonError };
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("undo_ticket_checkin", {
     p_ticket_id: payload.ticket_id,
+    p_reason_code: payload.reason_code,
+    p_reason_text: payload.reason_text?.trim() || null,
+    p_also_unlink_wristband: Boolean(payload.also_unlink_wristband),
   });
   if (error || data !== true) return { success: false, message: error?.message ?? "Não foi possível desfazer o check-in." };
   revalidatePath("/operacoes");
@@ -1930,7 +2257,7 @@ export async function undoCheckinEntryAction(payload: { ticket_id: string }) {
   return { success: true, message: "Check-in desfeito com sucesso." };
 }
 
-export async function deliverKitAndCheckinAction(payload: { ticket_id: string }) {
+export async function deliverKitAndCheckinAction(payload: { ticket_id: string; wristband_code?: string }) {
   await assertPermission("kits.deliver");
   await assertPermission("checkin.scan");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
@@ -1944,6 +2271,7 @@ export async function deliverKitAndCheckinAction(payload: { ticket_id: string })
 
   const { data: combinedData, error: combinedError } = await supabase.rpc("deliver_items_and_checkin", {
     p_ticket_id: payload.ticket_id,
+    p_wristband_code: payload.wristband_code?.trim() || null,
   });
 
   if (combinedError || combinedData !== true) {
@@ -1964,4 +2292,99 @@ export async function deliverKitAndCheckinAction(payload: { ticket_id: string })
     kit_delivered: true,
     checkin_done: true,
   };
+}
+
+// ============================================================
+// Pulseira -- vincula/troca/desvincula/consulta/historico. Reutiliza as RPCs
+// ja existentes (link_wristband_to_ticket/unlink_wristband_from_ticket/
+// replace_wristband_for_ticket, migration legada 064/075) -- nenhuma tabela
+// ou RPC nova aqui, so os server actions que faltavam pra chama-las a
+// partir da Central de Operações.
+// ============================================================
+
+export async function linkWristbandAction(payload: { ticket_id: string; code: string }) {
+  await assertPermission("wristbands.link");
+  if (!isUuid(payload.ticket_id)) return invalidTicketId();
+  const code = payload.code.trim();
+  if (!code) return { success: false, message: "Informe o código da pulseira." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("link_wristband_to_ticket", {
+    p_ticket_id: payload.ticket_id,
+    p_code: code,
+  });
+  if (error) return { success: false, message: error.message };
+  const result = data as { success?: boolean; wristband_id?: string; code?: string; already_linked?: boolean } | null;
+  revalidatePath("/operacoes");
+  revalidatePath(`/ingressos/${payload.ticket_id}`);
+  return {
+    success: true,
+    message: result?.already_linked ? "Esta pulseira já estava vinculada a este ingresso." : "Pulseira vinculada com sucesso.",
+    wristband_id: result?.wristband_id ?? null,
+    code: result?.code ?? code,
+  };
+}
+
+export async function unlinkWristbandAction(payload: { ticket_id: string; reason?: string }) {
+  await assertPermission("wristbands.unlink");
+  if (!isUuid(payload.ticket_id)) return invalidTicketId();
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("unlink_wristband_from_ticket", {
+    p_ticket_id: payload.ticket_id,
+    p_reason: payload.reason?.trim() || null,
+  });
+  if (error || data !== true) return { success: false, message: error?.message ?? "Não foi possível desvincular a pulseira." };
+  revalidatePath("/operacoes");
+  revalidatePath(`/ingressos/${payload.ticket_id}`);
+  return { success: true, message: "Pulseira desvinculada com sucesso." };
+}
+
+export async function replaceWristbandAction(payload: { ticket_id: string; new_code: string; reason?: string }) {
+  await assertPermission("wristbands.replace");
+  if (!isUuid(payload.ticket_id)) return invalidTicketId();
+  const newCode = payload.new_code.trim();
+  if (!newCode) return { success: false, message: "Informe o código da nova pulseira." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("replace_wristband_for_ticket", {
+    p_ticket_id: payload.ticket_id,
+    p_new_code: newCode,
+    p_reason: payload.reason?.trim() || null,
+  });
+  if (error) return { success: false, message: error.message };
+  const result = data as { success?: boolean; wristband_id?: string; code?: string } | null;
+  revalidatePath("/operacoes");
+  revalidatePath(`/ingressos/${payload.ticket_id}`);
+  return { success: true, message: "Pulseira trocada com sucesso.", wristband_id: result?.wristband_id ?? null, code: result?.code ?? newCode };
+}
+
+const WRISTBAND_HISTORY_ACTIONS = ["wristband_linked", "wristband_unlinked", "wristband_blocked"];
+
+export async function getWristbandHistoryAction(ticketId: string) {
+  await assertPermission("wristbands.view");
+  if (!isUuid(ticketId)) return invalidTicketId();
+  const supabase = await createServerSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("id, action, created_at, details")
+    .in("action", WRISTBAND_HISTORY_ACTIONS)
+    .filter("details->>ticket_id", "eq", ticketId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) return { success: false as const, message: error.message };
+
+  const entries: WristbandHistoryEntry[] = ((data ?? []) as Array<Record<string, unknown>>)
+    .map((row) => {
+      const details = row.details as Record<string, unknown>;
+      return {
+        id: String(row.id ?? ""),
+        action: String(row.action ?? ""),
+        code: details.code ? String(details.code) : null,
+        reason: details.reason ? String(details.reason) : null,
+        actor_email: details.actor_email ? String(details.actor_email) : (details.actor_user_id ? String(details.actor_user_id) : null),
+        created_at: String(row.created_at ?? ""),
+      };
+    });
+
+  return { success: true as const, entries };
 }
