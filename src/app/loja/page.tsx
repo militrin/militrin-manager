@@ -5,7 +5,10 @@ import { getCurrentPermissionMap, requirePermission } from "@/lib/admin/permissi
 import { StoreEventSelector } from "./store-event-selector";
 import { StoreItemForm } from "./store-item-form";
 import { StoreItemCard } from "./store-item-card";
+import { StoreItemStatusFilter } from "./store-item-status-filter";
 import { StoreOrdersList } from "./store-orders-list";
+
+type StatusFilter = "active" | "inactive" | "all";
 
 type EventOption = { id: string; name: string; year: number | null; is_active: boolean };
 
@@ -18,6 +21,7 @@ type StoreItemVariant = {
   reservedQuantity: number;
   deliveredQuantity: number;
   availableQuantity: number;
+  linkedEventKitItemVariantId: string | null;
 };
 
 type StoreItemImage = { id: string; url: string; isPrimary: boolean };
@@ -30,11 +34,18 @@ type StoreItem = {
   primaryImageUrl: string | null;
   images: StoreItemImage[];
   price: number;
+  discountType: "percentage" | "fixed" | null;
+  discountValue: number;
+  finalPrice: number;
   requiresVariant: boolean;
   sortOrder: number;
   supplyMode: "stock" | "made_to_order";
+  visibility: "public" | "code_required" | "admin_only";
+  isActive: boolean;
   eventId: string | null;
   eventLabel: string;
+  linkedEventKitItemId: string | null;
+  linkedEventKitItemName: string | null;
   variants: StoreItemVariant[];
   totalQuantity: number;
   reservedQuantity: number;
@@ -42,13 +53,19 @@ type StoreItem = {
   availableQuantity: number;
 };
 
+function computeFinalPrice(price: number, discountType: "percentage" | "fixed" | null, discountValue: number) {
+  if (discountType === "percentage") return Math.max(price * (1 - Math.min(discountValue, 100) / 100), 0);
+  if (discountType === "fixed") return Math.max(price - discountValue, 0);
+  return price;
+}
+
 function eventLabelFor(events: EventOption[], eventId: string | null) {
   if (!eventId) return "Todos os eventos";
   const event = events.find((e) => e.id === eventId);
   return event ? `${event.name}${event.year ? ` ${event.year}` : ""}` : "Evento";
 }
 
-async function getStoreData(selectedEventId: string | null) {
+async function getStoreData(selectedEventId: string | null, statusFilter: StatusFilter) {
   const supabase = await createServerSupabaseClient();
 
   const { data: eventsData, error: eventsError } = await supabase
@@ -59,133 +76,116 @@ async function getStoreData(selectedEventId: string | null) {
   if (eventsError) throw eventsError;
   const events = (eventsData ?? []) as EventOption[];
 
-  if (!selectedEventId) {
-    const { data: rows, error: rowsError } = await supabase
-      .from("store_items")
-      .select(
-        "id, event_id, name, slug, description, price, requires_variant, supply_mode, sort_order, store_item_variants(id, name, value, price_adjustment, sort_order, is_active), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity), store_item_images(id, image_url, is_primary, sort_order)"
-      )
-      .eq("is_active", true)
-      .order("sort_order", { ascending: true });
-    if (rowsError) throw rowsError;
+  // Consulta direta em store_items (nunca list_store_items_for_event) --
+  // essa RPC agora so retorna itens visibility='public' (catalogo
+  // self-service), e o painel admin precisa continuar enxergando TODOS os
+  // itens, inclusive admin_only/code_required, pra poder gerencia-los.
+  let query = supabase
+    .from("store_items")
+    .select(
+      "id, event_id, name, slug, description, price, discount_type, discount_value, requires_variant, supply_mode, visibility, is_active, sort_order, linked_event_kit_item_id, event_kit_items(name, shirt_supply_mode), store_item_variants(id, name, value, price_adjustment, sort_order, is_active, linked_event_kit_item_variant_id), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity), store_item_images(id, image_url, is_primary, sort_order)"
+    )
+    .order("sort_order", { ascending: true });
+  // "Desativado" e um estado PROPRIO (nunca sinonimo de "Indisponivel"/sem
+  // estoque) -- o filtro de status controla so is_active, nunca estoque.
+  query = statusFilter === "active" ? query.eq("is_active", true) : statusFilter === "inactive" ? query.eq("is_active", false) : query;
+  query = selectedEventId ? query.or(`event_id.eq.${selectedEventId},event_id.is.null`) : query;
+  const { data: rows, error: rowsError } = await query;
+  if (rowsError) throw rowsError;
 
-    const items = ((rows ?? []) as Array<Record<string, unknown>>).map((row) => {
-      const supplyMode = row.supply_mode === "made_to_order" ? "made_to_order" : "stock";
-      const invRows = (Array.isArray(row.store_item_inventory) ? row.store_item_inventory : []) as Array<Record<string, unknown>>;
-      const invByVariant = new Map<string | null, Record<string, unknown>>();
-      for (const inv of invRows) invByVariant.set(inv.variant_id ? String(inv.variant_id) : null, inv);
-      const availFor = (inv: Record<string, unknown> | undefined) => {
-        const total = Number(inv?.total_quantity ?? 0);
-        const reserved = Number(inv?.reserved_quantity ?? 0);
-        const delivered = Number(inv?.delivered_quantity ?? 0);
-        return { total, reserved, delivered, available: supplyMode === "made_to_order" ? 0 : Math.max(total - reserved - delivered, 0) };
-      };
-      const variantRows = ((Array.isArray(row.store_item_variants) ? row.store_item_variants : []) as Array<Record<string, unknown>>)
-        .filter((v) => v.is_active !== false)
-        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
-      const variants: StoreItemVariant[] = variantRows.map((v) => {
-        const q = availFor(invByVariant.get(String(v.id)));
-        return {
-          id: String(v.id), name: String(v.name ?? ""), value: String(v.value ?? ""), priceAdjustment: Number(v.price_adjustment ?? 0),
-          totalQuantity: q.total, reservedQuantity: q.reserved, deliveredQuantity: q.delivered, availableQuantity: q.available,
-        };
-      });
-      const images: StoreItemImage[] = ((Array.isArray(row.store_item_images) ? row.store_item_images : []) as Array<Record<string, unknown>>)
-        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
-        .map((image) => ({ id: String(image.id), url: String(image.image_url ?? ""), isPrimary: Boolean(image.is_primary) }));
-      const base = availFor(invByVariant.get(null));
-      const eventId = row.event_id ? String(row.event_id) : null;
+  const linkedKitItemIds = ((rows ?? []) as Array<Record<string, unknown>>)
+    .map((row) => (row.linked_event_kit_item_id ? String(row.linked_event_kit_item_id) : null))
+    .filter((id): id is string => Boolean(id));
+  const { data: kitInvRows, error: kitInvError } = linkedKitItemIds.length
+    ? await supabase.from("event_kit_item_variant_inventory").select("kit_item_id, variant_id, total_quantity, reserved_quantity, delivered_quantity").in("kit_item_id", linkedKitItemIds)
+    : { data: [] as Array<Record<string, unknown>>, error: null };
+  if (kitInvError) throw kitInvError;
+  const kitInvByKey = new Map<string, Record<string, unknown>>();
+  for (const inv of kitInvRows ?? []) kitInvByKey.set(`${inv.kit_item_id}:${inv.variant_id}`, inv);
+
+  const items = ((rows ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const linkedKitItemId = row.linked_event_kit_item_id ? String(row.linked_event_kit_item_id) : null;
+    const linkedKitItem = row.event_kit_items as { name?: string; shirt_supply_mode?: string } | null;
+    const supplyMode = linkedKitItemId
+      ? (linkedKitItem?.shirt_supply_mode === "made_to_order" ? "made_to_order" : "stock")
+      : row.supply_mode === "made_to_order" ? "made_to_order" : "stock";
+    const invRows = (Array.isArray(row.store_item_inventory) ? row.store_item_inventory : []) as Array<Record<string, unknown>>;
+    const invByVariant = new Map<string | null, Record<string, unknown>>();
+    for (const inv of invRows) invByVariant.set(inv.variant_id ? String(inv.variant_id) : null, inv);
+    const availFor = (inv: Record<string, unknown> | undefined) => {
+      const total = Number(inv?.total_quantity ?? 0);
+      const reserved = Number(inv?.reserved_quantity ?? 0);
+      const delivered = Number(inv?.delivered_quantity ?? 0);
+      return { total, reserved, delivered, available: supplyMode === "made_to_order" ? 0 : Math.max(total - reserved - delivered, 0) };
+    };
+    const variantRows = ((Array.isArray(row.store_item_variants) ? row.store_item_variants : []) as Array<Record<string, unknown>>)
+      .filter((v) => v.is_active !== false)
+      .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+    const variants: StoreItemVariant[] = variantRows.map((v) => {
+      const linkedVariantId = v.linked_event_kit_item_variant_id ? String(v.linked_event_kit_item_variant_id) : null;
+      const inv = linkedKitItemId && linkedVariantId ? kitInvByKey.get(`${linkedKitItemId}:${linkedVariantId}`) : invByVariant.get(String(v.id));
+      const q = availFor(inv);
       return {
-        id: String(row.id),
-        name: String(row.name ?? ""),
-        slug: String(row.slug ?? ""),
-        description: row.description ? String(row.description) : null,
-        primaryImageUrl: images.find((image) => image.isPrimary)?.url ?? images[0]?.url ?? null,
-        images,
-        price: Number(row.price ?? 0),
-        requiresVariant: Boolean(row.requires_variant),
-        sortOrder: Number(row.sort_order ?? 0),
-        supplyMode,
-        eventId,
-        eventLabel: eventLabelFor(events, eventId),
-        variants,
-        totalQuantity: base.total, reservedQuantity: base.reserved, deliveredQuantity: base.delivered, availableQuantity: base.available,
-      } satisfies StoreItem;
-    }).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+        id: String(v.id), name: String(v.name ?? ""), value: String(v.value ?? ""), priceAdjustment: Number(v.price_adjustment ?? 0),
+        totalQuantity: q.total, reservedQuantity: q.reserved, deliveredQuantity: q.delivered, availableQuantity: q.available,
+        linkedEventKitItemVariantId: linkedVariantId,
+      };
+    });
+    const images: StoreItemImage[] = ((Array.isArray(row.store_item_images) ? row.store_item_images : []) as Array<Record<string, unknown>>)
+      .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+      .map((image) => ({ id: String(image.id), url: String(image.image_url ?? ""), isPrimary: Boolean(image.is_primary) }));
+    const base = availFor(invByVariant.get(null));
+    const eventId = row.event_id ? String(row.event_id) : null;
+    const visibility = row.visibility === "code_required" || row.visibility === "admin_only" ? row.visibility : "public";
+    const discountType = row.discount_type === "percentage" || row.discount_type === "fixed" ? row.discount_type : null;
+    const discountValue = Number(row.discount_value ?? 0);
+    const price = Number(row.price ?? 0);
+    return {
+      id: String(row.id),
+      name: String(row.name ?? ""),
+      slug: String(row.slug ?? ""),
+      description: row.description ? String(row.description) : null,
+      primaryImageUrl: images.find((image) => image.isPrimary)?.url ?? images[0]?.url ?? null,
+      images,
+      price,
+      discountType,
+      discountValue,
+      finalPrice: computeFinalPrice(price, discountType, discountValue),
+      requiresVariant: Boolean(row.requires_variant),
+      sortOrder: Number(row.sort_order ?? 0),
+      supplyMode,
+      visibility,
+      isActive: Boolean(row.is_active),
+      eventId,
+      eventLabel: eventLabelFor(events, eventId),
+      linkedEventKitItemId: linkedKitItemId,
+      linkedEventKitItemName: linkedKitItem?.name ?? null,
+      variants,
+      totalQuantity: base.total, reservedQuantity: base.reserved, deliveredQuantity: base.delivered, availableQuantity: base.available,
+    } satisfies StoreItem;
+  }).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 
+  if (!selectedEventId) {
     return { events, selectedEventId: null, items, orders: [] as Array<Record<string, unknown>> };
   }
 
-  const [{ data: rows, error: rowsError }, { data: orderRows, error: ordersError }] = await Promise.all([
-    supabase.rpc("list_store_items_for_event", { p_event_id: selectedEventId }),
-    supabase
-      .from("store_orders")
-      .select("id, order_number, status, payment_method, payment_status, final_amount, created_at, confirmed_at, store_order_items(id, quantity, unit_price, final_amount, status, store_items(name), store_item_variants(name, value))")
-      .eq("event_id", selectedEventId)
-      .order("created_at", { ascending: false })
-      .limit(200),
-  ]);
-  if (rowsError) throw rowsError;
+  const { data: orderRows, error: ordersError } = await supabase
+    .from("store_orders")
+    .select("id, order_number, status, payment_method, payment_status, final_amount, created_at, confirmed_at, store_order_items(id, quantity, unit_price, final_amount, status, store_items(name), store_item_variants(name, value))")
+    .eq("event_id", selectedEventId)
+    .order("created_at", { ascending: false })
+    .limit(200);
   if (ordersError) throw ordersError;
-
-  const itemsById = new Map<string, StoreItem>();
-  for (const row of (rows ?? []) as Array<Record<string, unknown>>) {
-    const itemId = String(row.store_item_id);
-    let item = itemsById.get(itemId);
-    if (!item) {
-      const eventId = row.event_id ? String(row.event_id) : null;
-      item = {
-        id: itemId,
-        name: String(row.name ?? ""),
-        slug: String(row.slug ?? ""),
-        description: row.description ? String(row.description) : null,
-        primaryImageUrl: row.image_url ? String(row.image_url) : null,
-        images: (Array.isArray(row.images) ? row.images : []).map((image) => {
-          const img = image as Record<string, unknown>;
-          return { id: String(img.id), url: String(img.url ?? ""), isPrimary: Boolean(img.is_primary) };
-        }),
-        price: Number(row.price ?? 0),
-        requiresVariant: Boolean(row.requires_variant),
-        sortOrder: Number(row.sort_order ?? 0),
-        supplyMode: row.supply_mode === "made_to_order" ? "made_to_order" : "stock",
-        eventId,
-        eventLabel: eventId ? eventLabelFor(events, eventId) : "Todos os eventos",
-        variants: [],
-        totalQuantity: 0,
-        reservedQuantity: 0,
-        deliveredQuantity: 0,
-        availableQuantity: 0,
-      };
-      itemsById.set(itemId, item);
-    }
-    if (row.variant_id) {
-      item.variants.push({
-        id: String(row.variant_id),
-        name: String(row.variant_name ?? ""),
-        value: String(row.variant_value ?? ""),
-        priceAdjustment: Number(row.price_adjustment ?? 0),
-        totalQuantity: Number(row.total_quantity ?? 0),
-        reservedQuantity: Number(row.reserved_quantity ?? 0),
-        deliveredQuantity: Number(row.delivered_quantity ?? 0),
-        availableQuantity: Number(row.available_quantity ?? 0),
-      });
-    } else if (!item.requiresVariant) {
-      item.totalQuantity = Number(row.total_quantity ?? 0);
-      item.reservedQuantity = Number(row.reserved_quantity ?? 0);
-      item.deliveredQuantity = Number(row.delivered_quantity ?? 0);
-      item.availableQuantity = Number(row.available_quantity ?? 0);
-    }
-  }
-  const items = Array.from(itemsById.values()).sort((a, b) => a.sortOrder - b.sortOrder);
 
   return { events, selectedEventId, items, orders: orderRows ?? [] };
 }
 
-export default async function LojaPage({ searchParams }: { searchParams?: Promise<{ eventId?: string }> }) {
+export default async function LojaPage({ searchParams }: { searchParams?: Promise<{ eventId?: string; status?: string }> }) {
   await requirePermission("store.view");
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const selectedEventId = typeof resolvedSearchParams.eventId === "string" ? resolvedSearchParams.eventId : null;
-  const { events, items, orders } = await getStoreData(selectedEventId);
+  const statusFilter: StatusFilter = resolvedSearchParams.status === "inactive" || resolvedSearchParams.status === "all" ? resolvedSearchParams.status : "active";
+  const { events, items, orders } = await getStoreData(selectedEventId, statusFilter);
   const permissionMap = await getCurrentPermissionMap(["store.manage", "store.deliver"]);
   const canManage = Boolean(permissionMap["store.manage"]);
   const canDeliver = Boolean(permissionMap["store.deliver"]);
@@ -207,17 +207,22 @@ export default async function LojaPage({ searchParams }: { searchParams?: Promis
           <AdminSection
             title="Catálogo"
             description={selectedEventId ? `Itens opcionais disponíveis para ${selectedEventLabel}` : "Todos os itens cadastrados, de qualquer evento"}
-            actions={canManage && selectedEventId ? <StoreItemForm eventId={selectedEventId} eventLabel={selectedEventLabel} item={null} /> : null}
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <StoreItemStatusFilter eventId={selectedEventId} status={statusFilter} />
+                {canManage ? <StoreItemForm events={events} eventId={selectedEventId} eventLabel={selectedEventLabel} item={null} /> : null}
+              </div>
+            }
           >
             {!selectedEventId && canManage ? (
-              <p className="mb-3 text-xs text-slate-500">Selecione um evento acima para cadastrar um item novo ou editar nome, preço e disponibilidade. Estoque e variantes podem ser ajustados aqui em qualquer modo.</p>
+              <p className="mb-3 text-xs text-slate-500">Um item criado aqui, sem evento selecionado, é global (disponível para todos os eventos). Selecione um evento acima para criar um item específico dele.</p>
             ) : null}
             {items.length === 0 ? (
-              <AdminEmptyState title="Nenhum item cadastrado" description="Crie o primeiro item opcional da loja selecionando um evento acima." />
+              <AdminEmptyState title="Nenhum item cadastrado" description="Crie o primeiro item opcional da loja acima." />
             ) : (
               <div className="space-y-3">
                 {items.map((item) => (
-                  <StoreItemCard key={item.id} contextEventId={selectedEventId} contextEventLabel={selectedEventId ? selectedEventLabel : null} item={item} canManage={canManage} />
+                  <StoreItemCard key={item.id} events={events} item={item} canManage={canManage} />
                 ))}
               </div>
             )}

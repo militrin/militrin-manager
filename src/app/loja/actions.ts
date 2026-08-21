@@ -6,7 +6,9 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export async function upsertStoreItemAction(input: {
   id: string | null;
-  eventId: string;
+  // null = item global (filtro "Todos os eventos"), sem evento base --
+  // store_items.event_id ja suporta isso (nunca foi exclusivo de evento).
+  eventId: string | null;
   name: string;
   slug: string;
   description: string;
@@ -16,6 +18,14 @@ export async function upsertStoreItemAction(input: {
   sortOrder: number;
   supplyMode: "stock" | "made_to_order";
   availableAllEvents: boolean;
+  visibility: "public" | "code_required" | "admin_only";
+  // Quando definido, o item usa os mesmos tamanhos e o mesmo estoque do
+  // item de kit do evento (ex.: a camiseta do kit) -- nunca cria estoque
+  // paralelo em store_item_inventory pra essas variantes.
+  linkedEventKitItemId: string | null;
+  // Desconto intrinseco do produto (sempre aplicado, diferente de cupom).
+  discountType: "percentage" | "fixed" | null;
+  discountValue: number;
 }) {
   await assertPermission("store.manage");
   const supabase = await createServerSupabaseClient();
@@ -31,10 +41,60 @@ export async function upsertStoreItemAction(input: {
     p_sort_order: input.sortOrder,
     p_supply_mode: input.supplyMode,
     p_available_all_events: input.availableAllEvents,
+    p_visibility: input.visibility,
+    p_linked_event_kit_item_id: input.linkedEventKitItemId,
+    p_discount_type: input.discountType,
+    p_discount_value: input.discountValue,
   });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/loja");
   return { success: true as const, message: "Item salvo.", storeItemId: data as string };
+}
+
+export async function setStoreItemActiveAction(storeItemId: string, isActive: boolean) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("set_store_item_active", { p_store_item_id: storeItemId, p_is_active: isActive });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: isActive ? "Item reativado." : "Item desativado." };
+}
+
+export async function deleteStoreItemAction(storeItemId: string) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("delete_store_item", { p_store_item_id: storeItemId });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: "Item excluído." };
+}
+
+export async function getEventKitItemsForLinkAction(eventId: string) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_event_kit_items", { p_event_id: eventId });
+  if (error) return { success: false as const, message: error.message, items: [] };
+  const items = ((data ?? []) as Array<Record<string, unknown>>)
+    .filter((row) => row.is_active)
+    .map((row) => ({
+      id: String(row.id),
+      name: String(row.name ?? ""),
+      itemType: String(row.item_type ?? ""),
+      requiresVariant: Boolean(row.requires_variant),
+      variants: (Array.isArray(row.variants) ? row.variants : [])
+        .filter((v: { is_active?: boolean }) => v.is_active !== false)
+        .map((v: { id: string; name: string; value: string }) => ({ id: String(v.id), name: String(v.name ?? ""), value: String(v.value ?? "") })),
+    }));
+  return { success: true as const, message: null, items };
+}
+
+export async function syncLinkedStoreItemVariantsAction(storeItemId: string) {
+  await assertPermission("store.manage");
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("sync_linked_store_item_variants", { p_store_item_id: storeItemId });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/loja");
+  return { success: true as const, message: "Variantes sincronizadas com o item de kit do evento." };
 }
 
 export async function addStoreItemImageAction(storeItemId: string, imageUrl: string) {
