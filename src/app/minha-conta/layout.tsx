@@ -148,7 +148,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
         </div>
       </div>
 
-      <AccountMobileNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} />
+      <AccountMobileNav />
     </main>
     </StoreCartProvider>
   );

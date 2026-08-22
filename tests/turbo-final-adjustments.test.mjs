@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile as readFileRaw } from "node:fs/promises";
 import test from "node:test";
+
+// Normaliza CRLF->LF (ver mesmo comentario em turbo-qr-camera-fallback.test.mjs).
+async function readFile(url, encoding) {
+  return (await readFileRaw(url, encoding)).replace(/\r\n/g, "\n");
+}
 
 const turboRouteClient = await readFile(new URL("../src/app/operacoes/turbo/TurboRouteClient.tsx", import.meta.url), "utf8");
 const sidebar = await readFile(new URL("../src/components/dashboard/Sidebar.tsx", import.meta.url), "utf8");
+const adminMenu = await readFile(new URL("../src/lib/navigation/admin-menu.ts", import.meta.url), "utf8");
 const turboMode = await readFile(new URL("../src/app/operacoes/components/TurboMode.tsx", import.meta.url), "utf8");
 const actions = await readFile(new URL("../src/app/operacoes/actions.ts", import.meta.url), "utf8");
 const errorMessages = await readFile(new URL("../src/app/operacoes/error-messages.ts", import.meta.url), "utf8");
@@ -64,8 +70,11 @@ test("desmontar a rota (back-button, ou qualquer saida que nao seja o botao Sair
 });
 
 test("Sidebar NUNCA propaga ?eventId= pro link do Modo Turbo -- a rota sempre decide sozinha (sessionStorage), nunca herda contexto de outra pagina", () => {
-  const eventScopedLine = slice(sidebar, "const eventScopedHref = selectedEventId");
-  assert.doesNotMatch(eventScopedLine.slice(0, 400), /"\/operacoes\/turbo"/);
+  assert.match(sidebar, /function eventScopedHref\(href: string, selectedEventId: string \| null\)/);
+  assert.match(sidebar, /EVENT_SCOPED_HREFS\.includes\(href\)/);
+  const scopedList = slice(adminMenu, "export const EVENT_SCOPED_HREFS = [", "];");
+  assert.doesNotMatch(scopedList, /"\/operacoes\/turbo"/);
+  assert.match(scopedList, /"\/operacoes\/pulseira"/);
 });
 
 test("getTurboEventsAction (usada pro seletor) nao depende de nenhum estado de evento previamente selecionado -- sempre lista tudo que o operador pode escolher de novo", () => {

@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile as readFileRaw } from "node:fs/promises";
 import test from "node:test";
 
+// Normaliza CRLF->LF (ver mesmo comentario em turbo-qr-camera-fallback.test.mjs).
+async function readFile(url, encoding) {
+  return (await readFileRaw(url, encoding)).replace(/\r\n/g, "\n");
+}
+
 const sidebar = await readFile(new URL("../src/components/dashboard/Sidebar.tsx", import.meta.url), "utf8");
+const adminMenu = await readFile(new URL("../src/lib/navigation/admin-menu.ts", import.meta.url), "utf8");
 const sidebarActions = await readFile(new URL("../src/components/dashboard/sidebar-actions.ts", import.meta.url), "utf8");
 const layout = await readFile(new URL("../src/app/operacoes/layout.tsx", import.meta.url), "utf8");
 const turboPage = await readFile(new URL("../src/app/operacoes/turbo/page.tsx", import.meta.url), "utf8");
@@ -22,10 +28,16 @@ function slice(source, startMarker, endMarker) {
 
 // ============================================================
 // 1. Menu lateral -- ordem e presenca dos 4 itens
+//
+// A fonte de dados (adminNavGroups) foi extraida de Sidebar.tsx pra
+// src/lib/navigation/admin-menu.ts (pra ser compartilhada com o header/
+// drawer/bottom nav moveis, ver secao 6 abaixo) -- os testes de conteudo do
+// menu leem esse arquivo agora; os de COMPORTAMENTO (active state, render)
+// continuam lendo Sidebar.tsx.
 // ============================================================
 
 test("grupo Operacao tem os 4 itens na ordem pedida: Central, Modo Turbo, Ver pulseira vinculada, Cronograma", () => {
-  const group = slice(sidebar, 'label: "Operação"', 'label: "Administração"');
+  const group = slice(adminMenu, 'label: "Operação"', 'label: "Administração"');
   const central = group.indexOf('label: "Central de Operações"');
   const turbo = group.indexOf('label: "Modo Turbo"');
   const pulseira = group.indexOf('label: "Ver pulseira vinculada"');
@@ -35,11 +47,18 @@ test("grupo Operacao tem os 4 itens na ordem pedida: Central, Modo Turbo, Ver pu
 });
 
 test("Modo Turbo aponta pra /operacoes/turbo, usa icone de raio, e Ver pulseira vinculada aponta pra /operacoes/pulseira", () => {
-  const turboItem = slice(sidebar, 'label: "Modo Turbo"', 'label: "Ver pulseira vinculada"');
+  const turboItem = slice(adminMenu, 'label: "Modo Turbo"', 'label: "Ver pulseira vinculada"');
   assert.match(turboItem, /href:\s*"\/operacoes\/turbo"/);
   assert.match(turboItem, /icon:\s*Bolt/);
-  const pulseiraItem = slice(sidebar, 'label: "Ver pulseira vinculada"', 'label: "Cronograma"');
+  const pulseiraItem = slice(adminMenu, 'label: "Ver pulseira vinculada"', 'label: "Cronograma"');
   assert.match(pulseiraItem, /href:\s*"\/operacoes\/pulseira"/);
+});
+
+test("Sidebar (desktop) e a navegacao movel nova (header/drawer/bottom nav) importam adminNavGroups/isAdminNavItemVisible do MESMO modulo -- nenhuma lista de rotas/permissoes duplicada", () => {
+  assert.match(sidebar, /adminNavGroups as groups/);
+  assert.match(sidebar, /isAdminNavItemVisible as isItemVisible/);
+  assert.match(sidebar, /from "@\/lib\/navigation\/admin-menu"/);
+  assert.doesNotMatch(sidebar, /const groups: (AdminNavGroup|NavGroup)\[\] = \[/);
 });
 
 // ============================================================
@@ -47,9 +66,11 @@ test("Modo Turbo aponta pra /operacoes/turbo, usa icone de raio, e Ver pulseira 
 // ============================================================
 
 test("active state usa match EXATO quando algum item do menu bate exatamente com o pathname (evita Central ativa junto com Turbo/pulseira)", () => {
+  const helper = slice(sidebar, "function isActivePath", "function eventScopedHref");
+  assert.match(helper, /if \(hasExactMatch\) return pathname === href;/);
   const component = slice(sidebar, "function SidebarContent", "export function Sidebar");
   assert.match(component, /hasExactMatch/);
-  assert.match(component, /const active = hasExactMatch\s*\n\s*\? pathname === item\.href/);
+  assert.match(component, /isActivePath\(pathname, item\.href, hasExactMatch\)/);
 });
 
 test("eventScopedHref inclui /operacoes/turbo e /operacoes/pulseira (evento selecionado propaga pro Turbo/pulseira)", () => {
@@ -62,7 +83,7 @@ test("eventScopedHref inclui /operacoes/turbo e /operacoes/pulseira (evento sele
 // ============================================================
 
 test("Modo Turbo no menu exige as permissoes minimas de operacao Turbo (kits.deliver/checkin.scan/store.deliver)", () => {
-  const turboItem = slice(sidebar, 'label: "Modo Turbo"', 'label: "Ver pulseira vinculada"');
+  const turboItem = slice(adminMenu, 'label: "Modo Turbo"', 'label: "Ver pulseira vinculada"');
   assert.match(turboItem, /permissionAny:\s*\["kits\.deliver",\s*"checkin\.scan",\s*"store\.deliver"\]/);
 });
 
@@ -70,7 +91,7 @@ test("toda permissao usada em permissionAny do menu e efetivamente consultada po
   const codesBlock = slice(sidebarActions, "const sidebarPermissionCodes = [", "];");
   const declaredCodes = new Set([...codesBlock.matchAll(/'([a-z_]+\.[a-z_]+)'/g)].map((m) => m[1]));
 
-  const usedCodes = new Set([...sidebar.matchAll(/permissionAny:\s*\[([^\]]+)\]/g)]
+  const usedCodes = new Set([...adminMenu.matchAll(/permissionAny:\s*\[([^\]]+)\]/g)]
     .flatMap((m) => [...m[1].matchAll(/"([a-z_]+\.[a-z_]+)"/g)].map((mm) => mm[1])));
 
   const missing = [...usedCodes].filter((code) => !declaredCodes.has(code));
@@ -82,7 +103,7 @@ test("toda permissao usada em permissionAny do menu e efetivamente consultada po
 });
 
 test("Ver pulseira vinculada no menu exige wristbands.view", () => {
-  const pulseiraItem = slice(sidebar, 'label: "Ver pulseira vinculada"', 'label: "Cronograma"');
+  const pulseiraItem = slice(adminMenu, 'label: "Ver pulseira vinculada"', 'label: "Cronograma"');
   assert.match(pulseiraItem, /permissionAny:\s*\["wristbands\.view"\]/);
 });
 

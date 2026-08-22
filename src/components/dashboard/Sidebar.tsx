@@ -5,239 +5,57 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
-  CalendarDays,
   ChevronRight,
   FileText,
-  Gift,
-  Import,
   LayoutDashboard,
-  Bolt,
-  Layers,
   LogOut,
-  MessageSquareWarning,
-  Settings,
-  ShieldAlert,
-  ShieldCheck,
+  Menu,
+  ScanLine,
   Shirt,
-  ShoppingBag,
-  Tag,
-  Ticket,
-  UserPlus,
-  UserRoundCog,
   Users,
-  Wallet,
-  Zap,
+  X,
 } from "lucide-react";
 import { getSidebarContextAction, signOutAdministrativePanelAction, type SidebarContext } from "./sidebar-actions";
-import type { EventCapabilities } from "@/lib/admin/event-capabilities";
+import {
+  adminNavGroups as groups,
+  findAdminNavItem,
+  isAdminNavItemVisible as isItemVisible,
+  EVENT_SCOPED_HREFS,
+  type AdminNavGroup,
+} from "@/lib/navigation/admin-menu";
 
-// ── tipos ──────────────────────────────────────────────────────────────────
+// Navegacao administrativa: a MESMA fonte de dados (adminNavGroups/
+// isAdminNavItemVisible em src/lib/navigation/admin-menu.ts) alimenta a
+// sidebar desktop (inalterada, "hidden lg:flex") e as 3 pecas moveis novas
+// (header com titulo+hamburguer, drawer completo, bottom nav enxuta) --
+// nunca duas listas de rotas/permissoes divergentes.
 
-type NavItem = {
+// ── bottom nav administrativa (5 slots fixos) ───────────────────────────────
+
+type BottomNavSlot = {
+  key: string;
   label: string;
-  icon: React.ElementType;
   href: string;
-  /** Permissões: basta ter ao menos uma */
-  permissionAny: string[];
-  /** Capacidade do evento exigida. undefined = sem restrição de capacidade */
-  requireCapability?: (cap: EventCapabilities) => boolean;
+  icon: React.ElementType;
+  emphasize?: boolean;
 };
 
-type NavGroup = {
-  label: string;
-  items: NavItem[];
-};
-
-// ── definição dos grupos ───────────────────────────────────────────────────
-
-const groups: NavGroup[] = [
-  {
-    label: "Operação",
-    items: [
-      {
-        label: "Central de Operações",
-        icon: Zap,
-        href: "/operacoes",
-        permissionAny: ["participants.view", "checkin.view", "kits.view", "wristbands.view", "wristbands.link"],
-        requireCapability: (c) => c.hasCheckin || c.hasDistributableItems || c.hasWristbands,
-      },
-      {
-        label: "Modo Turbo",
-        icon: Bolt,
-        href: "/operacoes/turbo",
-        // Mesma lista de TURBO_ENTRY_PERMISSIONS em operacoes/actions.ts --
-        // so entra quem tem alguma permissao real de operacao Turbo
-        // (ingresso OU produto de loja).
-        permissionAny: ["kits.deliver", "checkin.scan", "store.deliver"],
-        requireCapability: (c) => c.hasCheckin || c.hasDistributableItems,
-      },
-      {
-        label: "Ver pulseira vinculada",
-        icon: Tag,
-        href: "/operacoes/pulseira",
-        permissionAny: ["wristbands.view"],
-        requireCapability: (c) => c.hasWristbands,
-      },
-      {
-        label: "Cronograma",
-        icon: CalendarDays,
-        href: "/painel/cronograma-entregas",
-        permissionAny: ["events.view"],
-      },
-    ],
-  },
-  {
-    label: "Administração",
-    items: [
-      {
-        label: "Dashboard",
-        icon: LayoutDashboard,
-        href: "/painel",
-        permissionAny: ["dashboard.view"],
-      },
-      {
-        label: "Integridade",
-        icon: ShieldAlert,
-        href: "/painel/integridade",
-        permissionAny: ["integrity.view"],
-      },
-      {
-        label: "Público e recorrência",
-        icon: Users,
-        href: "/painel/usuarios",
-        permissionAny: ["dashboard.view", "participants.view"],
-      },
-      {
-        label: "Eventos",
-        icon: Layers,
-        href: "/painel/eventos",
-        permissionAny: ["events.view"],
-      },
-      {
-        label: "Cadastros",
-        icon: Users,
-        href: "/cadastros",
-        permissionAny: ["participants.view"],
-      },
-      {
-        label: "Pedidos",
-        icon: FileText,
-        href: "/pedidos",
-        permissionAny: ["orders.view"],
-        requireCapability: (c) => c.hasOrders,
-      },
-      {
-        label: "Financeiro",
-        icon: Wallet,
-        href: "/financeiro",
-        permissionAny: ["finance.view"],
-      },
-      {
-        label: "Estoque",
-        icon: Shirt,
-        href: "/camisetas",
-        permissionAny: ["inventory.view", "kits.view"],
-        requireCapability: (c) => c.hasInventory || c.hasDistributableItems,
-      },
-      {
-        label: "Loja",
-        icon: ShoppingBag,
-        href: "/loja",
-        permissionAny: ["store.view"],
-      },
-      {
-        label: "Importações",
-        icon: Import,
-        href: "/importacoes",
-        permissionAny: ["imports.view"],
-      },
-      {
-        label: "Relatórios",
-        icon: FileText,
-        href: "/relatorios",
-        permissionAny: ["reports.view"],
-        requireCapability: (c) => c.hasEvents,
-      },
-      {
-        label: "Cupons",
-        icon: Gift,
-        href: "/cupons",
-        permissionAny: ["coupons.view"],
-      },
-      {
-        label: "Fotos",
-        icon: Layers,
-        href: "/fotos",
-        permissionAny: ["photos.view_admin"],
-        requireCapability: (c) => c.hasPhotos,
-      },
-      {
-        label: "Novo cadastro",
-        icon: UserPlus,
-        href: "/cadastros/novo",
-        permissionAny: ["participants.create"],
-      },
-    ],
-  },
-  {
-    label: "Ingressos",
-    items: [
-      { label: "Todos os ingressos", icon: Ticket, href: "/ingressos", permissionAny: ["participants.view", "orders.view"] },
-      { label: "Emitir ingresso", icon: UserPlus, href: "/ingressos/emitir", permissionAny: ["participants.create"], requireCapability: (c) => c.registrationEnabled },
-      { label: "Cortesias em lote (futuro)", icon: Gift, href: "/ingressos/cortesias", permissionAny: ["participants.create"] },
-    ],
-  },
-  {
-    label: "Organização",
-    items: [
-      {
-        label: "Equipe",
-        icon: UserRoundCog,
-        href: "/painel/configuracoes/equipe",
-        permissionAny: ["team.view"],
-      },
-      {
-        label: "Patrocinadores",
-        icon: ShieldCheck,
-        href: "/painel/patrocinadores",
-        permissionAny: ["sponsors.view"],
-      },
-      {
-        label: "Feedbacks",
-        icon: MessageSquareWarning,
-        href: "/painel/feedbacks",
-        permissionAny: ["feedback.view"],
-      },
-      {
-        label: "Configurações",
-        icon: Settings,
-        href: "/configuracao",
-        permissionAny: ["settings.manage"],
-      },
-    ],
-  },
+const BOTTOM_NAV_SLOTS: BottomNavSlot[] = [
+  { key: "painel", label: "Painel", href: "/painel", icon: LayoutDashboard },
+  { key: "pessoas", label: "Pessoas", href: "/cadastros", icon: Users },
+  { key: "scanner", label: "Scanner", href: "/operacoes/turbo", icon: ScanLine, emphasize: true },
+  { key: "pedidos", label: "Pedidos", href: "/pedidos", icon: FileText },
 ];
 
-// ── helpers de visibilidade ────────────────────────────────────────────────
+function isActivePath(pathname: string, href: string, hasExactMatch: boolean) {
+  if (hasExactMatch) return pathname === href;
+  return pathname === href || (href !== "/painel" && pathname.startsWith(`${href}/`));
+}
 
-function isItemVisible(
-  item: NavItem,
-  permissionMap: Record<string, boolean>,
-  capabilities: EventCapabilities,
-): boolean {
-  // 1. Verificação de permissão
-  const hasPerm =
-    !item.permissionAny.length ||
-    item.permissionAny.some((p) => Boolean(permissionMap[p]));
-  if (!hasPerm) return false;
-
-  // 2. Capacidades são agregadas na organização; nenhuma escolha de evento é implícita.
-  if (item.requireCapability) {
-    if (!capabilities.hasEvents) return false;
-    return item.requireCapability(capabilities);
-  }
-
-  return true;
+function eventScopedHref(href: string, selectedEventId: string | null) {
+  return selectedEventId && EVENT_SCOPED_HREFS.includes(href)
+    ? `${href}?eventId=${encodeURIComponent(selectedEventId)}`
+    : href;
 }
 
 // ── componente ────────────────────────────────────────────────────────────
@@ -247,6 +65,7 @@ function SidebarContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [context, setContext] = useState<SidebarContext | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const selectedEventId = searchParams.get("eventId");
 
   useEffect(() => {
@@ -281,105 +100,283 @@ function SidebarContent() {
     [visibleGroups, pathname],
   );
 
+  // Titulo do header mobile -- deriva do MESMO menu (nenhuma pagina precisa
+  // passar um titulo manualmente): acha o item cujo href bate com a rota
+  // atual (match exato, ou prefixo mais especifico como fallback).
+  const currentPageLabel = useMemo(() => {
+    const allItems = visibleGroups.flatMap((g) => g.items);
+    const exact = allItems.find((item) => item.href === pathname);
+    if (exact) return exact.label;
+    const byPrefix = allItems
+      .filter((item) => pathname.startsWith(`${item.href}/`))
+      .sort((a, b) => b.href.length - a.href.length)[0];
+    return byPrefix?.label ?? "Central administrativa";
+  }, [visibleGroups, pathname]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [drawerOpen]);
+
+  function navLink(item: { label: string; icon: React.ElementType; href: string }, active: boolean, onNavigate?: () => void, compact = false) {
+    const Icon = item.icon;
+    const href = eventScopedHref(item.href, selectedEventId);
+    return (
+      <Link
+        key={item.href}
+        href={href}
+        onClick={(event) => {
+          onNavigate?.();
+          if (item.href === "/cadastros") {
+            event.preventDefault();
+            router.push(href);
+          }
+        }}
+        className={`flex w-full items-center justify-between rounded-2xl px-4 text-left font-medium transition ${compact ? "py-2.5 text-sm" : "py-3.5 text-base"} ${
+          active
+            ? "bg-emerald-500/15 text-emerald-300"
+            : "text-slate-300 hover:bg-slate-800/80 hover:text-white active:bg-slate-800"
+        }`}
+      >
+        <span className="flex items-center gap-3">
+          <Icon size={compact ? 18 : 20} />
+          {item.label}
+        </span>
+        <ChevronRight size={16} />
+      </Link>
+    );
+  }
+
+  function renderGroups(compact: boolean, onNavigate?: () => void) {
+    return (
+      <>
+        {visibleGroups.map((group: AdminNavGroup) => (
+          <div key={group.label}>
+            <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {group.label}
+            </p>
+            <div className="space-y-1">
+              {group.items.map((item) => navLink(item, isActivePath(pathname, item.href, hasExactMatch), onNavigate, compact))}
+            </div>
+          </div>
+        ))}
+
+        {!context && (
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-11 animate-pulse rounded-2xl bg-slate-800/60" />
+            ))}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
-    <aside className="hidden w-72 flex-col justify-between rounded-3xl border border-slate-800/80 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 lg:flex">
-      <div>
-        <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400">
-            <Shirt size={20} />
+    <>
+      {/* ============================================================
+          DESKTOP -- sidebar fixa lateral. Inalterada (mesmas classes de
+          sempre, "hidden lg:flex"): a experiencia desktop nao muda em
+          nada com a adicao das pecas moveis abaixo.
+          ============================================================ */}
+      <aside className="hidden w-72 flex-col justify-between rounded-3xl border border-slate-800/80 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 lg:flex">
+        <div>
+          <div className="mb-8 flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400">
+              <Shirt size={20} />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-slate-100">Militrin Manager</p>
+              <p className="text-sm text-slate-400">Painel administrativo</p>
+            </div>
           </div>
-          <div>
-            <p className="text-lg font-semibold text-slate-100">Militrin Manager</p>
-            <p className="text-sm text-slate-400">Painel administrativo</p>
-          </div>
+
+          <nav className="space-y-6">{renderGroups(false)}</nav>
         </div>
 
-        <nav className="space-y-6">
-          {visibleGroups.map((group) => (
-            <div key={group.label}>
-              <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {group.label}
-              </p>
-              <div className="space-y-1">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const active = hasExactMatch
-                    ? pathname === item.href
-                    : pathname === item.href ||
-                      (item.href !== "/painel" && pathname.startsWith(`${item.href}/`));
-                  // "/operacoes/turbo" DE PROPOSITO fora desta lista: o
-                  // Modo Turbo sempre exige escolher o evento na propria
-                  // rota (sessionStorage por operacao, nunca herdado da URL
-                  // de outra pagina) -- ver TurboRouteClient.tsx.
-                  const eventScopedHref = selectedEventId && ["/operacoes", "/painel", "/cadastros", "/operacoes/pulseira", "/pedidos", "/financeiro", "/camisetas", "/loja", "/importacoes", "/relatorios", "/cupons"].includes(item.href)
-                    ? `${item.href}?eventId=${encodeURIComponent(selectedEventId)}`
-                    : item.href;
-                  return (
-                    <Link
-                      key={item.label}
-                      href={eventScopedHref}
-                      onClick={item.href === "/cadastros" ? (event) => {
-                        event.preventDefault();
-                        router.push(eventScopedHref);
-                      } : undefined}
-                      className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${
-                        active
-                          ? "bg-emerald-500/15 text-emerald-300"
-                          : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
-                      }`}
-                    >
-                      <span className="flex items-center gap-3">
-                        <Icon size={18} />
-                        {item.label}
-                      </span>
-                      <ChevronRight size={16} />
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-
-          {/* Skeleton enquanto carrega */}
-          {!context && (
-            <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-11 animate-pulse rounded-2xl bg-slate-800/60"
-                />
-              ))}
+        <div className="space-y-3">
+          {context && !context.capabilities.hasEvents && (
+            <div className="rounded-2xl border border-slate-700/40 bg-slate-800/40 p-4 text-sm text-slate-400">
+              <p className="font-medium text-slate-300">Nenhum evento disponível</p>
+              <p className="mt-1 text-xs">Cadastre ou restaure um evento para usar os módulos específicos.</p>
             </div>
           )}
-        </nav>
-      </div>
 
-      <div className="space-y-3">
-        {context && !context.capabilities.hasEvents && (
-          <div className="rounded-2xl border border-slate-700/40 bg-slate-800/40 p-4 text-sm text-slate-400">
-            <p className="font-medium text-slate-300">Nenhum evento disponível</p>
-            <p className="mt-1 text-xs">Cadastre ou restaure um evento para usar os módulos específicos.</p>
-          </div>
-        )}
-
-        {context && context.capabilities.hasEvents && (
-          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
-            <div className="mb-2 flex items-center gap-2">
-              <AlertTriangle size={16} />
-              <span className="font-semibold">Navegação protegida</span>
+          {context && context.capabilities.hasEvents && (
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
+              <div className="mb-2 flex items-center gap-2">
+                <AlertTriangle size={16} />
+                <span className="font-semibold">Navegação protegida</span>
+              </div>
+              <p>Os itens do menu são exibidos conforme suas permissões e os recursos dos eventos da organização.</p>
             </div>
-            <p>Os itens do menu são exibidos conforme suas permissões e os recursos dos eventos da organização.</p>
-          </div>
-        )}
+          )}
 
-        <form action={signOutAdministrativePanelAction}>
-          <button type="submit" className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-sm font-medium text-rose-200 transition hover:bg-rose-500/20">
-            <LogOut size={17} />
-            Sair da conta
-          </button>
-        </form>
-      </div>
-    </aside>
+          <form action={signOutAdministrativePanelAction}>
+            <button type="submit" className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-sm font-medium text-rose-200 transition hover:bg-rose-500/20">
+              <LogOut size={17} />
+              Sair da conta
+            </button>
+          </form>
+        </div>
+      </aside>
+
+      {/* ============================================================
+          MOBILE -- header fixo (titulo + hamburguer). "lg:hidden" ==
+          some exatamente onde a sidebar desktop aparece.
+          ============================================================ */}
+      <header
+        className="fixed inset-x-0 top-0 z-40 flex items-center gap-3 border-b border-slate-800/80 bg-slate-950/95 px-4 backdrop-blur lg:hidden"
+        style={{ paddingTop: "var(--safe-top)", height: "calc(var(--mobile-header-h) + var(--safe-top))" }}
+      >
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Abrir menu administrativo"
+          aria-expanded={drawerOpen}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-200 active:bg-slate-800"
+        >
+          <Menu size={20} />
+        </button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-slate-100">{currentPageLabel}</h1>
+      </header>
+
+      {/* ============================================================
+          MOBILE -- drawer completo (todas as areas administrativas
+          disponiveis, respeitando as MESMAS permissoes do desktop).
+          Tambem e o alvo do botao "Mais" da bottom nav.
+          ============================================================ */}
+      {drawerOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu administrativo">
+          <button
+            type="button"
+            aria-label="Fechar menu"
+            onClick={() => setDrawerOpen(false)}
+            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+          />
+          <div
+            className="absolute inset-y-0 left-0 flex w-[85%] max-w-sm flex-col overflow-y-auto border-r border-slate-800 bg-slate-950 shadow-2xl"
+            style={{ paddingTop: "var(--safe-top)", paddingBottom: "var(--safe-bottom)" }}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400">
+                  <Shirt size={20} />
+                </div>
+                <div>
+                  <p className="text-base font-semibold text-slate-100">Militrin Manager</p>
+                  <p className="text-xs text-slate-400">Painel administrativo</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Fechar menu"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 active:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <nav className="flex-1 space-y-6 px-4 py-5">{renderGroups(false, () => setDrawerOpen(false))}</nav>
+
+            <div className="border-t border-slate-800/80 p-4">
+              <form action={signOutAdministrativePanelAction}>
+                <button type="submit" className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-sm font-medium text-rose-200 active:bg-rose-500/20">
+                  <LogOut size={17} />
+                  Sair da conta
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ============================================================
+          MOBILE -- bottom nav enxuta (Painel/Pessoas/Scanner/Pedidos/
+          Mais). "data-admin-mobile-bottom-nav" e o gancho que faz o
+          <main> de toda pagina administrativa reservar espaco pra ela
+          (ver globals.css, regra :has()) sem precisar editar cada
+          pagina uma por uma.
+          ============================================================ */}
+      <nav
+        data-admin-mobile-bottom-nav
+        aria-label="Navegação rápida administrativa"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-800/90 bg-slate-950/95 backdrop-blur lg:hidden"
+        style={{ paddingBottom: "var(--safe-bottom)" }}
+      >
+        <ul className="grid h-(--mobile-bottomnav-h) grid-cols-5 items-center gap-1 px-1 text-[10px]">
+          {BOTTOM_NAV_SLOTS.map((slot) => {
+            const navItem = findAdminNavItem(slot.href);
+            const visible = context && navItem ? isItemVisible(navItem, context.permissionMap, context.capabilities) : false;
+            const active = isActivePath(pathname, slot.href, hasExactMatch);
+            const Icon = slot.icon;
+
+            if (slot.emphasize) {
+              return (
+                <li key={slot.key} className="flex justify-center">
+                  {visible ? (
+                    <Link
+                      href={eventScopedHref(slot.href, selectedEventId)}
+                      aria-label={slot.label}
+                      className={`-mt-6 flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-full border-4 border-slate-950 shadow-lg transition ${
+                        active ? "bg-emerald-400 text-emerald-950" : "bg-emerald-500 text-emerald-950 active:bg-emerald-400"
+                      }`}
+                    >
+                      <Icon size={22} />
+                    </Link>
+                  ) : (
+                    <span className="-mt-6 flex h-14 w-14 items-center justify-center rounded-full border-4 border-slate-950 bg-slate-800 text-slate-600" aria-hidden>
+                      <Icon size={22} />
+                    </span>
+                  )}
+                  <span className="sr-only">{slot.label}</span>
+                </li>
+              );
+            }
+
+            return (
+              <li key={slot.key}>
+                {visible ? (
+                  <Link
+                    href={eventScopedHref(slot.href, selectedEventId)}
+                    className={`flex flex-col items-center gap-1 rounded-xl px-1 py-2 ${active ? "font-semibold text-emerald-300" : "text-slate-300"}`}
+                  >
+                    <Icon size={18} />
+                    {slot.label}
+                  </Link>
+                ) : (
+                  <span className="flex flex-col items-center gap-1 rounded-xl px-1 py-2 text-slate-700" aria-hidden>
+                    <Icon size={18} />
+                    {slot.label}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+          <li>
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Abrir menu completo"
+              className="flex w-full flex-col items-center gap-1 rounded-xl px-1 py-2 text-slate-300 active:bg-slate-800"
+            >
+              <Menu size={18} />
+              Mais
+            </button>
+          </li>
+        </ul>
+      </nav>
+    </>
   );
 }
 

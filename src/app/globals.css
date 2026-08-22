@@ -215,3 +215,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * Refatoracao mobile global (navegacao inferior/drawer administrativo) --
+ * tokens compartilhados. --safe-top/--safe-bottom refletem o notch/home
+ * indicator do iPhone (env() cai pra 0px sozinho em telas sem safe-area,
+ * entao e seguro usar em qualquer dispositivo). --mobile-header-h e
+ * --mobile-bottomnav-h sao as alturas de CONTEUDO das barras fixas (sem
+ * contar a safe-area, que e somada separadamente onde for usada).
+ */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mobile-header-h: 3.25rem;
+  --mobile-bottomnav-h: 4rem;
+}
+
+/*
+ * Reserva de espaco pro <main> de QUALQUER pagina administrativa (todas
+ * renderizam <Sidebar/>, que e quem desenha a barra superior/inferior
+ * moveis) -- via :has(), sem precisar editar cada pagina uma por uma. So
+ * roda abaixo do breakpoint lg (mesmo ponto em que a sidebar desktop vira
+ * "hidden"), entao a experiencia desktop existente fica 100% intocada.
+ */
+@media (max-width: 63.9375rem) {
+  body:has([data-admin-mobile-bottom-nav]) main {
+    padding-top: calc(var(--mobile-header-h) + var(--safe-top) + 1rem);
+    padding-bottom: calc(var(--mobile-bottomnav-h) + var(--safe-bottom) + 1.25rem);
+  }
+}

@@ -175,8 +175,10 @@ test('comparativo financeiro guarda linhas por período e exporta PDF CSV e Exce
 
 test('dashboard de público separa participação confirmada de check-in e filtra recorrência', async () => {
   const page = await readFile(new URL('../src/app/painel/usuarios/page.tsx', import.meta.url), 'utf8');
-  const sidebar = await readFile(new URL('../src/components/dashboard/Sidebar.tsx', import.meta.url), 'utf8');
-  assert.match(sidebar, /Público e recorrência/);
+  // Rota do menu extraida pra src/lib/navigation/admin-menu.ts (compartilhada
+  // com a navegacao mobile) -- o label continua existindo, so mudou de arquivo.
+  const adminMenu = await readFile(new URL('../src/lib/navigation/admin-menu.ts', import.meta.url), 'utf8');
+  assert.match(adminMenu, /Público e recorrência/);
   assert.match(page, /Participation confirmed|Participação confirmada/);
   assert.match(page, /Presença por check-in/);
   assert.match(page, /Últimos 3 anos/);
@@ -937,13 +939,19 @@ test('resolução em massa confirma quantidade e reutiliza reavaliação/finaliz
 test('cadastros separa visão geral do filtro explícito por lote', async () => {
   const page = await readFile(new URL('../src/app/cadastros/page.tsx', import.meta.url), 'utf8');
   const sidebar = await readFile(new URL('../src/components/dashboard/Sidebar.tsx', import.meta.url), 'utf8');
+  // EVENT_SCOPED_HREFS foi extraida pra src/lib/navigation/admin-menu.ts
+  // (compartilhada com a navegacao mobile); Sidebar.tsx so chama a funcao
+  // eventScopedHref(href, selectedEventId), que consulta essa lista.
+  const adminMenu = await readFile(new URL('../src/lib/navigation/admin-menu.ts', import.meta.url), 'utf8');
   const importer = await readFile(new URL('../src/app/importacoes/ImportacoesClient.tsx', import.meta.url), 'utf8');
   assert.match(page, /import_batch_id/);
   assert.match(page, /Ver todos os cadastros/);
   assert.match(page, /href="\/cadastros"/);
   assert.match(importer, /import_batch_id=/);
-  assert.match(sidebar, /router\.push\(eventScopedHref\)/);
-  assert.match(sidebar, /\["\/operacoes", "\/painel", "\/cadastros"[\s\S]*"\/financeiro"[\s\S]*"\/cupons"\]\.includes\(item\.href\)/);
+  assert.match(sidebar, /const href = eventScopedHref\(item\.href, selectedEventId\)/);
+  assert.match(sidebar, /router\.push\(href\)/);
+  assert.match(sidebar, /EVENT_SCOPED_HREFS\.includes\(href\)/);
+  assert.match(adminMenu, /=\s*\[\s*\n\s*"\/operacoes",[\s\S]*"\/painel",[\s\S]*"\/cadastros",[\s\S]*"\/financeiro",[\s\S]*"\/cupons",\s*\n\s*\];/);
   assert.doesNotMatch(page, /type Params[^\n]*importBatchId/);
 });
 
@@ -1308,12 +1316,18 @@ test('portal — participante comum nao recebe acesso operacional por identidade
   assert.match(policy, /results\.some\(Boolean\)/);
 });
 
-test('portal — botao administrativo existe em desktop e mobile e leva ao painel', async () => {
+test('portal — botao administrativo existe em desktop (sidebar) e mobile (atalho secundario no Perfil) e leva ao painel', async () => {
+  // Refatoracao mobile global: a navegacao inferior do usuario ficou
+  // limitada a 5 itens principais (Início/Ingressos/Compras/Carrinho/
+  // Perfil); "Painel administrativo" deixou de aparecer ali e virou um
+  // atalho secundario na pagina de Perfil -- nunca removido, so realocado.
   const navigation = await readFile(new URL('../src/app/minha-conta/account-nav.tsx', import.meta.url), 'utf8');
-  const panelLinks = navigation.match(/href="\/painel"/g) ?? [];
-  assert.equal(panelLinks.length, 2);
+  const perfilPage = await readFile(new URL('../src/app/minha-conta/dados/page.tsx', import.meta.url), 'utf8');
   assert.match(navigation, /Painel administrativo/);
-  assert.match(navigation, /AccountMobileNav[\s\S]*href="\/painel"[\s\S]*label="Painel"/);
+  assert.match(navigation, /AccountSidebarNav[\s\S]*href="\/painel"/);
+  assert.doesNotMatch(navigation, /AccountMobileNav[\s\S]*href="\/painel"/);
+  assert.match(perfilPage, /canAccessAdministrativePanel/);
+  assert.match(perfilPage, /href="\/painel"[\s\S]*Painel administrativo/);
 });
 
 test('portal — destino pos-login operacional usa a mesma politica', async () => {

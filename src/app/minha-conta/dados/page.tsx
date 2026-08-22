@@ -1,3 +1,5 @@
+import Link from 'next/link';
+import { ArrowRight, LayoutDashboard, ShieldCheck } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requestEmailChangeAction, updateMyProfileAction, updatePasswordAction } from '@/app/minha-conta/actions';
 import { redirect } from 'next/navigation';
@@ -11,6 +13,7 @@ import {
 } from '@/lib/account/participant-identity';
 import { sanitizeInternalNextPath } from '@/lib/utils/safe-navigation';
 import { getMyPublicPin } from '@/lib/account/public-pin';
+import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
 
 export default async function DadosPage({
   searchParams,
@@ -26,10 +29,15 @@ export default async function DadosPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [{ data: profileData }, publicPin] = await Promise.all([
+  const [{ data: profileData }, publicPin, isAdministrativeUser, sponsorRow] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     getMyPublicPin(user?.id),
+    canAccessAdministrativePanel(),
+    user?.id
+      ? supabase.from('sponsors').select('id').eq('user_id', user.id).eq('is_active', true).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
+  const isSponsorUser = Boolean(sponsorRow.data);
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const birthDate = formatISOToDateBR(String(profile?.birth_date ?? ''));
   const userMetadata = (user?.user_metadata as Record<string, unknown> | undefined) ?? null;
@@ -59,6 +67,40 @@ export default async function DadosPage({
 
   return (
     <section className="space-y-4">
+      {/* Atalhos secundarios -- so em mobile (desktop ja mostra os mesmos
+          links no topo da sidebar, AccountSidebarNav). "Painel
+          administrativo" e "Área do patrocinador" saíram da navegação
+          inferior (limite de 5 itens principais) e ficam acessíveis aqui,
+          nunca removidos. */}
+      {isAdministrativeUser || isSponsorUser ? (
+        <div className="space-y-2 lg:hidden">
+          {isAdministrativeUser ? (
+            <Link
+              href="/painel"
+              className="flex items-center justify-between rounded-2xl border border-(--brand-500)/30 bg-(--brand-500)/10 px-4 py-3 text-sm font-semibold text-(--brand-100)"
+            >
+              <span className="flex items-center gap-3">
+                <LayoutDashboard size={16} />
+                Painel administrativo
+              </span>
+              <ArrowRight size={14} />
+            </Link>
+          ) : null}
+          {isSponsorUser ? (
+            <Link
+              href="/minha-conta/patrocinador"
+              className="flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200"
+            >
+              <span className="flex items-center gap-3">
+                <ShieldCheck size={16} />
+                Área do patrocinador
+              </span>
+              <ArrowRight size={14} />
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
       <MilitrinSection
         eyebrow="Meu perfil"
         title="Dados do usuário"

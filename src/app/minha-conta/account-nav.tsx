@@ -123,18 +123,18 @@ function MobileNavLink({ href, label, icon: Icon, active }: { href: string; labe
   );
 }
 
-export function AccountMobileNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
+// Maximo 5 itens principais na navegacao inferior (Inicio, Ingressos,
+// Compras, Carrinho, Perfil) -- "Painel administrativo" e "Area do
+// patrocinador" sao itens SECUNDARIOS e saem da barra fixa; continuam
+// acessiveis (nenhuma funcionalidade removida) como atalhos dentro do
+// Perfil (ver src/app/minha-conta/dados/page.tsx), a area secundaria
+// natural pra esse tipo de link.
+export function AccountMobileNav() {
   const pathname = usePathname();
-  const itemCount = 5 + (isAdministrativeUser ? 1 : 0) + (isSponsorUser ? 1 : 0);
 
   return (
     <nav className="fixed inset-x-3 bottom-3 z-40 rounded-2xl border border-slate-800/90 bg-slate-950/90 p-2 shadow-2xl shadow-black/30 backdrop-blur lg:hidden" aria-label="Navegação rápida do usuário">
-      <ul className="grid gap-1 text-[11px]" style={{ gridTemplateColumns: `repeat(${itemCount}, minmax(0, 1fr))` }}>
-        {isAdministrativeUser ? (
-          <li>
-            <MobileNavLink href="/painel" label="Painel" icon={LayoutDashboard} active={isActivePath(pathname, '/painel')} />
-          </li>
-        ) : null}
+      <ul className="grid grid-cols-5 gap-1 text-[11px]">
         <li>
           <MobileNavLink href="/minha-conta" label="Início" icon={LayoutDashboard} active={isActivePath(pathname, '/minha-conta')} />
         </li>
@@ -150,11 +150,6 @@ export function AccountMobileNav({ isAdministrativeUser, isSponsorUser }: { isAd
         <li>
           <MobileNavLink href="/minha-conta/dados" label="Perfil" icon={CircleUserRound} active={isActivePath(pathname, '/minha-conta/dados')} />
         </li>
-        {isSponsorUser ? (
-          <li>
-            <MobileNavLink href="/minha-conta/patrocinador" label="Patroc." icon={ShieldCheck} active={isActivePath(pathname, '/minha-conta/patrocinador')} />
-          </li>
-        ) : null}
       </ul>
     </nav>
   );
