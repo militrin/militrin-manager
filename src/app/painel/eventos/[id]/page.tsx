@@ -8,8 +8,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { EventKitManager } from "@/app/eventos/[eventSlug]/ui";
 import { CategoriesManager } from "@/app/categorias/ui";
 import { BatchesManager } from "@/app/lotes/ui";
-import { getEventSingleTicketPriceStatusAction } from "@/app/eventos/actions";
-import { SingleTicketPriceManager } from "./single-ticket-price-manager";
+import { SingleTicketBatchesManager, type SingleTicketBatchRow } from "./single-ticket-batches-manager";
 import { EventSummaryCard } from "./event-summary-card";
 import { BuyerPresentationPreview } from "./buyer-presentation-preview";
 import { EventHelpCard, EventResumeCard } from "./event-sidebar-cards";
@@ -225,13 +224,52 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     : ticketMode === "category_hidden"
       ? "1 categoria ativa — o comprador só vê o lote"
       : `${activeCategoryCount} categorias ativas — o comprador escolhe a categoria`;
-  let singleTicketPriceStatus: { male_price: number | null; female_price: number | null; price_confirmed: boolean; registration_enabled: boolean } | null = null;
+  let singleTicketBatches: SingleTicketBatchRow[] = [];
+  let singleTicketCurrentBatches: { gender: string; batch_id: string | null; batch_name: string | null; sequence_number: number | null; price: number | null }[] = [];
   if ((currentStep === 2 || currentStep === 3) && activeCategoryCount === 0) {
-    const statusResult = await getEventSingleTicketPriceStatusAction(event.id);
-    singleTicketPriceStatus = statusResult.success
-      ? statusResult.status
-      : { male_price: null, female_price: null, price_confirmed: false, registration_enabled: event.registration_enabled };
+    const [{ data: singleBatchRows, error: singleBatchError }, { data: currentBatchRows, error: currentBatchError }] = await Promise.all([
+      supabase.rpc("list_single_ticket_batches", { p_event_id: id }),
+      supabase.rpc("get_single_ticket_current_batches", { p_event_id: id }),
+    ]);
+    if (singleBatchError) throw singleBatchError;
+    if (currentBatchError) throw currentBatchError;
+    singleTicketBatches = (singleBatchRows ?? []).map((row: {
+      batch_id: string; name: string; sequence_number: number; male_price: number; female_price: number;
+      male_max: number; female_max: number; gender_split: boolean; male_confirmed: number; female_confirmed: number;
+      male_closed: boolean; female_closed: boolean; starts_at: string | null; ends_at: string | null;
+      male_status: string; female_status: string;
+    }) => ({
+      batchId: String(row.batch_id),
+      name: String(row.name),
+      sequenceNumber: Number(row.sequence_number),
+      malePrice: Number(row.male_price),
+      femalePrice: Number(row.female_price),
+      maleMax: Number(row.male_max),
+      femaleMax: Number(row.female_max),
+      genderSplit: Boolean(row.gender_split),
+      maleConfirmed: Number(row.male_confirmed ?? 0),
+      femaleConfirmed: Number(row.female_confirmed ?? 0),
+      maleClosed: Boolean(row.male_closed),
+      femaleClosed: Boolean(row.female_closed),
+      startsAt: row.starts_at ? String(row.starts_at) : null,
+      endsAt: row.ends_at ? String(row.ends_at) : null,
+      maleStatus: (row.male_status as SingleTicketBatchRow["maleStatus"]) ?? "esgotado",
+      femaleStatus: (row.female_status as SingleTicketBatchRow["femaleStatus"]) ?? "esgotado",
+    }));
+    singleTicketCurrentBatches = currentBatchRows ?? [];
   }
+  const singleTicketMaleCurrent = singleTicketCurrentBatches.find((row) => row.gender === "male") ?? null;
+  const singleTicketFemaleCurrent = singleTicketCurrentBatches.find((row) => row.gender === "female") ?? null;
+  const singleTicketPriceStatus = activeCategoryCount === 0
+    ? {
+        male_price: singleTicketMaleCurrent?.price ?? null,
+        female_price: singleTicketFemaleCurrent?.price ?? null,
+        price_confirmed: singleTicketBatches.length > 0,
+        male_batch_label: singleTicketMaleCurrent?.batch_name ? `${singleTicketMaleCurrent.sequence_number}º lote — ${singleTicketMaleCurrent.batch_name}` : null,
+        female_batch_label: singleTicketFemaleCurrent?.batch_name ? `${singleTicketFemaleCurrent.sequence_number}º lote — ${singleTicketFemaleCurrent.batch_name}` : null,
+        same_batch: Boolean(singleTicketMaleCurrent?.batch_id && singleTicketMaleCurrent?.batch_id === singleTicketFemaleCurrent?.batch_id),
+      }
+    : null;
 
   const categoryIds = categories.map((category: { id: string }) => category.id);
   const { data: benefitsData, error: benefitsError } = categoryIds.length > 0
@@ -275,7 +313,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     updated_at: String(row.updated_at),
   })) as BatchCategoryRow[];
 
-  const totalBatchCount = new Set(batches.map((row) => row.id)).size;
+  const totalBatchCount = new Set(batches.map((row) => row.id)).size + singleTicketBatches.length;
 
   const benefits = (benefitsData ?? []).map((row: {
     id: string;
@@ -437,7 +475,12 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                     activeCategories={activeCategoriesForPreview}
                     singleTicketPrice={singleTicketPriceStatus}
                   />
-                  <EventResumeCard data={{ ticketModeLabel, activeCategoryCount, totalCategoryCount: categories.length, totalBatchCount, ticketsCount: Number(ticketsCount ?? 0) }} />
+                  <EventResumeCard data={{
+                    ticketModeLabel, activeCategoryCount, totalCategoryCount: categories.length, totalBatchCount, ticketsCount: Number(ticketsCount ?? 0),
+                    singleTicketMaleBatchLabel: singleTicketPriceStatus?.male_batch_label ?? null,
+                    singleTicketFemaleBatchLabel: singleTicketPriceStatus?.female_batch_label ?? null,
+                    singleTicketBatchesDiffer: Boolean(singleTicketPriceStatus && singleTicketPriceStatus.same_batch === false),
+                  }} />
                   <EventHelpCard step={currentStep} />
                 </div>
               </div>
@@ -455,8 +498,8 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                 Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
               </div>
               <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_310px]">
-                {activeCategoryCount === 0 && singleTicketPriceStatus ? (
-                  <SingleTicketPriceManager eventId={event.id} initialStatus={singleTicketPriceStatus} />
+                {activeCategoryCount === 0 ? (
+                  <SingleTicketBatchesManager eventId={event.id} batches={singleTicketBatches} />
                 ) : (
                   <BatchesManager eventId={event.id} batches={batches} categories={categories} />
                 )}
@@ -466,7 +509,12 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                     activeCategories={activeCategoriesForPreview}
                     singleTicketPrice={singleTicketPriceStatus}
                   />
-                  <EventResumeCard data={{ ticketModeLabel, activeCategoryCount, totalCategoryCount: categories.length, totalBatchCount, ticketsCount: Number(ticketsCount ?? 0) }} />
+                  <EventResumeCard data={{
+                    ticketModeLabel, activeCategoryCount, totalCategoryCount: categories.length, totalBatchCount, ticketsCount: Number(ticketsCount ?? 0),
+                    singleTicketMaleBatchLabel: singleTicketPriceStatus?.male_batch_label ?? null,
+                    singleTicketFemaleBatchLabel: singleTicketPriceStatus?.female_batch_label ?? null,
+                    singleTicketBatchesDiffer: Boolean(singleTicketPriceStatus && singleTicketPriceStatus.same_batch === false),
+                  }} />
                   <EventHelpCard step={currentStep} />
                 </div>
               </div>

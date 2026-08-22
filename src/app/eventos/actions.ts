@@ -458,54 +458,125 @@ export async function upsertEventPaymentMethodsAction(payload: z.infer<typeof ev
   }
 }
 
-const singleTicketPriceSchema = z.object({
+// Substitui o antigo fluxo de preco fixo (setEventSingleTicketPriceAction/
+// getEventSingleTicketPriceStatusAction, 1 unico lote sempre sobrescrito)
+// por lotes reais e independentes por genero, reaproveitando
+// registration_batches/registration_batch_prices -- ver migration
+// 20260865000000_single_ticket_multi_batch_gender_split.sql.
+const singleTicketBatchCreateSchema = z.object({
   event_id: z.string().uuid(),
+  name: z.string().trim().min(1, 'Informe o nome do lote.'),
+  sequence_number: z.number().int().positive('Ordem do lote invalida.'),
   male_price: z.number().min(0, 'Preço masculino inválido.'),
   female_price: z.number().min(0, 'Preço feminino inválido.'),
+  male_max: z.number().int().positive('Informe o limite masculino.'),
+  female_max: z.number().int().positive('Informe o limite feminino.'),
+  starts_at: z.string().optional().nullable(),
+  ends_at: z.string().optional().nullable(),
+  male_closed: z.boolean().default(false),
+  female_closed: z.boolean().default(false),
 });
 
-export async function getEventSingleTicketPriceStatusAction(eventId: string) {
-  try {
-    const supabase = await createServerSupabaseClient();
-    const { data, error } = await supabase.rpc('get_event_single_ticket_price_status', { p_event_id: eventId });
-    if (error) throw error;
-    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
-    return {
-      success: true as const,
-      status: {
-        active_category_count: Number(row?.active_category_count ?? 0),
-        male_price: row?.male_price === null || row?.male_price === undefined ? null : Number(row.male_price),
-        female_price: row?.female_price === null || row?.female_price === undefined ? null : Number(row.female_price),
-        price_confirmed: Boolean(row?.price_confirmed),
-        registration_enabled: Boolean(row?.registration_enabled),
-      },
-    };
-  } catch (error) {
-    return { success: false as const, message: resolveActionErrorMessage(error, 'Falha ao consultar o preço do ingresso único.') };
-  }
-}
+const singleTicketBatchUpdateSchema = z.object({
+  batch_id: z.string().uuid(),
+  name: z.string().trim().min(1, 'Informe o nome do lote.'),
+  male_price: z.number().min(0, 'Preço masculino inválido.'),
+  female_price: z.number().min(0, 'Preço feminino inválido.'),
+  male_max: z.number().int().positive('Informe o limite masculino.'),
+  female_max: z.number().int().positive('Informe o limite feminino.'),
+  starts_at: z.string().optional().nullable(),
+  ends_at: z.string().optional().nullable(),
+});
 
-export async function setEventSingleTicketPriceAction(payload: z.infer<typeof singleTicketPriceSchema>) {
-  const parsed = singleTicketPriceSchema.safeParse(payload);
+const singleTicketBatchGenderClosedSchema = z.object({
+  batch_id: z.string().uuid(),
+  event_id: z.string().uuid(),
+  gender: z.enum(['male', 'female']),
+  closed: z.boolean(),
+});
+
+export async function createSingleTicketBatchAction(payload: z.infer<typeof singleTicketBatchCreateSchema>) {
+  const parsed = singleTicketBatchCreateSchema.safeParse(payload);
   if (!parsed.success) {
-    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos para o preço do ingresso.' };
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos do lote.' };
   }
-
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.rpc('set_event_single_ticket_price', {
+    const { error } = await supabase.rpc('create_single_ticket_batch', {
       p_event_id: parsed.data.event_id,
+      p_name: parsed.data.name,
+      p_sequence_number: parsed.data.sequence_number,
       p_male_price: parsed.data.male_price,
       p_female_price: parsed.data.female_price,
+      p_male_max: parsed.data.male_max,
+      p_female_max: parsed.data.female_max,
+      p_starts_at: parsed.data.starts_at || null,
+      p_ends_at: parsed.data.ends_at || null,
+      p_male_closed: parsed.data.male_closed,
+      p_female_closed: parsed.data.female_closed,
     });
-
     if (error) throw error;
     await revalidateEventsPages();
     revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
     revalidatePath('/inscricao');
-    return { success: true, message: 'Preço configurado.' };
+    revalidatePath('/importacoes');
+    return { success: true, message: 'Lote criado.' };
   } catch (error) {
-    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao salvar o preço do ingresso.') };
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao criar o lote.') };
+  }
+}
+
+export async function updateSingleTicketBatchAction(eventId: string, payload: z.infer<typeof singleTicketBatchUpdateSchema>) {
+  const parsed = singleTicketBatchUpdateSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos do lote.' };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('update_single_ticket_batch', {
+      p_batch_id: parsed.data.batch_id,
+      p_name: parsed.data.name,
+      p_male_price: parsed.data.male_price,
+      p_female_price: parsed.data.female_price,
+      p_male_max: parsed.data.male_max,
+      p_female_max: parsed.data.female_max,
+      p_starts_at: parsed.data.starts_at || null,
+      p_ends_at: parsed.data.ends_at || null,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${eventId}`);
+    revalidatePath('/inscricao');
+    return { success: true, message: 'Lote atualizado.' };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao atualizar o lote.') };
+  }
+}
+
+export async function setSingleTicketBatchGenderClosedAction(payload: z.infer<typeof singleTicketBatchGenderClosedSchema>) {
+  const parsed = singleTicketBatchGenderClosedSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('set_single_ticket_batch_gender_closed', {
+      p_batch_id: parsed.data.batch_id,
+      p_gender: parsed.data.gender,
+      p_closed: parsed.data.closed,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath('/inscricao');
+    return {
+      success: true,
+      message: parsed.data.closed
+        ? `${parsed.data.gender === 'male' ? 'Masculino' : 'Feminino'} encerrado neste lote.`
+        : `${parsed.data.gender === 'male' ? 'Masculino' : 'Feminino'} reaberto neste lote.`,
+    };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao alterar o status do lote.') };
   }
 }
 

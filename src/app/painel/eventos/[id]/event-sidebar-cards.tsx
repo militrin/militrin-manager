@@ -6,6 +6,9 @@ export type EventResumeCardData = {
   totalCategoryCount: number;
   totalBatchCount: number;
   ticketsCount: number;
+  singleTicketMaleBatchLabel?: string | null;
+  singleTicketFemaleBatchLabel?: string | null;
+  singleTicketBatchesDiffer?: boolean;
 };
 
 // Resumo rapido do que ja esta configurado no evento, para o admin nao precisar
@@ -15,6 +18,12 @@ export function EventResumeCard({ data }: { data: EventResumeCardData }) {
     { icon: Tag, label: "Modelo de ingresso", value: data.ticketModeLabel },
     { icon: LayoutList, label: "Categorias ativas", value: `${data.activeCategoryCount} de ${data.totalCategoryCount}` },
     { icon: Ticket, label: "Lotes cadastrados", value: String(data.totalBatchCount) },
+    ...(data.singleTicketBatchesDiffer
+      ? [
+          { icon: Ticket, label: "Lote atual masc.", value: data.singleTicketMaleBatchLabel ?? "—" },
+          { icon: Ticket, label: "Lote atual fem.", value: data.singleTicketFemaleBatchLabel ?? "—" },
+        ]
+      : []),
     { icon: Ticket, label: "Ingressos emitidos", value: String(data.ticketsCount) },
   ];
 

@@ -26,6 +26,9 @@ export type BuyerPreviewSingleTicketPrice = {
   male_price: number | null;
   female_price: number | null;
   price_confirmed: boolean;
+  male_batch_label?: string | null;
+  female_batch_label?: string | null;
+  same_batch?: boolean;
 };
 
 export type BuyerPreviewEvent = {
@@ -82,10 +85,23 @@ export function BuyerPresentationPreview({
             <div className="mt-2 space-y-2">
               {mode === "single" ? (
                 singleTicketPrice?.price_confirmed ? (
-                  <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5">
-                    <span className="text-sm text-slate-200">Ingresso único</span>
-                    <span className="text-sm font-semibold text-emerald-300">{priceLabel(singleTicketPrice.male_price, singleTicketPrice.female_price)}</span>
-                  </div>
+                  singleTicketPrice.same_batch === false ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5">
+                        <span className="text-sm text-slate-200">Masculino — {singleTicketPrice.male_batch_label ?? "lote a definir"}</span>
+                        <span className="text-sm font-semibold text-emerald-300">{singleTicketPrice.male_price !== null ? money(singleTicketPrice.male_price) : "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5">
+                        <span className="text-sm text-slate-200">Feminino — {singleTicketPrice.female_batch_label ?? "lote a definir"}</span>
+                        <span className="text-sm font-semibold text-emerald-300">{singleTicketPrice.female_price !== null ? money(singleTicketPrice.female_price) : "—"}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5">
+                      <span className="text-sm text-slate-200">Ingresso único{singleTicketPrice.male_batch_label ? ` — ${singleTicketPrice.male_batch_label}` : ""}</span>
+                      <span className="text-sm font-semibold text-emerald-300">{priceLabel(singleTicketPrice.male_price, singleTicketPrice.female_price)}</span>
+                    </div>
+                  )
                 ) : (
                   <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-300">Preço do ingresso único ainda não configurado.</p>
                 )
