@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 import { getPublicEvents, isEventOpen } from '@/lib/public/events';
+import { PublicBrandMark } from '@/components/public/PublicBrandMark';
 import { HomeLoginForm } from './home-login-form';
 
 export default async function Home() {
@@ -23,7 +24,7 @@ export default async function Home() {
       <section className="mx-auto w-full max-w-6xl rounded-[2rem] border border-slate-800/70 bg-slate-950/65 p-6 shadow-2xl shadow-black/20 sm:p-10">
         <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
           <div className="space-y-5">
-            <p className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-1 text-xs uppercase tracking-[0.2em] text-emerald-200">Grupo Militrin</p>
+            <PublicBrandMark />
             <h1 className="text-3xl font-semibold text-white sm:text-5xl">Prepare o caneco: viva a Oktoberfest com o Militrin!</h1>
             <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
               Garanta seu pacote de forma rápida, sem complicação e 100% online.
