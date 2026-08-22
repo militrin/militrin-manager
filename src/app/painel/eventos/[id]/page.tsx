@@ -22,6 +22,7 @@ import { DeliveryScheduleManager, type EventScheduleRow } from "./delivery-sched
 import { EventDataForm } from "./event-data-form";
 import { AttractionsManager } from "./attractions-manager";
 import { EventWristbandSettings } from "./wristband-settings";
+import { ShirtKitConfigurator } from "./shirt-kit-configurator";
 
 type Params = Promise<{ id: string }>;
 type SearchParams = Promise<{ etapa?: string }>;
@@ -51,9 +52,9 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   const supabase = await createServerSupabaseClient();
 
   const etapaValue = Number(resolvedSearchParams?.etapa ?? "1");
-  const currentStep = Number.isFinite(etapaValue) ? Math.min(8, Math.max(1, Math.trunc(etapaValue))) : 1;
+  const currentStep = Number.isFinite(etapaValue) ? Math.min(9, Math.max(1, Math.trunc(etapaValue))) : 1;
 
-  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }, { count: ticketsCount, error: ticketsCountError }] = await Promise.all([
+  const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }, { count: ticketsCount, error: ticketsCountError }, { data: shirtConfigData, error: shirtConfigError }] = await Promise.all([
     supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer, wristband_enabled, wristband_required_for_checkin, wristband_required_for_kit").eq("id", id).maybeSingle(),
     supabase.rpc("get_event_kit_items", { p_event_id: id }),
     supabase.rpc("get_event_ticket_categories", { p_event_id: id }),
@@ -63,6 +64,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     supabase.from('kit_delivery_schedule').select('id,event_id,delivery_at,title,location,description,schedule_type,sort_order,is_active,is_visible_to_users').eq('event_id', id).order('delivery_at'),
     supabase.from('event_attractions').select('id,event_id,name,description,banner_url,is_active,sort_order').eq('event_id', id).order('sort_order'),
     supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('event_id', id).neq('status', 'cancelled'),
+    supabase.rpc("get_event_shirt_kit_configuration", { p_event_id: id }),
   ]);
 
   if (eventError) throw eventError;
@@ -73,6 +75,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   if (ticketsCountError) throw ticketsCountError;
   if (scheduleError) throw scheduleError;
   if (attractionsError) throw attractionsError;
+  if (shirtConfigError) throw shirtConfigError;
   if (!eventData?.id) notFound();
 
   const event = {
@@ -141,6 +144,44 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
         }))
       : [],
   }));
+
+  const shirtConfigRows = (shirtConfigData ?? []) as Array<{
+    shirt_supply_mode: string | null;
+    is_required: boolean | null;
+    quantity_per_participant: number | null;
+    variant_id: string | null;
+    shirt_type: string | null;
+    shirt_size: string | null;
+    variant_is_active: boolean | null;
+    kit_total_quantity: number | null;
+    kit_reserved_quantity: number | null;
+    kit_delivered_quantity: number | null;
+    stock_total_quantity: number | null;
+    stock_reserved_quantity: number | null;
+    stock_delivered_quantity: number | null;
+  }>;
+  const shirtConfigHead = shirtConfigRows[0];
+  const shirtKitConfigInitial = {
+    supplyMode: (shirtConfigHead?.shirt_supply_mode === "made_to_order" || shirtConfigHead?.shirt_supply_mode === "disabled"
+      ? shirtConfigHead.shirt_supply_mode
+      : "stock") as "stock" | "made_to_order" | "disabled",
+    isRequired: Boolean(shirtConfigHead?.is_required ?? false),
+    quantityPerParticipant: Number(shirtConfigHead?.quantity_per_participant ?? 1),
+    variants: shirtConfigRows
+      .filter((row) => row.variant_id)
+      .map((row) => ({
+        variantId: String(row.variant_id),
+        shirtType: (row.shirt_type === "Babylook" ? "Babylook" : "Camiseta") as "Camiseta" | "Babylook",
+        shirtSize: String(row.shirt_size ?? ""),
+        isActive: Boolean(row.variant_is_active),
+        kitTotal: Number(row.kit_total_quantity ?? 0),
+        kitReserved: Number(row.kit_reserved_quantity ?? 0),
+        kitDelivered: Number(row.kit_delivered_quantity ?? 0),
+        stockTotal: Number(row.stock_total_quantity ?? 0),
+        stockReserved: Number(row.stock_reserved_quantity ?? 0),
+        stockDelivered: Number(row.stock_delivered_quantity ?? 0),
+      })),
+  };
 
   const categories = (categoriesData ?? []).map((row: {
     id: string;
@@ -343,6 +384,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                   { step: 6, label: "Itens de kit" },
                   { step: 7, label: "Cronograma" },
                   { step: 8, label: "Atrações" },
+                  { step: 9, label: "Acesso e pulseiras" },
                 ].map((item) => (
                   <Link
                     key={item.step}
@@ -364,7 +406,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                     ← Voltar etapa
                   </Link>
                 ) : null}
-                {currentStep < 8 ? (
+                {currentStep < 9 ? (
                   <Link href={`/painel/eventos/${event.id}?etapa=${currentStep + 1}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200 hover:border-emerald-400">
                     Próxima etapa →
                   </Link>
@@ -450,20 +492,15 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
           ) : null}
 
           {currentStep === 6 ? (
-            <SectionCard title="Etapa 6: Itens e variações de kit" description="Opcional: detalhar itens, variações e regras de alteração do kit utilizado no evento.">
-              <EventWristbandSettings
-                eventId={event.id}
-                initial={{
-                  enabled: event.wristband_enabled,
-                  requiredForCheckin: event.wristband_required_for_checkin,
-                  requiredForKit: event.wristband_required_for_kit,
-                }}
-              />
+            <SectionCard title="Etapa 6: Itens e variações de kit" description="Opcional: detalhar itens físicos entregáveis (camiseta, copo, tirante etc.), variações e regras de alteração do kit utilizado no evento.">
               <ItemChangeRules eventId={event.id} initialEnabled={event.allow_participant_item_changes} items={(itemRulesData ?? []).map((item) => ({ id: String(item.id), name: String(item.name), item_type: String(item.item_type), requires_variant: Boolean(item.requires_variant), allow_participant_change: Boolean(item.allow_participant_change), track_variant_inventory: Boolean(item.track_variant_inventory), require_stock_for_choice: item.shirt_supply_mode === "stock" }))} />
               {!event.kit_enabled ? (
                 <EmptyState title="Kit desabilitado" description="Ative 'Possui kit' no cadastro do evento para usar itens de kit." />
               ) : (
-                <EventKitManager event={event} items={items} />
+                <div className="space-y-4">
+                  <ShirtKitConfigurator eventId={event.id} initial={shirtKitConfigInitial} />
+                  <EventKitManager event={event} items={items.filter((item: { item_type: string }) => item.item_type !== "shirt")} />
+                </div>
               )}
             </SectionCard>
           ) : null}
@@ -486,6 +523,19 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
                 banner_url: row.banner_url ? String(row.banner_url) : null,
                 is_active: Boolean(row.is_active), sort_order: Number(row.sort_order ?? 0),
               }))} />
+            </SectionCard>
+          ) : null}
+
+          {currentStep === 9 ? (
+            <SectionCard title="Etapa 9: Acesso e pulseiras" description="Configuração operacional/de acesso do evento: uso de pulseiras vinculadas ao ingresso e exigências no check-in e na entrega do kit.">
+              <EventWristbandSettings
+                eventId={event.id}
+                initial={{
+                  enabled: event.wristband_enabled,
+                  requiredForCheckin: event.wristband_required_for_checkin,
+                  requiredForKit: event.wristband_required_for_kit,
+                }}
+              />
             </SectionCard>
           ) : null}
         </div>

@@ -41,8 +41,13 @@ type KitItemRow = {
   variants: VariantRow[];
 };
 
+// "shirt" foi removido deste form generico: Camiseta/Babylook tem
+// configurador dedicado (ShirtKitConfigurator, Etapa 6) que materializa
+// event_kit_item_variants + os 2 saldos canonicos (event_kit_item_variant_inventory
+// e shirt_inventory) e preenche shirt_supply_mode -- campo que este form
+// generico nunca soube preencher, causa raiz do antigo "Falha ao salvar
+// item do kit".
 const itemTypes = [
-  { value: "shirt", label: "Camiseta" },
   { value: "cup", label: "Copo" },
   { value: "strap", label: "Tirante" },
   { value: "cup_holder", label: "Porta-copo" },

@@ -757,6 +757,49 @@ export async function deleteKitVariantAction(variantId: string) {
   }
 }
 
+const shirtKitPairSchema = z.object({
+  shirt_type: z.enum(["Camiseta", "Babylook"]),
+  shirt_size: z.enum(["PP", "P", "M", "G", "GG", "EG", "EXG", "EXGG"]),
+});
+
+const shirtKitConfigurationSchema = z.object({
+  event_id: z.string().uuid(),
+  supply_mode: z.enum(["stock", "made_to_order", "disabled"]),
+  is_required: z.boolean(),
+  quantity_per_participant: z.number().int().min(1),
+  pairs: z.array(shirtKitPairSchema).min(1, "Selecione ao menos um tamanho."),
+});
+
+export async function saveEventShirtKitConfigurationAction(payload: z.infer<typeof shirtKitConfigurationSchema>) {
+  const parsed = shirtKitConfigurationSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false as const, message: parsed.error.issues[0]?.message ?? "Dados inválidos da configuração de camiseta." };
+  }
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.rpc("save_event_shirt_kit_configuration", {
+      p_event_id: parsed.data.event_id,
+      p_supply_mode: parsed.data.supply_mode,
+      p_is_required: parsed.data.is_required,
+      p_quantity_per_participant: parsed.data.quantity_per_participant,
+      p_pairs: parsed.data.pairs,
+    });
+    if (error) throw error;
+    revalidatePath('/eventos');
+    revalidatePath('/painel/eventos');
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath("/inscricoes/nova");
+    revalidatePath("/camisetas");
+    const blockedRemovals = Array.isArray((data as { blocked_removals?: unknown[] } | null)?.blocked_removals)
+      ? ((data as { blocked_removals: Array<{ shirt_type: string; shirt_size: string; reason: string }> }).blocked_removals)
+      : [];
+    return { success: true as const, message: "Configuração de camiseta salva.", blockedRemovals };
+  } catch (error) {
+    return { success: false as const, message: error instanceof Error ? error.message : "Falha ao salvar a configuração de camiseta." };
+  }
+}
+
 const attractionSchema = z.object({
   id: z.string().uuid().optional(),
   event_id: z.string().uuid(),
