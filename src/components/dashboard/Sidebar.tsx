@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ChevronRight,
+  CircleUserRound,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -200,6 +201,21 @@ function SidebarContent() {
             </div>
           </div>
 
+          {/* Troca de area -- NAO e logout ("Sair da conta" continua so no
+              rodape, exclusivo pra encerrar sessao). Perto do topo, antes
+              dos grupos de navegacao, pra nunca ficar perdido numa lista
+              longa. */}
+          <Link
+            href="/minha-conta"
+            className="mb-6 flex items-center justify-between rounded-2xl border border-slate-700/80 bg-slate-800/40 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-emerald-400/40 hover:bg-slate-800/70 hover:text-white"
+          >
+            <span className="flex items-center gap-3">
+              <CircleUserRound size={18} />
+              Ir para Minha Conta
+            </span>
+            <ChevronRight size={15} />
+          </Link>
+
           <nav className="space-y-6">{renderGroups(false)}</nav>
         </div>
 
@@ -248,6 +264,15 @@ function SidebarContent() {
           <Menu size={20} />
         </button>
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-slate-100">{currentPageLabel}</h1>
+        {/* Troca de area em 1 toque, sempre visivel (nunca atras do drawer/
+            bottom nav) -- NAO e logout, so leva pra /minha-conta. */}
+        <Link
+          href="/minha-conta"
+          aria-label="Ir para Minha Conta"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-200 active:bg-slate-800"
+        >
+          <CircleUserRound size={20} />
+        </Link>
       </header>
 
       {/* ============================================================
@@ -287,7 +312,22 @@ function SidebarContent() {
               </button>
             </div>
 
-            <nav className="flex-1 space-y-6 px-4 py-5">{renderGroups(false, () => setDrawerOpen(false))}</nav>
+            <nav className="flex-1 space-y-6 px-4 py-5">
+              {/* Perto do topo, ANTES dos grupos filtrados por permissao --
+                  nunca escondido no fim de uma lista longa. */}
+              <Link
+                href="/minha-conta"
+                onClick={() => setDrawerOpen(false)}
+                className="flex items-center justify-between rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 text-left text-base font-medium text-emerald-200 transition hover:bg-emerald-500/20 py-3.5"
+              >
+                <span className="flex items-center gap-3">
+                  <CircleUserRound size={20} />
+                  Ir para Minha Conta
+                </span>
+                <ChevronRight size={16} />
+              </Link>
+              {renderGroups(false, () => setDrawerOpen(false))}
+            </nav>
 
             <div className="border-t border-slate-800/80 p-4">
               <form action={signOutAdministrativePanelAction}>

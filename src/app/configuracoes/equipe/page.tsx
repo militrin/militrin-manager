@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatusBadge } from '@/components/admin';
-import { requirePermission } from '@/lib/admin/permissions';
+import { hasPermission, requirePermission } from '@/lib/admin/permissions';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { AddTeamMemberButton } from './add-member-modal';
 
 type SearchParams = Promise<{
   q?: string;
@@ -20,13 +21,14 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
 
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: teamRows, error: teamError }, { data: rolesData, error: rolesError }] = await Promise.all([
+  const [{ data: teamRows, error: teamError }, { data: rolesData, error: rolesError }, canAddMember] = await Promise.all([
     supabase.rpc('list_admin_team', {
       p_search: q || null,
       p_role_name: role || null,
       p_status: status || null,
     }),
     supabase.rpc('list_admin_roles'),
+    hasPermission('team.edit_permissions'),
   ]);
 
   if (teamError) throw teamError;
@@ -34,6 +36,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
 
   const rows = teamRows ?? [];
   const roles = rolesData ?? [];
+  const roleOptions = roles.map((item: Record<string, unknown>) => ({ id: String(item.id), name: String(item.name) }));
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -71,7 +74,11 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
             </form>
           </AdminSection>
 
-          <AdminSection title="Usuarios da equipe" description="Clique em editar acesso para ajustar funcao e overrides">
+          <AdminSection
+            title="Usuarios da equipe"
+            description="Clique em editar acesso para ajustar funcao e overrides"
+            actions={canAddMember ? <AddTeamMemberButton roleOptions={roleOptions} /> : null}
+          >
             {rows.length === 0 ? (
               <AdminEmptyState title="Nenhum usuario encontrado" description="Ajuste os filtros para localizar membros da equipe." />
             ) : (

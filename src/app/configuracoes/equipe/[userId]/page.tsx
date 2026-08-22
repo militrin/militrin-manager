@@ -56,6 +56,19 @@ export default async function TeamUserAccessPage({ params }: { params: Promise<{
       email: String(item.email ?? ''),
     }));
 
+  // Aviso PREVENTIVO na UI (nao substitui a protecao real, que e o trigger
+  // "trg_prevent_last_owner_admin_user_mutation" no banco -- esse continua
+  // valendo mesmo se este calculo estiver errado). Usa os MESMOS dados ja
+  // buscados (list_admin_team) que alimentam o seletor "copiar permissoes
+  // de", nenhuma consulta nova: um usuario e Owner ativo quando
+  // role_name === 'Owner' (mesmo texto que o RPC list_admin_roles usa pro
+  // papel de sistema "owner") e is_active === true.
+  const activeOwnerCount = (teamRows ?? []).filter(
+    (item: Record<string, unknown>) => String(item.role_name ?? '') === 'Owner' && Boolean(item.is_active),
+  ).length;
+  const isTargetActiveOwner = String(user.role_name ?? '') === 'Owner' && Boolean(user.is_active);
+  const isLastActiveOwner = isTargetActiveOwner && activeOwnerCount <= 1;
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
@@ -96,6 +109,7 @@ export default async function TeamUserAccessPage({ params }: { params: Promise<{
               permissions={permissions}
               roleOptions={roleOptions}
               copyUsers={copyUsers}
+              isLastActiveOwner={isLastActiveOwner}
             />
           )}
         </div>

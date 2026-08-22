@@ -5,6 +5,80 @@ import { z } from 'zod';
 import { assertPermission } from '@/lib/admin/permissions';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
+export async function searchPromotableUsersAction(term: string) {
+  await assertPermission('team.edit_permissions');
+
+  const parsed = z.string().trim().min(3).max(200).safeParse(term);
+  if (!parsed.success) {
+    return { success: false, message: 'Informe ao menos 3 caracteres para buscar.', results: [] as Array<{ userId: string; fullName: string; maskedEmail: string }> };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('search_promotable_admin_users', { p_term: parsed.data });
+
+  if (error) {
+    return { success: false, message: error.message, results: [] as Array<{ userId: string; fullName: string; maskedEmail: string }> };
+  }
+
+  const results = (data ?? []).map((row: Record<string, unknown>) => ({
+    userId: String(row.user_id),
+    fullName: String(row.full_name ?? ''),
+    maskedEmail: String(row.masked_email ?? ''),
+  }));
+
+  return { success: true, results };
+}
+
+const addMemberSchema = z.object({
+  userId: z.string().uuid(),
+  roleId: z.string().uuid(),
+});
+
+export async function addTeamMemberAction(input: { userId: string; roleId: string }) {
+  await assertPermission('team.edit_permissions');
+
+  const parsed = addMemberSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, message: 'Selecione um usuário e uma função válidos.' };
+  }
+
+  const supabase = await createServerSupabaseClient();
+
+  // "Nao permitir promover a propria conta de forma incoerente" -- o RPC de
+  // busca ja exclui o proprio ator dos resultados (quem chega aqui com
+  // permissao pra isso ja e um admin_users ativo, entao nunca apareceria
+  // como "promovivel"), mas o guard fica explicito aqui tambem: nenhum
+  // caminho, direto ou pela UI, adiciona a propria conta por este fluxo.
+  const {
+    data: { user: actor },
+  } = await supabase.auth.getUser();
+  if (actor && actor.id === parsed.data.userId) {
+    return { success: false, message: 'Você já tem acesso à equipe -- não é possível se adicionar por este fluxo.' };
+  }
+
+  // Reaproveita o RPC canonico existente (mesmo caminho do editor completo
+  // de acesso) -- nenhum sistema de permissao novo, nenhuma segunda logica
+  // de upsert em admin_users. is_active=true e overrides vazios: um membro
+  // novo entra so com a funcao base escolhida, sem excecoes individuais.
+  const { error } = await supabase.rpc('upsert_admin_user_access', {
+    p_target_user_id: parsed.data.userId,
+    p_role_id: parsed.data.roleId,
+    p_is_active: true,
+    p_internal_note: null,
+    p_overrides: [],
+    p_reason: 'Adicionado via fluxo "Adicionar membro"',
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  revalidatePath('/painel/configuracoes/equipe');
+  revalidatePath('/configuracoes/equipe');
+
+  return { success: true, message: 'Membro adicionado com sucesso.' };
+}
+
 const overrideSchema = z.object({
   permission_code: z.string().min(1),
   effect: z.enum(['allow', 'deny']),

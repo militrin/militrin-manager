@@ -65,6 +65,8 @@ export function TeamAccessEditor(props: {
   permissions: PermissionRow[];
   roleOptions: RoleOption[];
   copyUsers: TeamUserOption[];
+  /** Este usuario e o UNICO Owner ativo hoje (calculado no server a partir de list_admin_team). So aviso preventivo na UI -- a protecao real continua sendo o trigger no banco. */
+  isLastActiveOwner: boolean;
 }) {
   const [roleId, setRoleId] = useState<string>(props.initialRoleId ?? '');
   const [isActive, setIsActive] = useState<boolean>(props.initialIsActive);
@@ -82,6 +84,13 @@ export function TeamAccessEditor(props: {
   });
 
   const [isPending, startTransition] = useTransition();
+
+  // Aviso PREVENTIVO -- nunca bloqueia o clique em "Salvar alteracoes"
+  // (quem bloqueia de verdade, mesmo se este calculo estiver errado, e o
+  // trigger no banco). So avisa ANTES de tentar, pra nao descobrir so pelo
+  // erro depois de preencher tudo.
+  const ownerRole = props.roleOptions.find((role) => role.name === 'Owner');
+  const wouldRemoveLastOwner = props.isLastActiveOwner && ((ownerRole ? roleId !== ownerRole.id : false) || !isActive);
 
   const grouped = useMemo(() => {
     const map = new Map<string, PermissionRow[]>();
@@ -193,6 +202,12 @@ export function TeamAccessEditor(props: {
             {isActive ? 'Ativo' : 'Inativo'}
           </button>
         </label>
+
+        {wouldRemoveLastOwner ? (
+          <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 lg:col-span-2">
+            Este é o único Owner ativo da equipe. Trocar a função ou desativar vai ser bloqueado ao salvar -- promova outro Owner antes de rebaixar ou desativar este.
+          </p>
+        ) : null}
 
         <label className="space-y-1 text-sm text-slate-300 lg:col-span-2">
           <span>Observacao interna</span>

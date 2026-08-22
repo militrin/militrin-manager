@@ -183,7 +183,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     label: "Organização",
     items: [
       {
-        label: "Equipe",
+        label: "Equipe e permissões",
         icon: UserRoundCog,
         href: "/painel/configuracoes/equipe",
         permissionAny: ["team.view"],
