@@ -65,7 +65,7 @@ export function WristbandLookupClient() {
                 key={scannerKey}
                 title="Escaneie a pulseira"
                 onRead={handleRead}
-                guideLabel="Posicione o QR da pulseira dentro da área"
+                guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"
                 helpMessage="Aproxime a pulseira da câmera e evite reflexos."
               />
             ) : (

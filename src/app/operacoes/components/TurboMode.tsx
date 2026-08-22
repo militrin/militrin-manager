@@ -319,7 +319,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
             title="Escaneie a pulseira"
             onRead={(value) => handleWristbandScan(value, screen.participant)}
             onCancel={backToScanner}
-            guideLabel="Posicione o QR da pulseira dentro da área"
+            guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"
             helpMessage="Aproxime a pulseira da câmera e evite reflexos."
           />
         </div>

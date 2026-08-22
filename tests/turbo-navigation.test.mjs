@@ -164,13 +164,13 @@ test("Ver pulseira vinculada abre o leitor de QR imediatamente (nao exige seleci
   assert.match(scannerBlock, /key={scannerKey}/);
   assert.match(scannerBlock, /title="Escaneie a pulseira"/);
   assert.match(scannerBlock, /onRead={handleRead}/);
-  assert.match(scannerBlock, /guideLabel="Posicione o QR da pulseira dentro da área"/);
+  assert.match(scannerBlock, /guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"/);
   assert.match(scannerBlock, /helpMessage="Aproxime a pulseira da câmera e evite reflexos\."/);
 });
 
 test("Modo Turbo tambem mostra a guia visual e a dica ao escanear pulseira (mesmo problema relatado: QR de pulseira e mais dificil de reconhecer que o de ingresso)", () => {
   const wristbandScanner = slice(turboMode, 'title="Escaneie a pulseira"', "/>");
-  assert.match(wristbandScanner, /guideLabel="Posicione o QR da pulseira dentro da área"/);
+  assert.match(wristbandScanner, /guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"/);
   assert.match(wristbandScanner, /helpMessage="Aproxime a pulseira da câmera e evite reflexos\."/);
 });
 
