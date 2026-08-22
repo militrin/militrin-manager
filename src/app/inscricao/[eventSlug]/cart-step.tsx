@@ -12,6 +12,7 @@ import {
 } from "../actions";
 import { ProductImageGallery, type GalleryImage } from "@/components/store/product-image-gallery";
 import { QuantityStepper } from "@/components/store/store-item-controls";
+import { computeStoreItemFinalPrice } from "@/lib/store/pricing";
 import { shirtDisplayLabel } from "@/lib/constants/shirts";
 
 type CartItem = {
@@ -52,6 +53,9 @@ type EligibleProduct = {
   image_url: string | null;
   images: Array<{ id: string; url: string; is_primary: boolean }>;
   price: number;
+  /** Desconto intrinseco do produto (mesmo campo de list_store_items_for_event ja usado pelo resto da loja) -- fonte de computeStoreItemFinalPrice. */
+  discount_type: "percentage" | "fixed" | null;
+  discount_value: number;
   requires_variant: boolean;
   supply_mode: string;
   variant_id: string | null;
@@ -60,6 +64,10 @@ type EligibleProduct = {
   price_adjustment: number | null;
   available_quantity: number | null;
 };
+
+function effectivePrice(row: EligibleProduct) {
+  return computeStoreItemFinalPrice(row.price + (row.price_adjustment ?? 0), row.discount_type, row.discount_value);
+}
 
 type ProductGroup = [string, EligibleProduct[]];
 
@@ -155,7 +163,18 @@ function ProductCard({
         )}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-slate-100">{base.name}</p>
-          <p className="text-xs text-slate-400">{money(Number(base.price))}</p>
+          {(() => {
+            const original = base.price + (base.price_adjustment ?? 0);
+            const final = effectivePrice(base);
+            return final < original ? (
+              <p className="text-xs">
+                <span className="text-slate-500 line-through">{money(original)}</span>{' '}
+                <span className="font-semibold text-emerald-300">{money(final)}</span>
+              </p>
+            ) : (
+              <p className="text-xs text-slate-400">{money(original)}</p>
+            );
+          })()}
           {base.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-500">{base.description}</p> : null}
           {outOfStock ? (
             <p className="mt-1 text-xs font-medium text-rose-400">Esgotado</p>
@@ -259,7 +278,19 @@ function ProductDetailModal({
 
         <div className="mt-4 space-y-1">
           <p className="text-lg font-semibold text-slate-100">{base.name}</p>
-          <p className="text-base text-emerald-300">{money(Number(base.price))}</p>
+          {(() => {
+            const activeRow = selectedVariant ?? base;
+            const original = activeRow.price + (activeRow.price_adjustment ?? 0);
+            const final = effectivePrice(activeRow);
+            return final < original ? (
+              <p className="text-base">
+                <span className="mr-2 text-slate-500 line-through">{money(original)}</span>
+                <span className="font-semibold text-emerald-300">{money(final)}</span>
+              </p>
+            ) : (
+              <p className="text-base text-emerald-300">{money(original)}</p>
+            );
+          })()}
           {stockUrgencyLabel(availableQuantity) ? (
             <p className={`text-xs font-medium ${availableQuantity === 1 ? "text-rose-400" : "text-amber-400"}`}>
               {stockUrgencyLabel(availableQuantity)}

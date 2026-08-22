@@ -9,8 +9,9 @@ import {
   type StoreCartLine,
 } from '@/lib/store/actions';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
+import { resolveStoreItemLinePrice } from '@/lib/store/pricing';
 import { StorePaymentPanel, type StorePaymentState } from './StorePaymentPanel';
-import { ItemDetailModal, ItemVariantSelect, QuantityStepper, isSoldOut, money, type Selection } from './store-item-controls';
+import { ItemDetailModal, ItemVariantSelect, QuantityStepper, isSoldOut, money, StoreItemPrice, type Selection } from './store-item-controls';
 
 type CartLine = { variantId: string | null; quantity: number };
 
@@ -32,10 +33,11 @@ export function StoreCart({ eventId, items }: { eventId: string; items: StoreIte
       .map((item) => {
         const cartLine = cart[item.id];
         if (!cartLine || cartLine.quantity <= 0) return null;
-        const variant = item.variants.find((v) => v.id === cartLine.variantId) ?? null;
+        const { variant, finalUnitPrice } = resolveStoreItemLinePrice(item, cartLine.variantId);
         if (item.requiresVariant && !variant) return null;
-        const unitPrice = item.price + (variant?.priceAdjustment ?? 0);
-        return { item, variant, quantity: cartLine.quantity, lineTotal: unitPrice * cartLine.quantity };
+        // finalUnitPrice ja e o preco promocional -- mesmo valor mostrado no
+        // card (StoreItemPrice) e o que create_store_order cobra de verdade.
+        return { item, variant, quantity: cartLine.quantity, lineTotal: finalUnitPrice * cartLine.quantity };
       })
       .filter((line): line is NonNullable<typeof line> => line !== null);
   }, [cart, items]);
@@ -165,7 +167,7 @@ export function StoreCart({ eventId, items }: { eventId: string; items: StoreIte
                     <span className="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-normal text-sky-200">Por encomenda</span>
                   ) : null}
                 </button>
-                <p className="text-sm text-(--brand-300)">{money(item.price)}</p>
+                <StoreItemPrice item={item} variantId={sel.variantId} />
                 {item.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.description}</p> : null}
 
                 {soldOut ? (

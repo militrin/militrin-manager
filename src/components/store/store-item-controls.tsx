@@ -3,12 +3,38 @@
 import type { ReactNode } from 'react';
 import { MilitrinButton } from '@/components/militrin';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
+import { resolveStoreItemLinePrice } from '@/lib/store/pricing';
 import { ProductImageGallery } from './product-image-gallery';
 
 export type Selection = { variantId: string | null; quantity: number };
 
 export function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+}
+
+/**
+ * Preco efetivo exibido pra qualquer produto da loja -- unica fonte visual
+ * usada pelo card da vitrine (AccountStoreShop) e por este modal de
+ * detalhe. Sempre resolveStoreItemLinePrice (mesma formula do checkout);
+ * sem desconto mostra so o preco normal, com desconto mostra o preco
+ * original riscado + o final em destaque + badge de economia.
+ */
+export function StoreItemPrice({ item, variantId, size = 'sm' }: { item: StoreItemForPurchase; variantId: string | null; size?: 'sm' | 'lg' }) {
+  const { baseUnitPrice, finalUnitPrice, hasDiscount } = resolveStoreItemLinePrice(item, variantId);
+  const textClass = size === 'lg' ? 'text-lg font-semibold' : 'text-sm';
+
+  if (!hasDiscount) {
+    return <p className={`${textClass} text-(--brand-300)`}>{money(finalUnitPrice)}</p>;
+  }
+
+  const badge = item.discountType === 'percentage' ? `-${item.discountValue}%` : `-${money(item.discountValue)}`;
+  return (
+    <p className={`${textClass} flex flex-wrap items-baseline gap-2`}>
+      <span className="text-slate-500 line-through">{money(baseUnitPrice)}</span>
+      <span className="text-(--brand-300)">{money(finalUnitPrice)}</span>
+      <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">{badge}</span>
+    </p>
+  );
 }
 
 export function isSoldOut(item: StoreItemForPurchase) {
@@ -110,7 +136,9 @@ export function ItemDetailModal({
           <ProductImageGallery images={item.images} alt={item.name} />
         </div>
 
-        <p className="mt-4 text-lg font-semibold text-(--brand-300)">{money(item.price)}</p>
+        <div className="mt-4">
+          <StoreItemPrice item={item} variantId={selection.variantId} size="lg" />
+        </div>
         {item.supplyMode === 'made_to_order' ? (
           <span className="mt-1 inline-block rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200">Por encomenda</span>
         ) : null}

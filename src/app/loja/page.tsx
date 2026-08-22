@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { AdminEmptyState, AdminPageHeader, AdminSection } from "@/components/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentPermissionMap, requirePermission } from "@/lib/admin/permissions";
+import { computeStoreItemFinalPrice } from "@/lib/store/pricing";
 import { StoreEventSelector } from "./store-event-selector";
 import { StoreItemForm } from "./store-item-form";
 import { StoreItemCard } from "./store-item-card";
@@ -52,12 +53,6 @@ type StoreItem = {
   deliveredQuantity: number;
   availableQuantity: number;
 };
-
-function computeFinalPrice(price: number, discountType: "percentage" | "fixed" | null, discountValue: number) {
-  if (discountType === "percentage") return Math.max(price * (1 - Math.min(discountValue, 100) / 100), 0);
-  if (discountType === "fixed") return Math.max(price - discountValue, 0);
-  return price;
-}
 
 function eventLabelFor(events: EventOption[], eventId: string | null) {
   if (!eventId) return "Todos os eventos";
@@ -150,7 +145,7 @@ async function getStoreData(selectedEventId: string | null, statusFilter: Status
       price,
       discountType,
       discountValue,
-      finalPrice: computeFinalPrice(price, discountType, discountValue),
+      finalPrice: computeStoreItemFinalPrice(price, discountType, discountValue),
       requiresVariant: Boolean(row.requires_variant),
       sortOrder: Number(row.sort_order ?? 0),
       supplyMode,

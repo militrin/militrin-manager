@@ -1,4 +1,5 @@
 import type { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { StoreItemDiscountType } from './pricing';
 
 type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -30,6 +31,9 @@ export type StoreItemForPurchase = {
   /** Galeria completa, ja ordenada. Vazia quando o item nao tem nenhuma imagem. */
   images: StoreItemImage[];
   price: number;
+  /** Desconto intrinseco do produto (sempre aplicado, independente de cupom) -- fonte de public.compute_store_item_final_price via computeStoreItemFinalPrice (src/lib/store/pricing.ts). */
+  discountType: StoreItemDiscountType;
+  discountValue: number;
   requiresVariant: boolean;
   supplyMode: StoreSupplyMode;
   variants: StoreItemVariant[];
@@ -58,6 +62,8 @@ export async function getStoreItemsForEvent(supabase: ServerSupabaseClient, even
           return { id: String(img.id), url: String(img.url), isPrimary: Boolean(img.is_primary) };
         }),
         price: Number(row.price ?? 0),
+        discountType: row.discount_type === 'percentage' || row.discount_type === 'fixed' ? row.discount_type : null,
+        discountValue: Number(row.discount_value ?? 0),
         requiresVariant: Boolean(row.requires_variant),
         supplyMode: row.supply_mode === 'made_to_order' ? 'made_to_order' : 'stock',
         variants: [],

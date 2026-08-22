@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useStoreCart } from '@/lib/store/cart-context';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
-import { ItemDetailModal, ItemVariantSelect, QuantityStepper, isSoldOut, money, type Selection } from './store-item-controls';
+import { resolveStoreItemLinePrice } from '@/lib/store/pricing';
+import { ItemDetailModal, ItemVariantSelect, QuantityStepper, isSoldOut, StoreItemPrice, type Selection } from './store-item-controls';
 
 type EventOption = { id: string; name: string };
 
@@ -65,7 +66,7 @@ export function AccountStoreShop({ events, items }: { events: EventOption[]; ite
       setItemErrors((prev) => ({ ...prev, [item.id]: 'Escolha para qual evento é esta compra.' }));
       return;
     }
-    const variant = item.variants.find((v) => v.id === sel.variantId) ?? null;
+    const { variant, finalUnitPrice } = resolveStoreItemLinePrice(item, sel.variantId);
     addLine({
       eventId: targetEventOption?.id ?? null,
       eventName: targetEventOption?.name ?? 'Loja Militrin',
@@ -74,7 +75,10 @@ export function AccountStoreShop({ events, items }: { events: EventOption[]; ite
       imageUrl: item.imageUrl,
       variantId: variant?.id ?? null,
       variantLabel: variant ? `${variant.name}: ${variant.value}` : null,
-      unitPrice: item.price + (variant?.priceAdjustment ?? 0),
+      // preco JA promocional -- exatamente o mesmo valor mostrado no card
+      // (StoreItemPrice) e o que create_store_order vai cobrar de verdade
+      // (compute_store_item_final_price no backend); nunca o preco base.
+      unitPrice: finalUnitPrice,
       quantity: sel.quantity,
       supplyMode: item.supplyMode,
     });
@@ -114,7 +118,7 @@ export function AccountStoreShop({ events, items }: { events: EventOption[]; ite
                   <span className="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-normal text-sky-200">Por encomenda</span>
                 ) : null}
               </button>
-              <p className="text-sm text-(--brand-300)">{money(item.price)}</p>
+              <StoreItemPrice item={item} variantId={sel.variantId} />
               {item.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.description}</p> : null}
               {item.eventId ? <ExclusiveEventNotice eventName={eventNameFor(item.eventId)} /> : null}
 
