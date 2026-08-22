@@ -1,14 +1,35 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, CalendarDays, CircleUserRound, Coins, History, Images, LayoutDashboard, ShieldCheck, ShoppingBag, Star, Ticket, type LucideIcon } from 'lucide-react';
+import {
+  ArrowRight,
+  CalendarDays,
+  CircleUserRound,
+  Coins,
+  History,
+  LayoutDashboard,
+  LogOut,
+  Menu as MenuIcon,
+  Images,
+  ShieldCheck,
+  ShoppingBag,
+  Star,
+  Store,
+  Ticket,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { CartNavLink, MobileCartLink } from '@/components/store/CartHeaderLink';
+import { signOutAccountAction } from '@/app/minha-conta/actions';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isCart: boolean };
 
-// Mesmos destinos/rotas de sempre, so reagrupados visualmente (nenhuma
-// navegacao nova, nenhuma removida) para aproximar do mockup aprovado.
+// Mesmos destinos/rotas de sempre (nenhuma navegacao nova, nenhuma
+// removida) -- fonte UNICA reutilizada pela sidebar desktop (AccountSidebarNav)
+// E pelo drawer "Menu" mobile (ver MenuSheet abaixo), pra nunca ter duas
+// listas de rotas divergentes entre as duas apresentacoes.
 const navigationGroups: Array<{ title: string; items: NavItem[] }> = [
   {
     title: 'Minha conta',
@@ -63,14 +84,28 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
-  const pathname = usePathname();
-
+// Atalhos administrativos/patrocinador: MESMOS booleans (isAdministrativeUser/
+// isSponsorUser), calculados uma unica vez no layout server-side a partir das
+// fontes canonicas (canAccessAdministrativePanel / tabela sponsors) e apenas
+// repassados como prop -- nunca uma segunda logica de permissao aqui.
+function AdminAndSponsorShortcuts({
+  isAdministrativeUser,
+  isSponsorUser,
+  pathname,
+  onNavigate,
+}: {
+  isAdministrativeUser: boolean;
+  isSponsorUser: boolean;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  if (!isAdministrativeUser && !isSponsorUser) return null;
   return (
-    <nav className="mt-4 space-y-5" aria-label="Navegação principal do usuário">
+    <div className="space-y-2">
       {isAdministrativeUser ? (
         <Link
           href="/painel"
+          onClick={onNavigate}
           className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
             isActivePath(pathname, '/painel')
               ? 'bg-(--brand-500) text-white shadow-md shadow-(--brand-600)/30'
@@ -87,6 +122,7 @@ export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isA
       {isSponsorUser ? (
         <Link
           href="/minha-conta/patrocinador"
+          onClick={onNavigate}
           className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
             isActivePath(pathname, '/minha-conta/patrocinador')
               ? 'bg-amber-500 text-amber-950 shadow-md shadow-amber-600/30'
@@ -100,6 +136,16 @@ export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isA
           <ArrowRight size={13} />
         </Link>
       ) : null}
+    </div>
+  );
+}
+
+export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
+  const pathname = usePathname();
+
+  return (
+    <nav className="mt-4 space-y-5" aria-label="Navegação principal do usuário">
+      <AdminAndSponsorShortcuts isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} pathname={pathname} />
       {navigationGroups.map((group) => (
         <div key={group.title}>
           <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{group.title}</p>
@@ -114,6 +160,111 @@ export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isA
   );
 }
 
+// ── "Menu" mobile: bottom sheet com TODAS as funcoes secundarias ───────────
+// Aberto pelo botao "Menu" da bottom nav (ultimo slot, substitui "Perfil"
+// como item principal). Mesmo grupo de rotas (navigationGroups) + mesmos
+// atalhos administrativos/patrocinador do desktop -- so a apresentacao muda
+// (sheet deslizando de baixo, em vez de sidebar fixa lateral).
+function MenuSheet({
+  open,
+  onClose,
+  pathname,
+  isAdministrativeUser,
+  isSponsorUser,
+}: {
+  open: boolean;
+  onClose: () => void;
+  pathname: string;
+  isAdministrativeUser: boolean;
+  isSponsorUser: boolean;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu da conta">
+      <button type="button" aria-label="Fechar menu" onClick={onClose} className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" />
+      <div
+        className="absolute inset-x-0 bottom-0 flex max-h-[82vh] w-full flex-col overflow-hidden rounded-t-3xl border-t border-slate-800 bg-slate-950 shadow-2xl"
+        style={{ paddingBottom: 'var(--safe-bottom)' }}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
+          <p className="text-base font-semibold text-slate-100">Menu</p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar menu"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 active:bg-slate-800"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <nav className="flex-1 space-y-5 overflow-y-auto px-4 py-5">
+          <AdminAndSponsorShortcuts
+            isAdministrativeUser={isAdministrativeUser}
+            isSponsorUser={isSponsorUser}
+            pathname={pathname}
+            onNavigate={onClose}
+          />
+          {navigationGroups.map((group) => (
+            <div key={group.title}>
+              <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{group.title}</p>
+              <div className="space-y-0.5">
+                {group.items.map((item) =>
+                  item.isCart ? (
+                    <div key={item.href} onClick={onClose}>
+                      <CartNavLink active={isActivePath(pathname, item.href)} />
+                    </div>
+                  ) : (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={onClose}
+                      className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm transition ${
+                        isActivePath(pathname, item.href)
+                          ? 'bg-(--brand-500) font-semibold text-white shadow-md shadow-(--brand-600)/30'
+                          : 'text-slate-300 hover:bg-slate-900/70 hover:text-slate-100'
+                      }`}
+                    >
+                      <span className="flex items-center gap-3">
+                        <item.icon size={16} />
+                        {item.label}
+                      </span>
+                    </Link>
+                  ),
+                )}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        <div className="shrink-0 border-t border-slate-800/80 p-4">
+          <form action={signOutAccountAction}>
+            <button type="submit" className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-sm font-medium text-rose-200 active:bg-rose-500/20">
+              <LogOut size={16} />
+              Sair
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MobileNavLink({ href, label, icon: Icon, active }: { href: string; label: string; icon: LucideIcon; active: boolean }) {
   return (
     <Link href={href} className={`flex flex-col items-center gap-1 rounded-xl px-2 py-2 ${active ? 'bg-(--brand-500)/15 font-semibold text-(--brand-200)' : 'text-slate-200'}`}>
@@ -123,34 +274,57 @@ function MobileNavLink({ href, label, icon: Icon, active }: { href: string; labe
   );
 }
 
-// Maximo 5 itens principais na navegacao inferior (Inicio, Ingressos,
-// Compras, Carrinho, Perfil) -- "Painel administrativo" e "Area do
-// patrocinador" sao itens SECUNDARIOS e saem da barra fixa; continuam
-// acessiveis (nenhuma funcionalidade removida) como atalhos dentro do
-// Perfil (ver src/app/minha-conta/dados/page.tsx), a area secundaria
-// natural pra esse tipo de link.
-export function AccountMobileNav() {
+// Exatamente 5 itens principais na navegacao inferior: Início, Eventos, Loja,
+// Carrinho e Menu. "Eventos" e "Loja" (areas de descoberta/compra) substituem
+// Ingressos/Compras/Perfil como destaque fixo -- essas 3 (mais Fotos,
+// Histórico, Painel, Patrocinador etc.) continuam 100% acessiveis, agora
+// dentro do "Menu" (ver MenuSheet acima), nunca removidas.
+export function AccountMobileNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <nav className="fixed inset-x-3 bottom-3 z-40 rounded-2xl border border-slate-800/90 bg-slate-950/90 p-2 shadow-2xl shadow-black/30 backdrop-blur lg:hidden" aria-label="Navegação rápida do usuário">
-      <ul className="grid grid-cols-5 gap-1 text-[11px]">
-        <li>
-          <MobileNavLink href="/minha-conta" label="Início" icon={LayoutDashboard} active={isActivePath(pathname, '/minha-conta')} />
-        </li>
-        <li>
-          <MobileNavLink href="/minha-conta/ingressos" label="Ingressos" icon={Ticket} active={isActivePath(pathname, '/minha-conta/ingressos')} />
-        </li>
-        <li>
-          <MobileNavLink href="/minha-conta/compras" label="Compras" icon={Coins} active={isActivePath(pathname, '/minha-conta/compras')} />
-        </li>
-        <li>
-          <MobileCartLink active={isActivePath(pathname, '/minha-conta/carrinho')} />
-        </li>
-        <li>
-          <MobileNavLink href="/minha-conta/dados" label="Perfil" icon={CircleUserRound} active={isActivePath(pathname, '/minha-conta/dados')} />
-        </li>
-      </ul>
-    </nav>
+    <>
+      <nav
+        className="fixed inset-x-3 z-40 rounded-2xl border border-slate-800/90 bg-slate-950/90 p-2 shadow-2xl shadow-black/30 backdrop-blur lg:hidden"
+        style={{ bottom: 'calc(0.75rem + var(--safe-bottom))' }}
+        aria-label="Navegação rápida do usuário"
+      >
+        <ul className="grid grid-cols-5 gap-1 text-[11px]">
+          <li>
+            <MobileNavLink href="/minha-conta" label="Início" icon={LayoutDashboard} active={isActivePath(pathname, '/minha-conta')} />
+          </li>
+          <li>
+            <MobileNavLink href="/minha-conta/comprar" label="Eventos" icon={CalendarDays} active={isActivePath(pathname, '/minha-conta/comprar')} />
+          </li>
+          <li>
+            <MobileNavLink href="/minha-conta/loja" label="Loja" icon={Store} active={isActivePath(pathname, '/minha-conta/loja')} />
+          </li>
+          <li>
+            <MobileCartLink active={isActivePath(pathname, '/minha-conta/carrinho')} />
+          </li>
+          <li>
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              aria-label="Abrir menu"
+              aria-expanded={menuOpen}
+              className={`flex w-full flex-col items-center gap-1 rounded-xl px-2 py-2 ${menuOpen ? 'bg-(--brand-500)/15 font-semibold text-(--brand-200)' : 'text-slate-200'}`}
+            >
+              <MenuIcon size={15} />
+              Menu
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      <MenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        pathname={pathname}
+        isAdministrativeUser={isAdministrativeUser}
+        isSponsorUser={isSponsorUser}
+      />
+    </>
   );
 }

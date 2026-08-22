@@ -134,7 +134,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
           </form>
         </aside>
 
-        <div className="flex-1 pb-20 lg:pb-0">
+        <div className="flex-1 pb-[calc(5rem+var(--safe-bottom))] lg:pb-0">
           {administrativeIssueCount > 0 ? (
             <div className="mb-4 flex gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
               <AlertTriangle className="mt-0.5 shrink-0" size={18} />
@@ -148,7 +148,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
         </div>
       </div>
 
-      <AccountMobileNav />
+      <AccountMobileNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} />
     </main>
     </StoreCartProvider>
   );

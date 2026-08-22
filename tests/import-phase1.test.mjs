@@ -1316,16 +1316,22 @@ test('portal — participante comum nao recebe acesso operacional por identidade
   assert.match(policy, /results\.some\(Boolean\)/);
 });
 
-test('portal — botao administrativo existe em desktop (sidebar) e mobile (atalho secundario no Perfil) e leva ao painel', async () => {
-  // Refatoracao mobile global: a navegacao inferior do usuario ficou
-  // limitada a 5 itens principais (Início/Ingressos/Compras/Carrinho/
-  // Perfil); "Painel administrativo" deixou de aparecer ali e virou um
-  // atalho secundario na pagina de Perfil -- nunca removido, so realocado.
+test('portal — botao administrativo existe no desktop (sidebar), no Menu mobile e como atalho no Perfil, e leva ao painel', async () => {
+  // AJUSTE MOBILE (bottom nav do usuario = Início/Eventos/Loja/Carrinho/
+  // Menu): "Painel administrativo" nao e mais item principal da bottom nav
+  // em NENHUMA das 2 versoes -- desktop e mobile leem o MESMO booleano
+  // (isAdministrativeUser) atraves do MESMO componente compartilhado
+  // (AdminAndSponsorShortcuts), nunca uma segunda logica de permissao. No
+  // mobile, o atalho fica acessivel pelo "Menu" (MenuSheet) da bottom nav;
+  // o atalho historico dentro do Perfil continua existindo tambem, nunca
+  // removido.
   const navigation = await readFile(new URL('../src/app/minha-conta/account-nav.tsx', import.meta.url), 'utf8');
   const perfilPage = await readFile(new URL('../src/app/minha-conta/dados/page.tsx', import.meta.url), 'utf8');
   assert.match(navigation, /Painel administrativo/);
-  assert.match(navigation, /AccountSidebarNav[\s\S]*href="\/painel"/);
-  assert.doesNotMatch(navigation, /AccountMobileNav[\s\S]*href="\/painel"/);
+  assert.match(navigation, /function AdminAndSponsorShortcuts\(/);
+  assert.match(navigation, /href="\/painel"/);
+  assert.match(navigation, /export function AccountSidebarNav[\s\S]*<AdminAndSponsorShortcuts/);
+  assert.match(navigation, /function MenuSheet\([\s\S]*<AdminAndSponsorShortcuts/);
   assert.match(perfilPage, /canAccessAdministrativePanel/);
   assert.match(perfilPage, /href="\/painel"[\s\S]*Painel administrativo/);
 });

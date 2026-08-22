@@ -18,13 +18,18 @@ export function QrScanner({
   onRead: (value: string) => Promise<void>;
   onCancel?: () => void;
   compact?: boolean;
-  /** Rotulo mostrado dentro da guia visual central (ex.: pulseira). Sem isso, nenhuma guia e desenhada. */
+  /** Rotulo mostrado ACIMA do video, junto da guia discreta de cantos. Sem isso, nenhuma guia e desenhada. */
   guideLabel?: string;
   /** Dica extra mostrada apos `helpAfterMs` sem nenhuma leitura bem-sucedida. */
   helpMessage?: string;
   helpAfterMs?: number;
 }) {
-  const { videoRef, message, status, lastDetectedAt } = useQrCameraScanner(onRead);
+  // guideLabel hoje e exclusivo do contexto de pulseira (Turbo + Ver
+  // pulseira vinculada) -- reaproveitado como sinal de "modo pulseira" pro
+  // hook (crop extra + zoom leve quando suportado), sem precisar de mais um
+  // prop redundante nos 2 unicos chamadores atuais.
+  const wristbandMode = Boolean(guideLabel);
+  const { videoRef, message, status, lastDetectedAt } = useQrCameraScanner(onRead, { wristbandMode });
   const [manual, setManual] = useState('');
   const [showHelp, setShowHelp] = useState(false);
 
@@ -40,12 +45,19 @@ export function QrScanner({
 
   return <div className={compact ? 'space-y-3' : 'rounded-3xl border border-slate-700 bg-slate-900 p-5'}>
     <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-bold">{title}</h2><p className="text-sm text-slate-400">{message}</p></div>{onCancel ? <button type="button" onClick={onCancel} className="rounded-xl border border-slate-700 px-3 py-2 text-sm">Cancelar</button> : null}</div>
-    <div className="relative mt-3">
+    {/* Instrucao da guia FORA da imagem -- em cima do texto sobreposto ao
+        video escondia parte do QR e dificultava avaliar foco/nitidez. Dentro
+        do video sobra so a moldura discreta (cantos), sem nenhum texto. */}
+    {guideLabel ? <p className="mt-3 text-center text-xs font-semibold text-cyan-200">{guideLabel}</p> : null}
+    <div className="relative mt-2">
       <video ref={videoRef} playsInline muted className="aspect-video w-full rounded-2xl bg-black object-cover" />
       {guideLabel ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-8">
-          <div className="flex h-full max-h-64 w-full max-w-64 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-cyan-400/70 text-center">
-            <span className="rounded-lg bg-slate-950/70 px-3 py-1 text-xs font-semibold text-cyan-200">{guideLabel}</span>
+        <div aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center p-8">
+          <div className="relative h-full max-h-72 w-full max-w-72">
+            <span className="absolute left-0 top-0 h-7 w-7 rounded-tl-lg border-l-2 border-t-2 border-cyan-400/70" />
+            <span className="absolute right-0 top-0 h-7 w-7 rounded-tr-lg border-r-2 border-t-2 border-cyan-400/70" />
+            <span className="absolute bottom-0 left-0 h-7 w-7 rounded-bl-lg border-b-2 border-l-2 border-cyan-400/70" />
+            <span className="absolute bottom-0 right-0 h-7 w-7 rounded-br-lg border-b-2 border-r-2 border-cyan-400/70" />
           </div>
         </div>
       ) : null}

@@ -24,6 +24,21 @@ import jsQR from "jsqr";
 //      que o recorte original) -- da mais "pixels efetivos" pro jsQR quando
 //      o QR real ocupa so uma fracao pequena do frame. Para no primeiro
 //      sucesso, nunca faz as 3 tentativas se a primeira ja decodificou.
+//
+// Auditoria de hardware mobile real (QR de pulseira ainda dificil no
+// iPhone): melhorias adicionais, todas restritas ao "modo pulseira"
+// (options.wristbandMode) pra nao custar CPU extra no leitor comum de
+// ingresso, que ja funciona bem:
+//   4. Quarta tentativa de crop, ainda mais agressiva (16% da area, upscale
+//      2.4x) -- ver decodeWithJsQR passo 4.
+//   5. Zoom moderado (25% do range acima do minimo) via
+//      MediaTrackCapabilities/applyConstraints, quando o navegador anuncia
+//      suporte -- ver applyBestEffortTrackTuning. Foco continuo (quando
+//      suportado) e pedido pros 2 modos, nao so pulseira.
+//   Nenhuma dessas 2 usa "exact": sempre aplicadas via applyConstraints()
+//   best-effort DEPOIS que a camera ja abriu, nunca dentro do getUserMedia
+//   inicial -- um aparelho sem suporte simplesmente nao recebe o ajuste
+//   extra, a camera nunca deixa de abrir por causa disso.
 export type QrCameraStatus = "starting" | "scanning" | "error";
 
 type BarcodeDetectorLike = {
@@ -65,10 +80,64 @@ const FULL_FRAME_TARGET_WIDTH = 640;
 const CENTER_CROP_RATIO = 0.55;
 const CENTER_CROP_ENLARGED_RATIO = 0.3;
 const CENTER_CROP_ENLARGED_SCALE = 1.8;
+// Tentativa extra, SO no modo pulseira (custo de CPU restrito a esse
+// contexto -- nunca no fluxo comum de ingresso, que ja acerta nas 3
+// primeiras tentativas): recorte ainda mais agressivo, upscale maior, pro
+// caso do QR ocupar so uma fracao minima do quadro.
+const CENTER_CROP_ULTRA_RATIO = 0.16;
+const CENTER_CROP_ULTRA_SCALE = 2.4;
 // Intervalo entre tentativas de deteccao. Cada tentativa (no fallback jsQR)
 // pode rodar ate 3 sub-analises (multi-escala); 350ms mantem isso em ~3
 // ciclos/s -- responsivo sem virar um consumidor pesado de CPU.
 const SCAN_INTERVAL_MS = 350;
+
+// Capabilities/constraints experimentais (zoom, foco continuo) SEMPRE
+// aplicadas via applyConstraints() DEPOIS que a camera ja abriu, nunca
+// dentro do getUserMedia inicial -- e sempre com fallback silencioso (try/
+// catch, checando a capability antes de usar). Isso garante que nenhum
+// aparelho sem suporte a essas APIs deixe de abrir a camera: na pior
+// hipotese, o ajuste extra simplesmente nao acontece.
+type ExtendedTrackCapabilities = MediaTrackCapabilities & {
+  zoom?: { min: number; max: number; step?: number };
+  focusMode?: string[];
+};
+type ExtendedTrackConstraintSet = MediaTrackConstraintSet & { zoom?: number; focusMode?: string };
+
+async function applyBestEffortTrackTuning(track: MediaStreamTrack, wristbandMode: boolean) {
+  if (typeof track.getCapabilities !== "function") return;
+  let capabilities: ExtendedTrackCapabilities;
+  try {
+    capabilities = track.getCapabilities() as ExtendedTrackCapabilities;
+  } catch {
+    return;
+  }
+
+  const advanced: ExtendedTrackConstraintSet[] = [];
+
+  // Foco continuo ajuda tanto ingresso quanto pulseira -- pedido sempre que
+  // o dispositivo anuncia suporte, nunca como "exact" (constraint que
+  // rejeitaria a camera inteira em quem nao suporta).
+  if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+    advanced.push({ focusMode: "continuous" });
+  }
+
+  // Zoom moderado (25% do range acima do minimo, nunca o maximo -- perderia
+  // campo de visao) SO no modo pulseira: QR pequeno/distante e o caso que
+  // pediu essa melhoria; no leitor de ingresso comum o zoom padrao ja
+  // funciona bem e mexer nele so adicionaria risco.
+  if (wristbandMode && capabilities.zoom && Number.isFinite(capabilities.zoom.min) && Number.isFinite(capabilities.zoom.max) && capabilities.zoom.max > capabilities.zoom.min) {
+    const { min, max } = capabilities.zoom;
+    advanced.push({ zoom: min + (max - min) * 0.25 });
+  }
+
+  if (advanced.length === 0) return;
+  try {
+    await track.applyConstraints({ advanced });
+  } catch {
+    // Suporte anunciado mas aplicacao falhou (ou navegador inconsistente) --
+    // segue com a camera exatamente como abriu, nunca bloqueia o scanner.
+  }
+}
 
 function decodeRegionWithJsQR(
   canvas: HTMLCanvasElement,
@@ -92,7 +161,7 @@ function decodeRegionWithJsQR(
   return result?.data?.trim() || null;
 }
 
-function decodeWithJsQR(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, video: HTMLVideoElement): string | null {
+function decodeWithJsQR(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, video: HTMLVideoElement, wristbandMode: boolean): string | null {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) return null;
@@ -114,7 +183,7 @@ function decodeWithJsQR(canvas: HTMLCanvasElement, context: CanvasRenderingConte
   //    resolucao suficiente.
   const cw2 = vw * CENTER_CROP_ENLARGED_RATIO;
   const ch2 = vh * CENTER_CROP_ENLARGED_RATIO;
-  return decodeRegionWithJsQR(
+  const crop2 = decodeRegionWithJsQR(
     canvas,
     context,
     video,
@@ -124,9 +193,31 @@ function decodeWithJsQR(canvas: HTMLCanvasElement, context: CanvasRenderingConte
     ch2,
     Math.round(cw2 * CENTER_CROP_ENLARGED_SCALE),
   );
+  if (crop2 || !wristbandMode) return crop2;
+
+  // 4. Crop central ULTRA agressivo -- SO no modo pulseira (custo extra de
+  //    CPU restrito a esse contexto). Regiao ainda menor que a do passo 3,
+  //    com upscale maior, pro caso do QR da pulseira ocupar uma fracao
+  //    minima do quadro mesmo apos os 3 passos anteriores falharem.
+  const cw3 = vw * CENTER_CROP_ULTRA_RATIO;
+  const ch3 = vh * CENTER_CROP_ULTRA_RATIO;
+  return decodeRegionWithJsQR(
+    canvas,
+    context,
+    video,
+    (vw - cw3) / 2,
+    (vh - ch3) / 2,
+    cw3,
+    ch3,
+    Math.round(cw3 * CENTER_CROP_ULTRA_SCALE),
+  );
 }
 
-export function useQrCameraScanner(onRead: (value: string) => Promise<void>) {
+export function useQrCameraScanner(
+  onRead: (value: string) => Promise<void>,
+  options?: { wristbandMode?: boolean },
+) {
+  const wristbandMode = options?.wristbandMode ?? false;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastReadRef = useRef<string>("");
@@ -175,6 +266,9 @@ export function useQrCameraScanner(onRead: (value: string) => Promise<void>) {
           await videoRef.current.play();
         }
 
+        const [videoTrack] = stream.getVideoTracks();
+        if (videoTrack) void applyBestEffortTrackTuning(videoTrack, wristbandMode);
+
         const detector = getBarcodeDetector();
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -193,7 +287,7 @@ export function useQrCameraScanner(onRead: (value: string) => Promise<void>) {
           }
 
           if (!context) return null;
-          return decodeWithJsQR(canvas, context, video);
+          return decodeWithJsQR(canvas, context, video, wristbandMode);
         }
 
         if (cancelled) return;
@@ -247,7 +341,10 @@ export function useQrCameraScanner(onRead: (value: string) => Promise<void>) {
     // Deliberadamente SEM onRead nas deps -- ver comentario no onReadRef
     // acima. A camera so deve abrir/fechar por causa da montagem/
     // desmontagem do componente, nunca por troca de identidade de funcao.
-  }, []);
+    // wristbandMode entra pq e lido dentro do efeito (decode + tuning), mas
+    // na pratica e estatico por montagem -- nenhum consumidor troca esse
+    // valor no meio da vida do componente.
+  }, [wristbandMode]);
 
   return { videoRef, status, message, lastDetectedAt };
 }

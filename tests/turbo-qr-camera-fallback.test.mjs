@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile as readFileRaw } from "node:fs/promises";
 import test from "node:test";
+
+// Normaliza CRLF->LF: alguns arquivos-fonte no ambiente Windows sao salvos
+// com CRLF pelo editor independente do que a ferramenta escreveu; marcadores
+// de slice() com \n literal precisam de LF puro pra bater.
+async function readFile(url, encoding) {
+  return (await readFileRaw(url, encoding)).replace(/\r\n/g, "\n");
+}
 
 const hook = await readFile(new URL("../src/app/operacoes/components/useQrCameraScanner.ts", import.meta.url), "utf8");
 const qrScanner = await readFile(new URL("../src/app/operacoes/components/QrScanner.tsx", import.meta.url), "utf8");
@@ -26,7 +33,7 @@ test("hook decodifica com BarcodeDetector quando disponivel, e cai pra jsQR mult
   assert.match(hook, /window\.BarcodeDetector/);
   const detectFn = slice(hook, "async function detectFromVideo", "if (cancelled) return;\n        setStatus");
   assert.match(detectFn, /if \(detector\) \{/);
-  assert.match(detectFn, /return decodeWithJsQR\(canvas, context, video\)/);
+  assert.match(detectFn, /return decodeWithJsQR\(canvas, context, video, wristbandMode\)/);
   const decodeRegionFn = slice(hook, "function decodeRegionWithJsQR", "function decodeWithJsQR");
   assert.match(decodeRegionFn, /jsQR\(imageData\.data, imageData\.width, imageData\.height/);
 });
@@ -92,9 +99,9 @@ test("nenhuma nova deteccao/chamada de rede e agendada enquanto onRead ainda est
 test("onRead e isolado via ref -- camera nunca reabre por causa de o componente-pai recriar a funcao onRead (bug real: WristbandLookupClient chamava setLoading(true) dentro do proprio handler, recriando a funcao e derrubando a camera no meio da leitura)", () => {
   assert.match(hook, /const onReadRef = useRef\(onRead\)/);
   assert.match(hook, /onReadRef\.current = onRead;/);
-  const cameraEffect = slice(hook, "  useEffect(() => {\n    let cancelled = false;", "}, []);");
+  const cameraEffect = slice(hook, "  useEffect(() => {\n    let cancelled = false;", "}, [wristbandMode]);");
   assert.doesNotMatch(cameraEffect, /\[onRead\]/);
-  assert.match(hook, /}, \[\]\);\s*\n\s*return \{ videoRef, status, message, lastDetectedAt \};/);
+  assert.match(hook, /}, \[wristbandMode\]\);\s*\n\s*return \{ videoRef, status, message, lastDetectedAt \};/);
 });
 
 test("MediaStreamTracks sao liberadas no cleanup do effect (desmontar o componente, ou sair do Modo Turbo/trocar de tela, sempre libera a camera)", () => {
@@ -115,4 +122,52 @@ test("QrScanner aceita guia visual central (guideLabel) e dica apos alguns segun
   assert.match(qrScanner, /helpMessage\?:\s*string/);
   assert.match(qrScanner, /helpAfterMs/);
   assert.match(qrScanner, /lastDetectedAt/);
+});
+
+test("guideLabel nunca fica desenhado por cima do video -- fica ACIMA da area da camera, e dentro do video sobra so a moldura de cantos, sem nenhum texto/caixa preenchida no centro", () => {
+  const videoBlock = slice(qrScanner, "<video ref={videoRef}", "{helpMessage && showHelp");
+  // O texto do guideLabel precisa aparecer ANTES do bloco do video (fora da
+  // <div className="relative">), nunca dentro do overlay pointer-events-none
+  // que fica sobreposto ao <video>.
+  const guideLabelParagraphIdx = qrScanner.indexOf("{guideLabel ? <p ");
+  const videoTagIdx = qrScanner.indexOf("<video ref={videoRef}");
+  assert.ok(guideLabelParagraphIdx !== -1, "guideLabel precisa ser renderizado como paragrafo fora do video");
+  assert.ok(guideLabelParagraphIdx < videoTagIdx, "o paragrafo do guideLabel precisa vir ANTES do <video>, nunca sobreposto a ele");
+  // O overlay sobre o video (pointer-events-none) nao pode conter nenhum
+  // texto/rotulo -- so os 4 cantos discretos (spans sem filhos de texto).
+  assert.doesNotMatch(videoBlock, /\{guideLabel\}/);
+  assert.doesNotMatch(videoBlock, /bg-slate-950\/70/);
+  assert.match(videoBlock, /border-l-2 border-t-2/);
+  assert.match(videoBlock, /border-r-2 border-t-2/);
+  assert.match(videoBlock, /border-b-2 border-l-2/);
+  assert.match(videoBlock, /border-b-2 border-r-2/);
+});
+
+test("modo pulseira (wristbandMode) e derivado do guideLabel e repassado pro hook -- QrScannerModal (sem guideLabel) nunca ativa o modo pulseira", () => {
+  assert.match(qrScanner, /const wristbandMode = Boolean\(guideLabel\)/);
+  assert.match(qrScanner, /useQrCameraScanner\(onRead, \{ wristbandMode \}\)/);
+  assert.doesNotMatch(qrScannerModal, /wristbandMode/);
+});
+
+test("4a tentativa de crop (ainda mais agressiva) so roda no modo pulseira -- leitor comum de ingresso nunca paga esse custo extra de CPU quando as 3 primeiras falham", () => {
+  const fn = slice(hook, "function decodeWithJsQR", "export function useQrCameraScanner");
+  assert.match(fn, /if \(crop2 \|\| !wristbandMode\) return crop2;/);
+  assert.match(hook, /CENTER_CROP_ULTRA_RATIO = 0\.16/);
+  assert.match(hook, /CENTER_CROP_ULTRA_SCALE = 2\.4/);
+});
+
+test("zoom/foco continuo sao aplicados via applyConstraints DEPOIS que a camera ja abriu (nunca dentro do getUserMedia inicial), sempre com fallback silencioso -- nenhum 'exact' em nenhuma constraint de camera (comentarios explicando a regra nao contam)", () => {
+  // Regex pega a CHAVE de constraint (`exact:` dentro de um objeto), nunca a
+  // palavra dentro de comentario/prosa explicando por que ela e evitada.
+  assert.doesNotMatch(hook, /\bexact\s*:/);
+  assert.match(hook, /async function applyBestEffortTrackTuning\(track: MediaStreamTrack, wristbandMode: boolean\)/);
+  const tuningFn = slice(hook, "async function applyBestEffortTrackTuning", "function decodeRegionWithJsQR");
+  assert.match(tuningFn, /typeof track\.getCapabilities !== "function"/);
+  assert.match(tuningFn, /try \{[\s\S]*?track\.getCapabilities\(\)/);
+  assert.match(tuningFn, /await track\.applyConstraints\(\{ advanced \}\)/);
+  assert.match(tuningFn, /catch \{/);
+  // Zoom so entra no modo pulseira; foco continuo vale pros 2 modos.
+  assert.match(tuningFn, /if \(wristbandMode && capabilities\.zoom/);
+  const startFn = slice(hook, "async function start", "async function detectFromVideo");
+  assert.match(startFn, /void applyBestEffortTrackTuning\(videoTrack, wristbandMode\)/);
 });

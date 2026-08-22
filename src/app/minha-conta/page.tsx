@@ -1,9 +1,11 @@
+import Image from 'next/image';
 import Link from 'next/link';
-import { ChevronRight, Clock, QrCode, ShieldCheck, ShoppingBag, Ticket as TicketIcon } from 'lucide-react';
+import { ArrowRight, CalendarDays, ChevronRight, Clock, QrCode, ShieldCheck, ShoppingBag, Store, Ticket as TicketIcon } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
 import { resolveAccountHomeTicketCta } from '@/lib/account/home-ticket-cta';
 import { getLoyaltyLevel, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
@@ -156,6 +158,14 @@ export default async function MinhaContaPage() {
   const ticketCards = await buildAccountHomeTicketCards(supabase, allTickets as Array<{ id: string; status: string | null; order_id: string | null; order_item_id: string | null; event_id: string | null }>);
   const ticketCta = resolveAccountHomeTicketCta(ticketCards);
 
+  // Card de destaque "Loja Militrin" na home: imagem de um item real (mesma
+  // fonte que a pagina /minha-conta/loja usa -- eventos aos quais o usuario
+  // realmente tem ingresso), nunca uma imagem generica desconectada do
+  // catalogo de verdade.
+  const storeHighlightItem = ticketScope.ownedEventIds.length > 0
+    ? (await getStoreItemsForEvents(supabase, ticketScope.ownedEventIds)).find((item) => item.imageUrl) ?? null
+    : null;
+
   const cardEventsRaw = await Promise.all(dashboardEvents.slice(0, 2).map(async (event) => {
     const [categoriesRpc, bannerResult] = await Promise.all([
       event?.id ? supabase.rpc('get_event_ticket_categories', { p_event_id: event.id }) : Promise.resolve({ data: null }),
@@ -242,6 +252,43 @@ export default async function MinhaContaPage() {
           <p className="min-w-0 truncate text-sm text-slate-400" title={String(user?.email ?? '')}>{String(user?.email ?? '')}</p>
         </div>
       </MilitrinSection>
+
+      {/* Descoberta/compra em destaque: Eventos e Loja precisam ser
+          encontrados em poucos cliques a partir da home, alem de estarem na
+          bottom nav mobile -- ver AJUSTE MOBILE item 2. Imagem real (banner
+          do evento em destaque / foto de um item real da loja) quando
+          disponivel, gradiente de marca como fallback -- nunca um card vazio. */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link
+          href="/minha-conta/comprar"
+          className="group relative isolate flex min-h-32 flex-col justify-end overflow-hidden rounded-[1.75rem] border border-slate-800/80 p-4 shadow-lg shadow-black/10 transition hover:border-(--brand-400)/50 sm:min-h-40"
+        >
+          {cardEventsRaw[0]?.bannerUrl ? (
+            <Image src={cardEventsRaw[0].bannerUrl} alt="" fill unoptimized className="-z-20 object-cover opacity-70 transition group-hover:opacity-80" />
+          ) : (
+            <div aria-hidden className="absolute inset-0 -z-20 bg-linear-to-br from-(--brand-600)/50 to-slate-950" />
+          )}
+          <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950 via-slate-950/50 to-transparent" />
+          <CalendarDays size={18} className="mb-1 text-(--brand-300)" />
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-200">Próximos eventos</p>
+          <span className="mt-1 flex items-center gap-1 text-sm font-bold text-white">Ver eventos<ArrowRight size={14} /></span>
+        </Link>
+
+        <Link
+          href="/minha-conta/loja"
+          className="group relative isolate flex min-h-32 flex-col justify-end overflow-hidden rounded-[1.75rem] border border-slate-800/80 p-4 shadow-lg shadow-black/10 transition hover:border-amber-400/50 sm:min-h-40"
+        >
+          {storeHighlightItem?.imageUrl ? (
+            <Image src={storeHighlightItem.imageUrl} alt="" fill unoptimized className="-z-20 object-cover opacity-70 transition group-hover:opacity-80" />
+          ) : (
+            <div aria-hidden className="absolute inset-0 -z-20 bg-linear-to-br from-amber-500/40 to-slate-950" />
+          )}
+          <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950 via-slate-950/50 to-transparent" />
+          <Store size={18} className="mb-1 text-amber-300" />
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-200">Loja Militrin</p>
+          <span className="mt-1 flex items-center gap-1 text-sm font-bold text-white">Ir para a loja<ArrowRight size={14} /></span>
+        </Link>
+      </div>
 
       <div className={sponsors.length > 0 ? 'grid gap-5 xl:grid-cols-[1fr_1fr]' : 'grid gap-5'}>
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
