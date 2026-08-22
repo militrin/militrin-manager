@@ -5,6 +5,7 @@ import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
+import { resolveAccountHomeTicketCta } from '@/lib/account/home-ticket-cta';
 import { getLoyaltyLevel, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import {
@@ -153,7 +154,7 @@ export default async function MinhaContaPage() {
   const latestOrderActivityTitle = latestOrder?.status === 'confirmed' ? 'Compra realizada' : 'Pedido criado';
 
   const ticketCards = await buildAccountHomeTicketCards(supabase, allTickets as Array<{ id: string; status: string | null; order_id: string | null; order_item_id: string | null; event_id: string | null }>);
-  const highlightedTicketCard = ticketCards.find((card) => card.canShowTicket) ?? ticketCards[0] ?? null;
+  const ticketCta = resolveAccountHomeTicketCta(ticketCards);
 
   const cardEventsRaw = await Promise.all(dashboardEvents.slice(0, 2).map(async (event) => {
     const [categoriesRpc, bannerResult] = await Promise.all([
@@ -219,17 +220,17 @@ export default async function MinhaContaPage() {
         description="Bem-vindo à sua conta Militrin."
         className="relative isolate overflow-hidden"
         action={
-          highlightedTicketCard ? (
+          ticketCta ? (
             <Link
-              href={`/minha-conta/ingressos/${highlightedTicketCard.ticketId}`}
+              href={ticketCta.type === 'ticket' ? `/minha-conta/ingressos/${ticketCta.ticketId}` : '/minha-conta/ingressos'}
               className="inline-flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 transition hover:bg-emerald-500/15"
             >
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-500/40 bg-slate-950">
                 <QrCode size={20} className="text-emerald-300" />
               </span>
               <span className="min-w-0">
-                <span className="block text-xs text-slate-300">Acesse seu ingresso</span>
-                <span className="flex items-center gap-1 text-sm font-bold text-emerald-300">Ver QR Code<ChevronRight size={14} /></span>
+                <span className="block text-xs text-slate-300">{ticketCta.type === 'ticket' ? 'Acesse seu ingresso' : 'Acesse seus ingressos'}</span>
+                <span className="flex items-center gap-1 text-sm font-bold text-emerald-300">{ticketCta.type === 'ticket' ? 'Ver QR Code' : 'Ver ingressos'}<ChevronRight size={14} /></span>
               </span>
             </Link>
           ) : null
