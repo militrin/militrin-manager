@@ -3,7 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 export type AccountCartLine = {
-  eventId: string;
+  /** null para produto global (Todos os eventos) comprado sem nenhum evento vinculado -- vira store_orders.event_id = null. */
+  eventId: string | null;
   eventName: string;
   itemId: string;
   itemName: string;
@@ -23,15 +24,15 @@ type StoreCartContextValue = {
   lines: AccountCartLine[];
   totalCount: number;
   addLine: (line: AccountCartLine) => void;
-  removeLine: (eventId: string, itemId: string) => void;
-  setQuantity: (eventId: string, itemId: string, quantity: number) => void;
-  clearEvent: (eventId: string) => void;
+  removeLine: (eventId: string | null, itemId: string) => void;
+  setQuantity: (eventId: string | null, itemId: string, quantity: number) => void;
+  clearEvent: (eventId: string | null) => void;
 };
 
 const StoreCartContext = createContext<StoreCartContextValue | null>(null);
 
-function lineKey(eventId: string, itemId: string) {
-  return `${eventId}:${itemId}`;
+function lineKey(eventId: string | null, itemId: string) {
+  return `${eventId ?? '__global__'}:${itemId}`;
 }
 
 export function StoreCartProvider({ userId, children }: { userId: string; children: ReactNode }) {
@@ -71,7 +72,7 @@ export function StoreCartProvider({ userId, children }: { userId: string; childr
     });
   }, []);
 
-  const removeLine = useCallback((eventId: string, itemId: string) => {
+  const removeLine = useCallback((eventId: string | null, itemId: string) => {
     setState((prev) => {
       const next = { ...prev };
       delete next[lineKey(eventId, itemId)];
@@ -79,7 +80,7 @@ export function StoreCartProvider({ userId, children }: { userId: string; childr
     });
   }, []);
 
-  const setQuantity = useCallback((eventId: string, itemId: string, quantity: number) => {
+  const setQuantity = useCallback((eventId: string | null, itemId: string, quantity: number) => {
     setState((prev) => {
       const key = lineKey(eventId, itemId);
       const existing = prev[key];
@@ -93,7 +94,7 @@ export function StoreCartProvider({ userId, children }: { userId: string; childr
     });
   }, []);
 
-  const clearEvent = useCallback((eventId: string) => {
+  const clearEvent = useCallback((eventId: string | null) => {
     setState((prev) => {
       const next = { ...prev };
       for (const key of Object.keys(next)) {

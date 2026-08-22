@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile as readFileRaw } from "node:fs/promises";
 import test from "node:test";
+
+// Normaliza CRLF->LF (ver mesmo comentario em turbo-qr-camera-fallback.test.mjs).
+async function readFile(url, encoding) {
+  return (await readFileRaw(url, encoding)).replace(/\r\n/g, "\n");
+}
 
 const migration = await readFile(
   new URL("../supabase/migrations/20260860000000_turbo_mode_wristband_and_store_item_qr.sql", import.meta.url),
@@ -10,7 +15,7 @@ const actions = await readFile(new URL("../src/app/operacoes/actions.ts", import
 const types = await readFile(new URL("../src/app/operacoes/types.ts", import.meta.url), "utf8");
 const turbo = await readFile(new URL("../src/app/operacoes/components/TurboMode.tsx", import.meta.url), "utf8");
 const page = await readFile(new URL("../src/app/operacoes/page.tsx", import.meta.url), "utf8");
-const storeOrdersList = await readFile(new URL("../src/app/loja/store-orders-list.tsx", import.meta.url), "utf8");
+const storeOrderDetailActions = await readFile(new URL("../src/app/loja/pedidos/[orderId]/order-detail-actions.tsx", import.meta.url), "utf8");
 const filters = await readFile(new URL("../src/app/operacoes/components/OperationsFilters.tsx", import.meta.url), "utf8");
 const itemQrRoute = await readFile(
   new URL("../src/app/api/loja/pedidos/[storeOrderId]/itens/[itemId]/qrcode/route.ts", import.meta.url),
@@ -188,7 +193,7 @@ test("rota de QR por item exige store.deliver ou store.manage e usa qr_token (na
   assert.match(itemQrRoute, /hasPermission\("store\.manage"\)/);
   assert.match(itemQrRoute, /if \(!canDeliver && !canManage\)/);
   assert.match(itemQrRoute, /data=\$\{encodeURIComponent\(String\(item\.qr_token\)\)\}/);
-  assert.match(storeOrdersList, /\/api\/loja\/pedidos\/\$\{order\.id\}\/itens\/\$\{item\.id\}\/qrcode/);
+  assert.match(storeOrderDetailActions, /\/api\/loja\/pedidos\/\$\{storeOrderId\}\/itens\/\$\{itemId\}\/qrcode/);
 });
 
 // ============================================================

@@ -29,18 +29,23 @@ export default async function AccountStorePage({ searchParams }: { searchParams:
   const events = await getEventOptions(user.id);
   const selectedEventId = params.eventId && events.some((event) => event.id === params.eventId) ? params.eventId : null;
 
-  if (events.length === 0) {
-    return (
-      <MilitrinSection eyebrow="Loja" title="Loja" description="Itens opcionais do seu evento">
-        <MilitrinEmptyState title="Nenhum evento disponível" description="A loja fica disponível assim que você tiver um ingresso de um evento." />
-      </MilitrinSection>
-    );
-  }
-
-  const items = selectedEventId
-    ? await getStoreItemsForEvent(supabase, selectedEventId)
-    : await getStoreItemsForEvents(supabase, events.map((event) => event.id));
+  // visibleProducts = globalProducts UNION accessibleEventProducts. Produto
+  // global (Todos os eventos) nunca depende de o usuario ter ingresso --
+  // carregado sempre, incondicionalmente. Produtos de evento so entram
+  // quando ha evento acessivel/selecionado.
+  const globalItems = await getStoreItemsForEvent(supabase, null);
+  const eventItems = events.length === 0
+    ? []
+    : selectedEventId
+      ? await getStoreItemsForEvent(supabase, selectedEventId)
+      : await getStoreItemsForEvents(supabase, events.map((event) => event.id));
+  // getStoreItemsForEvent/getStoreItemsForEvents ja incluem os globais em
+  // cada chamada por evento (a RPC list_store_items_for_event retorna
+  // `event_id = p_event_id or event_id is null`) -- filtra pra nao duplicar
+  // com globalItems na secao "Produtos para todos".
+  const eventOnlyItems = eventItems.filter((item) => item.eventId !== null);
   const selectedEventName = selectedEventId ? events.find((event) => event.id === selectedEventId)?.name ?? 'Evento' : 'Todos os eventos';
+  const hasAnyItem = globalItems.length > 0 || eventOnlyItems.length > 0;
 
   const ordersQuery = supabase
     .from('store_orders')
@@ -49,7 +54,9 @@ export default async function AccountStorePage({ searchParams }: { searchParams:
     .order('created_at', { ascending: false });
   const { data: myOrders } = selectedEventId
     ? await ordersQuery.eq('event_id', selectedEventId)
-    : await ordersQuery.in('event_id', events.map((event) => event.id));
+    : events.length > 0
+      ? await ordersQuery.or(`event_id.is.null,event_id.in.(${events.map((event) => event.id).join(',')})`)
+      : await ordersQuery.is('event_id', null);
 
   return (
     <div className="space-y-5">
@@ -58,29 +65,45 @@ export default async function AccountStorePage({ searchParams }: { searchParams:
         title="Loja"
         description="Itens opcionais que você pode comprar avulso, além do ingresso."
         action={
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href="/minha-conta/loja"
-              className={`rounded-xl border px-3 py-1.5 text-xs ${!selectedEventId ? 'border-(--brand-400)/50 bg-(--brand-500)/15 text-(--brand-100)' : 'border-slate-700 text-slate-300'}`}
-            >
-              Todos os itens
-            </Link>
-            {events.map((event) => (
+          events.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
               <Link
-                key={event.id}
-                href={`/minha-conta/loja?eventId=${event.id}`}
-                className={`rounded-xl border px-3 py-1.5 text-xs ${event.id === selectedEventId ? 'border-(--brand-400)/50 bg-(--brand-500)/15 text-(--brand-100)' : 'border-slate-700 text-slate-300'}`}
+                href="/minha-conta/loja"
+                className={`rounded-xl border px-3 py-1.5 text-xs ${!selectedEventId ? 'border-(--brand-400)/50 bg-(--brand-500)/15 text-(--brand-100)' : 'border-slate-700 text-slate-300'}`}
               >
-                {event.name}
+                Todos os itens
               </Link>
-            ))}
-          </div>
+              {events.map((event) => (
+                <Link
+                  key={event.id}
+                  href={`/minha-conta/loja?eventId=${event.id}`}
+                  className={`rounded-xl border px-3 py-1.5 text-xs ${event.id === selectedEventId ? 'border-(--brand-400)/50 bg-(--brand-500)/15 text-(--brand-100)' : 'border-slate-700 text-slate-300'}`}
+                >
+                  {event.name}
+                </Link>
+              ))}
+            </div>
+          ) : null
         }
       >
-        {items.length === 0 ? (
+        {!hasAnyItem ? (
           <MilitrinEmptyState title="Nenhum item disponível" description="Ainda não há itens opcionais cadastrados." />
         ) : (
-          <AccountStoreShop events={selectedEventId ? [{ id: selectedEventId, name: selectedEventName }] : events} items={items} />
+          <div className="space-y-6">
+            {globalItems.length > 0 ? (
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-white">Produtos para todos</h3>
+                <AccountStoreShop events={events} items={globalItems} />
+              </div>
+            ) : null}
+
+            {events.length > 0 && eventOnlyItems.length > 0 ? (
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-white">Produtos dos seus eventos</h3>
+                <AccountStoreShop events={selectedEventId ? [{ id: selectedEventId, name: selectedEventName }] : events} items={eventOnlyItems} />
+              </div>
+            ) : null}
+          </div>
         )}
       </MilitrinSection>
 

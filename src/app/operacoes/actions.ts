@@ -1349,7 +1349,12 @@ async function buildTicketDetails(
           "id, store_item_id, variant_id, quantity, status, delivered_at, store_items(name), store_item_variants(name,value), store_orders!inner(participant_id,event_id,payment_method)",
         )
         .eq("store_orders.participant_id", participantId)
-        .eq("store_orders.event_id", String(ticketRow.event_id ?? ""))
+        // Inclui tambem pedidos de produto GLOBAL (store_orders.event_id
+        // null) feitos por este participante -- nao apenas os do evento do
+        // ingresso aberto. Um "= event_id" estrito nunca bate com NULL em
+        // SQL, entao sem este OR o item global comprado ficava invisivel
+        // aqui mesmo tendo sido legitimamente pago.
+        .or(`event_id.eq.${String(ticketRow.event_id ?? "")},event_id.is.null`, { referencedTable: "store_orders" })
         .neq("status", "cancelled")
     : { data: [] as Array<Record<string, unknown>>, error: null };
   if (additionalItemsError) return { success: false as const, message: additionalItemsError.message };

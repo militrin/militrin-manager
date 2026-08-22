@@ -8,7 +8,7 @@ const paymentProvider = getPaymentProvider();
 
 export type StoreCartLine = { storeItemId: string; variantId: string | null; quantity: number };
 
-export async function createAccountStoreOrderAction(input: { eventId: string; items: StoreCartLine[]; paymentMethod: "pix" | "credit_card" }) {
+export async function createAccountStoreOrderAction(input: { eventId: string | null; items: StoreCartLine[]; paymentMethod: "pix" | "credit_card" }) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("create_store_order", {
     p_event_id: input.eventId,

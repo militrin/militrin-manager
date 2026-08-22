@@ -42,6 +42,11 @@ export function AccountStoreShop({ events, items }: { events: EventOption[]; ite
 
   function resolveTargetEvent(item: StoreItemForPurchase): EventOption | null {
     if (item.eventId) return events.find((e) => e.id === item.eventId) ?? null;
+    // Produto global (item.eventId null): associar a um evento e so uma
+    // conveniencia opcional (ex. retirar junto do kit) quando o comprador tem
+    // eventos -- nunca um requisito. Sem nenhum evento acessivel, a compra
+    // segue sem evento (store_orders.event_id = null).
+    if (events.length === 0) return null;
     if (events.length === 1) return events[0];
     const chosenId = targetEvent[item.id] ?? events[0]?.id;
     return events.find((e) => e.id === chosenId) ?? events[0] ?? null;
@@ -54,14 +59,16 @@ export function AccountStoreShop({ events, items }: { events: EventOption[]; ite
       return;
     }
     const targetEventOption = resolveTargetEvent(item);
-    if (!targetEventOption) {
+    if (item.eventId && !targetEventOption) {
+      // Produto vinculado a um evento especifico sempre precisa resolver
+      // esse evento -- diferente do produto global, que pode seguir sem.
       setItemErrors((prev) => ({ ...prev, [item.id]: 'Escolha para qual evento é esta compra.' }));
       return;
     }
     const variant = item.variants.find((v) => v.id === sel.variantId) ?? null;
     addLine({
-      eventId: targetEventOption.id,
-      eventName: targetEventOption.name,
+      eventId: targetEventOption?.id ?? null,
+      eventName: targetEventOption?.name ?? 'Loja Militrin',
       itemId: item.id,
       itemName: item.name,
       imageUrl: item.imageUrl,

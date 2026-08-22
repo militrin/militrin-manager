@@ -9,7 +9,7 @@ import { createAccountStoreOrderAction, generateStoreOrderPixAction, type StoreC
 import { StorePaymentPanel, type StorePaymentState } from '@/components/store/StorePaymentPanel';
 import { money, QuantityStepper } from '@/components/store/store-item-controls';
 
-function EventCartGroup({ eventId, eventName, lines }: { eventId: string; eventName: string; lines: AccountCartLine[] }) {
+function EventCartGroup({ eventId, eventName, lines }: { eventId: string | null; eventName: string; lines: AccountCartLine[] }) {
   const router = useRouter();
   const { setQuantity, removeLine, clearEvent } = useStoreCart();
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credit_card'>('pix');
@@ -59,17 +59,19 @@ function EventCartGroup({ eventId, eventName, lines }: { eventId: string; eventN
     });
   }
 
+  const buyMoreHref = eventId ? `/minha-conta/loja?eventId=${eventId}` : '/minha-conta/loja';
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Evento</p>
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{eventId ? 'Evento' : 'Loja'}</p>
       <p className="text-lg font-semibold text-white">{eventName}</p>
 
       {payment ? (
         <div className="mt-4 space-y-3">
           <StorePaymentPanel state={payment} onChange={setPayment} />
           {payment.status === 'paid' || payment.paymentMethod !== 'pix' ? (
-            <Link href={`/minha-conta/loja?eventId=${eventId}`} className="text-xs text-slate-400 underline">
-              Comprar mais itens deste evento
+            <Link href={buyMoreHref} className="text-xs text-slate-400 underline">
+              {eventId ? 'Comprar mais itens deste evento' : 'Comprar mais itens'}
             </Link>
           ) : null}
         </div>
@@ -124,11 +126,12 @@ export function CartPageClient() {
   const { lines } = useStoreCart();
 
   const groups = useMemo(() => {
-    const byEvent = new Map<string, { eventId: string; eventName: string; lines: AccountCartLine[] }>();
+    const byEvent = new Map<string, { eventId: string | null; eventName: string; lines: AccountCartLine[] }>();
     for (const line of lines) {
-      const group = byEvent.get(line.eventId) ?? { eventId: line.eventId, eventName: line.eventName, lines: [] };
+      const key = line.eventId ?? '__global__';
+      const group = byEvent.get(key) ?? { eventId: line.eventId, eventName: line.eventId ? line.eventName : 'Loja Militrin', lines: [] };
       group.lines.push(line);
-      byEvent.set(line.eventId, group);
+      byEvent.set(key, group);
     }
     return Array.from(byEvent.values());
   }, [lines]);
@@ -147,7 +150,7 @@ export function CartPageClient() {
   return (
     <div className="space-y-4">
       {groups.map((group) => (
-        <EventCartGroup key={group.eventId} eventId={group.eventId} eventName={group.eventName} lines={group.lines} />
+        <EventCartGroup key={group.eventId ?? '__global__'} eventId={group.eventId} eventName={group.eventName} lines={group.lines} />
       ))}
     </div>
   );

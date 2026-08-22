@@ -37,7 +37,8 @@ export type StoreItemForPurchase = {
   availableQuantity: number | null;
 };
 
-export async function getStoreItemsForEvent(supabase: ServerSupabaseClient, eventId: string): Promise<StoreItemForPurchase[]> {
+/** eventId null retorna somente o catalogo global (produtos "Todos os eventos") -- a propria RPC ja resolve isso (`event_id = p_event_id or event_id is null`, que colapsa em so `event_id is null` quando p_event_id e null). */
+export async function getStoreItemsForEvent(supabase: ServerSupabaseClient, eventId: string | null): Promise<StoreItemForPurchase[]> {
   const { data, error } = await supabase.rpc('list_store_items_for_event', { p_event_id: eventId });
   if (error) return [];
 

@@ -6,7 +6,7 @@ import { StoreEventSelector } from "./store-event-selector";
 import { StoreItemForm } from "./store-item-form";
 import { StoreItemCard } from "./store-item-card";
 import { StoreItemStatusFilter } from "./store-item-status-filter";
-import { StoreOrdersList } from "./store-orders-list";
+import { StoreSubNav } from "./store-sub-nav";
 
 type StatusFilter = "active" | "inactive" | "all";
 
@@ -165,19 +165,7 @@ async function getStoreData(selectedEventId: string | null, statusFilter: Status
     } satisfies StoreItem;
   }).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 
-  if (!selectedEventId) {
-    return { events, selectedEventId: null, items, orders: [] as Array<Record<string, unknown>> };
-  }
-
-  const { data: orderRows, error: ordersError } = await supabase
-    .from("store_orders")
-    .select("id, order_number, status, payment_method, payment_status, final_amount, created_at, confirmed_at, store_order_items(id, quantity, unit_price, final_amount, status, qr_token, store_items(name), store_item_variants(name, value))")
-    .eq("event_id", selectedEventId)
-    .order("created_at", { ascending: false })
-    .limit(200);
-  if (ordersError) throw ordersError;
-
-  return { events, selectedEventId, items, orders: orderRows ?? [] };
+  return { events, selectedEventId, items };
 }
 
 export default async function LojaPage({ searchParams }: { searchParams?: Promise<{ eventId?: string; status?: string }> }) {
@@ -185,10 +173,9 @@ export default async function LojaPage({ searchParams }: { searchParams?: Promis
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const selectedEventId = typeof resolvedSearchParams.eventId === "string" ? resolvedSearchParams.eventId : null;
   const statusFilter: StatusFilter = resolvedSearchParams.status === "inactive" || resolvedSearchParams.status === "all" ? resolvedSearchParams.status : "active";
-  const { events, items, orders } = await getStoreData(selectedEventId, statusFilter);
-  const permissionMap = await getCurrentPermissionMap(["store.manage", "store.deliver"]);
+  const { events, items } = await getStoreData(selectedEventId, statusFilter);
+  const permissionMap = await getCurrentPermissionMap(["store.manage"]);
   const canManage = Boolean(permissionMap["store.manage"]);
-  const canDeliver = Boolean(permissionMap["store.deliver"]);
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedEventLabel = selectedEvent ? `${selectedEvent.name}${selectedEvent.year ? ` ${selectedEvent.year}` : ""}` : "Todos os eventos";
@@ -199,6 +186,8 @@ export default async function LojaPage({ searchParams }: { searchParams?: Promis
         <Sidebar />
         <div className="flex-1 space-y-6">
           <AdminPageHeader title="Loja" subtitle="Itens opcionais vendidos avulsos ou junto com o ingresso" />
+
+          <StoreSubNav active="produtos" />
 
           <AdminSection title="Evento" description={`Evento selecionado: ${selectedEventLabel}`}>
             <StoreEventSelector events={events} selectedEventId={selectedEventId} />
@@ -227,18 +216,6 @@ export default async function LojaPage({ searchParams }: { searchParams?: Promis
               </div>
             )}
           </AdminSection>
-
-          {selectedEventId ? (
-            <AdminSection title="Pedidos" description={`Compras da loja para ${selectedEventLabel}`}>
-              {orders.length === 0 ? (
-                <AdminEmptyState title="Nenhum pedido ainda" description="Pedidos aparecem aqui quando alguém compra um item da loja." />
-              ) : (
-                <StoreOrdersList orders={orders as unknown as Parameters<typeof StoreOrdersList>[0]["orders"]} canManage={canManage} canDeliver={canDeliver} />
-              )}
-            </AdminSection>
-          ) : (
-            <AdminEmptyState title="Pedidos por evento" description="Selecione um evento acima para ver os pedidos feitos na loja." />
-          )}
         </div>
       </div>
     </main>
