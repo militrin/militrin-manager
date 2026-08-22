@@ -169,3 +169,90 @@ export async function saveTeamAccessAction(input: {
     removedPermissions,
   };
 }
+
+const saveRolePermissionsSchema = z.object({
+  roleId: z.string().uuid(),
+  permissionCodes: z.array(z.string().min(1)),
+  reason: z.string().max(500).nullable(),
+});
+
+function summarizeRolePermissionChange(addedPermissions: string[], removedPermissions: string[]) {
+  const additions = addedPermissions.length ? `+ ${addedPermissions.join(', ')}` : '';
+  const removals = removedPermissions.length ? `- ${removedPermissions.join(', ')}` : '';
+  return [additions, removals].filter(Boolean).join(' | ') || 'Sem alteracoes efetivas de permissao.';
+}
+
+// Mutacao real (validacao de permissao, escalada de privilegio, protecao da
+// funcao Owner e da "ultima pessoa que administra equipe") mora inteira no
+// RPC upsert_admin_role_permissions -- este action so e a ponte HTTP+auth de
+// pagina, exatamente como saveTeamAccessAction ja faz pro editor individual.
+export async function saveRolePermissionsAction(input: { roleId: string; permissionCodes: string[]; reason: string | null }) {
+  await assertPermission('team.edit_permissions');
+
+  const parsed = saveRolePermissionsSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, message: 'Dados invalidos para salvar as permissoes da funcao.' };
+  }
+
+  const payload = parsed.data;
+  const supabase = await createServerSupabaseClient();
+
+  const { data, error } = await supabase.rpc('upsert_admin_role_permissions', {
+    p_role_id: payload.roleId,
+    p_permission_codes: payload.permissionCodes,
+    p_reason: payload.reason,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  const addedPermissions = Array.isArray(data?.added_permissions) ? data.added_permissions.map((item: unknown) => String(item)) : [];
+  const removedPermissions = Array.isArray(data?.removed_permissions) ? data.removed_permissions.map((item: unknown) => String(item)) : [];
+
+  revalidatePath('/painel/configuracoes/equipe');
+  revalidatePath(`/painel/configuracoes/equipe/funcoes/${payload.roleId}`);
+  revalidatePath('/configuracoes/equipe');
+  revalidatePath(`/configuracoes/equipe/funcoes/${payload.roleId}`);
+
+  return {
+    success: true,
+    message: `Permissoes da funcao atualizadas. ${summarizeRolePermissionChange(addedPermissions, removedPermissions)}`,
+    addedPermissions,
+    removedPermissions,
+  };
+}
+
+export async function restoreRolePermissionsDefaultAction(input: { roleId: string; reason: string | null }) {
+  await assertPermission('team.edit_permissions');
+
+  const parsed = z.object({ roleId: z.string().uuid(), reason: z.string().max(500).nullable() }).safeParse(input);
+  if (!parsed.success) {
+    return { success: false, message: 'Dados invalidos para restaurar as permissoes da funcao.' };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('restore_admin_role_permissions_default', {
+    p_role_id: parsed.data.roleId,
+    p_reason: parsed.data.reason,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  const addedPermissions = Array.isArray(data?.added_permissions) ? data.added_permissions.map((item: unknown) => String(item)) : [];
+  const removedPermissions = Array.isArray(data?.removed_permissions) ? data.removed_permissions.map((item: unknown) => String(item)) : [];
+
+  revalidatePath('/painel/configuracoes/equipe');
+  revalidatePath(`/painel/configuracoes/equipe/funcoes/${parsed.data.roleId}`);
+  revalidatePath('/configuracoes/equipe');
+  revalidatePath(`/configuracoes/equipe/funcoes/${parsed.data.roleId}`);
+
+  return {
+    success: true,
+    message: `Permissoes restauradas para o padrao do sistema. ${summarizeRolePermissionChange(addedPermissions, removedPermissions)}`,
+    addedPermissions,
+    removedPermissions,
+  };
+}

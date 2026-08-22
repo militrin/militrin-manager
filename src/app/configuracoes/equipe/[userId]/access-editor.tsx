@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from 'react';
+import { moduleLabel } from '@/lib/admin/permission-module-labels';
 import { loadUserOverridesAction, saveTeamAccessAction } from '../actions';
 
 type PermissionState = 'inherit' | 'allow' | 'deny';
@@ -32,29 +33,6 @@ function originLabel(origin: string) {
   if (origin === 'owner') return 'Owner';
   if (origin === 'inactive_user') return 'Usuario inativo';
   return 'Sem acesso';
-}
-
-function moduleLabel(module: string) {
-  const map: Record<string, string> = {
-    dashboard: 'Dashboard',
-    participants: 'Participantes',
-    orders: 'Pedidos',
-    finance: 'Financeiro',
-    inventory: 'Camisetas e estoque',
-    kits: 'Kits',
-    checkin: 'Check-in',
-    events: 'Eventos',
-    batches: 'Lotes',
-    categories: 'Categorias',
-    coupons: 'Cupons',
-    photos: 'Fotos',
-    imports: 'Importacoes',
-    reports: 'Relatorios',
-    team: 'Equipe e seguranca',
-    security: 'Equipe e seguranca',
-    settings: 'Equipe e seguranca',
-  };
-  return map[module] ?? module;
 }
 
 export function TeamAccessEditor(props: {

@@ -117,7 +117,7 @@ test("modal 'Adicionar membro': busca -> selecionar -> escolher funcao -> confir
 
 test("tela de equipe so mostra o botao 'Adicionar membro' pra quem tem team.edit_permissions -- calculado no server, condicional no render (nao so CSS escondendo)", () => {
   assert.match(teamListPage, /hasPermission\('team\.edit_permissions'\)/);
-  assert.match(teamListPage, /canAddMember \? <AddTeamMemberButton roleOptions=\{roleOptions\} \/> : null/);
+  assert.match(teamListPage, /canEditPermissions \? <AddTeamMemberButton roleOptions=\{roleOptions\} \/> : null/);
 });
 
 // ── Ultimo Owner -- aviso preventivo na UI, sem tocar na protecao do banco ──
