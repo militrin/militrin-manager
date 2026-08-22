@@ -9,6 +9,7 @@ type OrderItem = {
   unit_price: number;
   final_amount: number;
   status: string;
+  qr_token: string | null;
   store_items: { name: string } | { name: string }[] | null;
   store_item_variants: { name: string; value: string } | { name: string; value: string }[] | null;
 };
@@ -73,6 +74,16 @@ function OrderRow({ order, canManage, canDeliver }: { order: Order; canManage: b
               <span>
                 {item.quantity}x {storeItem?.name ?? "Item"}{variant ? ` — ${variant.name}: ${variant.value}` : ""} · {money(item.final_amount)} · {item.status}
               </span>
+              {canDeliver && item.qr_token && (item.status === "confirmed" || item.status === "delivered") ? (
+                <a
+                  href={`/api/loja/pedidos/${order.id}/itens/${item.id}/qrcode`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-6 items-center rounded-lg border border-cyan-500/40 px-2 text-[11px] text-cyan-200"
+                >
+                  Baixar QR do item
+                </a>
+              ) : null}
               {canDeliver && item.status === "confirmed" ? (
                 <button
                   type="button" disabled={pending}

@@ -153,7 +153,7 @@ export function OperationsFilters({
           </select>
         </div>
 
-        <div className="grid gap-2 lg:grid-cols-[minmax(360px,1fr)_auto_auto]">
+        <div className="grid gap-2 lg:grid-cols-[minmax(360px,1fr)_auto]">
           <input
             value={filters.search}
             onChange={(event) => onFilterChange("search", event.target.value)}
@@ -167,14 +167,6 @@ export function OperationsFilters({
             className="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-cyan-950"
           >
             Escanear QR
-          </button>
-
-          <button
-            type="button"
-            disabled
-            className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-500"
-          >
-            Modo Turbo (Em breve)
           </button>
         </div>
 

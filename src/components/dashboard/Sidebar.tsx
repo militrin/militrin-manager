@@ -11,6 +11,7 @@ import {
   Gift,
   Import,
   LayoutDashboard,
+  Bolt,
   Layers,
   LogOut,
   MessageSquareWarning,
@@ -19,6 +20,7 @@ import {
   ShieldCheck,
   Shirt,
   ShoppingBag,
+  Tag,
   Ticket,
   UserPlus,
   UserRoundCog,
@@ -58,6 +60,23 @@ const groups: NavGroup[] = [
         href: "/operacoes",
         permissionAny: ["participants.view", "checkin.view", "kits.view", "wristbands.view", "wristbands.link"],
         requireCapability: (c) => c.hasCheckin || c.hasDistributableItems || c.hasWristbands,
+      },
+      {
+        label: "Modo Turbo",
+        icon: Bolt,
+        href: "/operacoes/turbo",
+        // Mesma lista de TURBO_ENTRY_PERMISSIONS em operacoes/actions.ts --
+        // so entra quem tem alguma permissao real de operacao Turbo
+        // (ingresso OU produto de loja).
+        permissionAny: ["kits.deliver", "checkin.scan", "store.deliver"],
+        requireCapability: (c) => c.hasCheckin || c.hasDistributableItems,
+      },
+      {
+        label: "Ver pulseira vinculada",
+        icon: Tag,
+        href: "/operacoes/pulseira",
+        permissionAny: ["wristbands.view"],
+        requireCapability: (c) => c.hasWristbands,
       },
       {
         label: "Cronograma",
@@ -251,6 +270,17 @@ function SidebarContent() {
       .filter((group) => group.items.length > 0);
   }, [context]);
 
+  // "/operacoes" e "/operacoes/turbo" (e "/operacoes/pulseira") sao
+  // subareas irmas, nao pai/filho de navegacao -- sem isso, o prefix-match
+  // abaixo marcaria "Central de Operações" ativo junto com "Modo Turbo"
+  // sempre que pathname.startsWith("/operacoes/"). Quando algum item bate
+  // EXATAMENTE com o pathname atual, so ele fica ativo; o prefix-match so
+  // serve de fallback pra rotas sem item proprio no menu (ex.: /cadastros/[id]).
+  const hasExactMatch = useMemo(
+    () => visibleGroups.some((group) => group.items.some((item) => item.href === pathname)),
+    [visibleGroups, pathname],
+  );
+
   return (
     <aside className="hidden w-72 flex-col justify-between rounded-3xl border border-slate-800/80 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 lg:flex">
       <div>
@@ -273,10 +303,15 @@ function SidebarContent() {
               <div className="space-y-1">
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  const active =
-                    pathname === item.href ||
-                    (item.href !== "/painel" && pathname.startsWith(`${item.href}/`));
-                  const eventScopedHref = selectedEventId && ["/operacoes", "/painel", "/cadastros", "/pedidos", "/financeiro", "/camisetas", "/loja", "/importacoes", "/relatorios", "/cupons"].includes(item.href)
+                  const active = hasExactMatch
+                    ? pathname === item.href
+                    : pathname === item.href ||
+                      (item.href !== "/painel" && pathname.startsWith(`${item.href}/`));
+                  // "/operacoes/turbo" DE PROPOSITO fora desta lista: o
+                  // Modo Turbo sempre exige escolher o evento na propria
+                  // rota (sessionStorage por operacao, nunca herdado da URL
+                  // de outra pagina) -- ver TurboRouteClient.tsx.
+                  const eventScopedHref = selectedEventId && ["/operacoes", "/painel", "/cadastros", "/operacoes/pulseira", "/pedidos", "/financeiro", "/camisetas", "/loja", "/importacoes", "/relatorios", "/cupons"].includes(item.href)
                     ? `${item.href}?eventId=${encodeURIComponent(selectedEventId)}`
                     : item.href;
                   return (

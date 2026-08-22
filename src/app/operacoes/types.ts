@@ -451,6 +451,25 @@ export type WristbandHistoryEntry = {
   created_at: string;
 };
 
+// Modo Turbo -- leitor unico continuo. "item" cobre so o que o produto
+// precisa mostrar (nunca dados do pedido/comprador inteiro); a entrega
+// reaproveita deliverAdditionalStoreItemAction/deliver_store_order_item ja
+// existentes, aqui so o formato devolvido pela resolucao do QR do item.
+export type TurboStoreItemDetails = {
+  id: string;
+  store_item_name: string;
+  variant_label: string | null;
+  quantity: number;
+  status: "reserved" | "confirmed" | "delivered" | "cancelled";
+  image_url: string | null;
+  order_number: string | null;
+};
+
+export type TurboScanResult =
+  | { success: true; kind: "ticket"; participant: OperationTicketDetails }
+  | { success: true; kind: "store_item"; item: TurboStoreItemDetails }
+  | { success: false; message: string };
+
 export const EMPTY_PICKUP_FILTERS: PickupFilters = {
   eventId: '',
   search: '',

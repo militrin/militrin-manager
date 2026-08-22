@@ -1,0 +1,253 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import jsQR from "jsqr";
+
+// Leitura de QR por camera, compartilhada por QrScanner (Turbo + Ver
+// pulseira vinculada) e QrScannerModal (fluxo principal da Central). Um so
+// hook, um so lugar pra corrigir -- nenhum consumidor implementa sua propria
+// logica de camera/decodificacao em paralelo.
+//
+// window.BarcodeDetector so existe hoje em Chrome/Edge no Android e
+// ChromeOS por padrao -- em desktop a API nao existe sem flag experimental,
+// entao a maioria das estacoes de operacao cai direto no fallback jsQR
+// (biblioteca pura-JS, zero dependencias, madura) via canvas offscreen.
+//
+// Correcoes de leitura (QR de pulseira menor/mais distante que o de
+// ingresso costumava falhar):
+//   1. Pede resolucao de camera maior (ideal 1280x720) quando disponivel --
+//      "ideal" nunca falha em camera que nao suporta, so usa o que der.
+//   2. Nunca reduz cegamente pra 480px: o frame completo agora mira ate
+//      640px de largura, e so reduz se a fonte for maior que isso.
+//   3. Analise multi-escala por tentativa: frame completo -> crop central
+//      (55%) -> crop central AMPLIADO (30% da area, desenhado ~1.8x maior
+//      que o recorte original) -- da mais "pixels efetivos" pro jsQR quando
+//      o QR real ocupa so uma fracao pequena do frame. Para no primeiro
+//      sucesso, nunca faz as 3 tentativas se a primeira ja decodificou.
+export type QrCameraStatus = "starting" | "scanning" | "error";
+
+type BarcodeDetectorLike = {
+  detect: (source: CanvasImageSource) => Promise<Array<{ rawValue?: string }>>;
+};
+
+function getBarcodeDetector(): BarcodeDetectorLike | null {
+  const Ctor = (
+    window as unknown as {
+      BarcodeDetector?: new (options: { formats: string[] }) => BarcodeDetectorLike;
+    }
+  ).BarcodeDetector;
+  if (!Ctor) return null;
+  try {
+    return new Ctor({ formats: ["qr_code"] });
+  } catch {
+    return null;
+  }
+}
+
+function describeCameraError(error: unknown): string {
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Permissão de câmera negada. Autorize o acesso à câmera nas configurações do navegador.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "Nenhuma câmera encontrada neste dispositivo.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "A câmera está em uso por outro aplicativo ou aba. Feche-o e tente novamente.";
+  }
+  if (name === "OverconstrainedError") {
+    return "Nenhuma câmera compatível foi encontrada.";
+  }
+  return error instanceof Error ? error.message : "Não foi possível abrir a câmera.";
+}
+
+const FULL_FRAME_TARGET_WIDTH = 640;
+const CENTER_CROP_RATIO = 0.55;
+const CENTER_CROP_ENLARGED_RATIO = 0.3;
+const CENTER_CROP_ENLARGED_SCALE = 1.8;
+// Intervalo entre tentativas de deteccao. Cada tentativa (no fallback jsQR)
+// pode rodar ate 3 sub-analises (multi-escala); 350ms mantem isso em ~3
+// ciclos/s -- responsivo sem virar um consumidor pesado de CPU.
+const SCAN_INTERVAL_MS = 350;
+
+function decodeRegionWithJsQR(
+  canvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  targetWidth: number,
+): string | null {
+  if (sw <= 0 || sh <= 0) return null;
+  const scale = Math.min(CENTER_CROP_ENLARGED_SCALE, targetWidth / sw) || 1;
+  const dw = Math.max(1, Math.round(sw * scale));
+  const dh = Math.max(1, Math.round(sh * scale));
+  canvas.width = dw;
+  canvas.height = dh;
+  context.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
+  const imageData = context.getImageData(0, 0, dw, dh);
+  const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+  return result?.data?.trim() || null;
+}
+
+function decodeWithJsQR(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, video: HTMLVideoElement): string | null {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+
+  // 1. Frame completo -- pega QR grande/medio bem enquadrado (ingresso).
+  const full = decodeRegionWithJsQR(canvas, context, video, 0, 0, vw, vh, FULL_FRAME_TARGET_WIDTH);
+  if (full) return full;
+
+  // 2. Crop central -- descarta a margem, entao o QR (normalmente perto do
+  //    centro) ocupa uma fracao maior do quadro analisado.
+  const cw1 = vw * CENTER_CROP_RATIO;
+  const ch1 = vh * CENTER_CROP_RATIO;
+  const crop1 = decodeRegionWithJsQR(canvas, context, video, (vw - cw1) / 2, (vh - ch1) / 2, cw1, ch1, FULL_FRAME_TARGET_WIDTH);
+  if (crop1) return crop1;
+
+  // 3. Crop central AMPLIADO -- regiao ainda menor, desenhada em escala
+  //    maior que a original (upscale). Ajuda especificamente QR pequeno
+  //    e distante (tipico de pulseira), quando nem o crop 55% da
+  //    resolucao suficiente.
+  const cw2 = vw * CENTER_CROP_ENLARGED_RATIO;
+  const ch2 = vh * CENTER_CROP_ENLARGED_RATIO;
+  return decodeRegionWithJsQR(
+    canvas,
+    context,
+    video,
+    (vw - cw2) / 2,
+    (vh - ch2) / 2,
+    cw2,
+    ch2,
+    Math.round(cw2 * CENTER_CROP_ENLARGED_SCALE),
+  );
+}
+
+export function useQrCameraScanner(onRead: (value: string) => Promise<void>) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const lastReadRef = useRef<string>("");
+  // onRead muda de referencia a cada render do componente-pai que nao
+  // memoiza o callback (ex.: WristbandLookupClient chama setLoading(true)
+  // no proprio inicio do handler, o que re-renderiza e recria a funcao
+  // ANTES do await terminar). Sem isolar via ref, o useEffect abaixo
+  // (se dependesse de onRead) desmontaria e reabriria a camera no meio de
+  // uma leitura em andamento -- exatamente o bug que fazia a pulseira
+  // "nao ser reconhecida" em /operacoes/pulseira. A camera agora abre uma
+  // unica vez por montagem; o loop de scan sempre chama a versao mais
+  // recente de onRead through this ref, nunca precisa reabrir a camera por
+  // causa disso.
+  const onReadRef = useRef(onRead);
+  const [status, setStatus] = useState<QrCameraStatus>("starting");
+  const [message, setMessage] = useState("Abrindo câmera...");
+  const [lastDetectedAt, setLastDetectedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    onReadRef.current = onRead;
+  }, [onRead]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+
+    async function start() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+
+        const detector = getBarcodeDetector();
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+
+        async function detectFromVideo(): Promise<string | null> {
+          const video = videoRef.current;
+          if (!video || video.readyState < video.HAVE_ENOUGH_DATA) return null;
+
+          if (detector) {
+            try {
+              const codes = await detector.detect(video);
+              return codes[0]?.rawValue?.trim() || null;
+            } catch {
+              return null;
+            }
+          }
+
+          if (!context) return null;
+          return decodeWithJsQR(canvas, context, video);
+        }
+
+        if (cancelled) return;
+        setStatus("scanning");
+        setMessage("Aponte a câmera para o QR Code.");
+
+        const scan = async () => {
+          if (cancelled) return;
+          try {
+            const value = await detectFromVideo();
+            // So processa um QR novo -- enquanto o mesmo codigo continuar
+            // visivel (operador ainda nao afastou a camera), ignora; e
+            // enquanto onRead nao resolver, nenhuma nova varredura e
+            // agendada (proximo setTimeout so roda depois do await abaixo)
+            // -- para imediatamente ao reconhecer, nunca dispara leitura
+            // duplicada em paralelo.
+            if (value && value !== lastReadRef.current) {
+              lastReadRef.current = value;
+              setMessage("QR Code localizado.");
+              setLastDetectedAt(Date.now());
+              await onReadRef.current(value);
+              if (!cancelled) {
+                setMessage("Aponte a câmera para o QR Code.");
+                window.setTimeout(() => {
+                  lastReadRef.current = "";
+                }, 1200);
+              }
+            }
+          } catch {
+            // Mantem tentando enquanto a camera estiver aberta.
+          }
+          if (!cancelled) timer = window.setTimeout(scan, SCAN_INTERVAL_MS);
+        };
+
+        timer = window.setTimeout(scan, 300);
+      } catch (error) {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage(describeCameraError(error));
+      }
+    }
+
+    void start();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+    // Deliberadamente SEM onRead nas deps -- ver comentario no onReadRef
+    // acima. A camera so deve abrir/fechar por causa da montagem/
+    // desmontagem do componente, nunca por troca de identidade de funcao.
+  }, []);
+
+  return { videoRef, status, message, lastDetectedAt };
+}

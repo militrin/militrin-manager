@@ -14,6 +14,8 @@ import type {
   PickupCapabilities,
   PickupEvent,
   ReasonCode,
+  TurboScanResult,
+  TurboStoreItemDetails,
   WristbandHistoryEntry,
 } from "./types";
 import { REASON_CODES } from "./types";
@@ -48,9 +50,30 @@ function operationRpcError(error: { message?: string; details?: string | null } 
   shirt_type?: string;
   shirt_size?: string;
   physical_available?: number;
+  holder_name?: string | null;
 } {
   if (!error) return { code: "OPERATION_FAILED", message: "Operação não concluída." };
   const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+  if (serialized.includes("WRISTBAND_ALREADY_LINKED_SAME_TICKET")) {
+    try {
+      const detail = JSON.parse(error.details ?? "{}") as { message?: string };
+      return { code: "WRISTBAND_ALREADY_LINKED_SAME_TICKET", message: detail.message ?? "Esta pulseira já está vinculada a este ingresso." };
+    } catch {
+      return { code: "WRISTBAND_ALREADY_LINKED_SAME_TICKET", message: "Esta pulseira já está vinculada a este ingresso." };
+    }
+  }
+  if (serialized.includes("WRISTBAND_LINKED_TO_ANOTHER_TICKET")) {
+    try {
+      const detail = JSON.parse(error.details ?? "{}") as { message?: string; holder_name?: string | null };
+      return {
+        code: "WRISTBAND_LINKED_TO_ANOTHER_TICKET",
+        message: detail.message ?? "Pulseira já vinculada a outro participante.",
+        holder_name: detail.holder_name ?? null,
+      };
+    } catch {
+      return { code: "WRISTBAND_LINKED_TO_ANOTHER_TICKET", message: "Pulseira já vinculada a outro participante." };
+    }
+  }
   if (serialized.includes("WRISTBAND_REQUIRED")) {
     try {
       const detail = JSON.parse(error.details ?? "{}") as { message?: string };
@@ -527,11 +550,24 @@ export async function getRetiradaCapabilitiesAction() {
   };
 }
 
-export async function getPickupEventsAction() {
-  await assertPermission("participants.view");
+// Permissoes minimas pra alguma operacao do Modo Turbo (ingresso OU produto
+// de loja) -- usada tanto pelo gate de entrada da rota /operacoes/turbo
+// quanto pra listar os eventos operaveis. Cada acao disparada DE DENTRO do
+// Turbo (deliver_items_checkin_and_link_wristband, deliverAdditionalStoreItemAction
+// etc.) continua com sua propria checagem estrita; isto aqui e so o gate
+// "tem algum motivo legitimo de estar aqui".
+const TURBO_ENTRY_PERMISSIONS = ["kits.deliver", "checkin.scan", "store.deliver"];
 
-  const supabase = await createServerSupabaseClient();
+async function assertAnyPermission(codes: string[]) {
+  for (const code of codes) {
+    if (await hasPermission(code)) return;
+  }
+  // Garante lancar com um PermissionDeniedError de verdade (mesmo formato
+  // que o resto do arquivo ja trata via try/catch do chamador).
+  await assertPermission(codes[0]);
+}
 
+async function fetchOperationEventsList(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
   const [{ data: events, error: eventsError }, { data: kitItems, error: kitItemsError }] =
     await Promise.all([
       supabase
@@ -589,6 +625,22 @@ export async function getPickupEventsAction() {
       } satisfies PickupEvent;
     }),
   };
+}
+
+export async function getPickupEventsAction() {
+  await assertPermission("participants.view");
+  const supabase = await createServerSupabaseClient();
+  return fetchOperationEventsList(supabase);
+}
+
+// Mesma listagem de eventos que getPickupEventsAction, mas com o gate mais
+// permissivo do Turbo (kits.deliver/checkin.scan/store.deliver) em vez de
+// participants.view -- um operador so-de-loja (store.deliver, sem
+// participants.view) precisa conseguir escolher o evento pra abrir o Turbo.
+export async function getTurboEventsAction() {
+  await assertAnyPermission(TURBO_ENTRY_PERMISSIONS);
+  const supabase = await createServerSupabaseClient();
+  return fetchOperationEventsList(supabase);
 }
 
 export async function getKitMaterializationPreviewAction(ticketId: string) {
@@ -2387,4 +2439,224 @@ export async function getWristbandHistoryAction(ticketId: string) {
     });
 
   return { success: true as const, entries };
+}
+
+function escapeIlikePattern(value: string) {
+  return value.replace(/[%_\\]/g, (match) => `\\${match}`);
+}
+
+// "Ver pulseira vinculada" -- consulta rapida por codigo de pulseira (leitor
+// de QR dedicado, fora do Turbo). So exige wristbands.view; NUNCA reusa
+// getOperationTicketDetailsAction/buildTicketDetails (essas exigem
+// participants.view, permissao mais forte que um operador so-de-pulseira
+// pode nao ter). Le tickets/participants/orders direto -- RLS dessas tabelas
+// (tickets_rbac_select/participants_rbac_select) exige participants.view OU
+// checkin.*/kits.* (nunca so wristbands.view); se o operador nao tiver
+// nenhuma dessas, a query volta vazia e devolvemos so o que a pulseira em si
+// ja revela (codigo/status/vinculo), sem quebrar.
+export async function lookupWristbandByQrAction(rawValue: string) {
+  await assertPermission("wristbands.view");
+
+  const supabase = await createServerSupabaseClient();
+  const code = parseTokenCandidate(rawValue);
+  if (!code) return { success: false as const, message: "QR Code vazio." };
+
+  const { data: wristbandRows, error: wristbandError } = await supabase
+    .from("participant_wristbands")
+    .select("id, code, status, linked_at, ticket_id")
+    .ilike("code", escapeIlikePattern(code))
+    .order("linked_at", { ascending: false })
+    .limit(1);
+
+  if (wristbandError) return { success: false as const, message: wristbandError.message };
+
+  const wristband = wristbandRows?.[0];
+  if (!wristband) {
+    // Nunca houve registro pra este codigo -- QR invalido/nao reconhecido.
+    // Tambem cobre, de proposito, o caso de a pulseira pertencer a outra
+    // organizacao: RLS de participant_wristbands ja restringe o que este
+    // supabase.from(...) enxerga pela organizacao do operador, entao um
+    // codigo de outra organizacao simplesmente nao aparece aqui -- nunca
+    // vaza "existe em outra organizacao", trata igual a nao encontrado.
+    return { success: false as const, message: "QR Code não corresponde a nenhuma pulseira conhecida." };
+  }
+
+  const wristbandSummary = {
+    code: String(wristband.code ?? code),
+    status: String(wristband.status ?? "unlinked"),
+    linked_at: wristband.linked_at ? String(wristband.linked_at) : null,
+  };
+
+  // Registro existe (a pulseira ja foi vinculada alguma vez) mas o vinculo
+  // MAIS RECENTE nao esta ativo (foi desvinculada/substituida/bloqueada) --
+  // "pulseira valida sem vinculo", nunca mostra dados de ingresso antigos
+  // como se ainda fossem o vinculo atual.
+  if (wristband.status !== "active") {
+    return { success: true as const, state: "unlinked" as const, wristband: wristbandSummary };
+  }
+
+  const { data: ticket } = await supabase
+    .from("tickets")
+    .select(
+      "id, status, event_id, events(name), order_items(participant_id, holder_full_name, ticket_categories(name), participants(full_name)), orders(user_id)",
+    )
+    .eq("id", String(wristband.ticket_id))
+    .maybeSingle();
+
+  if (!ticket?.id) {
+    return { success: true as const, state: "linked" as const, wristband: wristbandSummary, ticket: null };
+  }
+
+  const ticketRow = ticket as Record<string, unknown>;
+  const eventRelation = getRelation(ticketRow.events as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const orderItem = getRelation(ticketRow.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const order = getRelation(ticketRow.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const category = orderItem
+    ? getRelation(orderItem.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null)
+    : null;
+  const participant = orderItem
+    ? getRelation(orderItem.participants as Record<string, unknown> | Array<Record<string, unknown>> | null)
+    : null;
+
+  let buyerName = "Comprador não identificado";
+  const buyerUserId = order?.user_id ? String(order.user_id) : null;
+  if (buyerUserId) {
+    const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(ticketRow.event_id ?? "") });
+    const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
+    if (buyer?.full_name) buyerName = String(buyer.full_name);
+  }
+
+  return {
+    success: true as const,
+    state: "linked" as const,
+    wristband: wristbandSummary,
+    ticket: {
+      ticket_status: String(ticketRow.status ?? ""),
+      event_name: eventRelation?.name ? String(eventRelation.name) : "",
+      category_name: category?.name ? String(category.name) : "Ingresso único",
+      holder_name: orderItem?.holder_full_name
+        ? String(orderItem.holder_full_name)
+        : participant?.full_name
+          ? String(participant.full_name)
+          : "Titular não definido",
+      buyer_name: buyerName,
+    },
+  };
+}
+
+// ============================================================
+// Modo Turbo -- leitor unico continuo (ingresso -> pulseira -> entrega +
+// checkin, OU produto de loja -> confirmar entrega). Reaproveita
+// integralmente getOperationTicketDetailsAction/deliverAdditionalStoreItemAction
+// (esta ultima chamada direto pelo componente, sem wrapper novo); as unicas
+// pecas novas aqui sao a resolucao unificada do QR (ticket ou item de loja,
+// nunca confia no "tipo" que o frontend acha que leu) e o wrapper da RPC
+// atomica deliver_items_checkin_and_link_wristband (migration
+// 20260860000000) que vincula a pulseira escaneada mesmo quando o evento nao
+// a torna obrigatoria.
+// ============================================================
+
+async function resolveTurboStoreItemByQr(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<TurboStoreItemDetails | null> {
+  const { data: line } = await supabase
+    .from("store_order_items")
+    .select(
+      "id, quantity, status, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number)",
+    )
+    .eq("qr_token", tokenCandidate)
+    .limit(1)
+    .maybeSingle();
+
+  if (!line?.id) return null;
+
+  const storeItem = getRelation(line.store_items as { name: string } | { name: string }[] | null);
+  const variant = getRelation(
+    line.store_item_variants as { name: string; value: string } | Array<{ name: string; value: string }> | null,
+  );
+  const order = getRelation(line.store_orders as { order_number: string } | { order_number: string }[] | null);
+
+  const { data: image } = await supabase
+    .from("store_item_images")
+    .select("image_url")
+    .eq("store_item_id", String(line.store_item_id))
+    .eq("is_primary", true)
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    id: String(line.id),
+    store_item_name: storeItem?.name ?? "Item",
+    variant_label: variant ? `${variant.name}: ${variant.value}` : null,
+    quantity: Number(line.quantity ?? 1),
+    status: (line.status as TurboStoreItemDetails["status"]) ?? "reserved",
+    image_url: image?.image_url ?? null,
+    order_number: order?.order_number ?? null,
+  };
+}
+
+export async function resolveTurboScanAction(rawValue: string): Promise<TurboScanResult> {
+  await assertPermission("participants.view");
+
+  const supabase = await createServerSupabaseClient();
+  const tokenCandidate = parseTokenCandidate(rawValue);
+  if (!tokenCandidate) return { success: false, message: "QR Code vazio." };
+
+  const { data: ticket } = await supabase
+    .from("tickets")
+    .select("id")
+    .eq("token", tokenCandidate)
+    .limit(1)
+    .maybeSingle();
+
+  if (ticket?.id) {
+    const detail = await getOperationTicketDetailsAction(String(ticket.id));
+    if (!detail.success || !detail.participant || detail.participant.kind !== "ticket") {
+      return { success: false, message: detail.message ?? "Não foi possível carregar o ingresso." };
+    }
+    return { success: true, kind: "ticket", participant: detail.participant as OperationTicketDetails };
+  }
+
+  const item = await resolveTurboStoreItemByQr(supabase, tokenCandidate);
+  if (item) {
+    // So exige store.deliver quando o QR realmente resolveu pra um item de
+    // loja -- assim um operador sem essa permissao continua recebendo
+    // "nao encontrado" pra qualquer outro QR, e uma mensagem especifica de
+    // permissao so quando o item existe de verdade.
+    await assertPermission("store.deliver");
+    return { success: true, kind: "store_item", item };
+  }
+
+  return { success: false, message: "QR Code não corresponde a nenhum ingresso ou produto." };
+}
+
+export async function deliverKitCheckinAndLinkWristbandAction(payload: { ticket_id: string; wristband_code: string }) {
+  await assertPermission("kits.deliver");
+  await assertPermission("checkin.scan");
+  if (!isUuid(payload.ticket_id)) return invalidTicketId();
+  const code = payload.wristband_code.trim();
+  if (!code) return { success: false, message: "Informe o código da pulseira." };
+
+  const supabase = await createServerSupabaseClient();
+  const [kitBlock, checkinBlock] = await Promise.all([
+    ticketHasOpenIssueBlock(supabase, payload.ticket_id, "blocks_kit_delivery"),
+    ticketHasOpenIssueBlock(supabase, payload.ticket_id, "blocks_checkin"),
+  ]);
+  if (kitBlock.error || checkinBlock.error || kitBlock.blocked || checkinBlock.blocked) {
+    return { success: false, message: "Operação bloqueada por pendência específica de entrega ou check-in." };
+  }
+
+  const { data, error } = await supabase.rpc("deliver_items_checkin_and_link_wristband", {
+    p_ticket_id: payload.ticket_id,
+    p_wristband_code: code,
+  });
+
+  if (error || data !== true) {
+    return { success: false, ...operationRpcError(error) };
+  }
+
+  revalidatePath("/operacoes");
+  revalidatePath(`/ingressos/${payload.ticket_id}`);
+  return { success: true, message: "Pulseira vinculada e check-in realizado." };
 }

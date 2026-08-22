@@ -10,6 +10,8 @@ export function getOperationalErrorTitle(code: string | undefined, message: stri
   if (code === "SHIRT_OUT_OF_STOCK" || code === "PRODUCT_OUT_OF_STOCK") return "Estoque insuficiente";
   if (code === "HOLDER_ALREADY_HAS_TICKET_FOR_EVENT") return "Titular já possui ingresso";
   if (code === "SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION") return "Alteração bloqueada";
+  if (code === "WRISTBAND_ALREADY_LINKED_SAME_TICKET") return "Pulseira já vinculada";
+  if (code === "WRISTBAND_LINKED_TO_ANOTHER_TICKET") return "Pulseira pertence a outro participante";
 
   const normalized = message.toLowerCase();
   if (normalized.includes("estoque insuficiente") || normalized.includes("sem estoque") || normalized.includes("nao ha estoque") || normalized.includes("não há estoque")) {

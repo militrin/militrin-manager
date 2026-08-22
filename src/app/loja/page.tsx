@@ -171,7 +171,7 @@ async function getStoreData(selectedEventId: string | null, statusFilter: Status
 
   const { data: orderRows, error: ordersError } = await supabase
     .from("store_orders")
-    .select("id, order_number, status, payment_method, payment_status, final_amount, created_at, confirmed_at, store_order_items(id, quantity, unit_price, final_amount, status, store_items(name), store_item_variants(name, value))")
+    .select("id, order_number, status, payment_method, payment_status, final_amount, created_at, confirmed_at, store_order_items(id, quantity, unit_price, final_amount, status, qr_token, store_items(name), store_item_variants(name, value))")
     .eq("event_id", selectedEventId)
     .order("created_at", { ascending: false })
     .limit(200);

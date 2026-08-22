@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import {
@@ -278,7 +279,8 @@ function upsertTicketInGroups(current: PickupListGroup[], row: PickupListItem) {
   });
 }
 
-export default function KitPickupPage() {
+function KitPickupPageContent() {
+  const searchParams = useSearchParams();
   const [filters, setFilters] = useState<PickupFilters>(EMPTY_PICKUP_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<PickupFilters>(EMPTY_PICKUP_FILTERS);
   const [sortField, setSortField] = useState<PickupSortField>("name");
@@ -555,6 +557,24 @@ export default function KitPickupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preferencesLoaded]);
 
+  // "Abrir operação completa" no Modo Turbo (rota separada, /operacoes/turbo)
+  // volta pra ca via /operacoes?eventId=...&focusTicket=<ticket_id> -- esta
+  // troca busca o ingresso e expande a ficha, mesmo comportamento de antes
+  // quando o Turbo era um overlay na mesma pagina.
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    const focusTicketId = searchParams.get("focusTicket");
+    if (!focusTicketId || !UUID_PATTERN.test(focusTicketId)) return;
+
+    void (async () => {
+      const response = await getOperationTicketDetailsAction(focusTicketId);
+      if (!response.success || !response.participant || response.participant.kind !== "ticket") return;
+      insertAndFocusTicket(response.participant as PickupDetails & { ticket_id: string });
+    })();
+    // So processa o focusTicket presente no carregamento inicial da pagina.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferencesLoaded]);
+
   useEffect(() => {
     if (typeof window === "undefined" || !preferencesLoaded) return;
 
@@ -681,30 +701,13 @@ export default function KitPickupPage() {
     }
   }
 
-  async function handleQrRead(value: string) {
-    setMessage(null);
-    const response = await searchPickupParticipantByQrAction(value);
-
-    if (!response.success || !response.participant) {
-      setMessage(response.message ?? "Participante não encontrado.");
-      return;
-    }
-
-    const participant = response.participant as PickupDetails;
-
-    if (participant.kind !== "ticket" || !UUID_PATTERN.test(participant.ticket_id)) {
-      setMessage("O QR Code não corresponde a um ingresso válido.");
-      return;
-    }
-
-    if (participant.event_id !== selectedEvent?.id) {
-      setMessage("Participante encontrado em outro evento. Selecione o evento correspondente para operar.");
-      return;
-    }
-
+  // Insere/atualiza um ingresso resolvido (por QR ou por ?focusTicket= vindo
+  // de outra rota, ex. "Abrir operação completa" no Modo Turbo) na tabela
+  // visivel, expande a ficha e rola ate ela. Compartilhado pelas duas
+  // origens pra nao duplicar a logica de merge em items/visibleItems/groups.
+  function insertAndFocusTicket(participant: PickupDetails & { ticket_id: string }) {
     const row = detailToListItem(participant);
 
-    setShowScanner(false);
     setDetails((current) => ({ ...current, [participant.ticket_id]: participant }));
     setExpandedId(participant.ticket_id);
 
@@ -730,6 +733,31 @@ export default function KitPickupPage() {
         block: "center",
       });
     }, 150);
+  }
+
+  async function handleQrRead(value: string) {
+    setMessage(null);
+    const response = await searchPickupParticipantByQrAction(value);
+
+    if (!response.success || !response.participant) {
+      setMessage(response.message ?? "Participante não encontrado.");
+      return;
+    }
+
+    const participant = response.participant as PickupDetails;
+
+    if (participant.kind !== "ticket" || !UUID_PATTERN.test(participant.ticket_id)) {
+      setMessage("O QR Code não corresponde a um ingresso válido.");
+      return;
+    }
+
+    if (participant.event_id !== selectedEvent?.id) {
+      setMessage("Participante encontrado em outro evento. Selecione o evento correspondente para operar.");
+      return;
+    }
+
+    setShowScanner(false);
+    insertAndFocusTicket(participant as PickupDetails & { ticket_id: string });
   }
 
   async function handleEventChange(eventId: string) {
@@ -985,5 +1013,13 @@ export default function KitPickupPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function KitPickupPage() {
+  return (
+    <Suspense fallback={null}>
+      <KitPickupPageContent />
+    </Suspense>
   );
 }
