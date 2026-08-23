@@ -24,6 +24,7 @@ export default function CriarContaPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
@@ -55,6 +56,7 @@ export default function CriarContaPage() {
     submitLockRef.current = true;
     setIsSubmitting(true);
     setMessage(null);
+    setEmailAlreadyRegistered(false);
     let keepLocked = false;
 
     try {
@@ -91,8 +93,9 @@ export default function CriarContaPage() {
           return;
         }
 
-        if (result.code === 'already_registered') {
-          setMessage('Esta conta já existe. Entre com seu e-mail e senha para continuar.');
+        if (result.code === 'EMAIL_ALREADY_REGISTERED') {
+          setEmailAlreadyRegistered(true);
+          setMessage('Este e-mail já possui uma conta cadastrada.');
           return;
         }
 
@@ -112,12 +115,9 @@ export default function CriarContaPage() {
         return;
       }
 
-      if (result.email_confirmation_required) {
-        setMessage('Conta criada. Verifique seu e-mail para confirmar o acesso.');
-        return;
-      }
-
-      setMessage('Conta criada. Verifique seu e-mail para confirmar o acesso.');
+      setIsRedirecting(true);
+      keepLocked = true;
+      router.push(`/verifique-seu-email?email=${encodeURIComponent(email)}`);
     } finally {
       if (!keepLocked) {
         submitLockRef.current = false;
@@ -207,7 +207,17 @@ export default function CriarContaPage() {
               <span>Aceito a política de privacidade e o uso dos meus dados para gestão da inscrição.</span>
             </label>
 
-            {message ? <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{message}</p> : null}
+            {message ? (
+              <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+                <p>{message}</p>
+                {emailAlreadyRegistered ? (
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    <Link href={email ? `/entrar?email=${encodeURIComponent(email)}` : '/entrar'} className="font-semibold underline">Entrar</Link>
+                    <Link href="/esqueci-minha-senha" className="font-semibold underline">Recuperar senha</Link>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {cooldownSeconds > 0 ? (
               <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">

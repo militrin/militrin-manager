@@ -12,6 +12,7 @@ import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/l
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
 import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBuyerToNewOrder } from '@/lib/registrations/active-ticket-holder';
+import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from '@/lib/account/email-confirmation';
 
 type PricingPreview = {
   batch_id: string;
@@ -172,7 +173,7 @@ function translateAuthErrorCode(message: string) {
   if (normalized.includes('email signups are disabled')) return 'email_signups_disabled';
   if (normalized.includes('email rate limit exceeded')) return 'rate_limit';
   if (normalized.includes('too many requests') && normalized.includes('email')) return 'rate_limit';
-  if (normalized.includes('already registered')) return 'already_registered';
+  if (normalized.includes('already registered')) return 'EMAIL_ALREADY_REGISTERED';
   if (normalized.includes('invalid email')) return 'invalid_email';
   if (normalized.includes('email address') && normalized.includes('is invalid')) return 'invalid_email';
   if (normalized.includes('weak password')) return 'weak_password';
@@ -186,6 +187,17 @@ function appBaseUrl() {
 
 function translateSignupCode(message: string) {
   return translateAuthErrorCode(message);
+}
+
+function isCpfAlreadyLinkedError(error: { message: string; details?: string | null }) {
+  if (error.message === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER') return true;
+  if (!error.details) return false;
+  try {
+    const parsed = JSON.parse(error.details) as { code?: string };
+    return parsed?.code === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER';
+  } catch {
+    return false;
+  }
 }
 
 function accountOrdersUrl() {
@@ -275,6 +287,7 @@ function firstAccessRouteWithNext(nextPath: string) {
 async function resolvePostAuthPath(params: {
   userId: string;
   authEmail?: string | null;
+  emailConfirmed: boolean;
   nextPath?: string | null;
   wizardPath?: string | null;
 }) {
@@ -284,6 +297,22 @@ async function resolvePostAuthPath(params: {
     wizardPath: params.wizardPath,
     fallback: administrativeAccess ? '/painel' : '/minha-conta',
   });
+
+  // Gate mais fundamental que qualquer outro (bloqueio, perfil incompleto):
+  // sem e-mail confirmado, a conta nao anda pra frente em lugar nenhum.
+  // Isso normalmente nem chega a rodar (o Supabase Auth ja recusa sessao
+  // pra login/signup nao confirmado quando "Confirm email" esta ligado) --
+  // e so a rede de seguranca canonica caso uma sessao exista mesmo assim
+  // (ex.: conta criada via Admin API sem confirmar).
+  if (!params.emailConfirmed) {
+    return {
+      destination,
+      isBlocked: false,
+      firstAccessRequired: false,
+      emailConfirmationRequired: true,
+      redirectTo: `/verifique-seu-email?email=${encodeURIComponent(params.authEmail ?? '')}`,
+    };
+  }
 
   const flags = await getFirstAccessFlags(params.userId, params.authEmail ?? null);
   const isBlocked = flags.isBlocked;
@@ -296,6 +325,7 @@ async function resolvePostAuthPath(params: {
     destination,
     isBlocked,
     firstAccessRequired,
+    emailConfirmationRequired: false,
     redirectTo,
   };
 }
@@ -414,11 +444,17 @@ async function ensureCustomerProfileForSignedUser(params: {
   const { error: contactError } = await params.supabase.rpc('ensure_registration_contact_for_user', {
     p_user_id: params.userId,
   });
+  let contactWarning: string | null = null;
   if (contactError) {
     console.warn('[auth-profile] Falha ao materializar cadastro global', {
       userId: params.userId,
       message: contactError.message,
     });
+    if (isCpfAlreadyLinkedError(contactError)) {
+      // Nao bloqueia login/sessao (a conta ja existe e e legitima) -- so
+      // avisa por que /cadastros nao mostra um Cadastro proprio pra ela.
+      contactWarning = 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.';
+    }
   }
 
   if (missingRequiredFields.length > 0) {
@@ -433,7 +469,7 @@ async function ensureCustomerProfileForSignedUser(params: {
     };
   }
 
-  return { success: true as const, warning: null };
+  return { success: true as const, warning: contactWarning };
 }
 
 function mapPayment(row: Record<string, unknown>) {
@@ -1022,6 +1058,7 @@ export async function getPublicSessionAction() {
   const postAuth = await resolvePostAuthPath({
     userId: user.id,
     authEmail: user.email ?? null,
+    emailConfirmed: isEmailConfirmed(user),
     nextPath: null,
     wizardPath: null,
   });
@@ -1110,6 +1147,7 @@ export async function signInPublicAccountAction(input: {
     const postAuth = await resolvePostAuthPath({
       userId: data.user.id,
       authEmail: data.user.email ?? normalized,
+      emailConfirmed: isEmailConfirmed(data.user),
       nextPath: input.next_path,
       wizardPath: input.wizard_path,
     });
@@ -1188,7 +1226,37 @@ export async function signUpPublicAccountAction(input: {
     return { success: false, message: 'Informe uma data válida no formato dd/MM/aaaa.' };
   }
 
-  const emailRedirectTo = `${appBaseUrl()}/`;
+  if (cpfDigits && isValidCpf(cpfDigits)) {
+    // Checa ANTES de criar a conta em auth.users: se o CPF ja pertence a
+    // outra conta, avisa aqui em vez de criar a conta e deixar
+    // ensure_registration_contact_for_user mesclar silenciosamente com o
+    // registration_contact da outra conta (ver find_conflicting_registration_contact,
+    // 20260873000000 — mesma organizacao default que a materializacao usa).
+    const { data: conflictData, error: conflictError } = await supabase.rpc('find_conflicting_registration_contact', {
+      p_cpf: cpfDigits,
+    });
+    if (!conflictError) {
+      const conflict = Array.isArray(conflictData) ? conflictData[0] : conflictData;
+      if (conflict?.has_conflict) {
+        return {
+          success: false,
+          code: 'CPF_ALREADY_LINKED_TO_ANOTHER_USER',
+          message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+        };
+      }
+    }
+  }
+
+  // Vai pro /auth/callback (mesmo mecanismo usado por convite e por
+  // recuperacao de senha), nao direto pra raiz -- garante uma sessao real
+  // via cookies do servidor antes de cair em /primeiro-acesso, em vez de
+  // depender de deteccao implicita de sessao no client da home.
+  const postSignupDestination = resolvePostAuthDestination({
+    nextPath: input.next_path,
+    wizardPath: input.wizard_path,
+    fallback: '/minha-conta',
+  });
+  const emailRedirectTo = `${appBaseUrl()}/auth/callback?next=${encodeURIComponent(firstAccessRouteWithNext(postSignupDestination))}`;
   const { data, error } = await supabase.auth.signUp({
     email: normalized,
     password: input.password,
@@ -1256,6 +1324,7 @@ export async function signUpPublicAccountAction(input: {
     const postAuth = await resolvePostAuthPath({
       userId: data.user.id,
       authEmail: data.user.email ?? normalized,
+      emailConfirmed: isEmailConfirmed(data.user),
       nextPath: input.next_path,
       wizardPath: input.wizard_path,
     });
@@ -1300,11 +1369,27 @@ export async function requestPasswordResetAction(email: string) {
   const normalized = normalizeEmail(email);
   if (!normalized) return { success: false, message: 'E-mail obrigatorio.' };
 
-  const resetUrl = `${appBaseUrl()}/redefinir-senha`;
+  // Vai pro /auth/callback primeiro (com next=/redefinir-senha), nao direto
+  // pra /redefinir-senha -- e o callback quem sabe trocar o code/token_hash
+  // do link por uma sessao de verdade (exchangeCodeForSession/verifyOtp);
+  // sem isso, /redefinir-senha chamava auth.updateUser sem nenhuma sessao
+  // e falhava.
+  const resetUrl = `${appBaseUrl()}/auth/callback?next=${encodeURIComponent('/redefinir-senha')}`;
   const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
     redirectTo: resetUrl,
   });
-  if (error) return { success: false, message: error.message };
+
+  // Mensagem sempre neutra pro chamador -- nunca revela se o e-mail existe
+  // ou nao (enumeracao). So um erro de rate limit de verdade (que ja nao
+  // revela nada sobre a conta) e repassado; qualquer outro erro do
+  // Supabase fica só no log do servidor.
+  if (error) {
+    console.warn('[requestPasswordResetAction] resetPasswordForEmail falhou', { message: error.message, code: error.code ?? null });
+    if (error.message.toLowerCase().includes('rate limit') || error.message.toLowerCase().includes('security purposes')) {
+      return { success: false, message: 'Muitas solicitações em pouco tempo. Aguarde um instante e tente novamente.' };
+    }
+    return { success: true };
+  }
 
   try {
     await emailProvider.sendPasswordReset({ to: normalized, resetUrl });
@@ -1804,6 +1889,9 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
   const userId = user?.id ?? null;
   if (!userId) {
     return { success: false as const, message: 'Entre na sua conta para continuar a inscricao.' };
+  }
+  if (!isEmailConfirmed(user)) {
+    return { success: false as const, message: ACCOUNT_NOT_CONFIRMED_MESSAGE, code: 'email_not_confirmed' };
   }
 
   const normalizedPaymentMethod = normalizeCheckoutPaymentMethod(input.payment_method);

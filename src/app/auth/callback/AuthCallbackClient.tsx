@@ -19,9 +19,20 @@ function withTimeout<T>(operation: Promise<T>): Promise<T> {
   });
 }
 
+// Allowlist explicita de destinos pos-callback -- nunca abrir pra qualquer
+// path (sanitizeInternalNextPath so evita open-redirect pra fora do site,
+// nao decide se o destino faz sentido aqui). /primeiro-acesso continua o
+// default (convites/primeiro acesso); /redefinir-senha e o unico outro
+// destino valido hoje (link de recuperacao de senha, ver
+// requestPasswordResetAction em src/app/inscricao/actions.ts).
+const ALLOWED_CALLBACK_DESTINATION_PREFIXES = ['/primeiro-acesso', '/redefinir-senha'];
+
 function safeFirstAccessDestination(value: string | null) {
   const safe = sanitizeInternalNextPath(value, '/primeiro-acesso');
-  return safe === '/primeiro-acesso' || safe.startsWith('/primeiro-acesso?') ? safe : '/primeiro-acesso';
+  const isAllowed = ALLOWED_CALLBACK_DESTINATION_PREFIXES.some(
+    (prefix) => safe === prefix || safe.startsWith(`${prefix}?`),
+  );
+  return isAllowed ? safe : '/primeiro-acesso';
 }
 
 function createCallbackClient() {
@@ -112,15 +123,33 @@ export function AuthCallbackClient() {
   }, [router, searchParams]);
 
   if (errorMessage) {
+    // O mesmo callback processa convite, confirmacao de cadastro e
+    // recuperacao de senha (ver ALLOWED_CALLBACK_DESTINATION_PREFIXES) --
+    // a copy de erro precisa refletir qual dos tres, nunca falar sempre em
+    // "convite" pra um link de recuperacao de senha expirado.
+    const otpTypeParam = searchParams.get('type');
+    const nextParam = searchParams.get('next') ?? '';
+    const linkKind: 'recovery' | 'signup' | 'invite' = otpTypeParam === 'recovery' || nextParam.startsWith('/redefinir-senha')
+      ? 'recovery'
+      : otpTypeParam === 'signup' || otpTypeParam === 'email'
+        ? 'signup'
+        : 'invite';
+
+    const copy = linkKind === 'recovery'
+      ? { title: 'Não foi possível validar o link de recuperação', hint: 'O link pode ter expirado ou já ter sido usado. Solicite um novo.', ctaLabel: 'Solicitar novo link', ctaHref: '/esqueci-minha-senha' }
+      : linkKind === 'signup'
+        ? { title: 'Não foi possível validar sua confirmação', hint: 'O link pode ter expirado ou já ter sido usado. Reenvie a confirmação.', ctaLabel: 'Reenviar confirmação', ctaHref: '/verifique-seu-email' }
+        : { title: 'Não foi possível validar o convite', hint: 'Peça ao organizador responsável pelo seu cadastro que envie um novo link.', ctaLabel: 'Solicitar novo convite', ctaHref: 'mailto:?subject=Solicitar%20novo%20convite%20de%20primeiro%20acesso' };
+
     return (
       <section className="w-full max-w-md rounded-3xl border border-rose-500/30 bg-slate-900 p-6 text-center">
-        <h1 className="text-xl font-semibold">Não foi possível validar o convite</h1>
+        <h1 className="text-xl font-semibold">{copy.title}</h1>
         <p className="mt-2 text-sm text-rose-200">{errorMessage}</p>
-        <p className="mt-3 text-xs text-slate-400">Peça ao organizador responsável pelo seu cadastro que envie um novo link.</p>
-        <a href="mailto:?subject=Solicitar%20novo%20convite%20de%20primeiro%20acesso" className="mt-5 inline-flex h-10 items-center whitespace-nowrap rounded-xl border border-slate-700 px-4 text-sm">Solicitar novo convite</a>
+        <p className="mt-3 text-xs text-slate-400">{copy.hint}</p>
+        <a href={copy.ctaHref} className="mt-5 inline-flex h-10 items-center whitespace-nowrap rounded-xl border border-slate-700 px-4 text-sm">{copy.ctaLabel}</a>
       </section>
     );
   }
 
-  return <p className="text-sm text-slate-300" role="status">Validando convite...</p>;
+  return <p className="text-sm text-slate-300" role="status">Validando link...</p>;
 }

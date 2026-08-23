@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
+import { isEmailConfirmed } from '@/lib/account/email-confirmation';
 import {
   resolveParticipantAvatarUrl,
   resolveParticipantFullName,
@@ -31,6 +32,10 @@ export default async function MinhaContaLayout({ children }: { children: React.R
 
   if (!user) {
     redirect('/entrar?next=/minha-conta');
+  }
+
+  if (!isEmailConfirmed(user)) {
+    redirect(`/verifique-seu-email?email=${encodeURIComponent(user.email ?? '')}`);
   }
 
   const flags = await getFirstAccessFlags(user.id, user.email ?? null);

@@ -55,6 +55,10 @@ export function PublicLoginForm({ defaultNext = '/minha-conta' }: PublicLoginFor
     setLoading(false);
 
     if (!result.success) {
+      if (result.code === 'email_not_confirmed') {
+        router.push(`/verifique-seu-email?email=${encodeURIComponent(email)}`);
+        return;
+      }
       setMessage(result.message || 'Não foi possível entrar.');
       return;
     }

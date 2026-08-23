@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getPaymentProvider } from "@/lib/payments/get-provider";
+import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from "@/lib/account/email-confirmation";
 
 const paymentProvider = getPaymentProvider();
 
@@ -10,6 +11,11 @@ export type StoreCartLine = { storeItemId: string; variantId: string | null; qua
 
 export async function createAccountStoreOrderAction(input: { eventId: string | null; items: StoreCartLine[]; paymentMethod: "pix" | "credit_card" }) {
   const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false as const, message: "Entre na sua conta para continuar a compra." };
+  if (!isEmailConfirmed(user)) {
+    return { success: false as const, message: ACCOUNT_NOT_CONFIRMED_MESSAGE, code: "email_not_confirmed" };
+  }
   const { data, error } = await supabase.rpc("create_store_order", {
     p_event_id: input.eventId,
     p_items: input.items.map((item) => ({ store_item_id: item.storeItemId, variant_id: item.variantId, quantity: item.quantity })),

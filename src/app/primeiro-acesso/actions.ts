@@ -122,6 +122,27 @@ export async function completeFirstAccessAction(formData: FormData) {
     return { success: false, message: 'Informe um CPF válido.' };
   }
 
+  // Mesma checagem de src/app/inscricao/actions.ts (signUpPublicAccountAction):
+  // se este CPF ja pertence a OUTRA conta, avisa aqui em vez de deixar
+  // ensure_registration_contact_for_user mesclar silenciosamente com o
+  // registration_contact da outra conta (find_conflicting_registration_contact,
+  // 20260873000000). p_exclude_user_id exclui o proprio contato desta conta
+  // (ex.: ja vinculado por um convite/importacao anterior) da checagem.
+  const { data: conflictData, error: conflictError } = await supabase.rpc('find_conflicting_registration_contact', {
+    p_cpf: cpf,
+    p_exclude_user_id: user.id,
+  });
+  if (!conflictError) {
+    const conflict = Array.isArray(conflictData) ? conflictData[0] : conflictData;
+    if (conflict?.has_conflict) {
+      return {
+        success: false,
+        code: 'CPF_ALREADY_LINKED_TO_ANOTHER_USER',
+        message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+      };
+    }
+  }
+
   const mustChangePassword = inviteContext
     ? inviteContext.requiresPasswordSetup
     : Boolean(profile?.must_change_password);

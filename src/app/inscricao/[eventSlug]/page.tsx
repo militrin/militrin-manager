@@ -8,6 +8,7 @@ import { getEventBySlug } from '@/lib/public/events';
 import { buildShirtInventoryVariants } from '@/lib/constants/shirts';
 import { getStoreItemsForEvent } from '@/lib/store/get-store-items';
 import { isCategoryConfigurationIncomplete } from '@/lib/checkout/ticket-presentation';
+import { isEmailConfirmed } from '@/lib/account/email-confirmation';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -68,6 +69,10 @@ export default async function EventRegistrationPage({ params }: { params: Promis
 
   if (!user) {
     redirect(`/entrar?next=/inscricao/${eventSlug}`);
+  }
+
+  if (!isEmailConfirmed(user)) {
+    redirect(`/verifique-seu-email?email=${encodeURIComponent(user.email ?? '')}`);
   }
 
   const profileStatus = await getProfileCompletionStatus(user.id, user.email ?? null);
