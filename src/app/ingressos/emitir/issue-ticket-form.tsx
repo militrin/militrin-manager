@@ -6,6 +6,7 @@ import { getEventCategoriesAndBatchesAction } from "@/app/operacoes/actions";
 import { getEventShirtOptionsAction, issueTicketAction, lookupRegistrationContactAction, type IssueTicketReason } from "./actions";
 
 type Option = { id: string; name: string };
+type CategoryOption = { id: string; name: string; sellable: boolean };
 type ShirtOption = { type: string; sizes: string[] };
 type ContactLookup = { status: "idle" | "loading" | "found" | "error"; name?: string; message?: string };
 type InitialContact = { id: string; name: string; pin: string };
@@ -19,7 +20,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const [eventId, setEventId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [batchId, setBatchId] = useState("");
-  const [categories, setCategories] = useState<Option[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [batches, setBatches] = useState<Option[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [reason, setReason] = useState<IssueTicketReason>("courtesy");
@@ -87,7 +88,9 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const notesRequired = reason === "other";
   const shirtSizesForType = shirtOptions.find((option) => option.type === shirtType)?.sizes ?? [];
   const hasCategories = categories.length > 0;
-  const canSubmit = contactLookup.status === "found" && eventId && (!hasCategories || categoryId) && batchId && (!notesRequired || notes.trim()) && (!hasShirts || (shirtType && shirtSize));
+  const selectedCategory = categories.find((category) => category.id === categoryId) ?? null;
+  const categoryUnsellable = hasCategories && Boolean(categoryId) && selectedCategory !== null && !selectedCategory.sellable;
+  const canSubmit = contactLookup.status === "found" && eventId && (!hasCategories || categoryId) && !categoryUnsellable && batchId && (!notesRequired || notes.trim()) && (!hasShirts || (shirtType && shirtSize));
 
   function submit(assignHolder = true) {
     setResult(null);
@@ -190,9 +193,19 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
           ) : (
             <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!eventId || loadingOptions} className={inputClass}>
               <option value="">{loadingOptions ? "Carregando..." : eventId ? "Selecione" : "Escolha um evento primeiro"}</option>
-              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}{category.sellable ? "" : " (sem lote/preço)"}
+                </option>
+              ))}
             </select>
           )}
+          {categoryUnsellable ? (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+              <p>Os ingressos desta categoria ainda não estão disponíveis para venda. Configure o lote/preço antes de emitir.</p>
+              <Link href={`/painel/eventos/${eventId}?etapa=3`} className="mt-1 inline-block underline">Configurar lotes do evento</Link>
+            </div>
+          ) : null}
         </label>
 
         <label className="space-y-2">

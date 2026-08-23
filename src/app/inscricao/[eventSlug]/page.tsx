@@ -7,6 +7,7 @@ import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { getEventBySlug } from '@/lib/public/events';
 import { buildShirtInventoryVariants } from '@/lib/constants/shirts';
 import { getStoreItemsForEvent } from '@/lib/store/get-store-items';
+import { isCategoryConfigurationIncomplete } from '@/lib/checkout/ticket-presentation';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -19,6 +20,7 @@ type CategoryRow = {
   is_active: boolean;
   sort_order: number;
   available_slots: number | null;
+  current_batch_id: string | null;
   current_batch_name: string | null;
   current_male_price: number | null;
   current_female_price: number | null;
@@ -234,10 +236,27 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     available_slots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
     is_active: Boolean(row.is_active),
     sort_order: Number(row.sort_order ?? 0),
+    current_batch_id: row.current_batch_id ? String(row.current_batch_id) : null,
     current_batch_name: row.current_batch_name ? String(row.current_batch_name) : null,
     current_male_price: row.current_male_price === null || row.current_male_price === undefined ? null : Number(row.current_male_price),
     current_female_price: row.current_female_price === null || row.current_female_price === undefined ? null : Number(row.current_female_price),
   }));
+
+  if (isCategoryConfigurationIncomplete(categories)) {
+    return (
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+        <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+          <h1 className="text-2xl font-semibold text-white">Inscrições ainda não disponíveis</h1>
+          <p className="mt-2 text-sm text-slate-300">Os ingressos deste evento ainda não estão disponíveis para venda. Volte a tentar em breve.</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href="/eventos" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
+              Voltar aos eventos
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   const benefitsByCategory: Record<string, Array<{ id: string; name: string; description: string | null }>> = {};
   for (const row of benefitsData ?? []) {

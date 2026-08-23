@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { CheckCircle2, MoreVertical, Tag } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2, MoreVertical, Tag, TriangleAlert } from "lucide-react";
 import { SlideOverPanel } from "@/components/admin/SlideOverPanel";
 import {
   createBenefitAction,
@@ -23,6 +24,7 @@ type CategoryRow = {
   pending_count: number;
   reserved_count: number;
   available_slots: number | null;
+  current_batch_id?: string | null;
 };
 
 type BenefitRow = {
@@ -85,6 +87,7 @@ export function CategoriesManager({
   categories: CategoryRow[];
   benefits: BenefitRow[];
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -157,6 +160,7 @@ export function CategoriesManager({
         setPanelOpen(false);
         setForm(emptyForm);
         setEditingId(null);
+        router.refresh();
       }
     });
   }
@@ -170,6 +174,7 @@ export function CategoriesManager({
         is_active: !category.is_active,
       });
       setMessage({ type: result.success ? "success" : "error", text: result.message });
+      if (result.success) router.refresh();
     });
   }
 
@@ -225,6 +230,7 @@ export function CategoriesManager({
           const list = benefitsByCategory.get(category.id) ?? [];
           const draft = benefitDraft[category.id] ?? { name: "", description: "", sort_order: "0" };
           const benefitFormOpen = benefitFormOpenFor === category.id;
+          const missingBatch = category.is_active && !category.current_batch_id;
 
           return (
             <div key={category.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
@@ -239,8 +245,18 @@ export function CategoriesManager({
                       <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] ${category.is_active ? "border-emerald-500/40 text-emerald-300" : "border-slate-700 text-slate-400"}`}>
                         {category.is_active ? "Ativa" : "Inativa"}
                       </span>
+                      {missingBatch ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-[11px] text-amber-200">
+                          <TriangleAlert size={11} /> Sem lote/preço
+                        </span>
+                      ) : null}
                     </div>
                     {category.description ? <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{category.description}</p> : null}
+                    {missingBatch ? (
+                      <p className="mt-1 text-xs text-amber-200/90">
+                        A categoria {category.name} está ativa, mas ainda não possui lote/preço configurado. Ingressos dela não podem ser vendidos até configurar um lote na Etapa 3.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 

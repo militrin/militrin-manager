@@ -54,6 +54,7 @@ export async function createCategoryAction(payload: z.infer<typeof categorySchem
 
     revalidatePath("/categorias");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
     return { success: true, message: "Categoria criada com sucesso." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? translateCategoryError(error.message) : "Falha ao criar categoria: erro desconhecido." };
@@ -81,6 +82,7 @@ export async function updateCategoryAction(payload: z.infer<typeof categorySchem
 
     revalidatePath("/categorias");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
     return { success: true, message: "Categoria atualizada com sucesso." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? translateCategoryError(error.message) : "Falha ao atualizar categoria: erro desconhecido." };
@@ -100,9 +102,10 @@ export async function toggleCategoryActiveAction(payload: { id: string; event_id
 
     revalidatePath("/categorias");
     revalidatePath("/inscricoes/nova");
+    revalidatePath(`/painel/eventos/${payload.event_id}`);
     return { success: true, message: payload.is_active ? "Categoria ativada." : "Categoria desativada." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao alterar status." };
+    return { success: false, message: error instanceof Error ? translateCategoryError(error.message) : "Falha ao alterar status." };
   }
 }
 

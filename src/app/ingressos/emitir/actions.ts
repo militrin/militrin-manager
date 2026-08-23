@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/admin/permissions";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { buildShirtInventoryVariants, getShirtTypeOrder } from "@/lib/constants/shirts";
 import { registrationContactHasActiveTicket } from "@/lib/registrations/active-ticket-holder";
+import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const pinPattern = /^[A-Z0-9]{10}$/;
@@ -106,6 +107,30 @@ export async function issueTicketAction(input: {
   if (!org?.id) return { success: false as const, message: "Selecione uma organização." };
 
   const supabase = await createServerSupabaseClient();
+
+  if (categoryId) {
+    // Mesma checagem de "categoria vendavel" do checkout publico
+    // (hasSellableCategory, ver src/lib/checkout/ticket-presentation.ts) —
+    // impede emitir para uma categoria ativa sem lote/preco em vez de deixar
+    // a RPC estourar um erro de SQL cru ou o select de Lote ficar vazio sem
+    // explicacao.
+    const { data: categoryRows, error: categoryError } = await supabase.rpc("get_event_ticket_categories", { p_event_id: input.eventId });
+    if (categoryError) return { success: false as const, message: categoryError.message };
+    const categoryRow = ((categoryRows ?? []) as Array<{ id: string; is_active: boolean; current_batch_id: string | null; available_slots: number | null }>)
+      .find((row) => String(row.id) === categoryId);
+    const sellable = Boolean(categoryRow) && hasSellableCategory([{
+      is_active: Boolean(categoryRow?.is_active),
+      current_batch_id: categoryRow?.current_batch_id ?? null,
+      available_slots: categoryRow?.available_slots ?? null,
+    }]);
+    if (!sellable) {
+      return {
+        success: false as const,
+        message: "Os ingressos desta categoria ainda não estão disponíveis para venda. Configure o lote/preço da categoria na Etapa 3 do evento antes de emitir.",
+      };
+    }
+  }
+
   let contactQuery = supabase.from("registration_contacts").select("*").eq("organization_id", org.id);
   contactQuery = hasContactId ? contactQuery.eq("id", input.registrationContactId as string) : contactQuery.eq("public_pin", normalizedPin);
   const contactResult = await contactQuery.maybeSingle();

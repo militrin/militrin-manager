@@ -124,10 +124,12 @@ export function BatchesManager({
   eventId,
   batches,
   categories,
+  categoriesNeedingPrice = [],
 }: {
   eventId: string;
   batches: BatchCategoryRow[];
   categories: CategoryRow[];
+  categoriesNeedingPrice?: { id: string; name: string }[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState<FormState>(initialForm(categories));
@@ -352,6 +354,19 @@ export function BatchesManager({
       {message ? (
         <div className={`rounded-xl border px-3 py-2 text-sm ${message.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`}>
           {message.text}
+        </div>
+      ) : null}
+
+      {categoriesNeedingPrice.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-100">
+          <p>
+            {categoriesNeedingPrice.length === 1
+              ? `A categoria ${categoriesNeedingPrice[0].name} está ativa, mas ainda não possui lote/preço configurado.`
+              : `As categorias ${categoriesNeedingPrice.map((category) => category.name).join(", ")} estão ativas, mas ainda não possuem lote/preço configurado.`}
+          </p>
+          <button type="button" onClick={openCreate} className="shrink-0 rounded-lg border border-amber-400/50 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-500/30">
+            {categoriesNeedingPrice.length === 1 ? `Configurar lote da ${categoriesNeedingPrice[0].name}` : "Configurar lote"}
+          </button>
         </div>
       ) : null}
 

@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
 import { revalidatePath } from "next/cache";
 import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
+import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
 import type {
   OperationGroup,
   OperationOrderTicketSummary,
@@ -1816,14 +1817,18 @@ export async function getEventCategoriesAndBatchesAction(eventId: string) {
   await assertPermission("participants.view");
   if (!isUuid(eventId)) return { success: false as const, message: "Evento inválido." };
   const supabase = await createServerSupabaseClient();
-  const [{ data: categories, error: categoriesError }, { data: batches, error: batchesError }] = await Promise.all([
-    supabase.from("ticket_categories").select("id,name").eq("event_id", eventId).eq("is_active", true).order("sort_order"),
+  const [{ data: categoriesData, error: categoriesError }, { data: batches, error: batchesError }] = await Promise.all([
+    supabase.rpc("get_event_ticket_categories", { p_event_id: eventId }),
     supabase.from("registration_batches").select("id,name,sequence_number").eq("event_id", eventId).order("sequence_number"),
   ]);
   if (categoriesError) return { success: false as const, message: categoriesError.message };
   if (batchesError) return { success: false as const, message: batchesError.message };
 
-  const hasActiveCategories = (categories ?? []).length > 0;
+  const activeCategoryRows = ((categoriesData ?? []) as Array<{
+    id: string; name: string; is_active: boolean; current_batch_id: string | null; available_slots: number | null;
+  }>).filter((row) => row.is_active);
+
+  const hasActiveCategories = activeCategoryRows.length > 0;
   const batchIds = (batches ?? []).map((item) => String(item.id));
   let categorizedBatchIds = new Set<string>();
   if (batchIds.length > 0) {
@@ -1845,7 +1850,19 @@ export async function getEventCategoriesAndBatchesAction(eventId: string) {
 
   return {
     success: true as const,
-    categories: (categories ?? []).map((item) => ({ id: String(item.id), name: String(item.name) })),
+    // sellable reusa a mesma regra de get_registration_pricing_preview
+    // (hasSellableCategory) que ja bloqueia checkout/wizard do evento —
+    // uma categoria ativa sem lote/preco vem aqui como sellable:false, em
+    // vez de simplesmente deixar o select de Lote vazio sem explicacao.
+    categories: activeCategoryRows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      sellable: hasSellableCategory([{
+        is_active: row.is_active,
+        current_batch_id: row.current_batch_id,
+        available_slots: row.available_slots,
+      }]),
+    })),
     batches: filteredBatches.map((item) => ({ id: String(item.id), name: String(item.name) })),
   };
 }

@@ -42,6 +42,7 @@ async function getCategoriesData(eventId: string | null) {
       pending_count: number;
       reserved_count: number;
       available_slots: number | null;
+      current_batch_id: string | null;
     }) => ({
       id: String(row.id),
       event_id: String(row.event_id),
@@ -55,6 +56,7 @@ async function getCategoriesData(eventId: string | null) {
       pending_count: Number(row.pending_count ?? 0),
       reserved_count: Number(row.reserved_count ?? 0),
       available_slots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
+      current_batch_id: row.current_batch_id ? String(row.current_batch_id) : null,
     })),
     benefits: (benefitsData ?? []).map((row: {
       id: string;

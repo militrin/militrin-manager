@@ -1329,6 +1329,27 @@ export async function updatePublicPasswordAction(input: { password: string; conf
   return { success: true };
 }
 
+function translatePricingPreviewError(error: { message: string; details?: string | null }) {
+  let detailCode: string | null = null;
+  if (error.details) {
+    try {
+      const parsed = JSON.parse(error.details) as { code?: string };
+      detailCode = parsed?.code ?? null;
+    } catch {
+      detailCode = null;
+    }
+  }
+  const code = detailCode ?? error.message;
+
+  if (code === 'TICKET_CATEGORY_UNAVAILABLE') {
+    return { code, message: 'Os ingressos desta categoria ainda não estão disponíveis para venda.' };
+  }
+  if (code === 'TICKET_CATEGORY_REQUIRED') {
+    return { code, message: 'Selecione uma categoria de ingresso.' };
+  }
+  return { code, message: error.message };
+}
+
 export async function getPublicPricingPreviewAction(payload: {
   event_id: string;
   ticket_category_id: string | null;
@@ -1356,7 +1377,8 @@ export async function getPublicPricingPreviewAction(payload: {
       details: error.details ?? null,
       hint: error.hint ?? null,
     });
-    return { success: false, message: error.message, code: error.code ?? null };
+    const translated = translatePricingPreviewError(error);
+    return { success: false, message: translated.message, code: translated.code };
   }
 
   const preview = (Array.isArray(data) ? data[0] : data) as PricingPreview | null;

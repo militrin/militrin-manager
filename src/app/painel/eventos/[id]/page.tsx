@@ -12,7 +12,7 @@ import { SingleTicketBatchesManager, type SingleTicketBatchRow } from "./single-
 import { EventSummaryCard } from "./event-summary-card";
 import { BuyerPresentationPreview } from "./buyer-presentation-preview";
 import { EventHelpCard, EventResumeCard } from "./event-sidebar-cards";
-import { resolveTicketPresentationMode } from "@/lib/checkout/ticket-presentation";
+import { resolveTicketPresentationMode, isCategoryConfigurationIncomplete } from "@/lib/checkout/ticket-presentation";
 import { EventAddonsManager } from "./addons-manager";
 import { EventPaymentMethodsManager } from "./payment-methods-manager";
 import { ItemChangeRules } from "./item-change-rules";
@@ -195,6 +195,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     pending_count: number;
     reserved_count: number;
     available_slots: number | null;
+    current_batch_id: string | null;
     current_batch_name: string | null;
     current_male_price: number | null;
     current_female_price: number | null;
@@ -211,6 +212,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     pending_count: Number(row.pending_count ?? 0),
     reserved_count: Number(row.reserved_count ?? 0),
     available_slots: row.available_slots === null || row.available_slots === undefined ? null : Number(row.available_slots),
+    current_batch_id: row.current_batch_id ? String(row.current_batch_id) : null,
     current_batch_name: row.current_batch_name ? String(row.current_batch_name) : null,
     current_male_price: row.current_male_price === null || row.current_male_price === undefined ? null : Number(row.current_male_price),
     current_female_price: row.current_female_price === null || row.current_female_price === undefined ? null : Number(row.current_female_price),
@@ -224,6 +226,10 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     : ticketMode === "category_hidden"
       ? "1 categoria ativa — o comprador só vê o lote"
       : `${activeCategoryCount} categorias ativas — o comprador escolhe a categoria`;
+  const configurationIncomplete = isCategoryConfigurationIncomplete(categories);
+  const categoriesNeedingPrice = activeCategoriesForPreview
+    .filter((category: { current_batch_id: string | null }) => !category.current_batch_id)
+    .map((category: { id: string; name: string }) => ({ id: category.id, name: category.name }));
   let singleTicketBatches: SingleTicketBatchRow[] = [];
   let singleTicketCurrentBatches: { gender: string; batch_id: string | null; batch_name: string | null; sequence_number: number | null; price: number | null }[] = [];
   if ((currentStep === 2 || currentStep === 3) && activeCategoryCount === 0) {
@@ -467,6 +473,20 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
               <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
                 Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
               </div>
+              {ticketMode !== "single" ? (
+                <div className="mb-4 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+                  Este evento está em modo <strong>com categorias</strong>. Os 4 lotes antigos de ingresso único (se existirem) continuam preservados como histórico/dormentes — eles voltam a valer automaticamente se todas as categorias forem desativadas de novo. Configure o lote/preço de cada categoria ativa na <Link href={`/painel/eventos/${event.id}?etapa=3`} className="underline">Etapa 3</Link>.
+                </div>
+              ) : null}
+              {configurationIncomplete ? (
+                <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-100">
+                  <p className="font-semibold">Configuração incompleta — configure os lotes das categorias para liberar vendas.</p>
+                  <p className="mt-1 text-amber-200/90">
+                    {categoriesNeedingPrice.length > 0 ? `Sem lote/preço: ${categoriesNeedingPrice.map((category: { name: string }) => category.name).join(", ")}. ` : ""}
+                    O checkout público continua bloqueado até pelo menos uma categoria ativa ter lote/preço configurado.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_310px]">
                 <CategoriesManager eventId={event.id} categories={categories} benefits={benefits} />
                 <div className="space-y-4">
@@ -497,11 +517,20 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
               <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
                 Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
               </div>
+              {configurationIncomplete ? (
+                <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-100">
+                  <p className="font-semibold">Configuração incompleta — configure os lotes das categorias para liberar vendas.</p>
+                  <p className="mt-1 text-amber-200/90">
+                    {categoriesNeedingPrice.length > 0 ? `Sem lote/preço: ${categoriesNeedingPrice.map((category: { name: string }) => category.name).join(", ")}. ` : ""}
+                    O checkout público continua bloqueado até pelo menos uma categoria ativa ter lote/preço configurado.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_310px]">
                 {activeCategoryCount === 0 ? (
                   <SingleTicketBatchesManager eventId={event.id} batches={singleTicketBatches} />
                 ) : (
-                  <BatchesManager eventId={event.id} batches={batches} categories={categories} />
+                  <BatchesManager eventId={event.id} batches={batches} categories={categories} categoriesNeedingPrice={categoriesNeedingPrice} />
                 )}
                 <div className="space-y-4">
                   <BuyerPresentationPreview
