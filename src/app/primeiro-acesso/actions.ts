@@ -194,6 +194,16 @@ export async function completeFirstAccessAction(formData: FormData) {
     return { success: false, message: translateFirstAccessPersistError(profileUpdate.error.message) };
   }
 
+  const { error: contactError } = await supabase.rpc('ensure_registration_contact_for_user', {
+    p_user_id: user.id,
+  });
+  if (contactError) {
+    console.warn('[first-access:registration-contact-error]', {
+      userIdPresent: Boolean(user.id),
+      message: contactError.message,
+    });
+  }
+
   const completedAt = new Date().toISOString();
   const accountUpdate = await updateCustomerProfileCompat(supabase, user.id, {
     must_change_password: false,

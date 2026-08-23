@@ -411,6 +411,16 @@ async function ensureCustomerProfileForSignedUser(params: {
     };
   }
 
+  const { error: contactError } = await params.supabase.rpc('ensure_registration_contact_for_user', {
+    p_user_id: params.userId,
+  });
+  if (contactError) {
+    console.warn('[auth-profile] Falha ao materializar cadastro global', {
+      userId: params.userId,
+      message: contactError.message,
+    });
+  }
+
   if (missingRequiredFields.length > 0) {
     console.warn('[auth-profile] Perfil incompleto para usuário autenticado', {
       userId: params.userId,
