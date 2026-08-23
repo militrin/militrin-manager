@@ -21,6 +21,19 @@ const benefitSchema = z.object({
   sort_order: z.number().int().default(0),
 });
 
+function translateCategoryError(rawMessage: string) {
+  if (rawMessage.includes("ux_ticket_categories_event_name")) {
+    return "Já existe uma categoria com esse nome neste evento. Escolha outro nome.";
+  }
+  if (rawMessage.includes("ux_ticket_categories_event_slug")) {
+    return "Já existe uma categoria com esse slug neste evento. Ajuste o slug.";
+  }
+  if (rawMessage.includes("ticket_categories_slug_format")) {
+    return "Slug inválido: use apenas letras minúsculas, números e hífens.";
+  }
+  return rawMessage;
+}
+
 export async function createCategoryAction(payload: z.infer<typeof categorySchema>) {
   const parsed = categorySchema.safeParse(payload);
   if (!parsed.success) return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -43,7 +56,7 @@ export async function createCategoryAction(payload: z.infer<typeof categorySchem
     revalidatePath("/inscricoes/nova");
     return { success: true, message: "Categoria criada com sucesso." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao criar categoria." };
+    return { success: false, message: error instanceof Error ? translateCategoryError(error.message) : "Falha ao criar categoria: erro desconhecido." };
   }
 }
 
@@ -70,7 +83,7 @@ export async function updateCategoryAction(payload: z.infer<typeof categorySchem
     revalidatePath("/inscricoes/nova");
     return { success: true, message: "Categoria atualizada com sucesso." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao atualizar categoria." };
+    return { success: false, message: error instanceof Error ? translateCategoryError(error.message) : "Falha ao atualizar categoria: erro desconhecido." };
   }
 }
 

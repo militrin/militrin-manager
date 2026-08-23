@@ -86,7 +86,8 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
 
   const notesRequired = reason === "other";
   const shirtSizesForType = shirtOptions.find((option) => option.type === shirtType)?.sizes ?? [];
-  const canSubmit = contactLookup.status === "found" && eventId && categoryId && batchId && (!notesRequired || notes.trim()) && (!hasShirts || (shirtType && shirtSize));
+  const hasCategories = categories.length > 0;
+  const canSubmit = contactLookup.status === "found" && eventId && (!hasCategories || categoryId) && batchId && (!notesRequired || notes.trim()) && (!hasShirts || (shirtType && shirtSize));
 
   function submit(assignHolder = true) {
     setResult(null);
@@ -96,7 +97,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
         pin: pin.trim(),
         registrationContactId,
         eventId,
-        categoryId,
+        categoryId: hasCategories ? categoryId : null,
         batchId,
         quantity: Number(quantity) || 1,
         reason,
@@ -184,10 +185,14 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
 
         <label className="space-y-2">
           <span>Categoria</span>
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!eventId || loadingOptions} className={inputClass}>
-            <option value="">{loadingOptions ? "Carregando..." : eventId ? "Selecione" : "Escolha um evento primeiro"}</option>
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
+          {eventId && !loadingOptions && !hasCategories ? (
+            <div className={`${inputClass} text-slate-300`}>Ingresso único</div>
+          ) : (
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!eventId || loadingOptions} className={inputClass}>
+              <option value="">{loadingOptions ? "Carregando..." : eventId ? "Selecione" : "Escolha um evento primeiro"}</option>
+              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+          )}
         </label>
 
         <label className="space-y-2">

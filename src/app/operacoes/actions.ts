@@ -1822,10 +1822,31 @@ export async function getEventCategoriesAndBatchesAction(eventId: string) {
   ]);
   if (categoriesError) return { success: false as const, message: categoriesError.message };
   if (batchesError) return { success: false as const, message: batchesError.message };
+
+  const hasActiveCategories = (categories ?? []).length > 0;
+  const batchIds = (batches ?? []).map((item) => String(item.id));
+  let categorizedBatchIds = new Set<string>();
+  if (batchIds.length > 0) {
+    const { data: prices, error: pricesError } = await supabase
+      .from("registration_batch_prices")
+      .select("batch_id")
+      .in("batch_id", batchIds);
+    if (pricesError) return { success: false as const, message: pricesError.message };
+    categorizedBatchIds = new Set((prices ?? []).map((item) => String(item.batch_id)));
+  }
+
+  // Modelo adaptativo (mesmo corte usado pelo checkout/RPC de emissao
+  // manual): com categoria ativa, so lotes do fluxo com categoria (que tem
+  // preco em registration_batch_prices) sao opcoes validas; sem categoria
+  // ativa, so lotes de ingresso unico (sem nenhuma linha ali) sao.
+  const filteredBatches = (batches ?? []).filter((item) =>
+    hasActiveCategories === categorizedBatchIds.has(String(item.id)),
+  );
+
   return {
     success: true as const,
     categories: (categories ?? []).map((item) => ({ id: String(item.id), name: String(item.name) })),
-    batches: (batches ?? []).map((item) => ({ id: String(item.id), name: String(item.name) })),
+    batches: filteredBatches.map((item) => ({ id: String(item.id), name: String(item.name) })),
   };
 }
 

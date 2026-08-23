@@ -74,7 +74,7 @@ export async function issueTicketAction(input: {
   pin: string;
   registrationContactId?: string | null;
   eventId: string;
-  categoryId: string;
+  categoryId: string | null;
   batchId: string;
   quantity: number;
   reason: IssueTicketReason;
@@ -89,8 +89,14 @@ export async function issueTicketAction(input: {
   const quantity = Math.min(20, Math.max(1, Number(input.quantity) || 1));
   const normalizedPin = normalizePin(input.pin);
   const hasContactId = Boolean(input.registrationContactId && uuid.test(input.registrationContactId));
-  if ((!hasContactId && !pinPattern.test(normalizedPin)) || !uuid.test(input.eventId) || !uuid.test(input.categoryId) || !uuid.test(input.batchId)) {
-    return { success: false as const, message: "Preencha o PIN do cadastro, evento, categoria e lote corretamente." };
+  const categoryId = input.categoryId && uuid.test(input.categoryId) ? input.categoryId : null;
+  if (
+    (!hasContactId && !pinPattern.test(normalizedPin))
+    || !uuid.test(input.eventId)
+    || !uuid.test(input.batchId)
+    || (input.categoryId && !categoryId)
+  ) {
+    return { success: false as const, message: "Preencha o PIN do cadastro, evento e lote corretamente." };
   }
   if (input.reason === "other" && !input.notes.trim()) {
     return { success: false as const, message: "Descreva o motivo em Observações quando escolher \"Outro motivo\"." };
@@ -127,7 +133,7 @@ export async function issueTicketAction(input: {
   const { data, error } = await supabase.rpc("issue_manual_ticket_batch", {
     p_registration_contact_id: String(contactResult.data.id),
     p_event_id: input.eventId,
-    p_ticket_category_id: input.categoryId,
+    p_ticket_category_id: categoryId,
     p_batch_id: input.batchId,
     p_quantity: quantity,
     p_pricing_gender: input.pricingGender,

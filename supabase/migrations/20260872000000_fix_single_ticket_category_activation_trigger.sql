@@ -1,0 +1,58 @@
+-- ============================================================================
+-- BUG: criar (ou reativar) a PRIMEIRA categoria de um evento que ja tem 2+
+-- lotes de ingresso unico ativos falha com "Falha ao criar categoria." --
+-- na verdade um erro generico escondendo:
+--   duplicate key value violates unique constraint
+--   "ux_registration_batches_single_active_categorized"
+--
+-- CAUSA RAIZ: trg_invalidate_single_ticket_price (20260815006300), disparada
+-- apos INSERT/UPDATE de is_active em ticket_categories, roda:
+--   update registration_batches set flat_price_confirmed=false
+--   where event_id=... and flat_price_confirmed=true;
+-- Isso nasceu no modelo ANTIGO de 1 lote fixo de ingresso unico (obrigar
+-- reconfirmacao humana do preco default ao ativar uma categoria). A
+-- migration 20260865000000 substituiu esse modelo por multiplos lotes de
+-- ingresso unico simultaneamente ativos, todos sempre com
+-- flat_price_confirmed=true -- mas nao atualizou este trigger. Com 2+ lotes
+-- de ingresso unico ativos, o UPDATE acima muda flat_price_confirmed para
+-- false em mais de 1 linha na mesma instrucao; o indice parcial
+-- ux_registration_batches_single_active_categorized (event_id) WHERE
+-- is_active AND NOT flat_price_confirmed -- que usa flat_price_confirmed
+-- como proxy de "isto e um lote do fluxo COM categoria" -- passa a enxergar
+-- 2 lotes "categorizados" no mesmo evento ao mesmo tempo (falso positivo: sao
+-- lotes de ingresso unico apenas de passagem por esse estado) e rejeita a
+-- transacao inteira, incluindo o INSERT em ticket_categories que a disparou.
+-- Com apenas 1 lote de ingresso unico ativo o bug nao aparece (so 1 linha
+-- muda, nada colide) -- por isso passa despercebido em testes com poucos
+-- lotes.
+--
+-- POR QUE REMOVER EM VEZ DE CONSERTAR O UPDATE: a invalidacao em si ja e
+-- redundante no modelo adaptativo atual. get_registration_pricing_preview
+-- (ramo sem categoria, 20260865000000) ja bloqueia estruturalmente qualquer
+-- venda via lote de ingresso unico assim que 1+ categoria fica ativa --
+-- levanta TICKET_CATEGORY_REQUIRED/TICKET_CATEGORY_UNAVAILABLE ANTES de
+-- sequer chamar resolve_single_ticket_batch_for_gender, independente de
+-- flat_price_confirmed. A emissao manual sem categoria (20260871000000)
+-- replica a mesma guarda (rejeita p_ticket_category_id nulo se houver
+-- categoria ativa). E a UI administrativa (Etapa 2/3,
+-- painel/eventos/[id]/page.tsx) so busca/mostra lotes de ingresso unico
+-- quando activeCategoryCount=0 -- com 1+ categoria ativa eles somem da tela
+-- de qualquer forma. Ou seja: nao existe mais nenhum caminho, com o evento
+-- em modo "com categoria", que leia flat_price_confirmed=true de um lote de
+-- ingresso unico e o venda por engano -- a invalidacao nao protege mais nada
+-- que ja nao esteja protegido estruturalmente, so quebra a criacao da
+-- categoria.
+--
+-- TRANSICAO "sem categoria -> com categoria" (efeito desta correcao): criar
+-- a primeira categoria NAO apaga, desativa nem migra os lotes de ingresso
+-- unico existentes -- eles ficam preservados e dormentes (invisiveis no
+-- checkout e na Etapa 3, por causa das guardas acima), e SE o organizador
+-- desativar todas as categorias de novo, eles voltam a ficar vendaveis
+-- automaticamente, exatamente como estavam. Nenhum ingresso ja emitido e
+-- afetado (tickets/order_items historicos nao sao tocados). Nenhum lote fica
+-- orfao, nenhum preco e duplicado, nada em registration_batch_prices e
+-- criado ou alterado por este fix.
+-- ============================================================================
+
+drop trigger if exists trg_invalidate_single_ticket_price on public.ticket_categories;
+drop function if exists public.invalidate_single_ticket_price_on_category_activation();
