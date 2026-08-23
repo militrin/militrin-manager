@@ -1228,22 +1228,33 @@ export async function signUpPublicAccountAction(input: {
 
   if (cpfDigits && isValidCpf(cpfDigits)) {
     // Checa ANTES de criar a conta em auth.users: se o CPF ja pertence a
-    // outra conta, avisa aqui em vez de criar a conta e deixar
-    // ensure_registration_contact_for_user mesclar silenciosamente com o
-    // registration_contact da outra conta (ver find_conflicting_registration_contact,
-    // 20260873000000 — mesma organizacao default que a materializacao usa).
+    // outra conta, bloqueia aqui e NUNCA chama auth.signUp. Fail-closed: se
+    // a propria checagem falhar (RPC indisponivel, erro de rede, etc.), NAO
+    // seguimos como se estivesse tudo certo -- um erro de leitura nao pode
+    // virar permissao silenciosa pra criar conta com CPF duplicado (foi
+    // exatamente esse "fail open" que deixou passar o bug real de producao:
+    // a RPC estava com um erro de SQL sempre presente e o `if (!conflictError)`
+    // fazia a checagem inteira ser pulada, nunca bloqueando nada).
     const { data: conflictData, error: conflictError } = await supabase.rpc('find_conflicting_registration_contact', {
       p_cpf: cpfDigits,
     });
-    if (!conflictError) {
-      const conflict = Array.isArray(conflictData) ? conflictData[0] : conflictData;
-      if (conflict?.has_conflict) {
-        return {
-          success: false,
-          code: 'CPF_ALREADY_LINKED_TO_ANOTHER_USER',
-          message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
-        };
-      }
+    if (conflictError) {
+      console.error('[signUpPublicAccountAction] find_conflicting_registration_contact falhou', {
+        message: conflictError.message,
+        code: conflictError.code ?? null,
+      });
+      return {
+        success: false,
+        message: 'Não foi possível validar seu CPF agora. Tente novamente em instantes.',
+      };
+    }
+    const conflict = Array.isArray(conflictData) ? conflictData[0] : conflictData;
+    if (conflict?.has_conflict) {
+      return {
+        success: false,
+        code: 'CPF_ALREADY_LINKED_TO_ANOTHER_USER',
+        message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+      };
     }
   }
 
