@@ -98,6 +98,13 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
 
   const kitItems = (ticketKitData ?? kitData ?? []) as Array<Record<string, unknown>>;
   const kitDelivered = kitItems.filter((item) => String(item.status ?? '') === 'delivered').length;
+  const shirtKitItem = kitItems.find((item) => String(item.item_type ?? '') === 'shirt');
+  const shirtVariant = shirtKitItem?.variant_data && typeof shirtKitItem.variant_data === 'object' && !Array.isArray(shirtKitItem.variant_data)
+    ? shirtKitItem.variant_data as Record<string, unknown>
+    : null;
+  const currentShirtType = String(shirtVariant?.shirt_type ?? ticketItem?.shirt_type ?? '').trim();
+  const currentShirtSize = String(shirtVariant?.shirt_size ?? ticketItem?.shirt_size ?? '').trim();
+  const currentShirtKey = currentShirtType && currentShirtSize ? `${currentShirtType}|${currentShirtSize}` : '';
 
   const timelineItems = [
     {
@@ -163,7 +170,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
     .slice(0, 20);
 
   const shirtOptions = (inventoryData ?? []).map((item) => {
-    const available = Math.max(0, Number(item.total_quantity ?? 0) - Number(item.reserved_quantity ?? 0) - Number(item.delivered_quantity ?? 0));
+    const available = Math.max(0, Number(item.total_quantity ?? 0) - Number(item.delivered_quantity ?? 0));
     return {
       key: `${String(item.shirt_type)}|${String(item.shirt_size)}`,
       label: `${String(item.shirt_type)} ${String(item.shirt_size)} (${available} disponível)` ,
@@ -172,6 +179,15 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
       available,
     };
   });
+  if (currentShirtKey && !shirtOptions.some((option) => option.key === currentShirtKey)) {
+    shirtOptions.unshift({
+      key: currentShirtKey,
+      label: `${currentShirtType} ${currentShirtSize} (sem estoque)`,
+      shirtType: currentShirtType,
+      shirtSize: currentShirtSize,
+      available: 0,
+    });
+  }
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -218,7 +234,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                 <p><span className="text-slate-400">Categoria:</span> {category?.name ? String(category.name) : '-'}</p>
                 <p><span className="text-slate-400">Lote:</span> {batch?.name ? String(batch.name) : '-'}</p>
                 <p><span className="text-slate-400">Status:</span> <AdminStatusBadge status={mapStatus(String(participant.registration_status ?? 'pending'))} /></p>
-                <p><span className="text-slate-400">Camiseta:</span> {participant.shirt_type} {participant.shirt_size}</p>
+                <p><span className="text-slate-400">Camiseta:</span> {currentShirtKey ? `${currentShirtType} ${currentShirtSize}` : '-'}</p>
                 <p><span className="text-slate-400">Origem:</span> Portal público</p>
               </div>
 
@@ -239,9 +255,9 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
               </div>
 
               {ticket?.id ? <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
-                <select disabled defaultValue={`${participant.shirt_type}|${participant.shirt_size}`} className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm">
+                <select disabled value={currentShirtKey} className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm">
                   {shirtOptions.map((option) => (
-                    <option key={option.key} value={`${option.shirtType}|${option.shirtSize}`} disabled={option.available <= 0 && option.key !== `${participant.shirt_type}|${participant.shirt_size}`}>
+                    <option key={option.key} value={option.key} disabled={option.available <= 0 && option.key !== currentShirtKey}>
                       {option.label}
                     </option>
                   ))}

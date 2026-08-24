@@ -4,7 +4,7 @@ import { SectionCard } from "@/components/dashboard/SectionCard";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ShirtStockTable } from "@/components/mvp/ShirtStockTable";
 import { ShirtEventSelector } from "@/components/mvp/ShirtEventSelector";
-import { buildShirtInventoryVariants } from "@/lib/constants/shirts";
+import { buildShirtInventoryVariants, makeShirtInventoryKey } from "@/lib/constants/shirts";
 import { getCurrentPermissionMap } from "@/lib/admin/permissions";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
@@ -108,27 +108,51 @@ async function getStock(selectedEventId: string | null) {
     } satisfies ShirtsPageData;
   }
 
-  const { data, error } = await supabase
-    .from("shirt_inventory")
-    .select("id, shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity")
-    .eq("event_id", effectiveSelectedEventId);
+  const [{ data, error }, { data: canonicalRows, error: canonicalError }] = await Promise.all([
+    supabase
+      .from("shirt_inventory")
+      .select("id, shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity")
+      .eq("event_id", effectiveSelectedEventId),
+    supabase
+      .from("event_kit_item_variant_inventory")
+      .select("reserved_quantity, delivered_quantity, event_kit_item_variants(name,value)")
+      .eq("event_id", effectiveSelectedEventId),
+  ]);
 
-  if (error) {
+  if (error || canonicalError) {
     const detailed = isDevelopment
-      ? `Falha ao consultar shirt_inventory: ${error.message} (${error.code ?? "sem-codigo"})`
+      ? `Falha ao consultar estoque: ${(error ?? canonicalError)?.message} (${(error ?? canonicalError)?.code ?? "sem-codigo"})`
       : "Não foi possível carregar o estoque.";
     return { events, selectedEventId: effectiveSelectedEventId, selectedEvent: effectiveSelectedEvent, rows: [], errorMessage: detailed } satisfies ShirtsPageData;
   }
 
-  const rows = buildShirtInventoryVariants((data ?? []) as ShirtInventoryRow[]).map((row) => ({
-    id: row.id,
-    shirt_type: row.shirt_type,
-    shirt_size: row.shirt_size,
-    total_quantity: row.total_quantity,
-    reserved_quantity: row.reserved_quantity,
-    delivered_quantity: row.delivered_quantity,
-    available: row.available_quantity,
-  }));
+  const canonicalByVariant = new Map<string, { reserved: number; delivered: number }>();
+  for (const row of (canonicalRows ?? []) as Array<Record<string, unknown>>) {
+    const relation = Array.isArray(row.event_kit_item_variants)
+      ? row.event_kit_item_variants[0]
+      : row.event_kit_item_variants;
+    if (!relation || typeof relation !== "object") continue;
+    const variant = relation as Record<string, unknown>;
+    canonicalByVariant.set(makeShirtInventoryKey(String(variant.name ?? ""), String(variant.value ?? "")), {
+      reserved: Number(row.reserved_quantity ?? 0),
+      delivered: Number(row.delivered_quantity ?? 0),
+    });
+  }
+
+  const rows = buildShirtInventoryVariants((data ?? []) as ShirtInventoryRow[]).map((row) => {
+    const canonical = canonicalByVariant.get(makeShirtInventoryKey(row.shirt_type, row.shirt_size));
+    const reserved = canonical?.reserved ?? row.reserved_quantity;
+    const delivered = canonical?.delivered ?? row.delivered_quantity;
+    return {
+      id: row.id,
+      shirt_type: row.shirt_type,
+      shirt_size: row.shirt_size,
+      total_quantity: row.total_quantity,
+      reserved_quantity: reserved,
+      delivered_quantity: delivered,
+      available: Math.max(row.total_quantity - delivered, 0),
+    };
+  });
 
   return {
     events,
