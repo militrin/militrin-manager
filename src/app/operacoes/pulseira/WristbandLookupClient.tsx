@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import { AppBreadcrumb } from "@/components/navigation/AppBreadcrumb";
 import { QrScanner } from "../components/QrScanner";
-import { lookupWristbandByQrAction } from "../actions";
+import { lookupWristbandByQrAction, searchLinkedWristbandsAction, unlinkWristbandAction } from "../actions";
 
 type LookupResult = Awaited<ReturnType<typeof lookupWristbandByQrAction>>;
+type LinkedWristbandsResult = Awaited<ReturnType<typeof searchLinkedWristbandsAction>>;
+type LinkedWristbandRow = LinkedWristbandsResult extends { rows: infer R } ? R extends Array<infer Item> ? Item : never : never;
 
 function formatDateTime(value: string | null) {
   if (!value) return null;
@@ -17,7 +19,162 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString("pt-BR");
 }
 
-export function WristbandLookupClient() {
+function maskCpf(cpf: string) {
+  const digits = cpf.replace(/\D/g, "");
+  if (digits.length < 5) return "Não informado";
+  return `***.***.***-${digits.slice(-2)}`;
+}
+
+const PAGE_SIZE = 30;
+
+function LinkedWristbandsSection({ events, canUnlink }: { events: Array<{ id: string; name: string }>; canUnlink: boolean }) {
+  const [eventId, setEventId] = useState(events[0]?.id ?? "");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [rows, setRows] = useState<LinkedWristbandRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
+
+  // Reset de pagina ao trocar evento/busca ajustado DURANTE o render (nao num
+  // useEffect) -- e o padrao recomendado pra "resetar estado quando uma prop
+  // muda" (evita o cascading render que useEffect+setState causaria aqui).
+  const [trackedFilters, setTrackedFilters] = useState({ eventId, query });
+  if (trackedFilters.eventId !== eventId || trackedFilters.query !== query) {
+    setTrackedFilters({ eventId, query });
+    setPage(1);
+  }
+
+  useEffect(() => {
+    if (!eventId) return;
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      setLoading(true);
+      void searchLinkedWristbandsAction({ eventId, query, page, pageSize: PAGE_SIZE }).then((response) => {
+        if (cancelled) return;
+        setLoading(false);
+        if (!response.success) {
+          setMessage(response.message ?? "Não foi possível carregar as pulseiras vinculadas.");
+          setRows([]);
+          setTotal(0);
+          return;
+        }
+        setMessage(null);
+        setRows(response.rows);
+        setTotal(response.total);
+      });
+    }, query ? 250 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [eventId, query, page]);
+
+  async function handleUnlink(row: LinkedWristbandRow) {
+    if (!window.confirm(`Desvincular a pulseira ${row.code} de ${row.participant_name}?`)) return;
+    setUnlinkingId(row.wristband_id);
+    const response = await unlinkWristbandAction({ ticket_id: row.ticket_id, reason: "Desvinculada pela lista de pulseiras vinculadas" });
+    setUnlinkingId(null);
+    if (!response.success) {
+      setMessage(response.message ?? "Não foi possível desvincular a pulseira.");
+      return;
+    }
+    setRows((current) => current.filter((item) => item.wristband_id !== row.wristband_id));
+    setTotal((current) => Math.max(0, current - 1));
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <SectionCard title="Pulseiras vinculadas" description="Consulte quem está com pulseira vinculada agora e desvincule diretamente pela lista, se precisar.">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="space-y-1 text-sm">
+          <span className="text-slate-300">Evento</span>
+          <select value={eventId} onChange={(event) => setEventId(event.target.value)} className="h-10 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm">
+            {events.map((event) => (
+              <option key={event.id} value={event.id}>{event.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="min-w-0 flex-1 space-y-1 text-sm">
+          <span className="text-slate-300">Pesquisar por nome, CPF, PIN ou pulseira</span>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Pesquisar por nome, CPF ou pulseira..."
+            className="h-10 w-full max-w-md rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
+          />
+        </label>
+      </div>
+
+      {message ? <p className="mt-3 text-sm text-rose-300" role="alert">{message}</p> : null}
+
+      <div className="mt-4">
+        {loading ? (
+          <p className="py-6 text-center text-sm text-slate-400">Carregando...</p>
+        ) : rows.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-slate-700 py-8 text-center text-sm text-slate-400">
+            {eventId ? "Nenhuma pulseira vinculada encontrada." : "Selecione um evento."}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((row) => (
+              <div key={row.wristband_id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-100">{row.participant_name}</p>
+                    <p className="text-xs text-slate-400">
+                      {maskCpf(row.participant_cpf)} · Pulseira {row.code} · Ingresso {row.ticket_reference}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Comprador: {row.buyer_name}
+                      {row.registration_contact_pin ? ` · PIN ${row.registration_contact_pin}` : ""}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {row.checkin_done ? "Check-in realizado" : "Check-in pendente"}
+                      {row.linked_at ? ` · vinculada em ${formatDateTime(row.linked_at)}` : ""}
+                      {row.linked_by_name ? ` · por ${row.linked_by_name}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Link href={`/ingressos/${row.ticket_id}`} className="inline-flex h-8 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
+                      Abrir ingresso
+                    </Link>
+                    {canUnlink ? (
+                      <button
+                        type="button"
+                        disabled={unlinkingId === row.wristband_id}
+                        onClick={() => void handleUnlink(row)}
+                        className="inline-flex h-8 items-center rounded-lg border border-rose-500/40 px-2.5 text-xs text-rose-200 disabled:opacity-40"
+                      >
+                        {unlinkingId === row.wristband_id ? "Desvinculando..." : "Desvincular"}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {total > PAGE_SIZE ? (
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <button type="button" disabled={page <= 1} onClick={() => setPage((current) => current - 1)} className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40">
+            Anterior
+          </button>
+          <span className="text-slate-400">Página {page} de {totalPages} · {total} pulseira(s)</span>
+          <button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40">
+            Próxima
+          </button>
+        </div>
+      ) : null}
+    </SectionCard>
+  );
+}
+
+export function WristbandLookupClient({ events, canUnlink }: { events: Array<{ id: string; name: string }>; canUnlink: boolean }) {
   const [result, setResult] = useState<LookupResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
@@ -73,6 +230,8 @@ export function WristbandLookupClient() {
             )}
             {loading ? <p className="mt-3 text-sm text-slate-400">Consultando...</p> : null}
           </SectionCard>
+
+          {events.length > 0 ? <LinkedWristbandsSection events={events} canUnlink={canUnlink} /> : null}
         </div>
       </div>
     </main>

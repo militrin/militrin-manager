@@ -20,7 +20,8 @@ import type {
   WristbandHistoryEntry,
 } from "./types";
 import { REASON_CODES } from "./types";
-import { orderDisplayReference } from "@/lib/display-reference";
+import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
+import { resolveOperatorNames } from "@/lib/admin/operator-names";
 
 type OperationFiltersInput = {
   eventId?: string | null;
@@ -2588,6 +2589,64 @@ export async function lookupWristbandByQrAction(rawValue: string) {
           : "Titular não definido",
       buyer_name: buyerName,
     },
+  };
+}
+
+// Lista "Pulseiras vinculadas" (item 4/5 da auditoria de desvincular pulseira):
+// busca server-side (nunca carrega tudo no client) via search_linked_wristbands
+// (RPC nova, migration 20260884000000). Comprador e operador que vinculou sao
+// resolvidos aqui em TS -- a RPC so devolve os IDs, reaproveitando
+// get_operation_buyers/resolveOperatorNames em vez de duplicar essa logica em SQL.
+export async function searchLinkedWristbandsAction(payload: { eventId: string; query?: string; page?: number; pageSize?: number }) {
+  await assertPermission("wristbands.view");
+  if (!isUuid(payload.eventId)) return { success: false as const, message: "Evento inválido.", rows: [], total: 0 };
+
+  const supabase = await createServerSupabaseClient();
+  const pageSize = Math.min(100, Math.max(1, Number(payload.pageSize ?? 30)));
+  const page = Math.max(1, Number(payload.page ?? 1));
+
+  const { data, error } = await supabase.rpc("search_linked_wristbands", {
+    p_event_id: payload.eventId,
+    p_query: payload.query?.trim() || null,
+    p_limit: pageSize,
+    p_offset: (page - 1) * pageSize,
+  });
+  if (error) return { success: false as const, message: error.message, rows: [], total: 0 };
+
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const total = rows[0]?.total_count ? Number(rows[0].total_count) : 0;
+
+  const buyerUserIds = [...new Set(rows.map((row) => row.order_user_id).filter(Boolean).map(String))];
+  const buyerMap = new Map<string, Record<string, unknown>>();
+  if (buyerUserIds.length) {
+    const { data: buyers } = await supabase.rpc("get_operation_buyers", { p_event_id: payload.eventId });
+    for (const buyer of (buyers ?? []) as Array<Record<string, unknown>>) buyerMap.set(String(buyer.user_id ?? ""), buyer);
+  }
+
+  const operatorIds = [...new Set(rows.map((row) => row.linked_by).filter(Boolean).map(String))];
+  const operatorNames = await resolveOperatorNames(operatorIds);
+
+  return {
+    success: true as const,
+    total,
+    rows: rows.map((row) => {
+      const buyer = row.order_user_id ? buyerMap.get(String(row.order_user_id)) : null;
+      const linkedByName = row.linked_by ? operatorNames.get(String(row.linked_by)) ?? "Operador administrativo" : null;
+      return {
+        wristband_id: String(row.wristband_id ?? ""),
+        ticket_id: String(row.ticket_id ?? ""),
+        code: String(row.code ?? ""),
+        linked_at: row.linked_at ? String(row.linked_at) : null,
+        linked_by_name: linkedByName,
+        ticket_reference: row.order_id ? ticketDisplayReference(row.order_display_number, row.item_position, row.order_number) : "-",
+        participant_name: String(row.participant_full_name ?? "Titular não definido"),
+        participant_cpf: String(row.participant_cpf ?? ""),
+        registration_contact_pin: row.registration_contact_pin ? String(row.registration_contact_pin) : null,
+        buyer_name: buyer?.full_name ? String(buyer.full_name) : row.order_id ? "Comprador não identificado" : "-",
+        event_name: String(row.event_name ?? ""),
+        checkin_done: row.ticket_status === "used" || Boolean(row.used_at),
+      };
+    }),
   };
 }
 
