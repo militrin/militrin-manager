@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { assertPermission } from "@/lib/admin/permissions";
 
 const categorySchema = z.object({
   id: z.string().uuid().optional(),
@@ -35,6 +36,7 @@ function translateCategoryError(rawMessage: string) {
 }
 
 export async function createCategoryAction(payload: z.infer<typeof categorySchema>) {
+  await assertPermission("categories.create");
   const parsed = categorySchema.safeParse(payload);
   if (!parsed.success) return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
@@ -62,6 +64,7 @@ export async function createCategoryAction(payload: z.infer<typeof categorySchem
 }
 
 export async function updateCategoryAction(payload: z.infer<typeof categorySchema>) {
+  await assertPermission("categories.edit");
   const parsed = categorySchema.safeParse(payload);
   if (!parsed.success || !parsed.data.id) return { success: false, message: "Dados inválidos para atualização." };
 
@@ -90,6 +93,7 @@ export async function updateCategoryAction(payload: z.infer<typeof categorySchem
 }
 
 export async function toggleCategoryActiveAction(payload: { id: string; event_id: string; is_active: boolean }) {
+  await assertPermission("categories.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("set_ticket_category_active", {
@@ -110,6 +114,7 @@ export async function toggleCategoryActiveAction(payload: { id: string; event_id
 }
 
 export async function createBenefitAction(payload: z.infer<typeof benefitSchema>) {
+  await assertPermission("categories.edit");
   const parsed = benefitSchema.safeParse(payload);
   if (!parsed.success) return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
@@ -132,6 +137,7 @@ export async function createBenefitAction(payload: z.infer<typeof benefitSchema>
 }
 
 export async function deleteBenefitAction(payload: { id: string }) {
+  await assertPermission("categories.delete");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("delete_ticket_category_benefit", {

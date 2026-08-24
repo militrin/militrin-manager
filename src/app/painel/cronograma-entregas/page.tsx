@@ -3,8 +3,10 @@ import { Sidebar } from '@/components/dashboard/Sidebar';
 import { TopBar } from '@/components/dashboard/TopBar';
 import { SectionCard } from '@/components/dashboard/SectionCard';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { requirePermission } from '@/lib/admin/permissions';
 
 export default async function AdminScheduleIndexPage() {
+  await requirePermission('events.view');
   const supabase = await createServerSupabaseClient();
   const { data: events, error } = await supabase.from('events').select('id,name,starts_at,is_active').order('starts_at', { ascending: false, nullsFirst: false });
   if (error) throw error;

@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { BatchesManager } from "./ui";
 import Link from "next/link";
 import { EventContextSelector } from "@/components/admin/EventContextSelector";
+import { getCurrentPermissionMap } from "@/lib/admin/permissions";
 
 type BatchCategoryRow = {
   id: string;
@@ -98,7 +99,11 @@ async function getBatchesData(eventId: string | null) {
 
 export default async function BatchesPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
   const params = await searchParams;
-  const { activeEvent, events, batches, categories } = await getBatchesData(params.eventId ?? null);
+  const [{ activeEvent, events, batches, categories }, permissions] = await Promise.all([
+    getBatchesData(params.eventId ?? null),
+    getCurrentPermissionMap(["batches.create", "batches.edit", "batches.activate", "batches.delete"]),
+  ]);
+  const canManage = Object.values(permissions).some(Boolean);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -119,7 +124,14 @@ export default async function BatchesPage({ searchParams }: { searchParams: Prom
             {!activeEvent?.id ? (
               <EmptyState title="Nenhum evento ativo" description="Ative um evento para configurar lotes." />
             ) : (
-              <BatchesManager eventId={activeEvent.id} batches={batches} categories={categories} />
+              canManage ? <BatchesManager eventId={activeEvent.id} batches={batches} categories={categories} /> : (
+                <div className="space-y-2">{batches.map((batch) => (
+                  <div key={batch.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
+                    <p className="font-medium text-slate-100">{batch.name || `Lote ${batch.sequence_number}`}</p>
+                    <p className="text-xs text-slate-400">{batch.category_name} · {batch.is_active ? "Ativo" : "Inativo"} · {batch.confirmed_count} confirmado(s)</p>
+                  </div>
+                ))}</div>
+              )
             )}
           </SectionCard>
         </div>

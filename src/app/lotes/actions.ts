@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { assertPermission } from "@/lib/admin/permissions";
 
 const batchSchema = z.object({
   id: z.string().uuid().optional(),
@@ -78,6 +79,7 @@ function parseTimestamp(value: string | null | undefined) {
 }
 
 export async function createBatchAction(payload: BatchPayload): Promise<ActionResult> {
+  await assertPermission("batches.create");
   const parsed = batchSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados invalidos." };
@@ -107,6 +109,7 @@ export async function createBatchAction(payload: BatchPayload): Promise<ActionRe
 }
 
 export async function updateBatchAction(payload: BatchPayload): Promise<ActionResult> {
+  await assertPermission("batches.edit");
   const parsed = batchSchema.safeParse(payload);
   if (!parsed.success || !parsed.data.id) {
     return { success: false, message: "Dados invalidos para atualizacao." };
@@ -137,6 +140,7 @@ export async function updateBatchAction(payload: BatchPayload): Promise<ActionRe
 }
 
 export async function activateBatchAction(payload: { id: string; event_id: string }): Promise<ActionResult> {
+  await assertPermission("batches.activate");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("activate_registration_batch", {
@@ -157,6 +161,7 @@ export async function activateBatchAction(payload: { id: string; event_id: strin
 }
 
 export async function deleteBatchAction(payload: { id: string; event_id: string }): Promise<ActionResult> {
+  await assertPermission("batches.delete");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("delete_registration_batch", {

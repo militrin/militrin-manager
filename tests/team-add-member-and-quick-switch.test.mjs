@@ -76,7 +76,7 @@ test("addTeamMemberAction exige roleId (funcao base obrigatoria) -- diferente do
   const schemaBlock = slice(actions, "const addMemberSchema = z.object({", "});");
   assert.match(schemaBlock, /userId: z\.string\(\)\.uuid\(\)/);
   assert.match(schemaBlock, /roleId: z\.string\(\)\.uuid\(\)/);
-  assert.doesNotMatch(schemaBlock, /nullable/);
+  assert.doesNotMatch(schemaBlock, /roleId:[^\n]*nullable/);
 });
 
 test("addTeamMemberAction bloqueia se o alvo for a propria conta do ator -- 'nao permitir promover a propria conta de forma incoerente'", () => {
@@ -85,12 +85,12 @@ test("addTeamMemberAction bloqueia se o alvo for a propria conta do ator -- 'nao
   assert.match(addFn, /não é possível se adicionar por este fluxo/);
 });
 
-test("addTeamMemberAction reaproveita o RPC canonico existente (upsert_admin_user_access) -- nenhum sistema de permissao paralelo, membro novo sempre ativo e sem overrides", () => {
+test("addTeamMemberAction reaproveita o RPC canonico existente (upsert_admin_user_access) -- nenhum sistema de permissao paralelo, status tem default ativo e sem overrides", () => {
   const addFn = slice(actions, "export async function addTeamMemberAction", null);
   assert.match(addFn, /supabase\.rpc\('upsert_admin_user_access', \{/);
   assert.match(addFn, /p_target_user_id: parsed\.data\.userId/);
   assert.match(addFn, /p_role_id: parsed\.data\.roleId/);
-  assert.match(addFn, /p_is_active: true/);
+  assert.match(addFn, /p_is_active: parsed\.data\.isActive \?\? true/);
   assert.match(addFn, /p_overrides: \[\]/);
   assert.doesNotMatch(addFn, /insert into public\.admin_users|update public\.admin_users/);
 });

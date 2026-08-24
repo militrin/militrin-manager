@@ -69,10 +69,18 @@ export function EventsManager({
   events,
   activeEvents,
   highlights,
+  canCreate,
+  canEdit,
+  canPublish,
+  canArchive,
 }: {
   events: EventRow[];
   activeEvents: { id: string; name: string }[];
   highlights: HighlightRow[];
+  canCreate: boolean;
+  canEdit: boolean;
+  canPublish: boolean;
+  canArchive: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -204,9 +212,9 @@ export function EventsManager({
             <p className="text-sm text-slate-400">{eventCountLabel}</p>
             <p className="text-sm text-slate-400">Eventos ativos: <span className="text-slate-200">{activeEvents.length ? activeEvents.map((event) => event.name).join(", ") : "Nenhum"}</span></p>
           </div>
-          <Link href="/painel/eventos/novo" className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950">
+          {canCreate ? <Link href="/painel/eventos/novo" className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950">
             + Novo evento
-          </Link>
+          </Link> : null}
         </div>
 
         {message ? (
@@ -286,13 +294,13 @@ export function EventsManager({
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              {!item.archived_at ? <Link
+              {!item.archived_at && canEdit ? <Link
                 href={`/painel/eventos/${item.id}?etapa=1`}
                 className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200"
               >
                 Editar
               </Link> : null}
-              {!item.archived_at ? <button
+              {!item.archived_at && canCreate ? <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
@@ -303,7 +311,7 @@ export function EventsManager({
               >
                 Clonar
               </button> : null}
-              {!item.archived_at ? <button
+              {!item.archived_at && canPublish ? <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
@@ -314,7 +322,7 @@ export function EventsManager({
               >
                 {item.is_active ? "Desativar" : "Ativar"}
               </button> : null}
-              {!item.archived_at ? <button
+              {!item.archived_at && canPublish ? <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
@@ -325,8 +333,8 @@ export function EventsManager({
               >
                 {item.registration_enabled ? "Fechar vendas" : "Abrir vendas"}
               </button> : null}
-              {item.archived_at ? <button type="button" onClick={() => restore(item)} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Restaurar</button> : null}
-              <button
+              {item.archived_at && canArchive ? <button type="button" onClick={() => restore(item)} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Restaurar</button> : null}
+              {canArchive && !item.archived_at ? <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
@@ -336,11 +344,11 @@ export function EventsManager({
                 className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200"
               >
                 Arquivar
-              </button>
+              </button> : null}
               <Link href={`/painel/eventos/${item.id}`} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Detalhes</Link>
             </div>
 
-            <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+            {canEdit ? <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">Eventos em destaque</p>
               <div className="mt-2 flex flex-wrap items-end gap-3 text-sm">
                 <label className="flex items-center gap-2 text-slate-300">
@@ -379,7 +387,7 @@ export function EventsManager({
                   Salvar destaque
                 </button>
               </div>
-            </div>
+            </div> : null}
           </div>
           );
         }

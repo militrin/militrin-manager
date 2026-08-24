@@ -28,6 +28,8 @@ type ShirtStockTableProps = {
   eventName: string;
   shirtOrderDeadline: string | null;
   limitShirtSelectionToStock: boolean;
+  canAdjustInventory: boolean;
+  canViewHistory: boolean;
   canLimitSelection: boolean;
   canResetInventory: boolean;
   canClearHistory: boolean;
@@ -56,6 +58,8 @@ export function ShirtStockTable({
   eventName,
   shirtOrderDeadline,
   limitShirtSelectionToStock,
+  canAdjustInventory,
+  canViewHistory,
   canLimitSelection,
   canResetInventory,
   canClearHistory,
@@ -344,7 +348,7 @@ export function ShirtStockTable({
         ) : null}
       </section>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {canAdjustInventory ? <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => openBulkMode("purchase")}
@@ -361,7 +365,7 @@ export function ShirtStockTable({
         >
           Ajustar estoque
         </button>
-      </div>
+      </div> : null}
 
       {bulkMode ? (
         <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
@@ -440,7 +444,7 @@ export function ShirtStockTable({
                             placeholder={bulkMode === "purchase" ? "0" : "+/-0"}
                             className="w-24 rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-1 text-sm text-slate-100 outline-none"
                           />
-                        ) : (
+                        ) : canViewHistory ? (
                           <button
                             type="button"
                             onClick={() => handleOpenHistory(row.id)}
@@ -449,6 +453,8 @@ export function ShirtStockTable({
                           >
                             {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Ver histórico"}
                           </button>
+                        ) : (
+                          <span className="text-xs text-slate-500">Somente leitura</span>
                         )}
                       </td>
                     </tr>

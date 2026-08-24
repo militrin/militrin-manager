@@ -7,7 +7,7 @@ import {
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatCard, AdminStatusBadge } from '@/components/admin';
 import { getAdminAccessContext } from '@/lib/admin/access';
-import { hasPermission } from '@/lib/admin/permissions';
+import { hasPermission, requirePermission } from '@/lib/admin/permissions';
 import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from '@/lib/dashboard/admin-dashboard-data';
 import { summarizeIntegrityReport } from '@/lib/integrity/report';
 import { getIntegrityReportAction } from './integridade/actions';
@@ -25,6 +25,7 @@ type QuickAction = {
 };
 
 export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
+  await requirePermission('dashboard.view');
   const { eventId } = await searchParams;
   const [{ canViewFinancial }, data, canIssue, canManageInventory, canOperateKits, canImport, canViewPeople, canViewFinance, canViewIntegrity] = await Promise.all([
     getAdminAccessContext(),
@@ -72,7 +73,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             actions={<DashboardEventSelector events={data.events} selectedId={selectedId} />}
           />
 
-          {!data.events.length ? <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." /> : <>
+          {!data.organization ? <AdminEmptyState title="Nenhuma organização vinculada à sua conta" description="Fale com um administrador para vincular sua conta a uma organização." /> : !data.events.length ? <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." /> : <>
             {canViewIntegrity ? <AdminSection compact title="Integridade operacional">
               {integrityTotals ? <AdminStatCard
                 compact

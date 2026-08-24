@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatusBadge } from '@/components/admin';
 import { getAdminAccessContext } from '@/lib/admin/access';
-import { hasPermission } from '@/lib/admin/permissions';
+import { hasPermission, requirePermission } from '@/lib/admin/permissions';
 import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from '@/lib/dashboard/admin-dashboard-data';
 
 const metricKeys = new Set<DashboardMetricKey>([
@@ -18,6 +18,7 @@ function money(value: number) {
 }
 
 export default async function DashboardDetailsPage({ searchParams }: { searchParams: Promise<{ metric?: string; eventId?: string }> }) {
+  await requirePermission('dashboard.view');
   const params = await searchParams;
   const key = metricKeys.has(params.metric as DashboardMetricKey) ? params.metric as DashboardMetricKey : 'registrations';
   const { canViewFinancial } = await getAdminAccessContext();

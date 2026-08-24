@@ -120,7 +120,7 @@ export async function addInventoryQuantityAction(payload: {
   quantity: number;
   notes?: string;
 }): Promise<ActionResult> {
-  await assertPermission("inventory.add_order");
+  await assertPermission("inventory.adjust");
 
   const parsed = addInventorySchema.safeParse(payload);
   if (!parsed.success) {
@@ -319,25 +319,6 @@ export async function resetEventShirtInventoryAction(payload: {
         success: false,
         message: `Confirmação inválida. Digite exatamente: ${expectedLabel}`,
       };
-    }
-
-    if (parsed.data.clear_history && process.env.NODE_ENV === "production") {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user?.id) {
-        return { success: false, message: "Sessão expirada. Entre novamente." };
-      }
-
-      const { data: isOwner, error: ownerError } = await supabase.rpc("is_active_owner", {
-        p_user_id: user.id,
-      });
-
-      if (ownerError) throw ownerError;
-      if (!Boolean(isOwner)) {
-        return { success: false, message: "Em produção, apenas Owner pode limpar histórico de estoque." };
-      }
     }
 
     const { data, error } = await supabase.rpc("reset_event_shirt_inventory", {

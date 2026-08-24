@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { assertPermission } from "@/lib/admin/permissions";
 
 const eventSchema = z.object({
   id: z.string().uuid().optional(),
@@ -24,6 +25,7 @@ const eventSchema = z.object({
 });
 
 export async function setEventParticipantItemChangesAction(eventId: string, enabled: boolean) {
+  await assertPermission("events.edit");
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_event_participant_item_changes", {
     p_event_id: eventId,
@@ -40,6 +42,7 @@ export async function updateEventWristbandSettingsAction(payload: {
   requiredForCheckin: boolean;
   requiredForKit: boolean;
 }) {
+  await assertPermission("events.edit");
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_event_wristband_settings", {
     p_event_id: payload.eventId,
@@ -58,6 +61,7 @@ export async function setEventKitItemChangeRulesAction(
   trackInventory: boolean,
   requireStockForChoice?: boolean,
 ) {
+  await assertPermission("events.edit");
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_event_kit_item_change_rules", {
     p_kit_item_id: itemId,
@@ -70,6 +74,7 @@ export async function setEventKitItemChangeRulesAction(
 }
 
 export async function setEventKitItemVariantStockAction(variantId: string, totalQuantity: number) {
+  await assertPermission("inventory.adjust");
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_event_kit_item_variant_stock", { p_variant_id: variantId, p_total_quantity: totalQuantity });
   if (error) return { success: false, message: error.message };
@@ -77,6 +82,7 @@ export async function setEventKitItemVariantStockAction(variantId: string, total
 }
 
 export async function setEventTicketHolderRulesAction(eventId: string, allowHolderChange: boolean, allowTicketTransfer: boolean) {
+  await assertPermission("events.edit");
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_event_ticket_holder_rules", { p_event_id: eventId, p_allow_holder_change: allowHolderChange, p_allow_ticket_transfer: allowTicketTransfer });
   if (error) return { success: false, message: error.message };
@@ -151,6 +157,7 @@ async function revalidateEventsPages() {
 }
 
 export async function setEventHighlightAction(payload: { event_id: string; sort_order: number; is_active?: boolean }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('upsert_event_highlight', {
@@ -168,6 +175,7 @@ export async function setEventHighlightAction(payload: { event_id: string; sort_
 }
 
 export async function removeEventHighlightAction(eventId: string) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('remove_event_highlight', {
@@ -183,6 +191,7 @@ export async function removeEventHighlightAction(eventId: string) {
 }
 
 export async function createEventAction(payload: z.infer<typeof eventSchema>) {
+  await assertPermission("events.create");
   const parsed = eventSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -231,6 +240,7 @@ export async function createEventAction(payload: z.infer<typeof eventSchema>) {
 }
 
 export async function updateEventAction(payload: z.infer<typeof eventSchema>) {
+  await assertPermission("events.edit");
   const parsed = eventSchema.safeParse(payload);
   if (!parsed.success || !parsed.data.id) {
     return { success: false, message: "Dados inválidos para atualizar evento." };
@@ -272,6 +282,7 @@ export async function updateEventAction(payload: z.infer<typeof eventSchema>) {
 }
 
 export async function activateEventAction(eventId: string) {
+  await assertPermission("events.publish");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("set_event_active", { p_event_id: eventId });
@@ -284,6 +295,7 @@ export async function activateEventAction(eventId: string) {
 }
 
 export async function deactivateEventAction(eventId: string) {
+  await assertPermission("events.publish");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('set_event_inactive', { p_event_id: eventId });
@@ -297,6 +309,7 @@ export async function deactivateEventAction(eventId: string) {
 }
 
 export async function setEventRegistrationEnabledAction(eventId: string, enabled: boolean) {
+  await assertPermission("events.publish");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("set_event_registration_enabled", {
@@ -312,6 +325,7 @@ export async function setEventRegistrationEnabledAction(eventId: string, enabled
 }
 
 export async function archiveEventAction(eventId: string) {
+  await assertPermission("events.archive");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("archive_event", { p_event_id: eventId });
@@ -324,6 +338,7 @@ export async function archiveEventAction(eventId: string) {
 }
 
 export async function duplicateEventAction(payload: z.infer<typeof duplicateSchema>) {
+  await assertPermission("events.create");
   const parsed = duplicateSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos para duplicação." };
@@ -370,6 +385,7 @@ export async function duplicateEventAction(payload: z.infer<typeof duplicateSche
 }
 
 export async function upsertEventScheduleAction(payload: z.infer<typeof eventScheduleSchema>) {
+  await assertPermission("events.edit");
   const parsed = eventScheduleSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos para o compromisso.' };
@@ -401,6 +417,7 @@ export async function upsertEventScheduleAction(payload: z.infer<typeof eventSch
 }
 
 export async function restoreEventAction(eventId: string) {
+  await assertPermission("events.archive");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("restore_event", { p_event_id: eventId });
@@ -413,6 +430,7 @@ export async function restoreEventAction(eventId: string) {
 }
 
 export async function deleteEventScheduleAction(id: string, eventId: string) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('delete_event_schedule_item', {
@@ -430,6 +448,7 @@ export async function deleteEventScheduleAction(id: string, eventId: string) {
 }
 
 export async function upsertEventPaymentMethodsAction(payload: z.infer<typeof eventPaymentMethodsSchema>) {
+  await assertPermission("events.edit");
   const parsed = eventPaymentMethodsSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados invalidos para formas de pagamento.' };
@@ -496,6 +515,7 @@ const singleTicketBatchGenderClosedSchema = z.object({
 });
 
 export async function createSingleTicketBatchAction(payload: z.infer<typeof singleTicketBatchCreateSchema>) {
+  await assertPermission("batches.create");
   const parsed = singleTicketBatchCreateSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos do lote.' };
@@ -527,6 +547,7 @@ export async function createSingleTicketBatchAction(payload: z.infer<typeof sing
 }
 
 export async function updateSingleTicketBatchAction(eventId: string, payload: z.infer<typeof singleTicketBatchUpdateSchema>) {
+  await assertPermission("batches.edit");
   const parsed = singleTicketBatchUpdateSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos do lote.' };
@@ -554,6 +575,7 @@ export async function updateSingleTicketBatchAction(eventId: string, payload: z.
 }
 
 export async function setSingleTicketBatchGenderClosedAction(payload: z.infer<typeof singleTicketBatchGenderClosedSchema>) {
+  await assertPermission("batches.activate");
   const parsed = singleTicketBatchGenderClosedSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
@@ -587,6 +609,7 @@ export async function upsertEventAddonsConfigAction(payload: {
   custom_cup_enabled: boolean;
   gifts_enabled: boolean;
 }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('upsert_event_addons_config', {
@@ -612,6 +635,7 @@ export async function upsertBatchAddonsConfigAction(payload: {
   custom_cup_enabled: boolean;
   gifts_enabled: boolean;
 }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('upsert_registration_batch_addons', {
@@ -634,6 +658,7 @@ export async function upsertEventAddonsModelAction(payload: {
   event_id: string;
   apply_to_all_batches: boolean;
 }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('upsert_event_addons_model', {
@@ -657,6 +682,7 @@ export async function upsertEventAddonOptionAction(payload: {
   is_active?: boolean;
   id?: string;
 }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('upsert_event_addon_option', {
@@ -677,6 +703,7 @@ export async function upsertEventAddonOptionAction(payload: {
 }
 
 export async function deleteEventAddonOptionAction(payload: { event_id: string; option_id: string }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('delete_event_addon_option', {
@@ -698,6 +725,7 @@ export async function upsertBatchAddonOptionAction(payload: {
   option_id: string;
   enabled: boolean;
 }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc('upsert_event_batch_addon_option', {
@@ -739,6 +767,7 @@ const kitVariantSchema = z.object({
 });
 
 export async function upsertKitItemAction(payload: z.infer<typeof kitItemSchema>) {
+  await assertPermission("events.edit");
   const parsed = kitItemSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos do item." };
@@ -771,6 +800,7 @@ export async function upsertKitItemAction(payload: z.infer<typeof kitItemSchema>
 }
 
 export async function deleteKitItemAction(payload: { event_id: string; kit_item_id: string }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("delete_event_kit_item", {
@@ -789,6 +819,7 @@ export async function deleteKitItemAction(payload: { event_id: string; kit_item_
 }
 
 export async function upsertKitVariantAction(payload: z.infer<typeof kitVariantSchema>) {
+  await assertPermission("events.edit");
   const parsed = kitVariantSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos da variação." };
@@ -815,6 +846,7 @@ export async function upsertKitVariantAction(payload: z.infer<typeof kitVariantS
 }
 
 export async function deleteKitVariantAction(variantId: string) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("delete_event_kit_item_variant", { p_variant_id: variantId });
@@ -842,6 +874,7 @@ const shirtKitConfigurationSchema = z.object({
 });
 
 export async function saveEventShirtKitConfigurationAction(payload: z.infer<typeof shirtKitConfigurationSchema>) {
+  await assertPermission("events.edit");
   const parsed = shirtKitConfigurationSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false as const, message: parsed.error.issues[0]?.message ?? "Dados inválidos da configuração de camiseta." };
@@ -882,6 +915,7 @@ const attractionSchema = z.object({
 });
 
 export async function upsertEventAttractionAction(payload: z.infer<typeof attractionSchema>) {
+  await assertPermission("events.edit");
   const parsed = attractionSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -911,6 +945,7 @@ export async function upsertEventAttractionAction(payload: z.infer<typeof attrac
 }
 
 export async function deleteEventAttractionAction(payload: { event_id: string; attraction_id: string }) {
+  await assertPermission("events.edit");
   try {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase.rpc("delete_event_attraction", {

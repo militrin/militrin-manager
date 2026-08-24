@@ -4,6 +4,7 @@ import { SectionCard } from "@/components/dashboard/SectionCard";
 import { EmptyState } from "@/components/mvp/EmptyState";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { EventsManager } from "@/app/eventos/ui";
+import { getCurrentPermissionMap, requirePermission } from "@/lib/admin/permissions";
 
 async function getEventsData() {
   const supabase = await createServerSupabaseClient();
@@ -71,7 +72,11 @@ async function getEventsData() {
 }
 
 export default async function AdminEventsPage() {
-  const { activeEvents, events, highlights } = await getEventsData();
+  await requirePermission("events.view");
+  const [{ activeEvents, events, highlights }, permissions] = await Promise.all([
+    getEventsData(),
+    getCurrentPermissionMap(["events.create", "events.edit", "events.publish", "events.archive"]),
+  ]);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -83,7 +88,15 @@ export default async function AdminEventsPage() {
             {events.length === 0 ? (
               <EmptyState title="Nenhum evento cadastrado" description="Crie o primeiro evento para iniciar a gestão." />
             ) : null}
-            <EventsManager events={events} activeEvents={activeEvents} highlights={highlights} />
+            <EventsManager
+              events={events}
+              activeEvents={activeEvents}
+              highlights={highlights}
+              canCreate={Boolean(permissions["events.create"])}
+              canEdit={Boolean(permissions["events.edit"])}
+              canPublish={Boolean(permissions["events.publish"])}
+              canArchive={Boolean(permissions["events.archive"])}
+            />
           </SectionCard>
         </div>
       </div>

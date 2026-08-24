@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { CategoriesManager } from "./ui";
 import Link from "next/link";
 import { EventContextSelector } from "@/components/admin/EventContextSelector";
+import { getCurrentPermissionMap } from "@/lib/admin/permissions";
 
 async function getCategoriesData(eventId: string | null) {
   const supabase = await createServerSupabaseClient();
@@ -76,7 +77,11 @@ async function getCategoriesData(eventId: string | null) {
 
 export default async function CategoriesPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
   const params = await searchParams;
-  const { activeEvent, events, categories, benefits } = await getCategoriesData(params.eventId ?? null);
+  const [{ activeEvent, events, categories, benefits }, permissions] = await Promise.all([
+    getCategoriesData(params.eventId ?? null),
+    getCurrentPermissionMap(["categories.create", "categories.edit", "categories.delete"]),
+  ]);
+  const canManage = Object.values(permissions).some(Boolean);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -97,7 +102,14 @@ export default async function CategoriesPage({ searchParams }: { searchParams: P
             {!activeEvent?.id ? (
               <EmptyState title="Nenhum evento ativo" description="Ative um evento para configurar categorias de acesso." />
             ) : (
-              <CategoriesManager eventId={activeEvent.id} categories={categories} benefits={benefits} />
+              canManage ? <CategoriesManager eventId={activeEvent.id} categories={categories} benefits={benefits} /> : (
+                <div className="space-y-2">{categories.map((category: { id: string; name: string; is_active: boolean; confirmed_count: number }) => (
+                  <div key={category.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
+                    <p className="font-medium text-slate-100">{category.name}</p>
+                    <p className="text-xs text-slate-400">{category.is_active ? "Ativa" : "Inativa"} · {category.confirmed_count} confirmado(s)</p>
+                  </div>
+                ))}</div>
+              )
             )}
           </SectionCard>
         </div>

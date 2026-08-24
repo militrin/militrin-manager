@@ -13,6 +13,7 @@ import { EventSummaryCard } from "./event-summary-card";
 import { BuyerPresentationPreview } from "./buyer-presentation-preview";
 import { EventHelpCard, EventResumeCard } from "./event-sidebar-cards";
 import { resolveTicketPresentationMode, isCategoryConfigurationIncomplete } from "@/lib/checkout/ticket-presentation";
+import { requirePermission } from "@/lib/admin/permissions";
 import { EventAddonsManager } from "./addons-manager";
 import { EventPaymentMethodsManager } from "./payment-methods-manager";
 import { ItemChangeRules } from "./item-change-rules";
@@ -46,6 +47,7 @@ type BatchCategoryRow = {
 };
 
 export default async function AdminEventDetailsPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
+  await requirePermission("events.view");
   const { id } = await params;
   const resolvedSearchParams = await searchParams;
   const supabase = await createServerSupabaseClient();

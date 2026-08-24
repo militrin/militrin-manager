@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { assertPermission } from "@/lib/admin/permissions";
 
 const couponSchema = z
   .object({
@@ -44,6 +45,7 @@ function parseTimestamp(value: string | null | undefined) {
 }
 
 export async function createCouponAction(payload: CouponPayload): Promise<ActionResult> {
+  await assertPermission("coupons.create");
   const parsed = couponSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -71,6 +73,7 @@ export async function createCouponAction(payload: CouponPayload): Promise<Action
 }
 
 export async function updateCouponAction(payload: CouponPayload): Promise<ActionResult> {
+  await assertPermission("coupons.edit");
   const parsed = couponSchema.safeParse(payload);
   if (!parsed.success || !parsed.data.id) {
     return { success: false, message: parsed.success ? "Dados inválidos para atualização." : parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -98,6 +101,7 @@ export async function updateCouponAction(payload: CouponPayload): Promise<Action
 }
 
 export async function toggleCouponAction(payload: { id: string; is_active: boolean }): Promise<ActionResult> {
+  await assertPermission("coupons.disable");
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("set_coupon_active", { p_coupon_id: payload.id, p_is_active: payload.is_active });
   if (error) return { success: false, message: error.message };
@@ -106,6 +110,7 @@ export async function toggleCouponAction(payload: { id: string; is_active: boole
 }
 
 export async function deleteOrArchiveCouponAction(couponId: string): Promise<ActionResult & { action?: "deleted" | "archived" }> {
+  await assertPermission("coupons.disable");
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("delete_or_archive_coupon", { p_coupon_id: couponId });
   if (error) return { success: false, message: error.message };
@@ -119,6 +124,7 @@ export async function deleteOrArchiveCouponAction(couponId: string): Promise<Act
 }
 
 export async function getCouponScopeOptionsAction(organizationId: string) {
+  await assertPermission("coupons.view");
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_organization_coupon_scope_options", { p_organization_id: organizationId });
   if (error) return { success: false as const, message: error.message };
@@ -126,6 +132,7 @@ export async function getCouponScopeOptionsAction(organizationId: string) {
 }
 
 export async function getCouponDetailsAction(couponId: string) {
+  await assertPermission("coupons.view");
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_organization_coupon_details", { p_coupon_id: couponId });
   if (error) return { success: false as const, message: error.message };

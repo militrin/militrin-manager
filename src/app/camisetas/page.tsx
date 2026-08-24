@@ -144,6 +144,8 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
   const selectedEventId = typeof resolvedSearchParams.eventId === "string" ? resolvedSearchParams.eventId : null;
   const { events, selectedEventId: resolvedEventId, selectedEvent, rows, errorMessage } = await getStock(selectedEventId);
   const permissionMap = await getCurrentPermissionMap([
+    "inventory.adjust",
+    "inventory.view_history",
     "inventory.limit_selection",
     "inventory.reset",
     "inventory.clear_history",
@@ -174,6 +176,8 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
                 eventName={selectedEventLabel}
                 shirtOrderDeadline={selectedEvent?.shirt_order_deadline ?? null}
                 limitShirtSelectionToStock={Boolean(selectedEvent?.limit_shirt_selection_to_stock)}
+                canAdjustInventory={Boolean(permissionMap["inventory.adjust"])}
+                canViewHistory={Boolean(permissionMap["inventory.view_history"])}
                 canLimitSelection={Boolean(permissionMap["inventory.limit_selection"])}
                 canResetInventory={Boolean(permissionMap["inventory.reset"])}
                 canClearHistory={Boolean(permissionMap["inventory.clear_history"])}

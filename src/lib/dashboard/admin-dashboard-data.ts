@@ -29,7 +29,16 @@ function personName(item: Row | null | undefined, participant: Row | null | unde
 export async function loadAdminDashboard(eventId?: string) {
   const supabase = await createServerSupabaseClient();
   const organization = (await getCurrentOrganizationContext()).organization;
-  if (!organization?.id) throw new Error('Organização não selecionada.');
+  // Nunca 500 por falta de organizacao resolvida -- devolve o mesmo formato
+  // "vazio" ja usado quando o evento nao tem dados, pra pagina renderizar o
+  // AdminEmptyState existente em vez de a pagina inteira quebrar. Depois de
+  // 20260877000000 (organization_members materializado junto com
+  // admin_users) isso nao deveria mais acontecer pra ninguem promovido pelo
+  // fluxo canonico -- mas nunca deve ser um throw quando acontecer mesmo
+  // assim (conta promovida antes da migration, ou organizacao removida).
+  if (!organization?.id) {
+    return { organization: null, events: [], selectedEvent: null, metrics: new Map<DashboardMetricKey, DashboardMetric>(), hasData: false };
+  }
   const { data: events, error: eventsError } = await supabase.from('events').select('id,name,is_active,starts_at,kit_enabled')
     .eq('organization_id', organization.id).order('is_active', { ascending: false }).order('starts_at', { ascending: false, nullsFirst: false });
   if (eventsError) throw eventsError;
