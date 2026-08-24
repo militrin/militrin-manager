@@ -8,6 +8,8 @@ import { getCurrentOrganizationContext } from "@/lib/organizations/current-organ
 import { contactTicketRoleLabel, groupContactTickets, rolesForContactTicket } from "@/lib/registrations/contact-tickets";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
+import { AddToTeamButton } from "../add-to-team-button";
+import { InviteAccountButton } from "../invite-account-button";
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -24,14 +26,16 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const organization = (await getCurrentOrganizationContext()).organization;
   if (!organization?.id) notFound();
 
-  const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions] = await Promise.all([
-    supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin").eq("id", id).eq("organization_id", organization.id).maybeSingle(),
+  const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions, canEditTeam, canInviteFirstAccess] = await Promise.all([
+    supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin,user_id").eq("id", id).eq("organization_id", organization.id).maybeSingle(),
     supabase.from("tickets").select("id,token,status,issued_at,used_at,event_id,owner_user_id,participant_id,order_id,order_item_id,events(id,name,starts_at),orders(order_number,status),order_items(participant_id,registration_contact_id,holder_full_name,shirt_type,shirt_size,ticket_categories(name),registration_batches(name)),participants(registration_contact_id,full_name),participant_kit_items(status)").eq("organization_id", organization.id).range(0, 4999),
     supabase.from("participants").select("id,user_id,registration_contact_id,participation_history(source)").eq("registration_contact_id", id).eq("organization_id", organization.id).range(0, 4999),
     supabase.from("events").select("id,name,starts_at").eq("organization_id", organization.id).order("starts_at", { ascending: false }),
     supabase.from("store_orders").select("id,event_id,payment_method,created_at,events(name),store_order_items(id,quantity,status,delivered_at,store_items(name),store_item_variants(name,value))").eq("organization_id", organization.id).eq("registration_contact_id", id).neq("status", "cancelled").order("created_at", { ascending: false }),
     hasPermission("participants.create"),
     Promise.all([hasPermission("store.grant_items"), hasPermission("store.manage")]),
+    hasPermission("team.edit_permissions"),
+    hasPermission("participants.edit_basic"),
   ]);
   if (contactError) throw contactError;
   if (!contact) notFound();
@@ -42,6 +46,25 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const canGrantStoreItems = grantPermissions.some(Boolean);
   const accountIds = Array.from(new Set((linkedParticipants ?? []).flatMap((row) => row.user_id ? [String(row.user_id)] : [])));
   const linkedAccountIds = new Set(accountIds);
+
+  // "Adicionar à equipe" / "Editar acesso da equipe": so quando a Pessoa
+  // (registration_contacts.user_id -- vinculo canonico de conta, nao
+  // participants.user_id, que e por evento) ja tem uma conta. Duas queries
+  // extras so quando fazem sentido, pra nao pagar o custo em toda ficha.
+  const contactUserId = contact.user_id ? String(contact.user_id) : null;
+  let isExistingTeamMember = false;
+  let teamRoleOptions: { id: string; name: string }[] = [];
+  if (contactUserId && canEditTeam) {
+    const [{ data: adminUserRow }, { data: rolesData }] = await Promise.all([
+      supabase.from("admin_users").select("user_id").eq("user_id", contactUserId).maybeSingle(),
+      supabase.rpc("list_admin_roles"),
+    ]);
+    isExistingTeamMember = Boolean(adminUserRow);
+    teamRoleOptions = (rolesData ?? []).map((role: { id: string; name: string }) => ({ id: String(role.id), name: String(role.name) }));
+  }
+  const firstAccessCandidateParticipantId = (linkedParticipants ?? []).find((row) => !row.user_id)?.id
+    ? String((linkedParticipants ?? []).find((row) => !row.user_id)!.id)
+    : null;
 
   const tickets = (ticketRows ?? []).flatMap((row) => {
     const orderItem = relation(row.order_items);
@@ -96,9 +119,17 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
     <TopBar title={String(contact.full_name)} subtitle="Ficha global da pessoa" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contact.full_name)}]} backHref="/cadastros" fallbackHref="/cadastros"/>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">Dados globais</h2><p className="mt-1 text-sm text-slate-400">Este cadastro não pertence a um evento.</p></div><div className="flex flex-wrap gap-2"><Link href={`/cadastros/${id}/editar`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar cadastro</Link>{canIssueTicket ? <Link href={`/ingressos/emitir?from=cadastro&contactId=${encodeURIComponent(id)}`} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400">Emitir ingresso</Link> : null}{canGrantStoreItems ? <ContactGrantStoreItemButton contactId={id} events={grantableEvents}/> : null}</div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">Dados globais</h2><p className="mt-1 text-sm text-slate-400">Este cadastro não pertence a um evento.</p></div><div className="flex flex-wrap gap-2"><Link href={`/cadastros/${id}/editar`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar cadastro</Link>{canIssueTicket ? <Link href={`/ingressos/emitir?from=cadastro&contactId=${encodeURIComponent(id)}`} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400">Emitir ingresso</Link> : null}{canGrantStoreItems ? <ContactGrantStoreItemButton contactId={id} events={grantableEvents}/> : null}{contactUserId && canEditTeam ? (isExistingTeamMember ? <Link href={`/painel/configuracoes/equipe/${contactUserId}`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar acesso da equipe</Link> : <AddToTeamButton userId={contactUserId} contactId={id} contactName={String(contact.full_name)} roleOptions={teamRoleOptions}/>) : null}</div></div>
       <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[["Nome",contact.full_name],["CPF",contact.cpf],["Nascimento",contact.birth_date],["Gênero",contact.gender],["Telefone",contact.phone],["E-mail",contact.email],["Cidade",contact.city],["Origem",imported ? "Importação" : "Cadastro global"],["Conta vinculada",accountIds.length ? `${accountIds.length} conta(s)` : "Não vinculada"],["Criado em",contact.created_at ? new Date(String(contact.created_at)).toLocaleString("pt-BR") : null]].map(([label,value]) => <div key={String(label)}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words">{valueOrFallback(value)}</dd></div>)}</dl>
       <div className="mt-4"><CopyableId label="PIN do cadastro" value={contact.public_pin ? String(contact.public_pin) : null}/></div>
+      {!contactUserId ? (
+        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+          <p className="text-sm text-slate-300">Esta pessoa ainda não possui uma conta vinculada.</p>
+          {firstAccessCandidateParticipantId && canInviteFirstAccess ? (
+            <div className="mt-3"><InviteAccountButton participantId={firstAccessCandidateParticipantId}/></div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
       <h2 className="text-lg font-semibold">Itens adicionais</h2><p className="text-sm text-slate-400">Produtos vinculados diretamente a este cadastro, separados dos ingressos.</p>

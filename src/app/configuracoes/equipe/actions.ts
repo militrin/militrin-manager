@@ -32,9 +32,28 @@ export async function searchPromotableUsersAction(term: string) {
 const addMemberSchema = z.object({
   userId: z.string().uuid(),
   roleId: z.string().uuid(),
+  isActive: z.boolean().optional(),
+  internalNote: z.string().max(2000).nullable().optional(),
+  reason: z.string().max(500).nullable().optional(),
+  contactId: z.string().uuid().optional(),
 });
 
-export async function addTeamMemberAction(input: { userId: string; roleId: string }) {
+// Unico ponto de escrita de "promover conta existente a membro da equipe" --
+// tanto o modal de Equipe ("+ Adicionar membro") quanto o botao "Adicionar
+// à equipe" na ficha de Cadastros chamam esta MESMA action (nunca uma copia
+// paralela), que por sua vez reusa o RPC canonico upsert_admin_user_access
+// (o mesmo do editor completo de acesso). isActive/internalNote/reason sao
+// opcionais para nao quebrar o caller mais antigo (modal de Equipe, que so
+// pede a funcao base) -- quando omitidos, mantem exatamente o
+// comportamento historico (ativo, sem nota, motivo padrao).
+export async function addTeamMemberAction(input: {
+  userId: string;
+  roleId: string;
+  isActive?: boolean;
+  internalNote?: string | null;
+  reason?: string | null;
+  contactId?: string;
+}) {
   await assertPermission('team.edit_permissions');
 
   const parsed = addMemberSchema.safeParse(input);
@@ -58,15 +77,14 @@ export async function addTeamMemberAction(input: { userId: string; roleId: strin
 
   // Reaproveita o RPC canonico existente (mesmo caminho do editor completo
   // de acesso) -- nenhum sistema de permissao novo, nenhuma segunda logica
-  // de upsert em admin_users. is_active=true e overrides vazios: um membro
-  // novo entra so com a funcao base escolhida, sem excecoes individuais.
+  // de upsert em admin_users.
   const { error } = await supabase.rpc('upsert_admin_user_access', {
     p_target_user_id: parsed.data.userId,
     p_role_id: parsed.data.roleId,
-    p_is_active: true,
-    p_internal_note: null,
+    p_is_active: parsed.data.isActive ?? true,
+    p_internal_note: parsed.data.internalNote ?? null,
     p_overrides: [],
-    p_reason: 'Adicionado via fluxo "Adicionar membro"',
+    p_reason: parsed.data.reason?.trim() || 'Adicionado via fluxo "Adicionar membro"',
   });
 
   if (error) {
@@ -75,6 +93,9 @@ export async function addTeamMemberAction(input: { userId: string; roleId: strin
 
   revalidatePath('/painel/configuracoes/equipe');
   revalidatePath('/configuracoes/equipe');
+  if (parsed.data.contactId) {
+    revalidatePath(`/cadastros/${parsed.data.contactId}`);
+  }
 
   return { success: true, message: 'Membro adicionado com sucesso.' };
 }
