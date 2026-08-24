@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Militrin Manager",
+  title: "Militrin",
   description: "Painel administrativo do Militrin Manager",
 };
 

@@ -43,6 +43,16 @@ export const TICKET_EVENT_TAXONOMY: Record<string, TimelineActionDefinition> = {
   participant_account_invite_claimed: { label: "Primeiro acesso confirmado", description: "O convite de primeiro acesso foi reivindicado pela conta autorizada.", category: "acesso", scopes: accountOnly },
   imported_participant_issue_finalized: { label: "Finalização do cadastro importado", description: "A etapa de resolução das pendências do cadastro importado foi finalizada.", category: "cadastro", scopes: accountOnly, previousKeys: ["previous_status"], nextKeys: ["finalization", "new_status"] },
   ticket_history_exported: { label: "Histórico exportado", description: "O histórico administrativo foi exportado.", category: "comunicacao", scopes: accountOnly },
+  manual_ticket_issued: { label: "Ingresso emitido manualmente", description: "O ingresso foi emitido administrativamente (cortesia, correção ou falha de sistema).", category: "ingresso", scopes: ticketAndAccount },
+  manual_registration_order_created: { label: "Ingresso emitido manualmente", description: "O pedido/ingresso foi criado administrativamente a partir de um cadastro.", category: "ingresso", scopes: ticketAndAccount },
+  combined_kit_delivery_and_checkin: { label: "Kit entregue + check-in", description: "O kit foi entregue e o check-in realizado em uma única operação.", category: "kit", scopes: ticketAndAccount, previousKeys: ["previous_status"], nextKeys: ["new_status"] },
+  ticket_shirt_admin_corrected_after_operation: { label: "Camiseta corrigida", description: "A camiseta foi corrigida administrativamente após entrega ou check-in.", category: "camiseta", scopes: ticketAndAccount, previousKeys: ["previous_variant_id"], nextKeys: ["new_variant_id", "variant_id"] },
+  wristband_linked: { label: "Pulseira vinculada", description: "Uma pulseira foi vinculada ao ingresso.", category: "kit", scopes: ticketAndAccount },
+  wristband_unlinked: { label: "Pulseira desvinculada", description: "A pulseira foi desvinculada do ingresso.", category: "kit", scopes: ticketAndAccount },
+  wristband_blocked: { label: "Pulseira bloqueada", description: "A pulseira foi bloqueada.", category: "kit", scopes: ticketAndAccount },
+  store_order_item_delivered: { label: "Item adicional entregue", description: "Um item adicional (loja) foi entregue.", category: "kit", scopes: ticketAndAccount },
+  store_order_item_delivery_undone: { label: "Entrega de item adicional desfeita", description: "A entrega de um item adicional (loja) foi desfeita.", category: "kit", scopes: ticketAndAccount },
+  store_item_admin_granted: { label: "Item adicional concedido", description: "Um item adicional (loja) foi concedido administrativamente.", category: "kit", scopes: ticketAndAccount },
 };
 
 export function timelineActionDefinition(action: string) {

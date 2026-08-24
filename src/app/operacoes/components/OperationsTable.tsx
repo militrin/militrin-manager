@@ -69,6 +69,8 @@ export function OperationsTable({
   selectedEvent,
   groups,
   items,
+  totalLoadedCount,
+  onClearFilters,
   details,
   expandedId,
   actionId,
@@ -97,6 +99,8 @@ export function OperationsTable({
   selectedEvent: PickupEvent | null;
   groups: PickupListGroup[];
   items: PickupListItem[];
+  totalLoadedCount: number;
+  onClearFilters: () => void;
   details: Record<string, PickupDetails>;
   expandedId: string | null;
   actionId: string | null;
@@ -171,7 +175,23 @@ export function OperationsTable({
           {loading && items.length === 0 ? (
             <div className="p-8 text-center text-slate-400">Carregando ingressos...</div>
           ) : groups.length === 0 ? (
-            <div className="p-8 text-center text-slate-400">Nenhum ingresso encontrado.</div>
+            totalLoadedCount > 0 ? (
+              <div className="flex flex-col items-center gap-3 p-8 text-center text-slate-400">
+                <p>
+                  Este evento tem {totalLoadedCount} ingresso(s), mas nenhum corresponde aos filtros atuais
+                  {" "}(pode ser um filtro salvo de uma sessão anterior).
+                </p>
+                <button
+                  type="button"
+                  onClick={onClearFilters}
+                  className="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-200"
+                >
+                  Limpar filtros
+                </button>
+              </div>
+            ) : (
+              <div className="p-8 text-center text-slate-400">Nenhum ingresso encontrado.</div>
+            )
           ) : (
             groups.map((group) => (
               <div key={group.id} className="border-t border-slate-800 first:border-t-0">

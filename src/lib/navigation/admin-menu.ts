@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  ClipboardList,
   FileText,
   Gift,
   Import,
@@ -76,6 +77,13 @@ export const adminNavGroups: AdminNavGroup[] = [
         permissionAny: ["wristbands.view"],
         requireCapability: (c) => c.hasWristbands,
         landingPriority: 22,
+      },
+      {
+        label: "Relatório de Operações",
+        icon: ClipboardList,
+        href: "/operacoes/relatorio",
+        permissionAny: ["operations.view_report"],
+        landingPriority: 23,
       },
       {
         label: "Cronograma",

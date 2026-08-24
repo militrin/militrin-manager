@@ -7,6 +7,7 @@ import { getTimelineStateLabel, isCanonicalTimelineState } from "@/lib/status-la
 import { applyReportPage, finalizeReportPages, formatReportDateTime, reportIsoDateTime, REPORT_THEME, splitTechnicalIdentifier } from "@/lib/reports/report-theme";
 import { sensitiveActionReasonLabel } from "@/lib/admin/sensitive-action-reasons";
 import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
+import { resolveOperatorNames } from "@/lib/admin/operator-names";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 type Row = Record<string, unknown>;
@@ -181,12 +182,25 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
   const variantIds = [...new Set((auditRows ?? []).flatMap((row) => ["variant_id", "previous_variant_id", "new_variant_id"].map((key) => String((one(row.details) ?? {})[key] ?? ""))).filter(Boolean))];
   const variantRows = variantIds.length ? await loadOptionalTimelineSource("variants", supabase.from("event_kit_item_variants").select("id,name,value").in("id",variantIds), ticketId, warnings) ?? [] : [];
   const variants = new Map(variantRows.map((variant) => [String(variant.id), `${String(variant.name)} / ${String(variant.value)}`]));
-  const operatorNames = new Map<string,string>();
-  const actorIds = [...new Set([...(holderRows ?? []).map((row)=>String(row.actor_user_id ?? "")),...(ownerRows??[]).flatMap((row)=>[row.actor_user_id,row.previous_owner_user_id,row.new_owner_user_id].map((value)=>String(value??""))),...(filters.canViewTechnicalAudit ? (auditRows ?? []).map((row) => String((one(row.details) ?? {}).actor_user_id ?? "")) : [])].filter(Boolean))];
-  if (actorIds.length) {
-    const { data: profiles } = await createServiceRoleSupabaseClient().from("customer_profiles").select("user_id,full_name").in("user_id", actorIds);
-    for (const profile of profiles ?? []) if (profile.full_name) operatorNames.set(profile.user_id, profile.full_name);
-  }
+  // Ator de toda linha com action MAPEADA na taxonomia sempre entra na
+  // resolucao de nome -- antes so entrava se filters.canViewTechnicalAudit
+  // fosse true, entao um admin comum via "Operador administrativo" generico
+  // ate pra acoes normais (check-in, entrega de kit) que ele tem permissao
+  // de ver. O gate de canViewTechnicalAudit continua valendo so pra linhas
+  // SEM definicao na taxonomia (auditoria tecnica, oculta por padrao).
+  const knownAuditActorIds = (auditRows ?? [])
+    .filter((row) => timelineActionDefinition(String(row.action)))
+    .map((row) => String((one(row.details) ?? {}).actor_user_id ?? ""));
+  const technicalAuditActorIds = filters.canViewTechnicalAudit
+    ? (auditRows ?? []).filter((row) => !timelineActionDefinition(String(row.action))).map((row) => String((one(row.details) ?? {}).actor_user_id ?? ""))
+    : [];
+  const actorIds = [...new Set([
+    ...(holderRows ?? []).map((row)=>String(row.actor_user_id ?? "")),
+    ...(ownerRows??[]).flatMap((row)=>[row.actor_user_id,row.previous_owner_user_id,row.new_owner_user_id].map((value)=>String(value??""))),
+    ...knownAuditActorIds,
+    ...technicalAuditActorIds,
+  ].filter(Boolean))];
+  const operatorNames = await resolveOperatorNames(actorIds);
   const holderParticipantIds=[...new Set((holderRows ?? []).flatMap((row)=>[row.previous_participant_id,row.new_participant_id]).filter(Boolean).map(String))];
   const holderNames=new Map<string,string>();
   if(holderParticipantIds.length){
@@ -194,9 +208,26 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
     for(const holderParticipant of holderParticipants ?? []) if(holderParticipant.full_name) holderNames.set(holderParticipant.id,holderParticipant.full_name);
   }
 
+  // "Sistema" so e correto quando a emissao foi mesmo automatica/self-service
+  // (comprador pagou e o ingresso saiu sem intervencao humana). Emissao
+  // administrativa/manual grava manual_ticket_issued ou
+  // manual_registration_order_created em audit_logs com actor_user_id real --
+  // antes esse audit real ficava escondido na secao tecnica e a linha
+  // sintetica abaixo sempre mostrava "Sistema", mesmo com um admin identificado.
+  const ISSUANCE_ACTIONS = new Set([
+    "manual_ticket_issued",
+    "manual_registration_order_created",
+    "confirm_order_and_issue_ticket",
+    "confirm_order_item_and_issue_ticket",
+    "confirm_order_payment_and_issue_tickets",
+    "create_imported_order_and_issue_ticket",
+  ]);
+  const issuanceAuditRow = (auditRows ?? []).find((row) => ISSUANCE_ACTIONS.has(String(row.action)));
+  const issuedOperator = issuanceAuditRow ? operatorFrom(one(issuanceAuditRow.details) ?? {}, null, operatorNames) : "Sistema";
+
   const events: TicketTimelineEvent[] = [];
   const technicalEvents: TicketTimelineEvent[] = [];
-  if (ticket.issued_at) events.push({ id: `issued-${ticketId}`, occurredAt: String(ticket.issued_at), type: "ticket_issued", label: actionLabel("ticket_issued", "Ingresso emitido"), description: "O ingresso foi emitido.", previousState: null, newState: null, operator: "Sistema", reason: null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
+  if (ticket.issued_at) events.push({ id: `issued-${ticketId}`, occurredAt: String(ticket.issued_at), type: "ticket_issued", label: actionLabel("ticket_issued", "Ingresso emitido"), description: "O ingresso foi emitido.", previousState: null, newState: null, operator: issuedOperator, reason: null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
   if (payment?.paid_at ?? order?.confirmed_at) events.push({ id: `paid-${order?.payment_id ?? ticket.order_id}`, occurredAt: String(payment?.paid_at ?? order?.confirmed_at), type: "payment_confirmed", label: "Pagamento confirmado", description: "O pagamento associado foi confirmado.", previousState: "pending", newState: String(payment?.payment_status ?? "paid"), operator: "Sistema", reason: null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
   if (ticket.used_at) events.push({ id: `used-${ticketId}`, occurredAt: String(ticket.used_at), type: "ticket_checkin_entry", label: actionLabel("ticket_checkin_entry", "Check-in realizado"), description: "O ingresso foi utilizado no check-in.", previousState: "active", newState: "used", operator: "Sistema", reason: null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
   if (ticket.cancelled_at) events.push({ id: `cancelled-${ticketId}`, occurredAt: String(ticket.cancelled_at), type: "admin_ticket_cancelled", label: actionLabel("admin_ticket_cancelled", "Ingresso cancelado"), description: "O ingresso foi cancelado administrativamente.", previousState: "active", newState: "cancelled", operator: "Sistema", reason: null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });

@@ -15,6 +15,7 @@ type OperationsFiltersProps = {
   summary: {
     totalGroups: number;
     totalTickets: number;
+    totalEventTickets: number;
     pending: number;
     completed: number;
   };
@@ -181,7 +182,11 @@ export function OperationsFilters({
           </button>
 
           <div className="text-xs text-slate-400">
-            {summary.totalGroups} compras/inscrições exibidas • {summary.totalTickets} ingressos totais • {summary.pending} pendentes • {summary.completed} concluídos
+            {summary.totalGroups} compras/inscrições exibidas •{" "}
+            {summary.totalTickets === summary.totalEventTickets
+              ? `${summary.totalTickets} ingressos totais`
+              : `${summary.totalTickets} de ${summary.totalEventTickets} ingressos do evento (filtros ativos)`}{" "}
+            • {summary.pending} pendentes • {summary.completed} concluídos
           </div>
         </div>
       </div>
@@ -326,8 +331,19 @@ export function OperationsFilters({
             </label>
           </div>
         </div>
-      ) : activeChips.length > 0 ? (
+      ) : activeChips.length > 0 || filters.search.trim() !== "" ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
+          {filters.search.trim() !== "" ? (
+            <button
+              type="button"
+              onClick={() => onFilterChange("search", "")}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1 text-xs"
+            >
+              <span>Busca: {filters.search}</span>
+              <span className="text-slate-400">×</span>
+            </button>
+          ) : null}
+
           {activeChips.map((chip) => (
             <button
               key={`${chip.key}:${chip.label}`}

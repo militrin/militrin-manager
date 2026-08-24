@@ -9,7 +9,8 @@ export type ReportCategory =
   | "equipe"
   | "loja"
   | "eventos"
-  | "contas";
+  | "contas"
+  | "operacoes";
 
 export type ReportKind = "simplificado" | "detalhado";
 
@@ -36,6 +37,7 @@ export const REPORT_CATEGORY_LABELS: Record<ReportCategory, string> = {
   loja: "Loja",
   eventos: "Eventos / lotes",
   contas: "Contas / convites",
+  operacoes: "Operações",
 };
 
 export const REPORT_CATALOG: ReportDefinition[] = [
@@ -258,5 +260,25 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     permission: "participants.view",
     needsEvent: "optional",
     needsDateRange: true,
+  },
+  {
+    id: "operacoes-historico",
+    label: "Histórico de Operações",
+    category: "operacoes",
+    kind: "detalhado",
+    description: "Log imutável de ações operacionais (kit, check-in, pulseira, camiseta, titular, itens adicionais), com operador e motivo. Reversões geram uma linha nova, nunca reescrevem a anterior.",
+    permission: "operations.view_report",
+    needsEvent: "required",
+    needsDateRange: true,
+  },
+  {
+    id: "operacoes-contingencia",
+    label: "Snapshot de Contingência",
+    category: "operacoes",
+    kind: "simplificado",
+    description: "Estado atual de cada ingresso (titular, comprador, camiseta, kit, check-in, pulseira, itens adicionais) para baixar e usar offline no dia do evento.",
+    permission: "operations.view_report",
+    needsEvent: "required",
+    needsDateRange: false,
   },
 ];

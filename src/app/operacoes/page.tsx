@@ -356,14 +356,20 @@ function KitPickupPageContent() {
     const totalTickets = visibleGroups.reduce((acc, group) => acc + group.tickets.filter((entry) => entry.kind === "ticket").length, 0);
     const completed = visibleItems.filter((item) => item.kind === "ticket" && isConcluded(item, selectedEvent)).length;
     const pending = Math.max(0, totalTickets - completed);
+    // Total carregado do evento ANTES dos filtros locais -- permite o resumo
+    // e o estado vazio distinguirem "evento sem ingresso nenhum" de "filtros
+    // ativos escondendo ingressos que existem" (estado persistido no
+    // localStorage pode fazer os dois parecerem identicos pro operador).
+    const totalEventTickets = items.filter((item) => item.kind === "ticket").length;
 
     return {
       totalGroups,
       totalTickets,
+      totalEventTickets,
       pending,
       completed,
     };
-  }, [visibleGroups, visibleItems, selectedEvent]);
+  }, [visibleGroups, visibleItems, items, selectedEvent]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -527,9 +533,18 @@ function KitPickupPageContent() {
       const loadedEvents = eventsResponse.events as PickupEvent[];
       setEvents(loadedEvents);
 
-      const preferredEvent = filters.eventId
-        ? loadedEvents.find((event) => event.id === filters.eventId) ?? null
-        : null;
+      // Regra: um eventId persistido (localStorage) so e respeitado se ainda
+      // existir na lista atual. Caso contrario -- e sempre no primeiro acesso,
+      // quando filters.eventId comeca vazio -- cai para o evento ativo mais
+      // recente e, na falta de um ativo, para o primeiro da lista (loadedEvents
+      // ja vem ordenado is_active desc, starts_at desc). So mostra "Nenhum
+      // evento encontrado" quando a organizacao realmente nao tem evento algum;
+      // antes, eventId vazio bastava pra cair aqui mesmo com eventos existindo.
+      const preferredEvent =
+        (filters.eventId ? loadedEvents.find((event) => event.id === filters.eventId) : undefined) ??
+        loadedEvents.find((event) => event.is_active) ??
+        loadedEvents[0] ??
+        null;
 
       if (!preferredEvent) {
         setMessage("Nenhum evento encontrado.");
@@ -983,6 +998,8 @@ function KitPickupPageContent() {
                 selectedEvent={selectedEvent}
                 groups={visibleGroups}
                 items={visibleItems}
+                totalLoadedCount={items.length}
+                onClearFilters={handleClearFilters}
                 details={details}
                 expandedId={expandedId}
                 actionId={actionId}

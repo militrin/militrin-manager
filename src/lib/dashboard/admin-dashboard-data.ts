@@ -2,6 +2,7 @@ import 'server-only';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import type { DashboardSection } from '@/lib/dashboard/dashboard-permissions';
+import { makeShirtInventoryKey } from '@/lib/constants/shirts';
 
 export type DashboardMetricKey =
   | 'people' | 'registrations' | 'confirmed' | 'pending' | 'cancelled'
@@ -54,12 +55,22 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const scope = (query: any) => query.in('event_id', eventIds);
   const enabled = new Set(authorizedSections);
   const emptyResult = { data: [], error: null };
-  const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
+  const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,participant_id,registration_contact_id,ownership_status,holder_full_name,shirt_type,shirt_size,final_amount,created_at,registration_contacts(full_name),participants(full_name,registration_contact_id),ticket_categories(name),registration_batches(name),orders(id,status,payment_id)')) : emptyResult,
     enabled.has('operations') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
     enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,created_at,paid_at,participants(full_name)')) : emptyResult,
+    // total_quantity (estoque fisico) continua vindo da tela historica de
+    // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
+    // o snapshot legado, nao mantido pelo fluxo ticket-first (ver reconciliacao
+    // com event_kit_item_variant_inventory logo abaixo).
     enabled.has('inventory') ? scope(supabase.from('shirt_inventory').select('id,event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity')) : emptyResult,
+    // Fonte canonica de demanda/entrega: derivada de participant_kit_items via
+    // account_ticket_shirt_demand e do fluxo operacional de entrega (Central de
+    // Operacoes), nunca de shirt_inventory. Mesmo padrao ja usado e validado em
+    // /camisetas (src/app/camisetas/page.tsx) -- reaproveitado aqui em vez de
+    // inventar uma segunda forma de reconciliar as duas tabelas.
+    enabled.has('inventory') ? scope(supabase.from('event_kit_item_variant_inventory').select('event_id,reserved_quantity,delivered_quantity,event_kit_item_variants(id,name,value)')) : emptyResult,
     enabled.has('operations') || enabled.has('inventory') ? scope(supabase.from('participant_kit_items').select('id,event_id,ticket_id,order_item_id,kit_item_id,status,quantity,variant_data,delivered_at')) : emptyResult,
     enabled.has('operations') ? scope(supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant')) : emptyResult,
     // Compatibilidade com o baseline remoto: as pendencias antigas sao ligadas
@@ -68,10 +79,44 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participant_data_issues').select('id,event_id,participant_id,field_code,message,status,resolution_scope').eq('status', 'open')) : emptyResult,
     enabled.has('inventory') ? scope(supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')) : emptyResult,
   ]);
-  for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult]) if (result.error) throw result.error;
+  for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult]) if (result.error) throw result.error;
   const participants = (participantsResult.data ?? []) as Row[]; const items = (itemsResult.data ?? []) as Row[]; const tickets = (ticketsResult.data ?? []) as Row[];
-  const payments = (paymentsResult.data ?? []) as Row[]; const inventory = (inventoryResult.data ?? []) as Row[]; const kits = (kitsResult.data ?? []) as Row[];
+  const payments = (paymentsResult.data ?? []) as Row[]; const rawInventory = (inventoryResult.data ?? []) as Row[]; const kits = (kitsResult.data ?? []) as Row[];
   const kitDefinitions = (kitDefinitionsResult.data ?? []) as Row[]; const issues = (issuesResult.data ?? []) as Row[]; const movements = (movementsResult.data ?? []) as Row[];
+
+  // Reconcilia reserved_quantity/delivered_quantity com a fonte canonica por
+  // variante+evento. shirt_inventory.total_quantity segue confiavel (espelhado
+  // por trigger a partir da tela historica de estoque fisico); reserved/delivered
+  // dessa mesma tabela sao um snapshot legado que o fluxo ticket-first (compra
+  // administrativa, cortesia, entrega/desfazer entrega operacional) nao
+  // mantem mais -- por isso divergem silenciosamente da demanda real dos
+  // ingressos. Quando nao ha linha canonica ainda (evento sem kit de camiseta
+  // configurado), mantem o valor legado em vez de zerar.
+  const canonicalByVariant = new Map<string, { reserved: number; delivered: number }>();
+  // shirt_inventory.id (linha legada) e event_kit_item_variants.id (variante
+  // canonica referenciada por participant_kit_items.variant_data.variant_id)
+  // sao chaves primarias de tabelas diferentes -- nunca coincidem. inventoryRow()
+  // usava row.id (shirt_inventory) pra cruzar com kit.variant_data.variant_id e
+  // por isso "Ingressos: ..." no detalhe do card ficava sempre vazio; este mapa
+  // resolve o variant_id canonico correto por evento+tipo+tamanho.
+  const variantIdByShirtKey = new Map<string, string>();
+  for (const row of (variantInventoryResult.data ?? []) as Row[]) {
+    const variant = one(row.event_kit_item_variants);
+    if (!variant) continue;
+    const key = `${String(row.event_id)}::${makeShirtInventoryKey(String(variant.name ?? ''), String(variant.value ?? ''))}`;
+    canonicalByVariant.set(key, { reserved: Number(row.reserved_quantity ?? 0), delivered: Number(row.delivered_quantity ?? 0) });
+    if (variant.id) variantIdByShirtKey.set(key, String(variant.id));
+  }
+  const inventory: Row[] = rawInventory.map((row) => {
+    const key = `${String(row.event_id)}::${makeShirtInventoryKey(String(row.shirt_type ?? ''), String(row.shirt_size ?? ''))}`;
+    const canonical = canonicalByVariant.get(key);
+    const variantId = variantIdByShirtKey.get(key);
+    return {
+      ...row,
+      ...(canonical ? { reserved_quantity: canonical.reserved, delivered_quantity: canonical.delivered } : {}),
+      canonical_variant_id: variantId ?? null,
+    } as Row;
+  });
   const participantById = new Map(participants.map((row) => [String(row.id), row as Row]));
   const itemById = new Map(items.map((row) => [String(row.id), row as Row]));
   const ticketByItem = new Map(tickets.filter((row) => row.order_item_id).map((row) => [String(row.order_item_id), row as Row]));
@@ -123,8 +168,10 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     secondary: String(payment.payment_method ?? 'Não informado'), status: String(payment.payment_status), value: Number(payment.final_amount ?? 0),
     href: `/financeiro?tab=sales&status=${payment.payment_method === 'courtesy' ? 'courtesy' : payment.payment_status}&eventId=${payment.event_id}`, actionLabel: 'Ver pagamento' });
   const inventoryRow = (row: Row, status: string, value: number): DashboardDetailRow => {
-    const linkedTickets = kits.filter((kit) => String(kit.variant_data?.variant_id ?? '') === String(row.id) && kit.status !== 'cancelled' && kit.ticket_id)
-      .map((kit) => `#${String(kit.ticket_id).slice(0, 8).toUpperCase()}`);
+    const linkedTickets = row.canonical_variant_id
+      ? kits.filter((kit) => String(kit.variant_data?.variant_id ?? '') === String(row.canonical_variant_id) && kit.status !== 'cancelled' && kit.ticket_id)
+        .map((kit) => `#${String(kit.ticket_id).slice(0, 8).toUpperCase()}`)
+      : [];
     return { id: String(row.id), primary: `${row.shirt_type} ${row.shirt_size}`,
       secondary: `Recebidas ${row.total_quantity} · Reservadas ${row.reserved_quantity} · Entregues ${row.delivered_quantity}`,
       status, value, issue: linkedTickets.length ? `Ingressos: ${linkedTickets.join(', ')}` : undefined,

@@ -10,6 +10,7 @@ import { equipeRanking, equipeAuditoria } from "./queries/equipe";
 import { lojaFaturamento, lojaPedidos } from "./queries/loja";
 import { eventosOcupacao, eventosLotesHistorico } from "./queries/eventos";
 import { contasConversao, contasConvites } from "./queries/contas";
+import { operacoesHistorico, operacoesContingencia } from "./queries/operacoes";
 
 type ReportQueryFn = (supabase: ReportSupabaseClient, ctx: ReportQueryContext) => Promise<ReportResult>;
 
@@ -36,4 +37,6 @@ export const REPORT_REGISTRY: Record<string, ReportQueryFn> = {
   "eventos-lotes-historico": eventosLotesHistorico,
   "contas-conversao": contasConversao,
   "contas-convites": contasConvites,
+  "operacoes-historico": operacoesHistorico,
+  "operacoes-contingencia": operacoesContingencia,
 };

@@ -10,6 +10,12 @@ type Option = { id: string; name: string };
 
 const inputClass = "h-10 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm";
 
+const DIACRITICS_PATTERN = new RegExp("[\\u0300-\\u036f]", "g");
+
+function normalizeSearch(value: string) {
+  return value.normalize("NFD").replace(DIACRITICS_PATTERN, "").toLowerCase();
+}
+
 export function ReportsExplorer({ catalog, events }: { catalog: ReportDefinition[]; events: Option[] }) {
   const [reportId, setReportId] = useState("");
   const [eventId, setEventId] = useState("");
@@ -17,6 +23,7 @@ export function ReportsExplorer({ catalog, events }: { catalog: ReportDefinition
   const [dateTo, setDateTo] = useState("");
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<ReportResult | null>(null);
+  const [quickSearch, setQuickSearch] = useState("");
 
   const grouped = useMemo(() => {
     const map = new Map<ReportCategory, ReportDefinition[]>();
@@ -34,11 +41,13 @@ export function ReportsExplorer({ catalog, events }: { catalog: ReportDefinition
     setDateFrom("");
     setDateTo("");
     setResult(null);
+    setQuickSearch("");
   }
 
   function generatePreview() {
     if (!selectedReport) return;
     setResult(null);
+    setQuickSearch("");
     startTransition(async () => {
       const response = await getReportPreviewAction(selectedReport.id, {
         eventId: eventId || null,
@@ -49,11 +58,26 @@ export function ReportsExplorer({ catalog, events }: { catalog: ReportDefinition
     });
   }
 
+  // Filtro rapido client-side sobre as linhas ja carregadas -- sem round-trip
+  // ao servidor. Cobre "ação, operador, titular, ingresso, camiseta" num so
+  // campo de texto: todas essas informacoes ja chegam como colunas de texto
+  // no resultado, entao um free-text search cobre o pedido de "busca rapida
+  // no dia do evento" sem precisar de um filtro dedicado por coluna.
+  const normalizedQuickSearch = normalizeSearch(quickSearch.trim());
+  const filteredRows = useMemo(() => {
+    if (!result?.success) return [];
+    if (!normalizedQuickSearch) return result.rows;
+    return result.rows.filter((row) =>
+      Object.values(row).some((value) => value !== null && normalizeSearch(String(value)).includes(normalizedQuickSearch)),
+    );
+  }, [result, normalizedQuickSearch]);
+
   const canGenerate = Boolean(selectedReport) && (selectedReport?.needsEvent !== "required" || Boolean(eventId));
   const exportParams = new URLSearchParams();
   if (eventId) exportParams.set("eventId", eventId);
   if (dateFrom) exportParams.set("dateFrom", dateFrom);
   if (dateTo) exportParams.set("dateTo", dateTo);
+  if (quickSearch.trim()) exportParams.set("q", quickSearch.trim());
   const exportQuery = exportParams.toString();
   const canExport = Boolean(result?.success);
 
@@ -135,6 +159,12 @@ export function ReportsExplorer({ catalog, events }: { catalog: ReportDefinition
                   >
                     Exportar Excel
                   </a>
+                  <a
+                    href={`/api/relatorios/${selectedReport.id}/csv${exportQuery ? `?${exportQuery}` : ""}`}
+                    className="inline-flex h-10 items-center rounded-xl border border-slate-700 px-4 text-sm text-slate-200 hover:border-slate-500"
+                  >
+                    Exportar CSV
+                  </a>
                 </>
               ) : null}
             </div>
@@ -161,7 +191,19 @@ export function ReportsExplorer({ catalog, events }: { catalog: ReportDefinition
                 ))}
               </div>
             ) : null}
-            <ReportDataTable columns={result.columns} rows={result.rows} />
+            <label className="block space-y-1 text-sm">
+              <span className="text-slate-300">Busca rápida (filtra todas as colunas, inclusive na exportação)</span>
+              <input
+                value={quickSearch}
+                onChange={(event) => setQuickSearch(event.target.value)}
+                placeholder="Nome, ação, operador, ingresso, camiseta..."
+                className={`w-full max-w-md ${inputClass}`}
+              />
+            </label>
+            {quickSearch.trim() ? (
+              <p className="text-xs text-slate-400">{filteredRows.length} de {result.rows.length} linha(s) exibida(s)</p>
+            ) : null}
+            <ReportDataTable columns={result.columns} rows={filteredRows} />
           </div>
         </AdminSection>
       ) : null}
