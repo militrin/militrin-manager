@@ -27,10 +27,6 @@ function one<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
-function makePickupQrUrl(orderNumber: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(orderNumber)}`;
-}
-
 export default async function StoreOrderDetailPage({ params }: { params: Promise<{ storeOrderId: string }> }) {
   const { storeOrderId } = await params;
   if (!isUuid(storeOrderId)) notFound();
@@ -78,7 +74,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
         <div className="grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
           <p>Data: {formatDateTimeBR(String(order.created_at), ' às ')}</p>
           <p>Valor final: {money(Number(order.final_amount ?? 0))}</p>
-          <p>Forma de pagamento: {optionalDisplayValue(order.payment_method)}</p>
+          <p>Origem: {order.payment_method === 'admin_courtesy' ? 'Concedido pela organização' : optionalDisplayValue(order.payment_method)}</p>
           <p>Pagamento: {getStatusLabel(paymentStatus)}</p>
         </div>
 
@@ -89,13 +85,16 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
               const storeItem = one(item.store_items as Record<string, unknown> | Record<string, unknown>[] | null);
               const variant = one(item.store_item_variants as Record<string, unknown> | Record<string, unknown>[] | null);
               return (
-                <li key={String(item.id)} className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                <li key={String(item.id)}>
+                  <Link href={`/minha-conta/compras/loja/${order.id}/itens/${item.id}`} className="group block rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 transition hover:border-emerald-500/50">
                   <p>
                     {String(item.quantity)}x {(storeItem as Record<string, unknown> | null)?.name ? String((storeItem as Record<string, unknown>).name) : 'Item'}
                     {variant ? ` — ${(variant as Record<string, unknown>).name}: ${(variant as Record<string, unknown>).value}` : ''}
                     {' — '}{money(Number(item.final_amount ?? 0))}
                   </p>
                   <p className="mt-1 text-xs text-slate-400">Status: {getStatusLabel(String(item.status ?? 'reserved'))}</p>
+                  <p className="mt-2 text-xs font-semibold text-emerald-300">Ver item e QR Code</p>
+                  </Link>
                 </li>
               );
             })}
@@ -120,10 +119,9 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
               <p className="mt-1 text-xs text-emerald-100/80">Mostre este comprovante na retirada dos itens no evento.</p>
             </div>
             <div className="flex flex-col gap-4 border-t border-emerald-500/20 p-4 sm:flex-row sm:items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={makePickupQrUrl(String(order.order_number))} alt="QR Code de retirada" className="h-40 w-40 shrink-0 self-center rounded-xl border border-slate-700 bg-white p-2 sm:self-start" />
               <div className="min-w-0 flex-1">
                 <p className="text-xs uppercase tracking-[0.2em] text-emerald-300/70">Itens a retirar</p>
+                <p className="mt-1 text-xs text-emerald-100/80">Abra cada item para apresentar seu QR Code individual.</p>
                 <ul className="mt-2 space-y-1.5 text-sm text-emerald-50">
                   {items.map((item) => {
                     const storeItem = one(item.store_items as Record<string, unknown> | Record<string, unknown>[] | null);

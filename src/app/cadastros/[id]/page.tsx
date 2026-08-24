@@ -44,7 +44,10 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   if (eventsError) throw eventsError;
   if (additionalItemsError) throw additionalItemsError;
   const canGrantStoreItems = grantPermissions.some(Boolean);
-  const accountIds = Array.from(new Set((linkedParticipants ?? []).flatMap((row) => row.user_id ? [String(row.user_id)] : [])));
+  const accountIds = Array.from(new Set([
+    ...(contact.user_id ? [String(contact.user_id)] : []),
+    ...(linkedParticipants ?? []).flatMap((row) => row.user_id ? [String(row.user_id)] : []),
+  ]));
   const linkedAccountIds = new Set(accountIds);
 
   // "Adicionar à equipe" / "Editar acesso da equipe": so quando a Pessoa
@@ -108,7 +111,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       const product = relation(item.store_items);
       const variant = relation(item.store_item_variants);
       return [{
-        id: String(item.id), eventName: String(event?.name ?? "Evento"), productName: String(product?.name ?? "Item"),
+        id: String(item.id), orderId: String(order.id), eventName: String(event?.name ?? "Evento"), productName: String(product?.name ?? "Item"),
         variantLabel: variant ? [variant.name, variant.value].filter(Boolean).join(" ") : null,
         quantity: Number(item.quantity ?? 1), status: String(item.status ?? "reserved"),
         isCourtesy: paymentMethod === "admin_courtesy",
@@ -133,7 +136,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
       <h2 className="text-lg font-semibold">Itens adicionais</h2><p className="text-sm text-slate-400">Produtos vinculados diretamente a este cadastro, separados dos ingressos.</p>
-      {additionalItems.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum item adicional vinculado.</p> : <div className="mt-5 grid gap-3 sm:grid-cols-2">{additionalItems.map((item) => <article key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.productName}{item.variantLabel ? ` — ${item.variantLabel}` : ""} ×{item.quantity}</p><p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Cortesia" : ""}</p></div><span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{item.status === "delivered" ? "Entregue" : item.status === "confirmed" ? "Pendente" : "Aguardando pagamento"}</span></div></article>)}</div>}
+      {additionalItems.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum item adicional vinculado.</p> : <div className="mt-5 grid gap-3 sm:grid-cols-2">{additionalItems.map((item) => <Link key={item.id} href={`/loja/pedidos/${item.orderId}#item-${item.id}`} className="group rounded-2xl border border-slate-800 bg-slate-950/50 p-4 transition hover:border-emerald-500/60 hover:bg-slate-900"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold group-hover:text-emerald-200">{item.productName}{item.variantLabel ? ` — ${item.variantLabel}` : ""} ×{item.quantity}</p><p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Concedido pela organização" : ""}</p></div><span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{item.status === "delivered" ? "Entregue" : item.status === "confirmed" ? "Pendente" : "Aguardando pagamento"}</span></div><span className="mt-3 inline-flex text-xs font-semibold text-emerald-300">Ver item</span></Link>)}</div>}
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Ingressos</h2><p className="text-sm text-slate-400">{tickets.length} ingresso(s) em {groups.length} evento(s)</p></div></div>
       {groups.length === 0 ? <p className="mt-6 rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Esta pessoa ainda não possui ingressos.</p> : <div className="mt-5 grid gap-5 xl:grid-cols-2">{groups.map((group) => <article key={group.eventId} className="rounded-3xl border border-slate-700/80 bg-slate-950/50 p-4 shadow-lg shadow-black/10"><div className="mb-3 border-b border-slate-800 pb-3"><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Evento</p><h3 className="mt-1 text-lg font-semibold text-emerald-200">{group.eventName}</h3><p className="text-xs text-slate-400">{group.tickets.length} ingresso(s)</p></div><div className="grid gap-2">{group.tickets.map((ticket) => <Link key={ticket.ticketId} href={`/ingressos/${ticket.ticketId}?from=cadastro&contactId=${id}`} className="group rounded-2xl border border-slate-800 bg-slate-900/70 p-4 transition hover:-translate-y-0.5 hover:border-emerald-500/60 hover:bg-slate-900"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold group-hover:text-emerald-200">{ticket.categoryName}</p><p className="mt-0.5 font-mono text-xs text-slate-500">#{ticket.shortCode}</p></div><span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs">{ticket.status}</span></div><p className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-300">{ticket.roleLabel}</p><p className="mt-2 text-sm text-slate-300">Titular: {ticket.holderName}</p><div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">{ticket.kitStatus ? <span>Kit: {ticket.kitStatus}</span> : null}<span>Check-in: {ticket.checkinDone ? "Realizado" : "Pendente"}</span>{ticket.shirt ? <span>{ticket.shirt}</span> : null}</div></Link>)}</div></article>)}</div>}

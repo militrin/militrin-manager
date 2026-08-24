@@ -72,6 +72,13 @@ type BatchPayload = z.infer<typeof batchSchema>;
 
 type ActionResult = { success: boolean; message: string };
 
+function actionErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message || fallback;
+  }
+  return error instanceof Error ? error.message : fallback;
+}
+
 function parseTimestamp(value: string | null | undefined) {
   if (!value) return null;
   const trimmed = value.trim();
@@ -104,7 +111,7 @@ export async function createBatchAction(payload: BatchPayload): Promise<ActionRe
 
     return { success: true, message: "Lote criado com sucesso." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao criar lote." };
+    return { success: false, message: actionErrorMessage(error, "Falha ao criar lote.") };
   }
 }
 
@@ -135,7 +142,7 @@ export async function updateBatchAction(payload: BatchPayload): Promise<ActionRe
 
     return { success: true, message: "Lote atualizado com sucesso." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao atualizar lote." };
+    return { success: false, message: actionErrorMessage(error, "Falha ao atualizar lote.") };
   }
 }
 
@@ -156,7 +163,7 @@ export async function activateBatchAction(payload: { id: string; event_id: strin
 
     return { success: true, message: "Lote ativado." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao ativar lote." };
+    return { success: false, message: actionErrorMessage(error, "Falha ao ativar lote.") };
   }
 }
 
@@ -177,6 +184,6 @@ export async function deleteBatchAction(payload: { id: string; event_id: string 
 
     return { success: true, message: "Lote removido." };
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : "Falha ao remover lote." };
+    return { success: false, message: actionErrorMessage(error, "Falha ao remover lote.") };
   }
 }

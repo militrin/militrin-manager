@@ -61,7 +61,7 @@ function initialForm(categories: CategoryRow[]): FormState {
     name: "",
     starts_at: "",
     ends_at: "",
-    is_active: false,
+    is_active: true,
     pricing_mode: "unisex",
     category_prices: categories.map((category) => ({
       ticket_category_id: category.id,
@@ -302,7 +302,7 @@ export function BatchesManager({
         starts_at: form.starts_at || null,
         ends_at: form.ends_at || null,
         is_active: form.is_active,
-        category_prices: form.category_prices.map((categoryPrice) => {
+        category_prices: form.category_prices.filter((categoryPrice) => categoryPrice.enabled).map((categoryPrice) => {
           const malePrice = Number(categoryPrice.male_price || 0);
           const femalePrice = form.pricing_mode === "unisex"
             ? malePrice

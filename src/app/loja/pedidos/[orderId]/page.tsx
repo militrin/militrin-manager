@@ -167,7 +167,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
           <AdminSection title="Itens" description={`${detail.items.length} item(ns)`}>
             <div className="space-y-3">
               {detail.items.map((item) => (
-                <div key={item.id} className="flex gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                <div id={`item-${item.id}`} key={item.id} className="scroll-mt-6 flex gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
                   {item.image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={item.image_url} alt="" className="h-16 w-16 shrink-0 rounded-xl border border-slate-800 object-cover" />

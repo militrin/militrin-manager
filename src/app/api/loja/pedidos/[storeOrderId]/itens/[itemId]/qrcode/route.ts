@@ -40,12 +40,11 @@ export async function GET(
   if (!user) return new NextResponse("Sessão expirada", { status: 401 });
 
   const [canDeliver, canManage] = await Promise.all([hasPermission("store.deliver"), hasPermission("store.manage")]);
-  if (!canDeliver && !canManage) return new NextResponse("Sem permissão para gerar este QR", { status: 403 });
 
   const { data: item, error } = await supabase
     .from("store_order_items")
     .select(
-      "id, quantity, qr_token, store_order_id, store_items(name), store_item_variants(name, value), store_orders!inner(id, order_number, events(name))",
+      "id, quantity, qr_token, store_order_id, store_items(name), store_item_variants(name, value), store_orders!inner(id, user_id, order_number, events(name))",
     )
     .eq("id", itemId)
     .eq("store_order_id", storeOrderId)
@@ -55,6 +54,9 @@ export async function GET(
   const storeItem = one(item.store_items as Record<string, unknown> | Record<string, unknown>[] | null);
   const variant = one(item.store_item_variants as Record<string, unknown> | Record<string, unknown>[] | null);
   const order = one(item.store_orders as Record<string, unknown> | Record<string, unknown>[] | null);
+  if (order?.user_id !== user.id && !canDeliver && !canManage) {
+    return new NextResponse("Sem permissão para gerar este QR", { status: 403 });
+  }
   const eventObj = one(order?.events as Record<string, unknown> | Record<string, unknown>[] | null);
   const eventName = eventObj?.name ? String(eventObj.name) : "";
   const itemName = storeItem?.name ? String(storeItem.name) : "Item";
@@ -84,7 +86,9 @@ export async function GET(
   return new NextResponse(svg, {
     headers: {
       "Content-Type": "image/svg+xml",
-      "Content-Disposition": `attachment; filename="item-${item.qr_token}.svg"`,
+      "Content-Disposition": new URL(request.url).searchParams.get("inline") === "1"
+        ? "inline"
+        : `attachment; filename="item-${item.qr_token}.svg"`,
       "Cache-Control": "private, no-store",
     },
   });
