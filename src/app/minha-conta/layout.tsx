@@ -12,7 +12,7 @@ import { signOutAccountAction } from '@/app/minha-conta/actions';
 import { PublicPinCopy } from '@/app/minha-conta/public-pin-copy';
 import { getMyPublicPin } from '@/lib/account/public-pin';
 import { MilitrinAvatar } from '@/components/militrin';
-import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
+import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 import { isAdministrativeIssue, isRequiredUserResolvableIssue } from '@/lib/account/participant-issue-policy';
 import { AlertTriangle, LogOut, UsersRound, Trophy, ArrowRight } from 'lucide-react';
 import { StoreCartProvider } from '@/lib/store/cart-context';
@@ -43,7 +43,8 @@ export default async function MinhaContaLayout({ children }: { children: React.R
     redirect('/acesso-negado');
   }
 
-  const isAdministrativeUser = await canAccessAdministrativePanel();
+  const administrativeLandingPage = await resolveAdministrativeLandingPage();
+  const isAdministrativeUser = Boolean(administrativeLandingPage);
   if (flags.firstAccessRequired && !isAdministrativeUser) {
     redirect('/primeiro-acesso?next=/minha-conta');
   }
@@ -107,7 +108,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
             {publicPin ? <PublicPinCopy publicPin={publicPin} /> : null}
           </div>
 
-          <AccountSidebarNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} />
+          <AccountSidebarNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} />
 
           <div className="mt-5">
             <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Futuro</p>
@@ -153,7 +154,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
         </div>
       </div>
 
-      <AccountMobileNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} />
+      <AccountMobileNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} />
     </main>
     </StoreCartProvider>
   );

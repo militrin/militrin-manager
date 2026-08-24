@@ -1,6 +1,7 @@
 import 'server-only';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
+import type { DashboardSection } from '@/lib/dashboard/dashboard-permissions';
 
 export type DashboardMetricKey =
   | 'people' | 'registrations' | 'confirmed' | 'pending' | 'cancelled'
@@ -26,7 +27,7 @@ function personName(item: Row | null | undefined, participant: Row | null | unde
   return String(canonicalContactName ?? canonicalParticipantName ?? 'Titular não definido');
 }
 
-export async function loadAdminDashboard(eventId?: string) {
+export async function loadAdminDashboard(eventId?: string, authorizedSections: DashboardSection[] = ['people', 'operations', 'inventory', 'finance']) {
   const supabase = await createServerSupabaseClient();
   const organization = (await getCurrentOrganizationContext()).organization;
   // Nunca 500 por falta de organizacao resolvida -- devolve o mesmo formato
@@ -51,19 +52,21 @@ export async function loadAdminDashboard(eventId?: string) {
   // simples e permanece centralizado para impedir qualquer consulta sem evento.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scope = (query: any) => query.in('event_id', eventIds);
+  const enabled = new Set(authorizedSections);
+  const emptyResult = { data: [], error: null };
   const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
-    scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')),
-    scope(supabase.from('order_items').select('id,event_id,status,participant_id,registration_contact_id,ownership_status,holder_full_name,shirt_type,shirt_size,final_amount,created_at,registration_contacts(full_name),participants(full_name,registration_contact_id),ticket_categories(name),registration_batches(name),orders(id,status,payment_id)')),
-    scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,shirt_type,shirt_size,ticket_categories(name))')),
-    scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,created_at,paid_at,participants(full_name)')),
-    scope(supabase.from('shirt_inventory').select('id,event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity')),
-    scope(supabase.from('participant_kit_items').select('id,event_id,ticket_id,order_item_id,kit_item_id,status,quantity,variant_data,delivered_at')),
-    scope(supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant')),
+    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,participant_id,registration_contact_id,ownership_status,holder_full_name,shirt_type,shirt_size,final_amount,created_at,registration_contacts(full_name),participants(full_name,registration_contact_id),ticket_categories(name),registration_batches(name),orders(id,status,payment_id)')) : emptyResult,
+    enabled.has('operations') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
+    enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,created_at,paid_at,participants(full_name)')) : emptyResult,
+    enabled.has('inventory') ? scope(supabase.from('shirt_inventory').select('id,event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity')) : emptyResult,
+    enabled.has('operations') || enabled.has('inventory') ? scope(supabase.from('participant_kit_items').select('id,event_id,ticket_id,order_item_id,kit_item_id,status,quantity,variant_data,delivered_at')) : emptyResult,
+    enabled.has('operations') ? scope(supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant')) : emptyResult,
     // Compatibilidade com o baseline remoto: as pendencias antigas sao ligadas
     // ao participant. A migration contact-first adiciona order_item_id/ticket_id,
     // mas o Dashboard nao pode exigir essas colunas antes de ela ser publicada.
-    scope(supabase.from('participant_data_issues').select('id,event_id,participant_id,field_code,message,status,resolution_scope').eq('status', 'open')),
-    scope(supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')),
+    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participant_data_issues').select('id,event_id,participant_id,field_code,message,status,resolution_scope').eq('status', 'open')) : emptyResult,
+    enabled.has('inventory') ? scope(supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')) : emptyResult,
   ]);
   for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult]) if (result.error) throw result.error;
   const participants = (participantsResult.data ?? []) as Row[]; const items = (itemsResult.data ?? []) as Row[]; const tickets = (ticketsResult.data ?? []) as Row[];

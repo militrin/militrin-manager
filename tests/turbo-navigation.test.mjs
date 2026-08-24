@@ -87,18 +87,15 @@ test("Modo Turbo no menu exige as permissoes minimas de operacao Turbo (kits.del
   assert.match(turboItem, /permissionAny:\s*\["kits\.deliver",\s*"checkin\.scan",\s*"store\.deliver"\]/);
 });
 
-test("toda permissao usada em permissionAny do menu e efetivamente consultada por sidebarPermissionCodes -- senao permissionMap[codigo] fica undefined e o item nunca aparece, mesmo pra quem tem a permissao (bug real: kits.deliver/checkin.scan/store.deliver faltavam aqui e o Modo Turbo nunca renderizava)", () => {
-  const codesBlock = slice(sidebarActions, "const sidebarPermissionCodes = [", "];");
-  const declaredCodes = new Set([...codesBlock.matchAll(/'([a-z_]+\.[a-z_]+)'/g)].map((m) => m[1]));
+test("toda permissao usada em permissionAny do menu e derivada pelo contexto da Sidebar", () => {
+  assert.match(sidebarActions, /getCurrentPermissionMap\(ADMIN_NAV_PERMISSION_CODES\)/);
+  assert.match(adminMenu, /ADMIN_NAV_PERMISSION_CODES = Array\.from/);
 
   const usedCodes = new Set([...adminMenu.matchAll(/permissionAny:\s*\[([^\]]+)\]/g)]
     .flatMap((m) => [...m[1].matchAll(/"([a-z_]+\.[a-z_]+)"/g)].map((mm) => mm[1])));
 
-  const missing = [...usedCodes].filter((code) => !declaredCodes.has(code));
-  assert.deepEqual(missing, [], `codigos usados no menu mas nunca consultados em sidebarPermissionCodes: ${missing.join(", ")}`);
-
   for (const code of ["kits.deliver", "checkin.scan", "store.deliver"]) {
-    assert.ok(declaredCodes.has(code), `sidebarPermissionCodes precisa incluir '${code}' pro Modo Turbo aparecer`);
+    assert.ok(usedCodes.has(code), `permissionAny precisa incluir '${code}' pro Modo Turbo aparecer`);
   }
 });
 

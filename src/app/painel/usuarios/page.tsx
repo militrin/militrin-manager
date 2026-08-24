@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatCard } from "@/components/admin";
 import { getAdminAccessContext } from "@/lib/admin/access";
-import { hasPermission } from "@/lib/admin/permissions";
+import { hasPermission, requirePermission } from "@/lib/admin/permissions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type EventRow = { id: string; name: string; starts_at: string | null; organization_id: string };
@@ -38,6 +38,7 @@ async function loadData() {
 }
 
 export default async function UsersDashboardPage({ searchParams }: { searchParams: Promise<Query> }) {
+  await requirePermission('dashboard.people.view');
   const access = await getAdminAccessContext();
   const canViewParticipants = await hasPermission("participants.view");
   if (!access.user || !access.isAdmin || !canViewParticipants) redirect("/acesso-negado");

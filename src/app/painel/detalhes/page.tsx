@@ -2,31 +2,29 @@ import Link from 'next/link';
 import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatusBadge } from '@/components/admin';
-import { getAdminAccessContext } from '@/lib/admin/access';
 import { hasPermission, requirePermission } from '@/lib/admin/permissions';
 import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from '@/lib/dashboard/admin-dashboard-data';
+import { DASHBOARD_METRIC_SECTIONS, DASHBOARD_SECTION_PERMISSIONS } from '@/lib/dashboard/dashboard-permissions';
 
 const metricKeys = new Set<DashboardMetricKey>([
   'people', 'registrations', 'confirmed', 'pending', 'cancelled', 'tickets', 'checkins', 'complete_kits', 'shirt_coherence',
   'shirts_received', 'shirts_reserved', 'shirts_delivered', 'shirts_available', 'shirts_deficit',
   'revenue_confirmed', 'revenue_pending', 'pix', 'card', 'courtesy',
 ]);
-const financial = new Set<DashboardMetricKey>(['revenue_confirmed', 'revenue_pending', 'pix', 'card', 'courtesy']);
-
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
 
 export default async function DashboardDetailsPage({ searchParams }: { searchParams: Promise<{ metric?: string; eventId?: string }> }) {
-  await requirePermission('dashboard.view');
   const params = await searchParams;
   const key = metricKeys.has(params.metric as DashboardMetricKey) ? params.metric as DashboardMetricKey : 'registrations';
-  const { canViewFinancial } = await getAdminAccessContext();
-  const data = await loadAdminDashboard(params.eventId);
+  const section = DASHBOARD_METRIC_SECTIONS[key];
+  await requirePermission(DASHBOARD_SECTION_PERMISSIONS[section]);
+  if (section === 'finance') await requirePermission('finance.view_amounts');
+  const data = await loadAdminDashboard(params.eventId, [section]);
   const metric = data.metrics.get(key);
   const requiredPermissions = [...new Set((metric?.rows ?? []).flatMap((row) => row.requiredPermission ? [row.requiredPermission] : []))];
   const grantedPermissions = new Set((await Promise.all(requiredPermissions.map(async (permission) => [permission, await hasPermission(permission)] as const))).filter(([, granted]) => granted).map(([permission]) => permission));
-  const denied = financial.has(key) && !canViewFinancial;
   const backParams = params.eventId && params.eventId !== 'all' ? `?eventId=${encodeURIComponent(params.eventId)}` : '';
   const isMoney = key === 'revenue_confirmed' || key === 'revenue_pending';
 
@@ -35,7 +33,7 @@ export default async function DashboardDetailsPage({ searchParams }: { searchPar
       <Sidebar />
       <div className="min-w-0 flex-1 space-y-6">
         <AdminPageHeader title={metric?.label ?? 'Detalhes do indicador'} subtitle={`Registros que formam o indicador em ${data.selectedEvent?.name ?? 'todos os eventos'}.`} actions={<Link href={`/painel${backParams}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500"><ArrowLeft className="size-4" />Voltar ao painel</Link>} />
-        {denied ? <AdminEmptyState title="Acesso financeiro restrito" description="Seu perfil não possui permissão para visualizar este indicador." /> : !metric ? <AdminEmptyState title="Indicador indisponível" description="O indicador solicitado não existe para este contexto." /> : <>
+        {!metric ? <AdminEmptyState title="Indicador indisponível" description="O indicador solicitado não existe para este contexto." /> : <>
           <AdminSection title={isMoney ? money(metric.value) : String(metric.value)} description={`${metric.rows.length} registro(s) na composição exata do indicador.`} actions={<AdminStatusBadge status={metric.rows.length ? 'confirmed' : 'pending'} />}>
             {!metric.rows.length ? <AdminEmptyState title="Nenhum registro" description="Não há registros que atendam aos filtros deste indicador." /> : <div className="overflow-hidden rounded-2xl border border-slate-800">
               <div className="overflow-x-auto">

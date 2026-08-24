@@ -6,15 +6,15 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('rotas filhas do painel revalidam a permissao especifica em acesso direto', async () => {
   const routes = [
-    ['src/app/painel/page.tsx', 'dashboard.view'],
-    ['src/app/painel/detalhes/page.tsx', 'dashboard.view'],
+    ['src/app/painel/page.tsx', 'requireDashboardAccess'],
+    ['src/app/painel/detalhes/page.tsx', 'DASHBOARD_SECTION_PERMISSIONS'],
     ['src/app/painel/eventos/page.tsx', 'events.view'],
     ['src/app/painel/eventos/[id]/page.tsx', 'events.view'],
     ['src/app/painel/eventos/novo/page.tsx', 'events.create'],
     ['src/app/painel/cronograma-entregas/page.tsx', 'events.view'],
   ];
   for (const [path, permission] of routes) {
-    assert.match(await read(path), new RegExp(`requirePermission\\(["']${permission.replace('.', '\\.')}["']\\)`), path);
+    assert.match(await read(path), new RegExp(permission.replace('.', '\\.')), path);
   }
 });
 

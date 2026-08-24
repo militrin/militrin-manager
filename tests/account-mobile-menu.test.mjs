@@ -68,23 +68,23 @@ test("MenuSheet da conta contem acesso as funcoes secundarias: ingressos, compra
   assert.match(accountNav, /label: 'Minha categoria - Em breve'/);
 });
 
-test("MenuSheet mostra Painel administrativo/Area do patrocinador reaproveitando os MESMOS booleans (isAdministrativeUser/isSponsorUser) do desktop -- nenhuma segunda logica de permissao", () => {
+test("MenuSheet mostra Painel administrativo/Area do patrocinador reaproveitando o MESMO destino administrativo do desktop", () => {
   assert.match(accountNav, /function AdminAndSponsorShortcuts\(/);
   // AccountSidebarNav (desktop) e AccountMobileNav (mobile, via MenuSheet)
   // usam o MESMO componente de atalhos -- uma unica leitura de
-  // isAdministrativeUser/isSponsorUser, nunca reimplementada duas vezes.
+  // administrativeLandingPage/isSponsorUser, nunca reimplementada duas vezes.
   const sidebarFn = slice(accountNav, "export function AccountSidebarNav", "// ── \"Menu\" mobile");
-  assert.match(sidebarFn, /<AdminAndSponsorShortcuts isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} pathname={pathname} \/>/);
+  assert.match(sidebarFn, /<AdminAndSponsorShortcuts administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} pathname={pathname} \/>/);
   const sheetFn = slice(accountNav, "function MenuSheet(", "function MobileNavLink");
   assert.match(sheetFn, /<AdminAndSponsorShortcuts/);
-  assert.match(sheetFn, /isAdministrativeUser={isAdministrativeUser}/);
+  assert.match(sheetFn, /administrativeLandingPage={administrativeLandingPage}/);
   assert.match(sheetFn, /isSponsorUser={isSponsorUser}/);
 });
 
-test("AccountMobileNav recebe isAdministrativeUser/isSponsorUser como prop (nao recalcula) -- layout.tsx repassa os MESMOS valores usados no desktop", () => {
-  assert.match(accountNav, /export function AccountMobileNav\({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }\)/);
-  assert.match(layout, /<AccountSidebarNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} \/>/);
-  assert.match(layout, /<AccountMobileNav isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} \/>/);
+test("AccountMobileNav recebe o destino administrativo como prop -- layout.tsx repassa o MESMO valor usado no desktop", () => {
+  assert.match(accountNav, /export function AccountMobileNav\({ administrativeLandingPage, isSponsorUser }/);
+  assert.match(layout, /<AccountSidebarNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} \/>/);
+  assert.match(layout, /<AccountMobileNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} \/>/);
 });
 
 test("home da Minha Conta destaca Eventos e Loja perto do topo (cards visuais com CTA), antes da secao 'Seus ingressos'", () => {

@@ -1138,7 +1138,7 @@ test('primeiro acesso carrega e resolve somente o participant indicado pelo conv
 test('primeiro acesso A — admin sem onboarding proprio permanece no painel', async () => {
   const page = await readFile(new URL('../src/app/primeiro-acesso/page.tsx', import.meta.url), 'utf8');
   const accountLayout = await readFile(new URL('../src/app/minha-conta/layout.tsx', import.meta.url), 'utf8');
-  assert.match(page, /canAccessAdministrativePanel\(\)[\s\S]*redirect\('\/painel'\)/);
+  assert.match(page, /resolveAdministrativeLandingPage\(\)[\s\S]*redirect\(administrativeLandingPage\)/);
   assert.match(accountLayout, /flags\.firstAccessRequired && !isAdministrativeUser/);
 });
 
@@ -1303,9 +1303,9 @@ test('portal — politica canonica controla botao e guard administrativo', async
   assert.match(policy, /'dashboard\.view'/);
   assert.match(policy, /'checkin\.view'/);
   assert.match(policy, /'kits\.view'/);
-  assert.match(layout, /canAccessAdministrativePanel\(\)/);
-  assert.match(layout, /AccountSidebarNav isAdministrativeUser=\{isAdministrativeUser\}/);
-  assert.match(navigation, /isAdministrativeUser \? \([\s\S]*Painel administrativo/);
+  assert.match(layout, /resolveAdministrativeLandingPage\(\)/);
+  assert.match(layout, /AccountSidebarNav administrativeLandingPage=\{administrativeLandingPage\}/);
+  assert.match(navigation, /administrativeLandingPage \? \([\s\S]*Painel administrativo/);
   assert.match(painel, /requireAdministrativePanelAccess\(\)/);
   assert.match(policy, /requireAdministrativePanelAccess[\s\S]*canAccessAdministrativePanel\(\)/);
 });
@@ -1329,11 +1329,11 @@ test('portal — botao administrativo existe no desktop (sidebar), no Menu mobil
   const perfilPage = await readFile(new URL('../src/app/minha-conta/dados/page.tsx', import.meta.url), 'utf8');
   assert.match(navigation, /Painel administrativo/);
   assert.match(navigation, /function AdminAndSponsorShortcuts\(/);
-  assert.match(navigation, /href="\/painel"/);
+  assert.match(navigation, /href={administrativeLandingPage}/);
   assert.match(navigation, /export function AccountSidebarNav[\s\S]*<AdminAndSponsorShortcuts/);
   assert.match(navigation, /function MenuSheet\([\s\S]*<AdminAndSponsorShortcuts/);
-  assert.match(perfilPage, /canAccessAdministrativePanel/);
-  assert.match(perfilPage, /href="\/painel"[\s\S]*Painel administrativo/);
+  assert.match(perfilPage, /resolveAdministrativeLandingPage/);
+  assert.match(perfilPage, /href={administrativeLandingPage}[\s\S]*Painel administrativo/);
 });
 
 test('portal — destino pos-login operacional usa a mesma politica', async () => {

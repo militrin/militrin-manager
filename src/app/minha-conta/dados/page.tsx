@@ -13,7 +13,7 @@ import {
 } from '@/lib/account/participant-identity';
 import { sanitizeInternalNextPath } from '@/lib/utils/safe-navigation';
 import { getMyPublicPin } from '@/lib/account/public-pin';
-import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
+import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 
 export default async function DadosPage({
   searchParams,
@@ -29,14 +29,15 @@ export default async function DadosPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [{ data: profileData }, publicPin, isAdministrativeUser, sponsorRow] = await Promise.all([
+  const [{ data: profileData }, publicPin, administrativeLandingPage, sponsorRow] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     getMyPublicPin(user?.id),
-    canAccessAdministrativePanel(),
+    resolveAdministrativeLandingPage(),
     user?.id
       ? supabase.from('sponsors').select('id').eq('user_id', user.id).eq('is_active', true).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
+  const isAdministrativeUser = Boolean(administrativeLandingPage);
   const isSponsorUser = Boolean(sponsorRow.data);
   const profile = (Array.isArray(profileData) ? profileData[0] : profileData) as Record<string, unknown> | null;
   const birthDate = formatISOToDateBR(String(profile?.birth_date ?? ''));
@@ -74,9 +75,9 @@ export default async function DadosPage({
           nunca removidos. */}
       {isAdministrativeUser || isSponsorUser ? (
         <div className="space-y-2 lg:hidden">
-          {isAdministrativeUser ? (
+          {administrativeLandingPage ? (
             <Link
-              href="/painel"
+              href={administrativeLandingPage}
               className="flex items-center justify-between rounded-2xl border border-(--brand-500)/30 bg-(--brand-500)/10 px-4 py-3 text-sm font-semibold text-(--brand-100)"
             >
               <span className="flex items-center gap-3">

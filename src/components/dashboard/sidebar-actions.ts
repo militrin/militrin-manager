@@ -4,35 +4,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentPermissionMap } from '@/lib/admin/permissions';
 import { getOrganizationEventCapabilities, type EventCapabilities } from '@/lib/admin/event-capabilities';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-
-const sidebarPermissionCodes = [
-  'dashboard.view',
-  'participants.view',
-  'participants.create',
-  'orders.view',
-  'events.view',
-  'kits.view',
-  'kits.deliver',
-  'checkin.view',
-  'checkin.scan',
-  'inventory.view',
-  'photos.view_admin',
-  'categories.view',
-  'batches.view',
-  'coupons.view',
-  'finance.view',
-  'reports.view',
-  'imports.view',
-  'settings.manage',
-  'team.view',
-  'wristbands.view',
-  'wristbands.link',
-  'store.view',
-  'store.deliver',
-  'sponsors.view',
-  'feedback.view',
-  'integrity.view',
-];
+import { ADMIN_NAV_PERMISSION_CODES } from '@/lib/navigation/admin-menu';
 
 export type SidebarContext = {
   permissionMap: Record<string, boolean>;
@@ -41,14 +13,14 @@ export type SidebarContext = {
 
 export async function getSidebarContextAction(): Promise<SidebarContext> {
   const [permissionMap, capabilities] = await Promise.all([
-    getCurrentPermissionMap(sidebarPermissionCodes),
+    getCurrentPermissionMap(ADMIN_NAV_PERMISSION_CODES),
     getOrganizationEventCapabilities(),
   ]);
   return { permissionMap, capabilities };
 }
 /** @deprecated use getSidebarContextAction */
 export async function getSidebarPermissionMapAction() {
-  return getCurrentPermissionMap(sidebarPermissionCodes);
+  return getCurrentPermissionMap(ADMIN_NAV_PERMISSION_CODES);
 }
 
 export async function signOutAdministrativePanelAction() {

@@ -84,30 +84,28 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-// Atalhos administrativos/patrocinador: MESMOS booleans (isAdministrativeUser/
-// isSponsorUser), calculados uma unica vez no layout server-side a partir das
-// fontes canonicas (canAccessAdministrativePanel / tabela sponsors) e apenas
-// repassados como prop -- nunca uma segunda logica de permissao aqui.
+// O destino administrativo e resolvido uma unica vez no layout server-side
+// a partir da mesma fonte de navegacao usada pela Sidebar.
 function AdminAndSponsorShortcuts({
-  isAdministrativeUser,
+  administrativeLandingPage,
   isSponsorUser,
   pathname,
   onNavigate,
 }: {
-  isAdministrativeUser: boolean;
+  administrativeLandingPage: string | null;
   isSponsorUser: boolean;
   pathname: string;
   onNavigate?: () => void;
 }) {
-  if (!isAdministrativeUser && !isSponsorUser) return null;
+  if (!administrativeLandingPage && !isSponsorUser) return null;
   return (
     <div className="space-y-2">
-      {isAdministrativeUser ? (
+      {administrativeLandingPage ? (
         <Link
-          href="/painel"
+          href={administrativeLandingPage}
           onClick={onNavigate}
           className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
-            isActivePath(pathname, '/painel')
+            isActivePath(pathname, administrativeLandingPage)
               ? 'bg-(--brand-500) text-white shadow-md shadow-(--brand-600)/30'
               : 'border border-(--brand-500)/30 bg-(--brand-500)/10 text-(--brand-100) hover:bg-(--brand-500)/20'
           }`}
@@ -140,12 +138,12 @@ function AdminAndSponsorShortcuts({
   );
 }
 
-export function AccountSidebarNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
+export function AccountSidebarNav({ administrativeLandingPage, isSponsorUser }: { administrativeLandingPage: string | null; isSponsorUser: boolean }) {
   const pathname = usePathname();
 
   return (
     <nav className="mt-4 space-y-5" aria-label="Navegação principal do usuário">
-      <AdminAndSponsorShortcuts isAdministrativeUser={isAdministrativeUser} isSponsorUser={isSponsorUser} pathname={pathname} />
+      <AdminAndSponsorShortcuts administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} pathname={pathname} />
       {navigationGroups.map((group) => (
         <div key={group.title}>
           <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{group.title}</p>
@@ -169,13 +167,13 @@ function MenuSheet({
   open,
   onClose,
   pathname,
-  isAdministrativeUser,
+  administrativeLandingPage,
   isSponsorUser,
 }: {
   open: boolean;
   onClose: () => void;
   pathname: string;
-  isAdministrativeUser: boolean;
+  administrativeLandingPage: string | null;
   isSponsorUser: boolean;
 }) {
   useEffect(() => {
@@ -215,7 +213,7 @@ function MenuSheet({
 
         <nav className="flex-1 space-y-5 overflow-y-auto px-4 py-5">
           <AdminAndSponsorShortcuts
-            isAdministrativeUser={isAdministrativeUser}
+            administrativeLandingPage={administrativeLandingPage}
             isSponsorUser={isSponsorUser}
             pathname={pathname}
             onNavigate={onClose}
@@ -279,7 +277,7 @@ function MobileNavLink({ href, label, icon: Icon, active }: { href: string; labe
 // Ingressos/Compras/Perfil como destaque fixo -- essas 3 (mais Fotos,
 // Histórico, Painel, Patrocinador etc.) continuam 100% acessiveis, agora
 // dentro do "Menu" (ver MenuSheet acima), nunca removidas.
-export function AccountMobileNav({ isAdministrativeUser, isSponsorUser }: { isAdministrativeUser: boolean; isSponsorUser: boolean }) {
+export function AccountMobileNav({ administrativeLandingPage, isSponsorUser }: { administrativeLandingPage: string | null; isSponsorUser: boolean }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -322,7 +320,7 @@ export function AccountMobileNav({ isAdministrativeUser, isSponsorUser }: { isAd
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         pathname={pathname}
-        isAdministrativeUser={isAdministrativeUser}
+        administrativeLandingPage={administrativeLandingPage}
         isSponsorUser={isSponsorUser}
       />
     </>

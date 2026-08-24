@@ -148,8 +148,9 @@ test("editor mostra aviso preventivo quando a alteracao em rascunho removeria o 
 // ── Troca rapida de area (Minha Conta <-> Painel) ───────────────────────────
 
 test("Minha Conta -> Painel: atalho 'Painel administrativo' continua so pra quem tem acesso administrativo, no topo do menu (desktop e mobile)", () => {
-  assert.match(accountNav, /if \(!isAdministrativeUser && !isSponsorUser\) return null;/);
-  assert.match(accountNav, /isAdministrativeUser \? \([\s\S]*?Painel administrativo/);
+  assert.match(accountNav, /if \(!administrativeLandingPage && !isSponsorUser\) return null;/);
+  assert.match(accountNav, /administrativeLandingPage \? \([\s\S]*?Painel administrativo/);
+  assert.match(accountNav, /href={administrativeLandingPage}/);
   // Usado no TOPO de ambas as apresentacoes -- primeiro filho de cada <nav>.
   const desktopNav = slice(accountNav, "export function AccountSidebarNav", "function MenuSheet(");
   assert.match(desktopNav, /<nav className="mt-4 space-y-5"[\s\S]*?<AdminAndSponsorShortcuts/);

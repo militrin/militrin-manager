@@ -7,8 +7,9 @@ import {
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatCard, AdminStatusBadge } from '@/components/admin';
 import { getAdminAccessContext } from '@/lib/admin/access';
-import { hasPermission, requirePermission } from '@/lib/admin/permissions';
+import { hasPermission } from '@/lib/admin/permissions';
 import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from '@/lib/dashboard/admin-dashboard-data';
+import { getDashboardSectionAccess, requireDashboardAccess, type DashboardSection } from '@/lib/dashboard/dashboard-permissions';
 import { summarizeIntegrityReport } from '@/lib/integrity/report';
 import { getIntegrityReportAction } from './integridade/actions';
 import { DashboardEventSelector } from './dashboard-event-selector';
@@ -25,11 +26,11 @@ type QuickAction = {
 };
 
 export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
-  await requirePermission('dashboard.view');
+  await requireDashboardAccess();
   const { eventId } = await searchParams;
-  const [{ canViewFinancial }, data, canIssue, canManageInventory, canOperateKits, canImport, canViewPeople, canViewFinance, canViewIntegrity] = await Promise.all([
+  const [sectionAccess, { canViewFinancial }, canIssue, canManageInventory, canOperateKits, canImport, canViewPeople, canViewFinance, canViewIntegrity] = await Promise.all([
+    getDashboardSectionAccess(),
     getAdminAccessContext(),
-    loadAdminDashboard(eventId),
     hasPermission('participants.create'),
     hasPermission('inventory.view'),
     hasPermission('kits.view'),
@@ -38,10 +39,15 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     hasPermission('finance.view'),
     hasPermission('integrity.view'),
   ]);
+  const canViewIntegritySection = sectionAccess.integrity && canViewIntegrity;
+  const canViewFinanceSection = sectionAccess.finance && canViewFinancial;
+  const authorizedSections = (['people', 'operations', 'inventory'] as DashboardSection[]).filter((section) => sectionAccess[section]);
+  if (canViewFinanceSection) authorizedSections.push('finance');
+  const data = await loadAdminDashboard(eventId, authorizedSections);
   const selectedId = data.selectedEvent?.id ?? 'all';
   // A Central de Integridade e' a unica fonte de verdade -- o Dashboard so consome
   // get_operational_integrity_report/summarizeIntegrityReport, nunca recalcula.
-  const integrityReport = canViewIntegrity
+  const integrityReport = canViewIntegritySection
     ? await getIntegrityReportAction(selectedId === 'all' ? null : selectedId)
     : null;
   const integrityTotals = integrityReport?.success
@@ -74,7 +80,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
           />
 
           {!data.organization ? <AdminEmptyState title="Nenhuma organização vinculada à sua conta" description="Fale com um administrador para vincular sua conta a uma organização." /> : !data.events.length ? <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." /> : <>
-            {canViewIntegrity ? <AdminSection compact title="Integridade operacional">
+            {canViewIntegritySection ? <AdminSection compact title="Integridade operacional">
               {integrityTotals ? <AdminStatCard
                 compact
                 label="Integridade operacional"
@@ -89,7 +95,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
               /> : <AdminEmptyState title="Não foi possível carregar a integridade operacional" description={integrityReport?.success === false ? integrityReport.message : 'Tente novamente em instantes.'} />}
             </AdminSection> : null}
 
-            <AdminSection compact title="Pessoas e inscrições">
+            {sectionAccess.people ? <AdminSection compact title="Pessoas e inscrições">
               {!data.hasData ? <AdminEmptyState title="Sem dados no período" description="Os indicadores aparecerão quando houver inscrições, pagamentos ou ingressos." /> : <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
                 <AdminStatCard compact label="Pessoas no evento" value={metric('people').value} href={href('people')} icon={Users} hint="Cadastros globais vinculados" />
                 <AdminStatCard compact label="Inscrições comerciais" value={metric('registrations').value} href={href('registrations')} icon={ClipboardList} hint="Itens de pedido no evento" />
@@ -97,9 +103,9 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
                 <AdminStatCard compact label="Pendentes" value={metric('pending').value} href={href('pending')} icon={Clock3} tone="warning" />
                 <AdminStatCard compact label="Canceladas" value={metric('cancelled').value} href={href('cancelled')} icon={Ban} />
               </div>}
-            </AdminSection>
+            </AdminSection> : null}
 
-            {data.hasData ? <AdminSection compact title="Ingressos e operação">
+            {sectionAccess.operations && data.hasData ? <AdminSection compact title="Ingressos e operação">
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <AdminStatCard compact label="Ingressos emitidos" value={metric('tickets').value} href={href('tickets')} icon={Ticket} />
                 <AdminStatCard compact label="Check-ins realizados" value={metric('checkins').value} href={href('checkins')} icon={ScanLine} tone="info" />
@@ -110,7 +116,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
               </div>
             </AdminSection> : null}
 
-            {data.hasData ? <AdminSection compact title="Estoque de camisetas">
+            {sectionAccess.inventory && data.hasData ? <AdminSection compact title="Estoque de camisetas">
               <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
                 <AdminStatCard compact label="Recebidas" value={metric('shirts_received').value} href={href('shirts_received')} icon={Boxes} />
                 <AdminStatCard compact label="Reservadas" value={metric('shirts_reserved').value} href={href('shirts_reserved')} icon={Shirt} />
@@ -121,15 +127,15 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
               <p className="mt-2 text-[11px] leading-4 text-slate-400">Disponibilidade física = recebidas − entregues. Reservas representam demanda, não saída física.</p>
             </AdminSection> : null}
 
-            <AdminSection compact title="Financeiro" actions={canViewFinancial ? <AdminStatusBadge status="confirmed" /> : <AdminStatusBadge status="pending" />}>
-              {canViewFinancial ? <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+            {canViewFinanceSection ? <AdminSection compact title="Financeiro" actions={<AdminStatusBadge status="confirmed" />}>
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
                 <AdminStatCard compact label="Receita confirmada" value={money(metric('revenue_confirmed').value)} href={href('revenue_confirmed')} icon={Banknote} tone="success" />
                 <AdminStatCard compact label="Receita pendente" value={money(metric('revenue_pending').value)} href={href('revenue_pending')} icon={Clock3} tone="warning" />
                 <AdminStatCard compact label="PIX" value={metric('pix').value} href={href('pix')} icon={QrCode} />
                 <AdminStatCard compact label="Cartão" value={metric('card').value} href={href('card')} icon={CreditCard} />
                 <AdminStatCard compact label="Cortesias" value={metric('courtesy').value} href={href('courtesy')} icon={Gift} />
-              </div> : <AdminEmptyState title="Acesso financeiro restrito" description="Seu perfil não possui permissão para visualizar valores monetários." />}
-            </AdminSection>
+              </div>
+            </AdminSection> : null}
 
             {quickActions.length ? <section aria-labelledby="quick-actions-title" className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/60 px-4 py-3">
               <h2 id="quick-actions-title" className="mr-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ações rápidas</h2>

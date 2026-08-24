@@ -33,8 +33,12 @@ export type AdminNavItem = {
   href: string;
   /** Permissões: basta ter ao menos uma */
   permissionAny: string[];
+  /** Permissoes cumulativas: todas sao obrigatorias. */
+  permissionAll?: string[];
   /** Capacidade do evento exigida. undefined = sem restrição de capacidade */
   requireCapability?: (cap: EventCapabilities) => boolean;
+  /** Prioridade da rota como entrada administrativa. Menor = preferida. */
+  landingPriority?: number;
 };
 
 export type AdminNavGroup = {
@@ -52,6 +56,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/operacoes",
         permissionAny: ["participants.view", "checkin.view", "kits.view", "wristbands.view", "wristbands.link"],
         requireCapability: (c) => c.hasCheckin || c.hasDistributableItems || c.hasWristbands,
+        landingPriority: 20,
       },
       {
         label: "Modo Turbo",
@@ -62,6 +67,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         // (ingresso OU produto de loja).
         permissionAny: ["kits.deliver", "checkin.scan", "store.deliver"],
         requireCapability: (c) => c.hasCheckin || c.hasDistributableItems,
+        landingPriority: 21,
       },
       {
         label: "Ver pulseira vinculada",
@@ -69,6 +75,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/operacoes/pulseira",
         permissionAny: ["wristbands.view"],
         requireCapability: (c) => c.hasWristbands,
+        landingPriority: 22,
       },
       {
         label: "Cronograma",
@@ -85,7 +92,8 @@ export const adminNavGroups: AdminNavGroup[] = [
         label: "Dashboard",
         icon: LayoutDashboard,
         href: "/painel",
-        permissionAny: ["dashboard.view"],
+        permissionAny: ["dashboard.integrity.view", "dashboard.people.view", "dashboard.operations.view", "dashboard.inventory.view", "dashboard.finance.view"],
+        landingPriority: 10,
       },
       {
         label: "Integridade",
@@ -97,19 +105,22 @@ export const adminNavGroups: AdminNavGroup[] = [
         label: "Público e recorrência",
         icon: Users,
         href: "/painel/usuarios",
-        permissionAny: ["dashboard.view", "participants.view"],
+        permissionAny: [],
+        permissionAll: ["dashboard.people.view", "participants.view"],
       },
       {
         label: "Eventos",
         icon: Layers,
         href: "/painel/eventos",
         permissionAny: ["events.view"],
+        landingPriority: 40,
       },
       {
         label: "Cadastros",
         icon: Users,
         href: "/cadastros",
         permissionAny: ["participants.view"],
+        landingPriority: 30,
       },
       {
         label: "Pedidos",
@@ -117,12 +128,14 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/pedidos",
         permissionAny: ["orders.view"],
         requireCapability: (c) => c.hasOrders,
+        landingPriority: 50,
       },
       {
         label: "Financeiro",
         icon: Wallet,
         href: "/financeiro",
         permissionAny: ["finance.view"],
+        landingPriority: 60,
       },
       {
         label: "Estoque",
@@ -130,12 +143,14 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/camisetas",
         permissionAny: ["inventory.view", "kits.view"],
         requireCapability: (c) => c.hasInventory || c.hasDistributableItems,
+        landingPriority: 70,
       },
       {
         label: "Loja",
         icon: ShoppingBag,
         href: "/loja",
         permissionAny: ["store.view"],
+        landingPriority: 80,
       },
       {
         label: "Importações",
@@ -149,6 +164,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/relatorios",
         permissionAny: ["reports.view"],
         requireCapability: (c) => c.hasEvents,
+        landingPriority: 90,
       },
       {
         label: "Cupons",
@@ -187,6 +203,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         icon: UserRoundCog,
         href: "/painel/configuracoes/equipe",
         permissionAny: ["team.view"],
+        landingPriority: 100,
       },
       {
         label: "Patrocinadores",
@@ -239,6 +256,7 @@ export function isAdminNavItemVisible(
     !item.permissionAny.length ||
     item.permissionAny.some((p) => Boolean(permissionMap[p]));
   if (!hasPerm) return false;
+  if (item.permissionAll?.some((p) => !permissionMap[p])) return false;
 
   // 2. Capacidades são agregadas na organização; nenhuma escolha de evento é implícita.
   if (item.requireCapability) {
@@ -256,3 +274,28 @@ export function findAdminNavItem(href: string): AdminNavItem | null {
   }
   return null;
 }
+
+/**
+ * Resolve a primeira rota administrativa que o usuario pode realmente abrir.
+ * As permissoes, capacidades, rotas e prioridades permanecem na mesma fonte
+ * que alimenta a navegacao desktop e mobile.
+ */
+export function resolveAdministrativeLandingHref(
+  permissionMap: Record<string, boolean>,
+  capabilities: EventCapabilities,
+): string | null {
+  const items = adminNavGroups.flatMap((group) => group.items);
+  const firstVisible = items
+    .map((item, menuIndex) => ({ item, menuIndex }))
+    .filter(({ item }) => isAdminNavItemVisible(item, permissionMap, capabilities))
+    .sort((a, b) =>
+      (a.item.landingPriority ?? 1_000 + a.menuIndex) -
+      (b.item.landingPriority ?? 1_000 + b.menuIndex),
+    )[0];
+
+  return firstVisible?.item.href ?? null;
+}
+
+export const ADMIN_NAV_PERMISSION_CODES = Array.from(
+  new Set(adminNavGroups.flatMap((group) => group.items.flatMap((item) => [...item.permissionAny, ...(item.permissionAll ?? [])]))),
+);

@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { FirstAccessForm } from './FirstAccessForm';
 import { getParticipantInviteContext, getParticipantInviteFailureCopy } from '@/lib/account/participant-invite';
 import { isValidCpf } from '@/lib/validation/registration';
-import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
+import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 
 export default async function PrimeiroAcessoPage({ searchParams }: { searchParams: Promise<{ next?: string; invite?: string }> }) {
   const params = await searchParams;
@@ -24,8 +24,11 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
   const status = await getProfileCompletionStatus(user.id, user.email ?? null);
   const inviteContext = params.invite ? await getParticipantInviteContext(params.invite, user) : null;
 
-  if (!params.invite && await canAccessAdministrativePanel()) {
-    redirect('/painel');
+  const administrativeLandingPage = !params.invite
+    ? await resolveAdministrativeLandingPage()
+    : null;
+  if (administrativeLandingPage) {
+    redirect(administrativeLandingPage);
   }
 
   if (params.invite && !inviteContext?.valid) {

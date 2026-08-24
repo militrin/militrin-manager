@@ -9,8 +9,8 @@ test('dashboard and details share the same canonical metric loader', async () =>
     read('src/app/painel/page.tsx'),
     read('src/app/painel/detalhes/page.tsx'),
   ]);
-  assert.match(dashboard, /loadAdminDashboard\(eventId\)/);
-  assert.match(details, /loadAdminDashboard\(params\.eventId\)/);
+  assert.match(dashboard, /loadAdminDashboard\(eventId, authorizedSections\)/);
+  assert.match(details, /loadAdminDashboard\(params\.eventId, \[section\]\)/);
   assert.doesNotMatch(dashboard, /registration_status|participantsQuery|final_amount.*participants/);
 });
 
