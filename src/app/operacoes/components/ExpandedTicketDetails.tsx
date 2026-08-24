@@ -204,10 +204,6 @@ export function ExpandedTicketDetails({
         <h3 className="text-sm font-semibold text-slate-100">Dados do ingresso</h3>
         <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
           <div>
-            <p className="text-slate-500">Token do ingresso</p>
-            <p>{detail.ticket_token || "—"}</p>
-          </div>
-          <div>
             <p className="text-slate-500">Titular</p>
             <p>{detail.participant_name || "Não informado"}</p>
           </div>

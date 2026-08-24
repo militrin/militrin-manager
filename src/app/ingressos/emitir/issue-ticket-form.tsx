@@ -122,9 +122,9 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
           <p>{result.message}</p>
           {result.success && result.ticketIds?.length ? (
             <div className="mt-2 flex flex-wrap gap-2">
-              {result.ticketIds.map((ticketId) => (
+              {result.ticketIds.map((ticketId, index) => (
                 <Link key={ticketId} href={registrationContactId ? `/ingressos/${ticketId}?from=cadastro&contactId=${encodeURIComponent(registrationContactId)}` : `/ingressos/${ticketId}`} className="text-xs underline">
-                  Ver ingresso {ticketId.slice(0, 8)}
+                  Ver ingresso {index + 1}
                 </Link>
               ))}
               {registrationContactId ? <Link href={`/cadastros/${registrationContactId}`} className="text-xs font-semibold underline">Voltar para {contactLookup.name}</Link> : null}

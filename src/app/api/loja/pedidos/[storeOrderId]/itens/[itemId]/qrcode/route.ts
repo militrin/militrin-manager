@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasPermission } from "@/lib/admin/permissions";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -44,7 +45,7 @@ export async function GET(
   const { data: item, error } = await supabase
     .from("store_order_items")
     .select(
-      "id, quantity, qr_token, store_order_id, store_items(name), store_item_variants(name, value), store_orders!inner(id, user_id, order_number, events(name))",
+      "id, quantity, qr_token, store_order_id, store_items(name), store_item_variants(name, value), store_orders!inner(id, user_id, order_number, display_number, events(name))",
     )
     .eq("id", itemId)
     .eq("store_order_id", storeOrderId)
@@ -61,7 +62,7 @@ export async function GET(
   const eventName = eventObj?.name ? String(eventObj.name) : "";
   const itemName = storeItem?.name ? String(storeItem.name) : "Item";
   const variantText = variant ? ` — ${String(variant.name)}: ${String(variant.value)}` : "";
-  const orderNumber = order?.order_number ? String(order.order_number) : "";
+  const orderNumber = orderDisplayReference(order?.display_number, order?.order_number);
 
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(String(item.qr_token))}`;
   const upstream = await fetch(qrUrl);
@@ -88,7 +89,7 @@ export async function GET(
       "Content-Type": "image/svg+xml",
       "Content-Disposition": new URL(request.url).searchParams.get("inline") === "1"
         ? "inline"
-        : `attachment; filename="item-${item.qr_token}.svg"`,
+        : `attachment; filename="item-pedido-${orderNumber.replace('#', '')}.svg"`,
       "Cache-Control": "private, no-store",
     },
   });

@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinEmptyState, MilitrinSection, MilitrinTimeline, type MilitrinTimelineItem } from '@/components/militrin';
 import { getStatusLabel } from '@/lib/status-labels';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -19,7 +20,7 @@ export default async function HistoricoPage() {
   const [ordersResult, ticketsResult] = await Promise.all([
     supabase
       .from('orders')
-      .select('id, order_number, status, created_at, confirmed_at, final_amount, events(name)')
+      .select('id, order_number, display_number, status, created_at, confirmed_at, final_amount, events(name)')
       .eq('user_id', user?.id ?? '')
       .order('created_at', { ascending: false })
       .limit(15),
@@ -44,7 +45,7 @@ export default async function HistoricoPage() {
     return {
       sortTs: createdAt,
       id: `order-${order.id}`,
-      title: `Pedido ${String(order.order_number)}`,
+      title: `Pedido ${orderDisplayReference(order.display_number, order.order_number)}`,
       subtitle: eventObj?.name ? `Evento: ${String(eventObj.name)}` : 'Pedido no portal Militrin',
       date: order.created_at ? formatDateTimeBR(String(order.created_at), ' as ') : undefined,
       status: normalizeStatus(String(order.status ?? 'pending')),

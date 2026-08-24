@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { MilitrinButton } from '@/components/militrin';
 import { cancelAccountStoreOrderAction, simulateStoreOrderPaymentAction } from '@/lib/store/actions';
 import { money } from './store-item-controls';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 const canSimulatePayment = process.env.NODE_ENV === 'development';
 
@@ -32,6 +33,7 @@ export function StorePaymentPanel({ state, onChange }: { state: StorePaymentStat
   }, [state.expiresAt, state.status]);
 
   const remainingSeconds = state.expiresAt ? Math.max(0, Math.floor((new Date(state.expiresAt).getTime() - now) / 1000)) : null;
+  const orderReference = orderDisplayReference(null, state.orderNumber);
 
   function cancel() {
     startTransition(async () => {
@@ -56,14 +58,14 @@ export function StorePaymentPanel({ state, onChange }: { state: StorePaymentStat
     return (
       <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
         <p className="text-sm font-semibold text-emerald-200">Pagamento confirmado!</p>
-        <p className="mt-1 text-xs text-emerald-100/80">Pedido {state.orderNumber} — {money(state.finalAmount)}. A organização vai preparar seus itens.</p>
+        <p className="mt-1 text-xs text-emerald-100/80">Pedido {orderReference} — {money(state.finalAmount)}. A organização vai preparar seus itens.</p>
       </div>
     );
   }
 
   return (
     <div className="rounded-2xl border border-(--brand-400)/30 bg-(--brand-500)/10 p-4">
-      <p className="text-sm font-semibold text-white">Pedido {state.orderNumber} — {money(state.finalAmount)}</p>
+      <p className="text-sm font-semibold text-white">Pedido {orderReference} — {money(state.finalAmount)}</p>
 
       {state.paymentMethod === 'pix' && state.pixCode ? (
         <div className="mt-3 space-y-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">

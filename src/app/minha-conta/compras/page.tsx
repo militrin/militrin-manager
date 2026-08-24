@@ -6,6 +6,7 @@ import { getStatusLabel } from '@/lib/status-labels';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 function one<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -50,7 +51,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
 
   return (
     <MilitrinPurchaseCard
-      orderNumber={String(order.order_number)}
+      orderNumber={orderDisplayReference(order.display_number, order.order_number)}
       eventName={(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}
       date={formatDateBR(String(order.created_at))}
       finalAmount={money(Number(order.final_amount ?? 0))}
@@ -102,7 +103,7 @@ function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
 
   return (
     <MilitrinPurchaseCard
-      orderNumber={String(order.order_number)}
+      orderNumber={orderDisplayReference(order.display_number, order.order_number)}
       eventName={`Loja — ${(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}`}
       date={formatDateBR(String(order.created_at))}
       finalAmount={money(Number(order.final_amount ?? 0))}

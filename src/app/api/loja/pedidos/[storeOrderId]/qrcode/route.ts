@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -31,7 +32,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ stor
   const { data: order, error } = await supabase
     .from("store_orders")
     .select(
-      "id, order_number, status, events(name), store_order_items(quantity, store_items(name), store_item_variants(name, value))"
+      "id, order_number, display_number, status, events(name), store_order_items(quantity, store_items(name), store_item_variants(name, value))"
     )
     .eq("id", storeOrderId)
     .eq("user_id", user.id)
@@ -49,6 +50,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ stor
     const variantText = variant ? ` — ${variant.name}: ${variant.value}` : "";
     return `${String(item.quantity)}x ${name}${variantText}`;
   });
+  const orderReference = orderDisplayReference(order.display_number, order.order_number);
 
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(order.order_number)}`;
   const upstream = await fetch(qrUrl);
@@ -74,7 +76,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ stor
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#ffffff" />
-    <text x="${width / 2}" y="${padding + 24}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#0f172a">Pedido ${escapeXml(String(order.order_number))}</text>
+    <text x="${width / 2}" y="${padding + 24}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#0f172a">Pedido ${escapeXml(orderReference)}</text>
     ${eventName ? `<text x="${width / 2}" y="${padding + 52}" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#475569">${escapeXml(eventName)}</text>` : ""}
     <image x="${(width - qrSize) / 2}" y="${headerHeight}" width="${qrSize}" height="${qrSize}" href="data:image/png;base64,${qrBase64}" />
     <text x="${width / 2}" y="${labelY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Itens a retirar</text>
@@ -84,7 +86,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ stor
   return new NextResponse(svg, {
     headers: {
       "Content-Type": "image/svg+xml",
-      "Content-Disposition": `attachment; filename="pedido-${order.order_number}.svg"`,
+      "Content-Disposition": `attachment; filename="pedido-${orderReference.replace('#', '')}.svg"`,
       "Cache-Control": "private, no-store",
     },
   });

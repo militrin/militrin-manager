@@ -3,7 +3,7 @@ import type { createServerSupabaseClient } from '@/lib/supabase/server';
 type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
 export const ACCOUNT_ORDERS_SELECT =
-  'id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, reservation_expires_at, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status), tickets(id, token, status), order_items(id, item_position, status, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
+  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, reservation_expires_at, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status), tickets(id, token, status), order_items(id, item_position, status, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
 
 export async function getAccountOrders(supabase: ServerSupabaseClient, userId: string) {
   return supabase

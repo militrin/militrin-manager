@@ -20,6 +20,7 @@ import type {
   WristbandHistoryEntry,
 } from "./types";
 import { REASON_CODES } from "./types";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 type OperationFiltersInput = {
   eventId?: string | null;
@@ -464,7 +465,7 @@ function mapTicketRow(params: {
     category_id: categoryId,
     category_name: categoryName,
     order_id: orderId,
-    order_number: orderRelation?.order_number ? String(orderRelation.order_number) : null,
+    order_number: orderRelation ? orderDisplayReference(orderRelation.display_number, orderRelation.order_number) : null,
     order_created_at: orderRelation?.created_at ? String(orderRelation.created_at) : null,
     buyer_user_id: buyerUserId,
     buyer_name: String(buyer?.full_name ?? "Comprador não identificado"),
@@ -650,12 +651,13 @@ export async function getKitMaterializationPreviewAction(ticketId: string) {
   const supabase = await createServerSupabaseClient();
   const { data: ticket, error: ticketError } = await supabase
     .from("tickets")
-    .select("id, token, event_id, participant_id, order_items(participant_id,holder_full_name,shirt_type,shirt_size,ticket_category_id,ticket_categories(name))")
+    .select("id, token, event_id, participant_id, orders(order_number,display_number),order_items(participant_id,holder_full_name,shirt_type,shirt_size,ticket_category_id,item_position,ticket_categories(name))")
     .eq("id", ticketId)
     .maybeSingle();
   if (ticketError || !ticket) return { success: false as const, message: ticketError?.message ?? "Ingresso não encontrado." };
 
   const orderItem = getRelation(ticket.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const previewOrder = getRelation(ticket.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
   const participantId = orderItem?.participant_id ? String(orderItem.participant_id) : null;
 
   const [{ data: participant, error: participantError }, { data: eventItems, error: eventItemsError }, { data: links, error: linksError }] = await Promise.all([
@@ -681,7 +683,7 @@ export async function getKitMaterializationPreviewAction(ticketId: string) {
     success: true as const,
     preview: {
       participantName: String(participantRow?.full_name ?? orderItem?.holder_full_name ?? "Titular não definido"),
-      ticketLabel: String(ticket.token ?? ticket.id),
+      ticketLabel: `${orderDisplayReference(previewOrder?.display_number, previewOrder?.order_number)}-${String(Number(orderItem?.item_position ?? 1)).padStart(2, "0")}`,
       categoryName: String(category?.name ?? "Ingresso único"),
       items: (eventItems ?? []).map((item) => {
         const existing = linkMap.get(String(item.id));
@@ -810,7 +812,8 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
           buyer_type,
           import_batch_id,
           created_at,
-          order_number
+          order_number,
+          display_number
         )
       `,
       { count: "exact" },
@@ -1231,7 +1234,8 @@ async function buildTicketDetails(
           buyer_type,
           import_batch_id,
           created_at,
-          order_number
+          order_number,
+          display_number
         ),
         events(
           id,

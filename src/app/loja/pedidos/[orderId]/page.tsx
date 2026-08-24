@@ -5,6 +5,7 @@ import { AdminPageHeader, AdminSection, AdminStatusBadge } from '@/components/ad
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentPermissionMap, requireAnyPermission } from '@/lib/admin/permissions';
 import { OrderItemActions, OrderPaymentActions } from './order-detail-actions';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 type OrderItemDetail = {
   id: string;
@@ -84,16 +85,19 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
   const { orderId } = await params;
   const supabase = await createServerSupabaseClient();
 
-  const [{ data, error }, permissionMap] = await Promise.all([
+  const [{ data, error }, permissionMap, { data: displayRow, error: displayError }] = await Promise.all([
     supabase.rpc('get_store_order_admin_detail', { p_store_order_id: orderId }),
     getCurrentPermissionMap(['store.manage', 'store.deliver']),
+    supabase.from('store_orders').select('display_number,order_number').eq('id', orderId).maybeSingle(),
   ]);
   if (error) throw error;
+  if (displayError) throw displayError;
   if (!data) notFound();
 
   const detail = data as unknown as OrderDetail;
   const canManage = Boolean(permissionMap['store.manage']);
   const canDeliver = Boolean(permissionMap['store.deliver']);
+  const orderReference = orderDisplayReference(displayRow?.display_number, displayRow?.order_number);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -101,14 +105,14 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
         <Sidebar />
         <div className="flex-1 space-y-6">
           <AdminPageHeader
-            title={`Pedido ${detail.order.order_number}`}
+            title={`Pedido ${orderReference}`}
             subtitle={detail.order.event_id ? detail.order.event_name : 'Produto global / Sem evento'}
             actions={<Link href="/loja/pedidos" className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-200">Voltar para pedidos</Link>}
             breadcrumbs={[
               { label: 'Início', href: '/painel' },
               { label: 'Loja', href: '/loja' },
               { label: 'Pedidos', href: '/loja/pedidos' },
-              { label: detail.order.order_number },
+              { label: orderReference },
             ]}
             backHref="/loja/pedidos"
           />

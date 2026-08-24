@@ -97,9 +97,6 @@ export default async function MyRegistrationPage({ params }: { params: Promise<{
 
         <section className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
           <h2 className="text-lg font-semibold">Kit e check-in</h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Token público: <strong>{snapshot.qr_token}</strong>
-          </p>
           {snapshot.kit_items.length > 0 ? (
             <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-200">
               {snapshot.kit_items.map((item: { kit_item_id: string; item_name: string; quantity: number; status: string; delivered_at: string | null }) => (

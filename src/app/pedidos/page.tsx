@@ -143,8 +143,8 @@ export default async function PedidosPage({
                   >
                     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-5 py-4 hover:bg-slate-800/30 transition rounded-2xl">
                       {/* Número do pedido */}
-                      <span className="font-mono text-xs text-slate-400 w-28 shrink-0">
-                        {order.orderNumber}
+                      <span className="text-xs font-semibold text-slate-300 w-28 shrink-0">
+                        Pedido {order.orderNumber}
                       </span>
 
                       {/* Comprador */}

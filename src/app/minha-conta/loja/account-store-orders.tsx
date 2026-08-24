@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { MilitrinButton, MilitrinStatusBadge } from '@/components/militrin';
 import { cancelAccountStoreOrderAction, simulateStoreOrderPaymentAction } from './actions';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 const canSimulatePayment = process.env.NODE_ENV === 'development';
 
@@ -18,6 +19,7 @@ type OrderItem = {
 type Order = {
   id: string;
   order_number: string;
+  display_number: number;
   status: string;
   payment_method: string | null;
   final_amount: number;
@@ -53,7 +55,7 @@ function OrderRow({ order }: { order: Order }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-mono text-xs text-slate-400">{order.order_number}</p>
+        <p className="text-xs font-semibold text-slate-300">Pedido {orderDisplayReference(order.display_number, order.order_number)}</p>
         <MilitrinStatusBadge status={order.status} />
       </div>
       <ul className="mt-2 space-y-0.5 text-xs text-slate-300">

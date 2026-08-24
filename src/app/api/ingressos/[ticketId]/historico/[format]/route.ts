@@ -48,8 +48,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ tick
     const audit = Array.isArray(auditRows) ? auditRows[0] : auditRows;
     if (auditError || !audit?.audit_id || !audit?.audited_at) return new NextResponse("Não foi possível auditar a exportação", { status: 500 });
     const generatedAt = String(audit.audited_at); const generatedBy = maskEmail(user.email);
-    if (format==='csv') return new NextResponse(ticketTimelineToCsv(result,generatedAt,generatedBy),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="historico-${ticketId}.csv"`}});
-    if (format==='xlsx') return new NextResponse(await ticketTimelineToXlsx(result,generatedAt,generatedBy),{headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="historico-${ticketId}.xlsx"`}});
-    return new NextResponse(ticketTimelineToPdf(result,generatedAt,generatedBy),{headers:{'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="historico-${ticketId}.pdf"`}});
+    const filenameReference = result.header.ticketReference.replace(/[^0-9A-Za-z-]/g, '');
+    if (format==='csv') return new NextResponse(ticketTimelineToCsv(result,generatedAt,generatedBy),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="historico-${filenameReference}.csv"`}});
+    if (format==='xlsx') return new NextResponse(await ticketTimelineToXlsx(result,generatedAt,generatedBy),{headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="historico-${filenameReference}.xlsx"`}});
+    return new NextResponse(ticketTimelineToPdf(result,generatedAt,generatedBy),{headers:{'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="historico-${filenameReference}.pdf"`}});
   } catch (error) { return new NextResponse(error instanceof Error?error.message:"Falha ao gerar histórico",{status:404}); }
 }

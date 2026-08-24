@@ -1,6 +1,7 @@
 import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "../types";
 import { dateRangeLabel, money, reportError, reportSuccess, resolveOptionalEvent } from "../helpers";
 import { formatDateTimeBR } from "@/lib/utils/date";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 const ORDER_STATUS_LABELS: Record<string, string> = { pending: "Pendente", confirmed: "Confirmado", cancelled: "Cancelado", expired: "Expirado" };
 const ITEM_STATUS_LABELS: Record<string, string> = { reserved: "Reservado", confirmed: "Confirmado", delivered: "Entregue", cancelled: "Cancelado" };
@@ -55,7 +56,7 @@ export async function lojaPedidos(supabase: ReportSupabaseClient, ctx: ReportQue
 
   let query = supabase
     .from("store_order_items")
-    .select("quantity,status,delivered_at,store_items(name),store_orders!inner(order_number,status,created_at,organization_id,event_id)")
+    .select("quantity,status,delivered_at,store_items(name),store_orders!inner(order_number,display_number,status,created_at,organization_id,event_id)")
     .eq("store_orders.organization_id", ctx.organizationId)
     .order("delivered_at", { ascending: false })
     .limit(2001);
@@ -69,7 +70,7 @@ export async function lojaPedidos(supabase: ReportSupabaseClient, ctx: ReportQue
     const storeItem = Array.isArray(item.store_items) ? item.store_items[0] : item.store_items;
     const order = Array.isArray(item.store_orders) ? item.store_orders[0] : item.store_orders;
     return {
-      pedido: order?.order_number ? String(order.order_number) : "-",
+      pedido: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
       status_pedido: order?.status ? ORDER_STATUS_LABELS[String(order.status)] ?? String(order.status) : "-",
       item: storeItem?.name ? String(storeItem.name) : "Item",
       quantidade: Number(item.quantity ?? 0),

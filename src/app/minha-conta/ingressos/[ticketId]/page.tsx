@@ -13,6 +13,7 @@ import { TicketOperationalControls } from './ticket-operational-controls';
 import { TicketHolderActions } from './ticket-holder-actions';
 import { CategoryContextAction, HolderContextAction, ShirtContextAction } from './ticket-context-actions';
 import { optionalDisplayValue } from '@/lib/optional-display';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -177,7 +178,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     {
       id: `ticket-issued-${ticket.id}`,
       title: 'Ingresso emitido',
-      subtitle: `Pedido ${String(order?.order_number ?? '-')}`,
+      subtitle: `Pedido ${orderDisplayReference(null, order?.order_number)}`,
       date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : undefined,
       status: 'confirmed',
     },
@@ -241,7 +242,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
       <MilitrinSection
         eyebrow="Ingresso"
         title={String(eventObj?.name ?? 'Ingresso')}
-        description={`Pedido ${String(order?.order_number ?? '-')} • ${holderName}`}
+        description={`Pedido ${orderDisplayReference(null, order?.order_number)} • ${holderName}`}
       >
         <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-4">
@@ -256,7 +257,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
                 <p>Pagamento: <MilitrinStatusBadge status={paymentStatus} /></p>
                 {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
                 <p>Status check-in: {ticket.used_at ? 'Realizado' : 'Pendente'}</p>
-                <p>Pedido: {String(order?.order_number ?? '-')}</p>
+                <p>Pedido: {orderDisplayReference(null, order?.order_number)}</p>
                 <p>Valor final: {money(Number(order?.final_amount ?? payment?.final_amount ?? 0))}</p>
                 {ticket.issued_at ? <p>Emissão: {formatDateTimeBR(String(ticket.issued_at), ' às ')}</p> : null}
               </div>
@@ -273,7 +274,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
                 eventDate={eventObj?.starts_at ? String(eventObj.starts_at) : null}
                 eventLocation={eventObj?.location ? String(eventObj.location) : null}
                 token={String(ticket.token ?? '')}
-                orderNumber={optionalDisplayValue(order?.order_number)}
+                orderNumber={orderDisplayReference(null, order?.order_number)}
                 showPdfButton
               /></div>
             ) : (

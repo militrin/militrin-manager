@@ -1,6 +1,7 @@
 import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "../types";
 import { dateRangeLabel, money, pct, reportError, reportSuccess, resolveRequiredEvent } from "../helpers";
 import { formatDateTimeBR } from "@/lib/utils/date";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Pendente",
@@ -67,7 +68,7 @@ export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQ
 
   let query = supabase
     .from("orders")
-    .select("order_number,status,final_amount,created_at,participants(full_name,cpf),payments(payment_method)")
+    .select("order_number,display_number,status,final_amount,created_at,participants(full_name,cpf),payments(payment_method)")
     .eq("event_id", resolved.event.id)
     .order("created_at", { ascending: false })
     .limit(2001);
@@ -80,7 +81,7 @@ export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQ
     const participant = Array.isArray(order.participants) ? order.participants[0] : order.participants;
     const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
     return {
-      pedido: String(order.order_number ?? ""),
+      pedido: orderDisplayReference(order.display_number, order.order_number),
       status: STATUS_LABELS[String(order.status ?? "")] ?? String(order.status ?? ""),
       comprador: participant?.full_name ? String(participant.full_name) : "Sem titular definido",
       valor: money(Number(order.final_amount ?? 0)),

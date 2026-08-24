@@ -12,6 +12,7 @@ import { getStatusLabel } from '@/lib/status-labels';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { shirtDisplayLabel } from '@/lib/constants/shirts';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
+import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -111,7 +112,7 @@ export default async function OrderDetailPage({
 
   const [{ data: eventRow }, { data: orderCreatedRow }] = await Promise.all([
     supabase.from('events').select('id, name, slug, location, starts_at').eq('id', order.event_id).maybeSingle(),
-    supabase.from('orders').select('created_at').eq('id', orderId).eq('user_id', user?.id ?? '').maybeSingle(),
+    supabase.from('orders').select('created_at,display_number,order_number').eq('id', orderId).eq('user_id', user?.id ?? '').maybeSingle(),
   ]);
 
   const editable = isOrderStillEditable({
@@ -123,6 +124,7 @@ export default async function OrderDetailPage({
 
   const normalizedPaymentStatus = order.payment?.payment_status ?? 'pending';
   const canShowTicket = order.order_status === 'confirmed' && ticketItems.some((item) => item.ticket_token);
+  const orderReference = orderDisplayReference(orderCreatedRow?.display_number, orderCreatedRow?.order_number ?? order.order_number);
 
   const receiptItemsSummary = [
     ...ticketItems.map((item) => `${item.participant_name ?? item.holder_full_name ?? 'Titular'}${item.category_name ? ` • ${item.category_name}` : ''}${item.ticket_status ? ` • ${getStatusLabel(item.ticket_status)}` : ''}`),
@@ -155,7 +157,7 @@ export default async function OrderDetailPage({
 
   return (
     <section className="space-y-4">
-      <MilitrinSection eyebrow="Minha compra" title="Detalhe do pedido" description={`Pedido ${order.order_number ?? ''}`}>
+      <MilitrinSection eyebrow="Minha compra" title="Detalhe do pedido" description={`Pedido ${orderReference}`}>
         {cannotEdit ? (
           <div className="mb-4 rounded-2xl border border-amber-600/40 bg-amber-950/20 p-3 text-sm text-amber-100">
             Este pedido não pode mais ser alterado.
@@ -165,7 +167,7 @@ export default async function OrderDetailPage({
           <article className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Resumo do pedido</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <p>Número do pedido: {order.order_number}</p>
+              <p>Número do pedido: {orderReference}</p>
               {orderCreatedRow?.created_at ? <p>Data da compra: {formatDateTimeBR(String(orderCreatedRow.created_at), ' as ')}</p> : null}
               <p>Evento: {optionalDisplayValue(eventRow?.name ?? order.event_name)}</p>
               <p>Valor original: {money(order.base_amount)}</p>
@@ -196,7 +198,7 @@ export default async function OrderDetailPage({
               const shirtLabel = shirtDisplayLabel(item.shirt_type);
               const holderLabel = item.participant_name || item.holder_full_name;
               const position = item.item_position ?? index + 1;
-              const friendlyCode = item.ticket_token || `${order.order_number ?? 'pedido'} · Ingresso ${position}`;
+              const friendlyCode = ticketDisplayReference(orderCreatedRow?.display_number, position, order.order_number);
               return (
                 <article key={item.order_item_id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -320,7 +322,7 @@ export default async function OrderDetailPage({
                   eventDate={eventRow?.starts_at ? String(eventRow.starts_at) : null}
                   eventLocation={eventRow?.location ? String(eventRow.location) : null}
                   token={String(item.ticket_token)}
-                  orderNumber={order.order_number}
+                  orderNumber={orderReference}
                 />
               </div>
             ))}
@@ -337,7 +339,7 @@ export default async function OrderDetailPage({
           </Link>
         ) : null}
         <PaymentReceiptPdfButton
-          orderNumber={String(order.order_number ?? '')}
+          orderNumber={orderReference}
           eventName={String(eventRow?.name ?? order.event_name ?? 'Evento')}
           createdAt={orderCreatedRow?.created_at ? String(orderCreatedRow.created_at) : null}
           paymentStatus={normalizedPaymentStatus}

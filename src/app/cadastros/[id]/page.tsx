@@ -10,6 +10,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
 import { InviteAccountButton } from "../invite-account-button";
+import { ticketDisplayReference } from "@/lib/display-reference";
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -28,7 +29,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
 
   const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions, canEditTeam, canInviteFirstAccess] = await Promise.all([
     supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin,user_id").eq("id", id).eq("organization_id", organization.id).maybeSingle(),
-    supabase.from("tickets").select("id,token,status,issued_at,used_at,event_id,owner_user_id,participant_id,order_id,order_item_id,events(id,name,starts_at),orders(order_number,status),order_items(participant_id,registration_contact_id,holder_full_name,shirt_type,shirt_size,ticket_categories(name),registration_batches(name)),participants(registration_contact_id,full_name),participant_kit_items(status)").eq("organization_id", organization.id).range(0, 4999),
+    supabase.from("tickets").select("id,token,status,issued_at,used_at,event_id,owner_user_id,participant_id,order_id,order_item_id,events(id,name,starts_at),orders(order_number,display_number,status),order_items(item_position,participant_id,registration_contact_id,holder_full_name,shirt_type,shirt_size,ticket_categories(name),registration_batches(name)),participants(registration_contact_id,full_name),participant_kit_items(status)").eq("organization_id", organization.id).range(0, 4999),
     supabase.from("participants").select("id,user_id,registration_contact_id,participation_history(source)").eq("registration_contact_id", id).eq("organization_id", organization.id).range(0, 4999),
     supabase.from("events").select("id,name,starts_at").eq("organization_id", organization.id).order("starts_at", { ascending: false }),
     supabase.from("store_orders").select("id,event_id,payment_method,created_at,events(name),store_order_items(id,quantity,status,delivered_at,store_items(name),store_item_variants(name,value))").eq("organization_id", organization.id).eq("registration_contact_id", id).neq("status", "cancelled").order("created_at", { ascending: false }),
@@ -95,7 +96,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       holderName: row.participant_id || orderItem?.participant_id ? String(participant?.full_name ?? orderItem?.holder_full_name ?? "Titular não identificado") : "Titular não definido",
       shirt: [orderItem?.shirt_type, orderItem?.shirt_size].filter(Boolean).join(" · "),
       orderNumber: order?.order_number ? String(order.order_number) : null,
-      shortCode: String(row.token ?? row.id).slice(0, 8).toUpperCase(),
+      shortCode: ticketDisplayReference(order?.display_number, orderItem?.item_position ?? 1, order?.order_number).replace(/^#/, ""),
       checkinDone: Boolean(row.used_at) || String(row.status) === "used",
       kitStatus: kitItems.length === 0 ? null : kitItems.every((item) => item.status === "delivered") ? "Entregue" : "Pendente",
     }];

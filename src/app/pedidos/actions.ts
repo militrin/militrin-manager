@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
 import type { OrderRow, OrderItemRow, OrdersFilterInput } from "./types";
 import { ORDER_PAGE_SIZE } from "./types";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 export type OrdersResult = {
   events: { id: string; name: string; is_active: boolean }[];
@@ -48,7 +49,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
   const { data: ordersRaw } = await supabase
     .from("orders")
     .select(`
-      id, order_number, status,
+      id, order_number, display_number, status,
       base_amount, discount_amount, final_amount,
       created_at, confirmed_at,
       participants!inner(id, full_name, email, phone, cpf)
@@ -125,7 +126,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
 
     return {
       id: oid,
-      orderNumber: String(o.order_number ?? ""),
+      orderNumber: orderDisplayReference(o.display_number, o.order_number),
       buyerName: buyer?.full_name ? String(buyer.full_name) : "—",
       buyerEmail: buyer?.email ? String(buyer.email) : "",
       buyerPhone: buyer?.phone ? String(buyer.phone) : "",

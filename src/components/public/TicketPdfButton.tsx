@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { getStatusLabel } from '@/lib/status-labels';
-import { applyReportPage, finalizeReportPages, formatReportDateTime, REPORT_THEME, splitTechnicalIdentifier } from '@/lib/reports/report-theme';
+import { applyReportPage, finalizeReportPages, formatReportDateTime, REPORT_THEME } from '@/lib/reports/report-theme';
 
 type TicketPdfButtonProps = {
   eventName: string;
@@ -105,12 +105,6 @@ export function TicketPdfButton({
         orderNumber ? `Pedido: ${orderNumber}` : null,
       ].filter((line): line is string => Boolean(line));
       detailLines.forEach((line, index) => doc.text(line, 56, 145 + (index * 21)));
-
-      doc.setTextColor(...colors.muted);
-      doc.setFontSize(10);
-      doc.setFont('courier', 'normal');
-      doc.text('Identificação técnica:', 56, 166 + (detailLines.length * 21));
-      doc.text(splitTechnicalIdentifier(token, 54), 56, 180 + (detailLines.length * 21));
 
       doc.setFillColor(...colors.white);
       doc.setDrawColor(...colors.border);

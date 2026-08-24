@@ -4,6 +4,7 @@ import { MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getStatusLabel } from '@/lib/status-labels';
 import { formatDateTimeBR } from '@/lib/utils/date';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 function one(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -23,7 +24,7 @@ export default async function AccountStoreItemPage({ params }: { params: Promise
 
   const { data: item, error } = await supabase
     .from('store_order_items')
-    .select('id,quantity,status,created_at,delivered_at,qr_token,store_items(name,description),store_item_variants(name,value),store_orders!inner(id,user_id,order_number,status,payment_method,created_at,events(name))')
+    .select('id,quantity,status,created_at,delivered_at,qr_token,store_items(name,description),store_item_variants(name,value),store_orders!inner(id,user_id,order_number,display_number,status,payment_method,created_at,events(name))')
     .eq('id', itemId)
     .eq('store_order_id', storeOrderId)
     .eq('store_orders.user_id', user.id)
@@ -44,7 +45,7 @@ export default async function AccountStoreItemPage({ params }: { params: Promise
         <div><dt className="text-xs text-slate-500">Produto</dt><dd>{itemName}</dd></div>
         <div><dt className="text-xs text-slate-500">Variante</dt><dd>{variant ? `${variant.name}: ${variant.value}` : 'Sem variante'}</dd></div>
         <div><dt className="text-xs text-slate-500">Evento</dt><dd>{String(event?.name ?? 'Produto global')}</dd></div>
-        <div><dt className="text-xs text-slate-500">Origem</dt><dd>{granted ? 'Concedido pela organização' : `Pedido ${String(order?.order_number ?? '')}`}</dd></div>
+        <div><dt className="text-xs text-slate-500">Origem</dt><dd>{granted ? 'Concedido pela organização' : `Pedido ${orderDisplayReference(order?.display_number, order?.order_number)}`}</dd></div>
         <div><dt className="text-xs text-slate-500">Data</dt><dd>{formatDateTimeBR(String(item.created_at), ' às ')}</dd></div>
         <div><dt className="text-xs text-slate-500">Status</dt><dd>{getStatusLabel(String(item.status))}</dd></div>
       </dl>

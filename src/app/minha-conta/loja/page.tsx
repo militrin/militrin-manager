@@ -49,7 +49,7 @@ export default async function AccountStorePage({ searchParams }: { searchParams:
 
   const ordersQuery = supabase
     .from('store_orders')
-    .select('id, order_number, status, payment_method, payment_status, final_amount, pix_code, pix_qrcode, expires_at, created_at, store_order_items(id, quantity, final_amount, status, store_items(name), store_item_variants(name, value))')
+    .select('id, order_number, display_number, status, payment_method, payment_status, final_amount, pix_code, pix_qrcode, expires_at, created_at, store_order_items(id, quantity, final_amount, status, store_items(name), store_item_variants(name, value))')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
   const { data: myOrders } = selectedEventId

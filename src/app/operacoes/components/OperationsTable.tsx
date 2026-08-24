@@ -178,7 +178,7 @@ export function OperationsTable({
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/75 px-3 py-2 text-xs text-slate-300">
                   <div className="font-medium text-slate-100">
                     {group.ticket_count > 0
-                      ? `Compra ${group.order_number ?? group.order_id ?? "sem número"} · Comprador: ${group.buyer_name}`
+                      ? `Compra ${group.order_number ?? "sem número"} · Comprador: ${group.buyer_name}`
                       : group.group_type === "imported_participant"
                         ? `Inscrição importada · Portador: ${group.participant_name}`
                         : `Inscrição sem ingresso · Participante: ${group.participant_name}`}

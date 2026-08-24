@@ -13,6 +13,7 @@ import { CopyableId } from '@/components/CopyableId';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { getAdminAccessContext } from '@/lib/admin/access';
+import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -51,13 +52,13 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
       .limit(1),
     supabase
       .from('orders')
-      .select('id, order_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, cancelled_at')
+      .select('id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, cancelled_at')
       .eq('participant_id', participant.id)
       .order('created_at', { ascending: false })
       .limit(1),
     supabase
       .from('tickets')
-      .select('id, token, status, issued_at, used_at, order_items(id,shirt_type,shirt_size,ticket_categories(name),registration_batches(name))')
+      .select('id, token, status, issued_at, used_at, order_items(id,item_position,shirt_type,shirt_size,ticket_categories(name),registration_batches(name))')
       .eq('participant_id', participant.id)
       .order('issued_at', { ascending: false }),
     supabase
@@ -141,7 +142,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
           {
             id: `ticket-issued-${String(ticket.id)}`,
             title: 'Ticket emitido',
-            description: `Token: ${String(ticket.token ?? '').slice(0, 8)}...`,
+            description: `Ingresso ${ticketDisplayReference(order?.display_number, ticketItem?.item_position ?? 1, order?.order_number)}`,
             date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : undefined,
             status: mapStatus(String(ticket.status ?? 'active')),
           },
@@ -161,7 +162,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
     ...(auditData ?? []).map((log) => ({
       id: `audit-${String(log.id)}`,
       title: String(log.action ?? 'Atualização de dados'),
-      description: log.details ? JSON.stringify(log.details) : undefined,
+      description: log.details ? 'Registro administrativo disponível na auditoria técnica.' : undefined,
       date: log.created_at ? formatDateTimeBR(String(log.created_at), ' às ') : undefined,
       status: 'active',
     })),
@@ -245,7 +246,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                   const entryBatch = Array.isArray(item?.registration_batches) ? item.registration_batches[0] : item?.registration_batches;
                   return (
                     <div key={String(entry.id)} className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-200 sm:grid-cols-2">
-                      <p><span className="text-slate-400">Ingresso:</span> {String(entry.id)}</p>
+                      <p><span className="text-slate-400">Ingresso:</span> {ticketDisplayReference(order?.display_number, item?.item_position ?? 1, order?.order_number)}</p>
                       <p><span className="text-slate-400">Categoria:</span> {String(entryCategory?.name ?? '-')}</p>
                       <p><span className="text-slate-400">Lote:</span> {String(entryBatch?.name ?? '-')}</p>
                       <p><span className="text-slate-400">Camiseta:</span> {String(item?.shirt_type ?? '-')} {String(item?.shirt_size ?? '')}</p>
@@ -269,7 +270,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
             <AdminSection title="C. Pedido e pagamento" description="Resumo financeiro e status atual">
               {canViewFinancial ? (
                 <div className="grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
-                  <p><span className="text-slate-400">Pedido:</span> {order?.order_number ? String(order.order_number) : '-'}</p>
+                  <p><span className="text-slate-400">Pedido:</span> {order ? orderDisplayReference(order.display_number, order.order_number) : '-'}</p>
                   <p><span className="text-slate-400">Status pedido:</span> <AdminStatusBadge status={mapStatus(String(order?.status ?? participant.registration_status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Valor original:</span> {money(Number(order?.base_amount ?? participant.base_amount ?? 0))}</p>
                   <p><span className="text-slate-400">Desconto:</span> {money(Number(order?.discount_amount ?? participant.discount_amount ?? 0))}</p>
@@ -288,8 +289,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
             <AdminSection title="D. Ingresso" description="Ticket, QR e check-in">
               {ticket ? (
                 <div className="grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
-                  <p><span className="text-slate-400">Ticket:</span> {String(ticket.id)}</p>
-                  <p><span className="text-slate-400">Token:</span> {String(ticket.token ?? '-')}</p>
+                  <p><span className="text-slate-400">Ingresso:</span> {ticketDisplayReference(order?.display_number, ticketItem?.item_position ?? 1, order?.order_number)}</p>
                   <p><span className="text-slate-400">Status:</span> <AdminStatusBadge status={mapStatus(String(ticket.status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Check-in:</span> {ticket.used_at ? formatDateTimeBR(String(ticket.used_at), ' às ') : 'Não realizado'}</p>
                   <p className="sm:col-span-2">

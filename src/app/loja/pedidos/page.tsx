@@ -5,6 +5,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { requireAnyPermission } from "@/lib/admin/permissions";
 import { StoreSubNav } from "../store-sub-nav";
 import { StoreOrderCard, type StoreOrderRow } from "./store-order-card";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 type SearchParams = Promise<{
   status?: string;
@@ -43,13 +44,14 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
   const dateTo = params.dateTo ?? "";
 
   const supabase = await createServerSupabaseClient();
+  const friendlySearch = q.trim().match(/^#?(\d{1,12})$/);
   const [{ data: eventsData, error: eventsError }, { data: orderRows, error: ordersError }] = await Promise.all([
     supabase.from("events").select("id, name, year").order("is_active", { ascending: false }).order("year", { ascending: false }),
     supabase.rpc("list_store_orders_for_admin", {
       p_status: status === "all" ? null : status,
       p_event_id: eventId || null,
       p_global_only: globalOnly,
-      p_search: q.trim() || null,
+      p_search: friendlySearch ? null : q.trim() || null,
       p_date_from: toDateOnly(dateFrom, false),
       p_date_to: toDateOnly(dateTo, true),
     }),
@@ -58,7 +60,15 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
   if (ordersError) throw ordersError;
 
   const events = (eventsData ?? []).map((event: Record<string, unknown>) => ({ id: String(event.id), name: String(event.name), year: event.year as number | null }));
-  const orders = (orderRows ?? []) as StoreOrderRow[];
+  const rawOrders = (orderRows ?? []) as StoreOrderRow[];
+  const { data: displayRows, error: displayError } = rawOrders.length
+    ? await supabase.from("store_orders").select("id,display_number,order_number").in("id", rawOrders.map((order) => order.store_order_id))
+    : { data: [], error: null };
+  if (displayError) throw displayError;
+  const displayById = new Map((displayRows ?? []).map((row) => [String(row.id), orderDisplayReference(row.display_number, row.order_number)]));
+  const orders = rawOrders
+    .map((order) => ({ ...order, order_number: displayById.get(order.store_order_id) ?? "sem número" }))
+    .filter((order) => !friendlySearch || order.order_number === `#${friendlySearch[1].padStart(6, "0")}`);
 
   function statusHref(code: string) {
     const qs = new URLSearchParams();

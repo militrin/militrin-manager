@@ -47,7 +47,7 @@ export function StoreOrderCard({ order }: { order: StoreOrderRow }) {
       className="flex flex-col gap-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-emerald-500/40"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-mono text-xs text-slate-400">{order.order_number}</p>
+        <p className="text-xs font-semibold text-slate-300">Pedido {order.order_number}</p>
         <AdminStatusBadge status={order.status} />
       </div>
 

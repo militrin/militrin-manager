@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Referencias internas ficam disponiveis aos fluxos tecnicos, nao na UX normal. */
+.report-technical-id {
+  display: none !important;
+}
+
 :root {
   --background: #020617;
   --foreground: #f8fafc;

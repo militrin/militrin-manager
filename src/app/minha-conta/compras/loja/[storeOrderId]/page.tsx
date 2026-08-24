@@ -8,6 +8,7 @@ import { getStatusLabel } from '@/lib/status-labels';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { StoreOrderActions } from '../store-order-actions';
 import { StoreOrderReceiptButtons } from '@/components/store/StoreOrderReceiptButtons';
+import { orderDisplayReference } from '@/lib/display-reference';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -38,7 +39,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
 
   const { data: order, error } = await supabase
     .from('store_orders')
-    .select('id, order_number, status, payment_method, payment_status, base_amount, final_amount, pix_code, pix_qrcode, expires_at, created_at, confirmed_at, cancelled_at, events(name), store_order_items(id, quantity, unit_price, final_amount, status, delivered_at, store_items(name, description), store_item_variants(name, value))')
+    .select('id, order_number, display_number, status, payment_method, payment_status, base_amount, final_amount, pix_code, pix_qrcode, expires_at, created_at, confirmed_at, cancelled_at, events(name), store_order_items(id, quantity, unit_price, final_amount, status, delivered_at, store_items(name, description), store_item_variants(name, value))')
     .eq('id', storeOrderId)
     .eq('user_id', user?.id ?? '')
     .maybeSingle();
@@ -67,7 +68,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
 
       <MilitrinSection
         eyebrow="Pedido da loja"
-        title={`Pedido ${order.order_number}`}
+        title={`Pedido ${orderDisplayReference(order.display_number, order.order_number)}`}
         description={(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}
         action={<MilitrinStatusBadge status={status} />}
       >
@@ -139,7 +140,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
                 <StoreOrderReceiptButtons
                   className="mt-3"
                   storeOrderId={String(order.id)}
-                  orderNumber={String(order.order_number)}
+                  orderNumber={orderDisplayReference(order.display_number, order.order_number)}
                   eventName={(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : null}
                   items={items.map((item) => {
                     const storeItem = one(item.store_items as Record<string, unknown> | Record<string, unknown>[] | null);

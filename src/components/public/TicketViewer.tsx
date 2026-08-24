@@ -45,7 +45,6 @@ export function TicketViewer({
             {eventDate ? <p>Data: {eventDate}</p> : null}
             {eventLocation ? <p>Local: {eventLocation}</p> : null}
             {orderNumber ? <p>Pedido: {orderNumber}</p> : null}
-            <p className="truncate">Token: {token}</p>
           </div>
 
           {showPdfButton ? (
