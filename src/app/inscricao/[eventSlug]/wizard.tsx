@@ -35,6 +35,7 @@ import { getStatusLabel } from '@/lib/status-labels';
 import { StoreCart } from '@/components/store/StoreCart';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
+import { resolveBuyerRequirements } from '@/lib/checkout/buyer-requirements';
 import { CartStep } from './cart-step';
 import { EditTicketsStep } from './edit-tickets-step';
 
@@ -979,19 +980,18 @@ export function RegistrationWizard({
   const birthDateLocked = initialBuyer.locked.birth_date;
   const needsPrivacyConsent = !initialBuyer.privacy_policy_accepted;
 
-  const missingBuyerFields = useMemo(() => {
-    const missing: Array<'full_name' | 'cpf' | 'birth_date' | 'gender' | 'phone' | 'city' | 'privacy_policy'> = [];
-    if (!form.full_name.trim()) missing.push('full_name');
-    if (removeCpfMask(form.cpf).length !== 11) missing.push('cpf');
-    if (!form.birth_date.trim()) missing.push('birth_date');
-    if (!form.gender.trim()) missing.push('gender');
-    if (form.phone.replace(/\D/g, '').length < 10) missing.push('phone');
-    if (!form.city.trim()) missing.push('city');
-    if (needsPrivacyConsent && !form.lgpd) missing.push('privacy_policy');
-    return missing;
-  }, [form, needsPrivacyConsent]);
-
-  const buyerProfileComplete = missingBuyerFields.length === 0;
+  const buyerRequirements = useMemo(() => resolveBuyerRequirements({
+    full_name: form.full_name,
+    cpf: form.cpf,
+    birth_date: form.birth_date,
+    gender: form.gender,
+    phone: form.phone,
+    city: form.city,
+    privacyAlreadyAccepted: initialBuyer.privacy_policy_accepted,
+    privacyAcceptedNow: form.lgpd,
+  }), [form.full_name, form.cpf, form.birth_date, form.gender, form.phone, form.city, form.lgpd, initialBuyer.privacy_policy_accepted]);
+  const missingBuyerFields = buyerRequirements.missingRequiredData;
+  const buyerProfileComplete = buyerRequirements.dataComplete;
   const buyerDataDirty = useMemo(() => {
     return (
       form.full_name.trim() !== (initialBuyer.full_name ?? '').trim()
@@ -2087,9 +2087,9 @@ export function RegistrationWizard({
             {step === 2 && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">2. Seus dados</h2>
-                {buyerProfileComplete ? (
+                {buyerRequirements.canRevealCompleteData ? (
                   <div className="rounded-2xl border border-emerald-600/40 bg-emerald-950/20 p-4 text-sm text-emerald-100">
-                    <p className="text-base font-semibold">Dados do comprador</p>
+                    <p className="text-base font-semibold">Confira seus dados</p>
                     <p className="mt-3">{form.full_name}</p>
                     <p>CPF: {formatCpf(removeCpfMask(form.cpf)).replace(/(\d{3}\.\d{3}\.\d{3}-)(\d{2})$/, '***.***.***-$2')}</p>
                     <p>Nascimento: {form.birth_date}</p>
@@ -2099,10 +2099,14 @@ export function RegistrationWizard({
                     <p>{form.city}</p>
                     <p className="mt-2 text-emerald-200">Seus dados foram carregados da sua conta.</p>
                   </div>
+                ) : buyerProfileComplete && buyerRequirements.missingConsent ? (
+                  <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                    Seus dados já estão cadastrados. Para continuar, autorize o uso deles nesta inscrição.
+                  </p>
                 ) : (
                   <>
                     <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                      Precisamos apenas completar algumas informações.
+                      Precisamos completar algumas informações antes de continuar.
                     </p>
                     <div className="grid gap-3 sm:grid-cols-2">
                       {missingBuyerFields.includes('full_name') && (
@@ -2205,7 +2209,7 @@ export function RegistrationWizard({
                   </>
                 )}
 
-                <label className="space-y-1">
+                {!buyerProfileComplete ? <label className="space-y-1">
                   <span className="text-sm text-slate-200">E-mail</span>
                   <input
                     type="email"
@@ -2213,7 +2217,7 @@ export function RegistrationWizard({
                     value={form.email}
                     className="h-11 w-full cursor-not-allowed rounded-xl border border-slate-700 bg-slate-900/50 px-3 text-sm text-slate-300"
                   />
-                </label>
+                </label> : null}
 
                 {needsPrivacyConsent ? (
                   <label className="mt-2 flex items-start gap-2 rounded-xl border border-slate-700 p-3 text-sm text-slate-300">
@@ -2223,22 +2227,24 @@ export function RegistrationWizard({
                       onChange={(event_) => setField('lgpd', event_.target.checked)}
                       className="mt-1"
                     />
-                    <span>Autorizo o uso dos meus dados para gestão da minha inscrição no evento.</span>
+                    <span>{buyerProfileComplete
+                      ? 'Autorizo o uso dos meus dados já cadastrados para realizar minha inscrição neste evento.'
+                      : 'Autorizo o uso dos meus dados para realizar minha inscrição neste evento.'}</span>
                   </label>
                 ) : (
                   <p className="text-xs text-emerald-200">Consentimento de privacidade já registrado na sua conta.</p>
                 )}
 
                 <div className="flex flex-wrap justify-end gap-2">
-                  <Link
+                  {buyerRequirements.canRevealCompleteData ? <Link
                     href={`/minha-conta/dados?next=${encodeURIComponent(`/inscricao/${event.slug}`)}`}
                     className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-700 px-5 text-sm text-slate-200"
                   >
-                    Atualizar meus dados
-                  </Link>
+                    Editar meus dados
+                  </Link> : null}
                   <button
                     type="button"
-                    disabled={isPending}
+                    disabled={isPending || !buyerRequirements.canContinue || !categoryChoiceReady}
                     onClick={handlePersonalNext}
                     className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
                   >
@@ -2810,11 +2816,11 @@ export function RegistrationWizard({
                   </p>
                   {courtesyMessage ? <p>{courtesyMessage}</p> : null}
                   <p>
-                    Protocolo: <strong>{registration.order_id || registration.participant_id}</strong>
+                    Solicitação registrada com sucesso.
                   </p>
                   {registration.order_number ? (
                     <p>
-                      Pedido: <strong>{registration.order_number}</strong>
+                      Pedido: <strong>{registration.order_number ? `#${String(Number(registration.order_number.match(/(\d+)$/)?.[1] ?? 0)).padStart(6, '0')}` : 'em processamento'}</strong>
                     </p>
                   ) : null}
                 </div>
