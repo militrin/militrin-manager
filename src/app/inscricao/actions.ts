@@ -13,6 +13,8 @@ import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profi
 import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
 import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBuyerToNewOrder } from '@/lib/registrations/active-ticket-holder';
 import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from '@/lib/account/email-confirmation';
+import { appBaseUrl } from '@/lib/urls/app-base-url';
+import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
 
 type PricingPreview = {
   batch_id: string;
@@ -179,10 +181,6 @@ function translateAuthErrorCode(message: string) {
   if (normalized.includes('weak password')) return 'weak_password';
 
   return 'unknown';
-}
-
-function appBaseUrl() {
-  return process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 }
 
 function translateSignupCode(message: string) {
@@ -1385,7 +1383,9 @@ export async function requestPasswordResetAction(email: string) {
   // do link por uma sessao de verdade (exchangeCodeForSession/verifyOtp);
   // sem isso, /redefinir-senha chamava auth.updateUser sem nenhuma sessao
   // e falhava.
-  const resetUrl = `${appBaseUrl()}/auth/callback?next=${encodeURIComponent('/redefinir-senha')}`;
+  const recoveryState = createPasswordRecoveryState(normalized);
+  const recoveryDestination = `/redefinir-senha?recovery=${encodeURIComponent(recoveryState)}`;
+  const resetUrl = `${appBaseUrl()}/auth/callback?next=${encodeURIComponent(recoveryDestination)}`;
   const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
     redirectTo: resetUrl,
   });
@@ -1411,7 +1411,7 @@ export async function requestPasswordResetAction(email: string) {
   return { success: true };
 }
 
-export async function updatePublicPasswordAction(input: { password: string; confirmPassword: string }) {
+export async function updatePublicPasswordAction(input: { password: string; confirmPassword: string; recoveryState: string }) {
   const supabase = await createServerSupabaseClient();
   if (!input.password || input.password.length < 8) {
     return { success: false, message: 'A senha deve ter pelo menos 8 caracteres.' };
@@ -1420,8 +1420,34 @@ export async function updatePublicPasswordAction(input: { password: string; conf
     return { success: false, message: 'A confirmacao de senha nao confere.' };
   }
 
+  const { data: userData, error: sessionError } = await supabase.auth.getUser();
+  if (sessionError || !userData.user) {
+    return {
+      success: false,
+      code: 'RECOVERY_SESSION_REQUIRED',
+      message: 'Este link de recuperacao expirou, ja foi utilizado ou nao possui uma sessao valida. Solicite um novo link.',
+    };
+  }
+  if (!verifyPasswordRecoveryState(input.recoveryState, userData.user.email ?? '')) {
+    return {
+      success: false,
+      code: 'INVALID_RECOVERY_STATE',
+      message: 'Este link de recuperacao expirou, ja foi utilizado, pertence a outra conta ou e invalido. Solicite um novo link.',
+    };
+  }
+
   const { error } = await supabase.auth.updateUser({ password: input.password });
-  if (error) return { success: false, message: error.message };
+  if (error) {
+    const code = translateAuthErrorCode(error.message);
+    return {
+      success: false,
+      code,
+      message: code === 'weak_password'
+        ? 'Escolha uma senha mais forte, com pelo menos 8 caracteres e que nao seja facil de adivinhar.'
+        : 'Nao foi possivel redefinir a senha. Solicite um novo link e tente novamente.',
+    };
+  }
+  await supabase.auth.signOut();
   return { success: true };
 }
 

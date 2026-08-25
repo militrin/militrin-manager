@@ -59,11 +59,18 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   let isExistingTeamMember = false;
   let teamRoleOptions: { id: string; name: string }[] = [];
   if (contactUserId && canEditTeam) {
-    const [{ data: adminUserRow }, { data: rolesData }] = await Promise.all([
-      supabase.from("admin_users").select("user_id").eq("user_id", contactUserId).maybeSingle(),
+    // admin_users tem RLS ligado sem nenhuma policy de SELECT -- uma leitura
+    // direta (.from("admin_users")...) sempre volta vazia pro client do
+    // usuario, entao isExistingTeamMember ficava sempre false mesmo pra quem
+    // já era da equipe. is_admin_team_member (migration 20260886000000,
+    // local, NAO aplicada ainda) é um boolean minimo via RPC SECURITY
+    // DEFINER -- não expõe função/status/nome de ninguém, só "é membro?" --
+    // e exige a mesma permissão (team.view) que já protege esta seção.
+    const [{ data: isTeamMember, error: teamMemberError }, { data: rolesData }] = await Promise.all([
+      supabase.rpc("is_admin_team_member", { p_user_id: contactUserId }),
       supabase.rpc("list_admin_roles"),
     ]);
-    isExistingTeamMember = Boolean(adminUserRow);
+    isExistingTeamMember = !teamMemberError && Boolean(isTeamMember);
     teamRoleOptions = (rolesData ?? []).map((role: { id: string; name: string }) => ({ id: String(role.id), name: String(role.name) }));
   }
   const firstAccessCandidateParticipantId = (linkedParticipants ?? []).find((row) => !row.user_id)?.id

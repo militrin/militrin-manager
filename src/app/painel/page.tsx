@@ -96,11 +96,12 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             </AdminSection> : null}
 
             {sectionAccess.people ? <AdminSection compact title="Pessoas e inscrições">
-              {!data.hasData ? <AdminEmptyState title="Sem dados no período" description="Os indicadores aparecerão quando houver inscrições, pagamentos ou ingressos." /> : <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+              {!data.hasData ? <AdminEmptyState title="Sem dados no período" description="Os indicadores aparecerão quando houver inscrições, pagamentos ou ingressos." /> : <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
                 <AdminStatCard compact label="Pessoas no evento" value={metric('people').value} href={href('people')} icon={Users} hint="Cadastros globais vinculados" />
                 <AdminStatCard compact label="Inscrições comerciais" value={metric('registrations').value} href={href('registrations')} icon={ClipboardList} hint="Itens de pedido no evento" />
                 <AdminStatCard compact label="Confirmadas" value={metric('confirmed').value} href={href('confirmed')} icon={CheckCircle2} tone="success" />
-                <AdminStatCard compact label="Pendentes" value={metric('pending').value} href={href('pending')} icon={Clock3} tone="warning" />
+                <AdminStatCard compact label="Pendentes" value={metric('pending').value} href={href('pending')} icon={Clock3} tone="warning" hint="Dentro do prazo de pagamento" />
+                <AdminStatCard compact label="Expiradas" value={metric('expired').value} href={href('expired')} icon={TriangleAlert} tone="danger" hint="Prazo de pagamento vencido" />
                 <AdminStatCard compact label="Canceladas" value={metric('cancelled').value} href={href('cancelled')} icon={Ban} />
               </div>}
             </AdminSection> : null}

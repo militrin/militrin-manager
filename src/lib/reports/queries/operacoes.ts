@@ -5,6 +5,7 @@ import { ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { sensitiveActionReasonLabel } from "@/lib/admin/sensitive-action-reasons";
 import { REASON_CODE_LABELS } from "@/app/operacoes/types";
+import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 
 type Row = Record<string, unknown>;
 const one = (value: unknown): Row | null => (Array.isArray(value) ? (value[0] as Row | undefined) ?? null : (value as Row | null));
@@ -89,10 +90,20 @@ function reasonLabel(details: Row) {
 }
 
 function operatorLabel(actorUserId: string | null, actorEmail: string | null, actorOrigin: string | null, names: Map<string, string>) {
+  // Nome resolvido (customer_profiles/Admin Auth API) vem ANTES do e-mail
+  // mascarado: varias actions (wristband_unlinked, store_item_admin_granted,
+  // ticket_checkin_undo...) gravam actor_email JUNTO com actor_user_id --
+  // mostrar "h.***@gmail.com" quando já sabemos que é "Douglas Hobold" é
+  // pior que o necessário, e contraria o pedido explícito de resolver o
+  // nome real em vez de um substituto.
+  if (actorUserId) {
+    const resolvedName = names.get(actorUserId);
+    if (resolvedName) return resolvedName;
+  }
   const masked = maskEmail(actorEmail);
   if (masked) return masked;
   if (actorOrigin === "portal") return "Titular autenticado";
-  if (actorUserId) return names.get(actorUserId) ?? "Operador administrativo";
+  if (actorUserId) return "Operador administrativo";
   return "Sistema";
 }
 
@@ -101,15 +112,34 @@ export async function operacoesHistorico(supabase: ReportSupabaseClient, ctx: Re
   if ("error" in resolved) return reportError(resolved.error);
   const eventId = resolved.event.id;
 
-  let auditQuery = supabase
+  // audit_logs tem RLS habilitado SEM NENHUMA policy de SELECT (confirmado:
+  // 10 linhas reais via service_role, 0 via client do usuario, mesmo filtro
+  // exato, evento Militrin) -- por isso o relatorio sempre voltava "0 ações"
+  // mesmo com historico real. run-report.ts já validou operations.view_report
+  // ANTES de chamar esta função (ver src/lib/reports/run-report.ts); o
+  // evento também já foi confirmado como pertencente à organização do
+  // chamador por resolveRequiredEvent logo acima, com o client normal (esse
+  // sim tem RLS correta em `events`). Só a leitura de audit_logs em si
+  // precisa do client de service role -- todo o resto da função (tickets,
+  // order_items, orders, participants, get_operation_buyers) continua no
+  // client do usuário, sem elevação de privilégio desnecessária. A migration
+  // 20260886000000 (local, não aplicada) fecha isso na origem com uma
+  // policy; até lá, este é o contorno seguro.
+  const auditLogsClient = createServiceRoleSupabaseClient();
+  let auditQuery = auditLogsClient
     .from("audit_logs")
     .select("id,action,entity_type,entity_id,details,created_at")
     .eq("event_id", eventId)
     .in("action", Object.keys(ACTION_ALLOWLIST))
     .order("created_at", { ascending: false })
     .limit(2001);
-  if (ctx.dateFrom) auditQuery = auditQuery.gte("created_at", `${ctx.dateFrom}T00:00:00`);
-  if (ctx.dateTo) auditQuery = auditQuery.lte("created_at", `${ctx.dateTo}T23:59:59`);
+  // "De"/"Até" são datas de calendário digitadas pelo operador pensando no
+  // horário do evento (Militrin só opera no Brasil) -- sem offset explícito,
+  // "T00:00:00" seria lido como meia-noite UTC (3h adiantado), incluindo/
+  // excluindo até 3h de ações do fuso errado perto da virada do dia. Brasil
+  // não tem mais horário de verão desde 2019, então -03:00 é estável.
+  if (ctx.dateFrom) auditQuery = auditQuery.gte("created_at", `${ctx.dateFrom}T00:00:00-03:00`);
+  if (ctx.dateTo) auditQuery = auditQuery.lte("created_at", `${ctx.dateTo}T23:59:59-03:00`);
   const { data: auditRows, error: auditError } = await auditQuery;
   if (auditError) return reportError(auditError.message);
 
@@ -120,8 +150,8 @@ export async function operacoesHistorico(supabase: ReportSupabaseClient, ctx: Re
     .in("operation", Object.keys(HOLDER_HISTORY_ALLOWLIST))
     .order("created_at", { ascending: false })
     .limit(2001);
-  if (ctx.dateFrom) holderQuery = holderQuery.gte("created_at", `${ctx.dateFrom}T00:00:00`);
-  if (ctx.dateTo) holderQuery = holderQuery.lte("created_at", `${ctx.dateTo}T23:59:59`);
+  if (ctx.dateFrom) holderQuery = holderQuery.gte("created_at", `${ctx.dateFrom}T00:00:00-03:00`);
+  if (ctx.dateTo) holderQuery = holderQuery.lte("created_at", `${ctx.dateTo}T23:59:59-03:00`);
   const { data: holderRows, error: holderError } = await holderQuery;
   if (holderError) return reportError(holderError.message);
 

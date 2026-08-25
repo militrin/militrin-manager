@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { ImportAccountInvites } from './import-account-invites';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import {
   executeImportBatchAction,
@@ -453,6 +454,8 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
           {(report.awaitingData ?? 0) > 0 && batchId ? <Link href={`/cadastros?pending=yes&import_batch_id=${encodeURIComponent(batchId)}`} className="mt-5 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Resolver pendências</Link> : null}
         </article>
       ) : null}
+
+      {report && batchId ? <ImportAccountInvites importBatchId={batchId} importedCount={report.imported} /> : null}
 
       {message ? (
         <p className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm text-slate-200">{message}</p>

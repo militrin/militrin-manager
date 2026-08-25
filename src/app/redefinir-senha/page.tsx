@@ -16,7 +16,8 @@ export default function RedefinirSenhaPage() {
     setLoading(true);
     setMessage(null);
 
-    const result = await updatePublicPasswordAction({ password, confirmPassword });
+    const recoveryState = new URLSearchParams(window.location.search).get('recovery') ?? '';
+    const result = await updatePublicPasswordAction({ password, confirmPassword, recoveryState });
     setLoading(false);
 
     if (!result.success) {
@@ -49,6 +50,7 @@ export default function RedefinirSenhaPage() {
                 {loading ? 'Salvando...' : 'Salvar nova senha'}
               </button>
             </form>
+            {message ? <Link href="/esqueci-minha-senha" className="mt-3 inline-block text-sm font-semibold text-amber-300 hover:underline">Solicitar novo link</Link> : null}
             <Link href="/entrar" className="mt-4 inline-block text-sm text-slate-300 hover:underline">Voltar para entrar</Link>
           </>
         )}

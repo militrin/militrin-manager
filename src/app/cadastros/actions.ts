@@ -181,6 +181,87 @@ export async function sendBulkFirstAccessInvitesAction(participantIds: string[])
   return { success: true as const, report };
 }
 
+type ImportInvitePreview = {
+  total_count: number; eligible_count: number; already_linked_count: number;
+  invalid_email_count: number; recently_invited_count: number; other_skipped_count: number;
+};
+
+export async function previewImportAccountInviteJobAction(importBatchId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(importBatchId)) return { success: false as const, message: "Importação inválida." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("preview_import_account_invites", { p_import_batch_id: importBatchId });
+  if (error) return { success: false as const, message: error.message };
+  const row = (Array.isArray(data) ? data[0] : data) as ImportInvitePreview | null;
+  if (!row) return { success: false as const, message: "Importação concluída não encontrada." };
+  return { success: true as const, preview: row };
+}
+
+export async function startImportAccountInviteJobAction(importBatchId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(importBatchId)) return { success: false as const, message: "Importação inválida." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("start_import_account_invite_job", { p_import_batch_id: importBatchId });
+  if (error || !data) return { success: false as const, message: error?.message ?? "Não foi possível iniciar os convites." };
+  return { success: true as const, jobId: String(data) };
+}
+
+export async function getImportAccountInviteJobAction(jobId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(jobId)) return { success: false as const, message: "Job inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.from("account_invite_jobs").select("id,status,total_count,eligible_count,processed_count,sent_count,skipped_count,failed_count").eq("id", jobId).maybeSingle();
+  if (error || !data) return { success: false as const, message: error?.message ?? "Job não encontrado." };
+  return { success: true as const, job: data };
+}
+
+export async function processImportAccountInviteJobChunkAction(jobId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(jobId)) return { success: false as const, message: "Job inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("claim_account_invite_job_items", { p_job_id: jobId, p_limit: 25 });
+  if (error) return { success: false as const, message: error.message };
+  const items = (data ?? []) as Array<{ item_id: string; participant_id: string }>;
+  for (const item of items) {
+    const turnResult = await supabase.rpc("check_account_invite_job_item_turn", { p_item_id: item.item_id });
+    const turn = (Array.isArray(turnResult.data) ? turnResult.data[0] : turnResult.data) as { allowed?: boolean; reason_code?: string } | null;
+    if (turnResult.error || !turn?.allowed) {
+      const reason = turnResult.error ? "turn_evaluation_error" : String(turn?.reason_code ?? "concurrent_invite");
+      const skipped = await supabase.rpc("finish_account_invite_job_item", { p_item_id: item.item_id, p_status: turnResult.error ? "failed" : "skipped", p_reason_code: reason });
+      if (skipped.error) return { success: false as const, message: skipped.error.message };
+      continue;
+    }
+    const result = await inviteCadastroFirstAccessAction(String(item.participant_id));
+    const status = result.success && result.sent ? "sent" : "prepared" in result && result.prepared ? "failed" : "skipped";
+    const reasonCode = "reasonCode" in result && result.reasonCode
+      ? String(result.reasonCode)
+      : status === "failed" ? "provider_or_prepare_error" : "not_eligible";
+    const finished = await supabase.rpc("finish_account_invite_job_item", { p_item_id: item.item_id, p_status: status, p_reason_code: reasonCode });
+    if (finished.error) return { success: false as const, message: finished.error.message };
+  }
+  return getImportAccountInviteJobAction(jobId);
+}
+
+export async function retryImportAccountInviteJobFailuresAction(jobId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(jobId)) return { success: false as const, message: "Job inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("retry_failed_account_invite_job", { p_job_id: jobId });
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, retried: Number(data ?? 0) };
+}
+
+export async function listImportAccountInviteJobFailuresAction(jobId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(jobId)) return { success: false as const, message: "Job inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.from("account_invite_job_items")
+    .select("id,error_code,attempt_count,participants(registration_contacts(full_name,email))")
+    .eq("job_id", jobId).eq("status", "failed").order("created_at").limit(200);
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, failures: data ?? [] };
+}
+
 export type FinalizeCadastroInput = {
   participantId: string;
   paymentId: string;

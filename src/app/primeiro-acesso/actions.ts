@@ -112,6 +112,13 @@ export async function completeFirstAccessAction(formData: FormData) {
     if (!inviteContext?.valid) {
       return { success: false, message: getParticipantInviteFailureCopy(inviteContext?.reason).actionMessage };
     }
+
+    // Reivindica o cadastro antes de alterar senha/perfil. O RPC serializa o
+    // participante e o convite, valida e-mail/conta e e idempotente para o
+    // mesmo usuario. Assim, duas sessoes ou uma conta criada em paralelo nao
+    // deixam uma conta ativada sem o vinculo canonico correspondente.
+    const { error: claimError } = await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
+    if (claimError) return { success: false, message: claimError.message };
   }
 
   if (!fullName || !cpf || !birthDate || phone.length < 10 || !city || !authEmail) {
@@ -254,9 +261,6 @@ export async function completeFirstAccessAction(formData: FormData) {
   }
 
   if (inviteId) {
-    const { error: claimError } = await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
-    if (claimError) return { success: false, message: claimError.message };
-
     const participantId = String(inviteContext?.participant?.id ?? '');
     const allowed = new Set(inviteContext?.userResolvableFields ?? []);
     const issueValues: Record<string, string> = {};

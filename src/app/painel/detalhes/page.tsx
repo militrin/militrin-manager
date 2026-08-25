@@ -7,7 +7,7 @@ import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from
 import { DASHBOARD_METRIC_SECTIONS, DASHBOARD_SECTION_PERMISSIONS } from '@/lib/dashboard/dashboard-permissions';
 
 const metricKeys = new Set<DashboardMetricKey>([
-  'people', 'registrations', 'confirmed', 'pending', 'cancelled', 'tickets', 'checkins', 'complete_kits', 'shirt_coherence',
+  'people', 'registrations', 'confirmed', 'pending', 'expired', 'cancelled', 'tickets', 'checkins', 'complete_kits', 'shirt_coherence',
   'shirts_received', 'shirts_reserved', 'shirts_delivered', 'shirts_available', 'shirts_deficit',
   'revenue_confirmed', 'revenue_pending', 'pix', 'card', 'courtesy',
 ]);

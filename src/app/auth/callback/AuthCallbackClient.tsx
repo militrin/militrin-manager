@@ -12,7 +12,7 @@ const allowedOtpTypes = new Set<EmailOtpType>(['invite', 'signup', 'magiclink', 
 function withTimeout<T>(operation: Promise<T>): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error('A validação do convite excedeu 10 segundos. Solicite um novo convite.')), CALLBACK_TIMEOUT_MS);
+    timeoutId = setTimeout(() => reject(new Error('A validação do link excedeu 10 segundos. Solicite um novo link.')), CALLBACK_TIMEOUT_MS);
   });
   return Promise.race([operation, timeout]).finally(() => {
     if (timeoutId) clearTimeout(timeoutId);
@@ -89,7 +89,7 @@ export function AuthCallbackClient() {
       } else if (tokenHash && otpType) {
         throw new Error(`Tipo de autenticação não suportado: ${otpType}.`);
       } else {
-        throw new Error('O link não contém credenciais válidas de convite. Ele pode ter expirado ou já ter sido utilizado.');
+        throw new Error('O link não contém credenciais válidas. Ele pode ter expirado ou já ter sido utilizado.');
       }
 
       if (authError) {
@@ -100,7 +100,7 @@ export function AuthCallbackClient() {
       if (sessionResult.error) {
         throw new Error(sessionResult.error.message);
       }
-      if (!sessionResult.data.session) throw new Error('O convite foi validado, mas a sessão não pôde ser criada. Solicite um novo convite.');
+      if (!sessionResult.data.session) throw new Error('O link foi validado, mas a sessão não pôde ser criada. Solicite um novo link.');
 
       reachedTerminalState = true;
       router.replace(destination);

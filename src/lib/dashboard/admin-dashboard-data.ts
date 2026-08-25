@@ -3,9 +3,11 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import type { DashboardSection } from '@/lib/dashboard/dashboard-permissions';
 import { makeShirtInventoryKey } from '@/lib/constants/shirts';
+import { orderDisplayReference } from '@/lib/display-reference';
+import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from '@/lib/dashboard/commercial-status';
 
 export type DashboardMetricKey =
-  | 'people' | 'registrations' | 'confirmed' | 'pending' | 'cancelled'
+  | 'people' | 'registrations' | 'confirmed' | 'pending' | 'expired' | 'cancelled'
   | 'tickets' | 'checkins' | 'complete_kits' | 'shirt_coherence'
   | 'shirts_received' | 'shirts_reserved' | 'shirts_delivered' | 'shirts_available' | 'shirts_deficit'
   | 'revenue_confirmed' | 'revenue_pending' | 'pix' | 'card' | 'courtesy';
@@ -57,7 +59,7 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const emptyResult = { data: [], error: null };
   const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
-    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,participant_id,registration_contact_id,ownership_status,holder_full_name,shirt_type,shirt_size,final_amount,created_at,registration_contacts(full_name),participants(full_name,registration_contact_id),ticket_categories(name),registration_batches(name),orders(id,status,payment_id)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
     enabled.has('operations') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
     enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,created_at,paid_at,participants(full_name)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
@@ -128,11 +130,35 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     issuesByParticipant.set(key, [...(issuesByParticipant.get(key) ?? []), issue]);
   }
 
+  // Comprador real (orders.buyer_type='account') resolvido via
+  // get_operation_buyers (RPC ja existente e ja usada por /operacoes e pelos
+  // relatorios -- reaproveitada aqui, sem duplicar a logica de resolucao).
+  // Emissao administrativa/cortesia (buyer_type='administrative'/
+  // 'imported_holder') tem orders.user_id SEMPRE null por design (CHECK
+  // orders_buyer_ownership_check) -- nunca inventamos um comprador pra esses,
+  // resolveBuyerPresentation() troca para "Destinatário" com o titular.
+  const buyerEventIds = [...new Set(items.map((item) => String(item.event_id ?? '')).filter(Boolean))];
+  const buyerMap = new Map<string, Row>();
+  if (enabled.has('people') || enabled.has('operations')) {
+    const buyerResults = await Promise.all(
+      buyerEventIds.map((id) => supabase.rpc('get_operation_buyers', { p_event_id: id }).then((result) => result.data ?? [])),
+    );
+    for (const rows of buyerResults) for (const buyer of rows as Row[]) buyerMap.set(String(buyer.user_id ?? ''), buyer);
+  }
+
   const itemRow = (item: Row): DashboardDetailRow => {
     const participant = participantById.get(String(item.participant_id ?? '')) ?? one(item.participants);
     const ticket = ticketByItem.get(String(item.id)); const order = one(item.orders); const payment = paymentByOrder.get(String(order?.id ?? ''));
     const open = issuesByParticipant.get(String(item.participant_id ?? '')) ?? [];
-    let actionLabel = 'Ver ingresso'; let href = ticket?.id ? `/ingressos/${ticket.id}` : `/inscricoes/${item.participant_id ?? ''}`;
+    const commercialStatus = resolveCommercialStatus({
+      itemStatus: item.status, orderStatus: order?.status, paymentStatus: payment?.payment_status,
+      reservationExpiresAt: item.reservation_expires_at,
+    });
+
+    let actionLabel: string; let href: string;
+    if (ticket?.id) { actionLabel = 'Ver ingresso'; href = `/ingressos/${ticket.id}`; }
+    else if (order?.id) { actionLabel = 'Ver pedido'; href = `/inscricoes/pedido/${order.id}`; }
+    else { actionLabel = 'Ver pedido'; href = '/inscricoes'; }
     let requiredPermission: string | undefined;
     if (open.length) {
       // Pendencia do baseline e participant-scoped. Sem order_item_id persistido,
@@ -148,8 +174,26 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     const snapshotNotice = textualHolderOnly ? `Nome informado na compra: ${String(item.holder_full_name).trim()}` : '';
     const issueMessages = open.map((issue) => String(issue.message ?? issue.field_code));
     if (textualHolderOnly) issueMessages.unshift('Titular informado sem dados suficientes para identificação');
-    return { id: String(item.id), primary: personName(item, participant), secondary: [snapshotNotice, one(item.ticket_categories)?.name ?? 'Ingresso único', one(item.registration_batches)?.name ?? 'Sem lote'].filter(Boolean).join(' · '),
-      status: String(item.status ?? 'pending'), href, actionLabel, requiredPermission, issue: issueMessages.join(' · ') || undefined };
+    const holderName = personName(item, participant);
+    const buyer = order?.user_id ? buyerMap.get(String(order.user_id)) : null;
+    const buyerPresentation = resolveBuyerPresentation({
+      buyerType: order?.buyer_type, buyerName: buyer?.full_name ? String(buyer.full_name) : null,
+      holderName, paymentMethod: payment?.payment_method,
+    });
+    const reason = issueMessages.join(' · ') || commercialStatusFriendlyReason(commercialStatus, Boolean(payment));
+    return {
+      id: String(item.id),
+      primary: holderName,
+      secondary: [
+        `${buyerPresentation.label}: ${buyerPresentation.name}`,
+        one(item.ticket_categories)?.name ?? 'Ingresso único',
+        one(item.registration_batches)?.name ?? 'Sem lote',
+        order?.id ? orderDisplayReference(order.display_number, order.order_number) : null,
+        snapshotNotice || null,
+      ].filter(Boolean).join(' · '),
+      status: COMMERCIAL_STATUS_LABELS[commercialStatus],
+      href, actionLabel, requiredPermission, issue: reason,
+    };
   };
   const ticketRow = (ticket: Row): DashboardDetailRow => { const item = one(ticket.order_items) ?? itemById.get(String(ticket.order_item_id)); const participant = participantById.get(String(ticket.participant_id ?? '')) ?? one(ticket.participants);
     const textualHolderOnly = !item?.registration_contact_id && !participant?.registration_contact_id && String(item?.holder_full_name ?? '').trim();
@@ -187,7 +231,23 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     return !required.some((id) => linked.some((kit) => String(kit.kit_item_id) === id && Boolean(kit.variant_data?.variant_id))); });
   const people = new Map<string, Row>(); for (const participant of participants) if (participant.registration_contact_id) people.set(String(participant.registration_contact_id), participant);
   const peopleRows = [...people.entries()].map(([id, participant]) => ({ id, primary: String(one(participant.registration_contacts)?.full_name ?? 'Pessoa'), secondary: 'Cadastro global vinculado ao evento', status: 'active', href: `/cadastros/${id}`, actionLabel: 'Ver pessoa' }));
-  const confirmedItems = items.filter((item) => item.status === 'confirmed'); const pendingItems = items.filter((item) => !cancelled(item.status) && item.status !== 'confirmed'); const cancelledItems = items.filter((item) => cancelled(item.status));
+  // Classificação de negócio via resolveCommercialStatus (fonte única,
+  // reaproveitada pelo card e pelo drill-down) -- nunca mais checar
+  // item.status sozinho: 'expired' quase nunca chega lá (ver comentário em
+  // commercial-status.ts), então confiar só nisso reproduzia o bug de
+  // pedidos expirados caindo em "Pendentes".
+  const itemCommercialStatus = (item: Row) => {
+    const order = one(item.orders);
+    const payment = paymentByOrder.get(String(order?.id ?? ''));
+    return resolveCommercialStatus({
+      itemStatus: item.status, orderStatus: order?.status, paymentStatus: payment?.payment_status,
+      reservationExpiresAt: item.reservation_expires_at,
+    });
+  };
+  const confirmedItems = items.filter((item) => itemCommercialStatus(item) === 'confirmed');
+  const pendingItems = items.filter((item) => itemCommercialStatus(item) === 'pending');
+  const expiredItems = items.filter((item) => itemCommercialStatus(item) === 'expired');
+  const cancelledItems = items.filter((item) => itemCommercialStatus(item) === 'cancelled');
   const paid = payments.filter((payment) => payment.payment_status === 'paid'); const pendingPayments = payments.filter((payment) => payment.payment_status === 'pending');
   const received = inventory.reduce((sum, row) => sum + Number(row.total_quantity ?? 0), 0); const reserved = inventory.reduce((sum, row) => sum + Number(row.reserved_quantity ?? 0), 0);
   const delivered = inventory.reduce((sum, row) => sum + Number(row.delivered_quantity ?? 0), 0); const available = inventory.reduce((sum, row) => sum + Math.max(0, Number(row.total_quantity ?? 0) - Number(row.delivered_quantity ?? 0)), 0);
@@ -196,6 +256,7 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const metrics = new Map<DashboardMetricKey, DashboardMetric>(); const put = (key: DashboardMetricKey, label: string, value: number, rows: DashboardDetailRow[]) => metrics.set(key, { key, label, value, rows });
   put('people', 'Pessoas no evento', people.size, peopleRows); put('registrations', 'Inscrições comerciais', items.length, items.map(itemRow));
   put('confirmed', 'Inscrições confirmadas', confirmedItems.length, confirmedItems.map(itemRow)); put('pending', 'Inscrições pendentes', pendingItems.length, pendingItems.map(itemRow));
+  put('expired', 'Inscrições expiradas', expiredItems.length, expiredItems.map(itemRow));
   put('cancelled', 'Inscrições canceladas', cancelledItems.length, cancelledItems.map(itemRow)); put('tickets', 'Ingressos emitidos', tickets.length, tickets.map(ticketRow));
   put('checkins', 'Check-ins realizados', tickets.filter((ticket) => ticket.used_at || ticket.status === 'used').length, tickets.filter((ticket) => ticket.used_at || ticket.status === 'used').map(checkinRow));
   put('complete_kits', 'Kits completos entregues', completeTickets.length, completeTickets.map(ticketRow)); put('shirt_coherence', 'Ingressos com camiseta pendente', shirtAttention.length, shirtAttention.map(shirtAttentionRow));

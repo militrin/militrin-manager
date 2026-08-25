@@ -18,6 +18,25 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
   } = await supabase.auth.getUser();
 
   if (!user?.id) {
+    if (params.invite) {
+      return (
+        <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
+          <section className="mx-auto max-w-xl rounded-3xl border border-amber-500/30 bg-slate-900 p-6">
+            <h1 className="text-2xl font-semibold">Não foi possível validar o convite</h1>
+            <p className="mt-2 text-sm text-slate-300">
+              Este link pode ter expirado, já ter sido usado ou ter sido aberto sem as credenciais de ativação.
+              Solicite ao organizador um novo convite de primeiro acesso.
+            </p>
+            <a
+              href="mailto:?subject=Solicitar%20novo%20convite%20de%20primeiro%20acesso"
+              className="mt-5 inline-flex h-10 items-center whitespace-nowrap rounded-xl border border-slate-700 px-4 text-sm"
+            >
+              Solicitar novo convite
+            </a>
+          </section>
+        </main>
+      );
+    }
     redirect('/entrar?next=/primeiro-acesso');
   }
 
