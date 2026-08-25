@@ -2,12 +2,14 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { SlideOverPanel } from '@/components/admin/SlideOverPanel';
 import {
   INTEGRITY_DOMAIN_LABELS,
   INTEGRITY_SEVERITY_LABELS,
   type IntegrityIssueSummary,
   type IntegritySeverity,
+  summarizeIntegrityReport,
 } from '@/lib/integrity/report';
 import { describeAffected, type IntegrityDetectorCheck } from '@/lib/integrity/checks';
 import { EntityCard, type IntegrityEntity } from './entity-card';
@@ -102,13 +104,15 @@ type Props = {
   checks: IntegrityDetectorCheck[];
   initialError: string | null;
   events: EventOption[];
+  initialSelectedEventId: string | null;
 };
 
-export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: initialChecks, initialError, events }: Props) {
+export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: initialChecks, initialError, events, initialSelectedEventId }: Props) {
+  const router = useRouter();
   const [issues, setIssues] = useState(initialIssues);
   const [checks, setChecks] = useState(initialChecks);
   const [error, setError] = useState(initialError);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(initialSelectedEventId);
   const [isPending, startTransition] = useTransition();
 
   const [drawerIssue, setDrawerIssue] = useState<ConsolidatedIssue | null>(null);
@@ -119,14 +123,7 @@ export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: ini
 
   const eventNameById = useMemo(() => new Map(events.map((event) => [event.id, event.name])), [events]);
 
-  const totals = useMemo(() => {
-    const critical = issues.filter((issue) => issue.severity === 'critical').length;
-    const attention = issues.filter((issue) => issue.severity === 'attention').length;
-    const warning = issues.filter((issue) => issue.severity === 'warning').length;
-    const distinctCodesWithIssues = new Set(issues.map((issue) => issue.code)).size;
-    const ok = Math.max(totalDetectorCount - distinctCodesWithIssues, 0);
-    return { critical, attention, warning, ok };
-  }, [issues, totalDetectorCount]);
+  const totals = useMemo(() => summarizeIntegrityReport(issues, totalDetectorCount), [issues, totalDetectorCount]);
 
   const grouped = useMemo(() => {
     const byDomain = new Map<string, IntegrityIssueSummary[]>();
@@ -169,6 +166,7 @@ export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: ini
   function handleEventChange(eventId: string) {
     const next = eventId === '' ? null : eventId;
     setSelectedEventId(next);
+    router.replace(next ? `/painel/integridade?eventId=${encodeURIComponent(next)}` : '/painel/integridade', { scroll: false });
     fetchReport(next);
   }
 
@@ -227,6 +225,11 @@ export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: ini
         <SummaryCard icon="🟠" label="Precisam de atenção" value={totals.attention} tone="amber" />
         <SummaryCard icon="🟡" label="Avisos" value={totals.warning} tone="yellow" />
         <SummaryCard icon="✅" label="Verificações aprovadas" value={totals.ok} tone="emerald" onClick={() => setChecksDrawerOpen(true)} />
+      </div>
+
+      <div className={`rounded-2xl border p-4 ${totals.critical ? 'border-rose-500/30 bg-rose-500/5' : 'border-emerald-500/30 bg-emerald-500/5'}`}>
+        <h2 className={`font-semibold ${totals.critical ? 'text-rose-200' : 'text-emerald-200'}`}>Bloqueios ({totals.critical})</h2>
+        {!totals.critical ? <p className="mt-1 text-sm text-emerald-200">Nenhum bloqueio encontrado.</p> : <p className="mt-1 text-sm text-rose-200">Os bloqueios estão listados abaixo com a entidade afetada e a ação recomendada.</p>}
       </div>
 
       {issues.length === 0 && !error ? (

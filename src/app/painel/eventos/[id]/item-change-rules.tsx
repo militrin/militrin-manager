@@ -26,6 +26,11 @@ export function ItemChangeRules({ eventId, initialEnabled, items }: { eventId: s
         ? await setEventKitItemChangeRulesAction(item.id, item.allow_participant_change, item.track_variant_inventory, item.require_stock_for_choice)
         : await setEventKitItemChangeRulesAction(item.id, item.allow_participant_change, item.track_variant_inventory);
       setMessage(result.message);
+      if (result.success && result.saved) update(item.id, {
+        allow_participant_change: result.saved.allowParticipantChange,
+        track_variant_inventory: result.saved.trackVariantInventory,
+        require_stock_for_choice: result.saved.requireStockForChoice,
+      });
     });
   }
   function update(id: string, values: Partial<ItemRule>) { setRules((current) => current.map((item) => item.id === id ? { ...item, ...values } : item)); }

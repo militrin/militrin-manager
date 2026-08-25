@@ -3,11 +3,13 @@ import { MilitrinSection } from '@/components/militrin';
 import { getIntegrityReportAction, listIntegrityEventsAction } from './actions';
 import { IntegrityCenter } from './integrity-center';
 
-export default async function IntegridadePage() {
+export default async function IntegridadePage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
   await requirePermission('integrity.view');
+  const { eventId: rawEventId } = await searchParams;
+  const eventId = rawEventId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawEventId) ? rawEventId : null;
 
   const [reportResult, eventsResult] = await Promise.all([
-    getIntegrityReportAction(null),
+    getIntegrityReportAction(eventId),
     listIntegrityEventsAction(),
   ]);
 
@@ -23,6 +25,7 @@ export default async function IntegridadePage() {
         checks={reportResult.success ? reportResult.checks : []}
         initialError={reportResult.success ? null : reportResult.message}
         events={eventsResult.success ? eventsResult.events : []}
+        initialSelectedEventId={eventId}
       />
     </MilitrinSection>
   );

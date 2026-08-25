@@ -70,7 +70,20 @@ export async function setEventKitItemChangeRulesAction(
     p_require_stock_for_choice: requireStockForChoice ?? null,
   });
   if (error) return { success: false, message: error.message };
-  return { success: true, message: "Regra do item salva." };
+  const { data: saved, error: readError } = await supabase.from("event_kit_items")
+    .select("id,event_id,allow_participant_change,track_variant_inventory,shirt_supply_mode")
+    .eq("id", itemId).maybeSingle();
+  if (readError || !saved) return { success: false, message: readError?.message ?? "Não foi possível reler a regra salva." };
+  revalidatePath(`/painel/eventos/${saved.event_id}`);
+  return {
+    success: true,
+    message: "Regra do item salva.",
+    saved: {
+      allowParticipantChange: Boolean(saved.allow_participant_change),
+      trackVariantInventory: Boolean(saved.track_variant_inventory),
+      requireStockForChoice: saved.shirt_supply_mode === "stock",
+    },
+  };
 }
 
 export async function setEventKitItemVariantStockAction(variantId: string, totalQuantity: number) {
