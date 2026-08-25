@@ -11,7 +11,7 @@ import {
 } from '@/app/minha-conta/actions';
 import { TicketOperationalControls } from './ticket-operational-controls';
 import { TicketHolderActions } from './ticket-holder-actions';
-import { CategoryContextAction, HolderContextAction, ShirtContextAction } from './ticket-context-actions';
+import { CategoryContextAction, HolderContextAction, ParticipantShirtChangeAction, ShirtContextAction } from './ticket-context-actions';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { orderDisplayReference } from '@/lib/display-reference';
 
@@ -159,6 +159,19 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     : null;
   const shirtIsCanonicallyLinked = Boolean(shirtVariantId);
   const currentShirtOption = shirtType && shirtSize ? `${shirtType}|${shirtSize}` : '';
+  const shirtKitItemId = String(shirtKitItem?.kit_item_id ?? '');
+  const { data: participantShirtRuleData } = isOwner && shirtKitItemId
+    ? await supabase.from('event_kit_items').select('id,item_type,requires_variant,allow_participant_change,shirt_supply_mode,event_kit_item_variants(id,name,value,is_active,sort_order,event_kit_item_variant_inventory(total_quantity,delivered_quantity))').eq('id', shirtKitItemId).maybeSingle()
+    : { data: null };
+  const participantShirtRule = participantShirtRuleData as Record<string, unknown> | null;
+  const participantShirtVariants = (participantShirtRule?.event_kit_item_variants ?? []) as Array<Record<string, unknown>>;
+  const participantShirtChangeEnabled = Boolean(isOwner
+    && eventObj?.allow_participant_item_changes
+    && participantShirtRule?.allow_participant_change
+    && participantShirtRule?.requires_variant
+    && shirtKitItemId
+    && shirtType
+    && shirtSize);
   const [ticketLogsResult, participantLogsResult, orderItemLogsResult] = timelineResult as [
     { data: Array<Record<string, unknown>> | null },
     { data: Array<Record<string, unknown>> | null },
@@ -172,6 +185,24 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
   const kitDeliveredCount = kitItems.filter((item) => String(item.status ?? '') === 'delivered').length;
   const kitFullyDelivered = kitItems.length > 0 && kitDeliveredCount === kitItems.length;
   const checkinDone = Boolean(ticket.used_at) || ticketStatus === 'used';
+  const shirtDelivered = String(shirtKitItem?.status ?? '') === 'delivered';
+  const pendingShirtRequest = pendingItemRequests.some((request) => String(request.kit_item_id ?? '') === shirtKitItemId);
+  const participantShirtDisabledReason = shirtDelivered
+    ? 'A alteração não está disponível porque a camiseta já foi entregue.'
+    : checkinDone
+      ? 'A alteração não está disponível após o check-in.'
+      : pendingShirtRequest
+        ? 'Já existe uma alteração aguardando confirmação do organizador.'
+        : null;
+  const requireStockForChoice = String(participantShirtRule?.shirt_supply_mode ?? '') === 'stock';
+  const participantShirtOptions = participantShirtVariants
+    .filter((variant) => Boolean(variant.is_active) && String(variant.id ?? '') !== shirtVariantId)
+    .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+    .map((variant) => {
+      const inventory = firstRelation(variant.event_kit_item_variant_inventory as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+      const physicallyAvailable = Number(inventory?.total_quantity ?? 0) - Number(inventory?.delivered_quantity ?? 0);
+      return { value: String(variant.id), label: `${String(variant.name ?? participantShirtRule?.item_type ?? 'Peça')} — ${String(variant.value ?? '')}`, disabled: requireStockForChoice && physicallyAvailable <= 0 };
+    });
   const kitSummary = `${kitDeliveredCount}/${kitItems.length} entregues`;
 
   const timelineItems = [
@@ -294,9 +325,10 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
                 </li>)}
               </ul>
             </div> : null}
-            {isOwner && ((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer))) ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
+            {isOwner && (((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer))) || participantShirtChangeEnabled) ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ações do ingresso</p>
-              <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div>
+              {((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer))) ? <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div> : null}
+              {participantShirtChangeEnabled ? <ParticipantShirtChangeAction ticketId={ticketId} kitItemId={shirtKitItemId} currentLabel={`${shirtType} — ${shirtSize}`} options={participantShirtOptions} disabledReason={participantShirtDisabledReason} /> : null}
             </div> : null}
 
             {isBuyer && kitItems.length > 0 ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">

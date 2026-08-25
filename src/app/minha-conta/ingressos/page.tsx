@@ -236,7 +236,7 @@ export default async function IngressosPage() {
                         href={`/minha-conta/ingressos/${item.ticketId}`}
                         className="inline-flex h-9 items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
                       >
-                        Ver QR Code
+                        Ver detalhes
                       </Link>
                     ) : null}
                   </div>
@@ -274,7 +274,7 @@ export default async function IngressosPage() {
                         href={`/minha-conta/ingressos/${item.ticketId}`}
                         className="inline-flex h-9 items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
                       >
-                        Ver QR Code
+                        Ver detalhes
                       </Link>
                     ) : null}
                     {!item.canShowTicket && item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (

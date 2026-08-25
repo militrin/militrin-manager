@@ -5,8 +5,48 @@ import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { resendParticipantTicketAction } from "@/app/inscricoes/actions";
+import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const ADMIN_DELETE_REASONS = new Set(["incorrect_issue", "duplicate", "cancelled_order", "incorrect_registration", "system_test", "administrative_correction", "other"]);
+
+async function assertCurrentOrganizationOwner() {
+  const context = await getCurrentOrganizationContext();
+  if (!context.organization?.id || !context.isOrgOwner) throw new Error("Somente o Owner da organização pode executar esta ação.");
+  return context.organization.id;
+}
+
+function validateAdministrativeDeleteReason(reasonCode: string, reasonText?: string) {
+  if (!ADMIN_DELETE_REASONS.has(reasonCode)) return "Selecione um motivo válido.";
+  if (reasonCode === "other" && !reasonText?.trim()) return "Descreva o motivo da exclusão.";
+  return null;
+}
+
+export async function cancelCadastroTicketAction(payload: { contactId: string; ticketId: string; reasonCode: string; reasonText?: string }) {
+  try { await assertCurrentOrganizationOwner(); } catch (error) { return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão." }; }
+  if (![payload.contactId, payload.ticketId].every((value) => UUID_PATTERN.test(value))) return { success: false as const, message: "Cadastro ou ingresso inválido." };
+  const reasonError = validateAdministrativeDeleteReason(payload.reasonCode, payload.reasonText);
+  if (reasonError) return { success: false as const, message: reasonError };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("owner_cancel_ticket", { p_ticket_id: payload.ticketId, p_reason_code: payload.reasonCode, p_reason_text: payload.reasonText?.trim() || null });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath(`/cadastros/${payload.contactId}`);
+  revalidatePath(`/ingressos/${payload.ticketId}`);
+  return { success: true as const, message: "Ingresso cancelado com sucesso." };
+}
+
+export async function cancelCadastroAdditionalItemAction(payload: { contactId: string; itemId: string; reasonCode: string; reasonText?: string }) {
+  try { await assertCurrentOrganizationOwner(); } catch (error) { return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão." }; }
+  if (![payload.contactId, payload.itemId].every((value) => UUID_PATTERN.test(value))) return { success: false as const, message: "Cadastro ou item inválido." };
+  const reasonError = validateAdministrativeDeleteReason(payload.reasonCode, payload.reasonText);
+  if (reasonError) return { success: false as const, message: reasonError };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("owner_cancel_store_order_item", { p_store_order_item_id: payload.itemId, p_reason_code: payload.reasonCode, p_reason_text: payload.reasonText?.trim() || null });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath(`/cadastros/${payload.contactId}`);
+  return { success: true as const, message: "Item adicional cancelado com sucesso." };
+}
 
 async function assertStoreGrantPermission() {
   if (await hasPermission("store.grant_items")) return;
@@ -62,6 +102,13 @@ async function dispatchFirstAccessEmail(input: { inviteId: string; email: string
   const isResend = input.reasonCode.startsWith("resend_invite_");
   const redirectTo = firstAccessInviteRedirect(input.inviteId);
 
+  const { data: invitePerson } = await admin.from("participant_account_invites")
+    .select("participants(registration_contacts(full_name))")
+    .eq("id", input.inviteId).maybeSingle();
+  const participantRelation = Array.isArray(invitePerson?.participants) ? invitePerson?.participants[0] : invitePerson?.participants;
+  const contactRelation = Array.isArray(participantRelation?.registration_contacts) ? participantRelation?.registration_contacts[0] : participantRelation?.registration_contacts;
+  const canonicalFullName = String(contactRelation?.full_name ?? "").trim();
+
   if (isResend) {
     const result = await admin.auth.signInWithOtp({
       email: input.email,
@@ -72,7 +119,7 @@ async function dispatchFirstAccessEmail(input: { inviteId: string; email: string
 
   const result = await admin.auth.admin.inviteUserByEmail(input.email, {
     redirectTo,
-    data: { participant_invite_id: input.inviteId },
+    data: { participant_invite_id: input.inviteId, ...(canonicalFullName ? { full_name: canonicalFullName } : {}) },
   });
   return { error: result.error, authUserId: result.data.user?.id ?? null, resent: false };
 }

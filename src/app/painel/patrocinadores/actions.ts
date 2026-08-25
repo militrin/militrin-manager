@@ -46,20 +46,20 @@ export async function upsertSponsorAction(input: { id: string | null; name: stri
   return { success: true as const, message: 'Patrocinador salvo com sucesso.', sponsorId: String(data) };
 }
 
-export async function setSponsorUserAction(input: { sponsorId: string; userId: string | null }) {
+export async function setSponsorContactAction(input: { sponsorId: string; registrationContactId: string | null }) {
   await assertPermission('sponsors.manage');
-  const parsed = z.object({ sponsorId: z.string().uuid(), userId: z.string().uuid().nullable() }).safeParse(input);
+  const parsed = z.object({ sponsorId: z.string().uuid(), registrationContactId: z.string().uuid().nullable() }).safeParse(input);
   if (!parsed.success) return { success: false, message: 'Dados inválidos.' };
 
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc('admin_set_sponsor_user', {
+  const { error } = await supabase.rpc('admin_set_sponsor_contact', {
     p_sponsor_id: parsed.data.sponsorId,
-    p_user_id: parsed.data.userId,
+    p_registration_contact_id: parsed.data.registrationContactId,
   });
 
   if (error) return { success: false, message: error.message };
   revalidatePath('/painel/patrocinadores');
-  return { success: true, message: parsed.data.userId ? 'Usuário vinculado.' : 'Usuário desvinculado.' };
+  return { success: true, message: parsed.data.registrationContactId ? 'Pessoa vinculada.' : 'Pessoa desvinculada.' };
 }
 
 export async function setSponsorBannerAction(input: { sponsorId: string; bannerUrl: string | null }) {
@@ -100,7 +100,7 @@ export async function searchSponsorCandidateUsersAction(term: string) {
   if (!parsed.success) return { success: false as const, message: 'Informe ao menos 3 caracteres.', candidates: [] };
 
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc('admin_search_sponsor_candidate_users', { p_term: parsed.data, p_organization_id: null });
+  const { data, error } = await supabase.rpc('admin_search_sponsor_candidate_contacts', { p_term: parsed.data, p_organization_id: null });
   if (error) return { success: false as const, message: error.message, candidates: [] };
   return { success: true as const, candidates: data ?? [] };
 }

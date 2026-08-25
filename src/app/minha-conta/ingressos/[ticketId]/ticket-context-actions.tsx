@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { adminChangeTicketShirtAction, updateTicketCategoryAction } from "@/app/minha-conta/actions";
+import { adminChangeTicketShirtAction, requestTicketItemChangeAction, updateTicketCategoryAction } from "@/app/minha-conta/actions";
 import { TicketHolderActions } from "./ticket-holder-actions";
 
 type Option = { value: string; label: string; disabled?: boolean };
@@ -30,4 +30,49 @@ export function CategoryContextAction({ ticketId, initial, options }: { ticketId
 }
 export function ShirtContextAction({ ticketId, initial, options }: { ticketId:string; initial:string; options:Option[] }) {
   return <SelectAction label="Trocar camiseta" buttonLabel="Trocar" initial={initial} options={options} save={value=>adminChangeTicketShirtAction(ticketId,value)}/>;
+}
+
+export function ParticipantShirtChangeAction({ ticketId, kitItemId, currentLabel, options, disabledReason }: {
+  ticketId: string;
+  kitItemId: string;
+  currentLabel: string;
+  options: Option[];
+  disabledReason?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function submit() {
+    if (!value) return;
+    startTransition(async () => {
+      const form = new FormData();
+      form.set("ticket_id", ticketId);
+      form.set("kit_item_id", kitItemId);
+      form.set("requested_variant_id", value);
+      const result = await requestTicketItemChangeAction(form);
+      setMessage(result.message);
+      if (result.success) {
+        router.refresh();
+        setOpen(false);
+      }
+    });
+  }
+
+  return <div className="mt-3 rounded-xl border border-slate-800 p-3">
+    <p className="font-medium">Alterar tamanho da camiseta</p>
+    <p className="mt-1 text-sm text-slate-400">Tamanho atual: <strong className="text-slate-200">{currentLabel}</strong></p>
+    {disabledReason ? <p className="mt-2 text-xs text-amber-200">{disabledReason}</p> : <button type="button" onClick={() => { setMessage(null); setValue(""); setOpen(true); }} className="mt-3 rounded-lg border border-emerald-500/40 px-3 py-2 text-sm text-emerald-200">Alterar tamanho</button>}
+    {message && !open ? <p className="mt-2 text-xs text-emerald-300">{message}</p> : null}
+    <Dialog title="Alterar tamanho da camiseta" open={open} close={() => setOpen(false)}>
+      <div className="mt-4 space-y-4">
+        <p className="text-sm text-slate-300">Tamanho atual: <strong className="text-white">{currentLabel}</strong></p>
+        <label className="block space-y-2 text-sm"><span>Novo tamanho</span><select value={value} onChange={(event) => setValue(event.target.value)} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3"><option value="">Selecione</option>{options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label>
+        {message ? <p className="text-sm text-rose-300">{message}</p> : null}
+        <div className="flex justify-end gap-2"><button type="button" onClick={() => setOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2">Cancelar</button><button type="button" onClick={submit} disabled={pending || !value} className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-950 disabled:opacity-40">Confirmar alteração</button></div>
+      </div>
+    </Dialog>
+  </div>;
 }

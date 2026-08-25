@@ -10,9 +10,10 @@ import {
   setSponsorBannerAction,
   setSponsorCarouselIntervalAction,
   setSponsorCarouselOrderModeAction,
-  setSponsorUserAction,
+  setSponsorContactAction,
   upsertSponsorAction,
 } from './actions';
+import { inviteCadastroFirstAccessAction } from '@/app/cadastros/actions';
 
 export type AdminSponsorRow = {
   sponsor_id: string;
@@ -21,12 +22,13 @@ export type AdminSponsorRow = {
   link_url: string | null;
   is_active: boolean;
   sort_order: number;
+  registration_contact_id: string | null;
   user_id: string | null;
   user_full_name: string | null;
   user_email: string | null;
 };
 
-type SponsorCandidate = { user_id: string; full_name: string; masked_email: string | null };
+type SponsorCandidate = { registration_contact_id: string; participant_id: string | null; user_id: string | null; full_name: string; masked_email: string | null; masked_cpf: string | null; has_account: boolean };
 
 const emptyForm = { name: '', isActive: true, sortOrder: '0', linkUrl: '' };
 
@@ -98,6 +100,7 @@ export function SponsorsManager({
             link_url: form.linkUrl.trim() || null,
             is_active: form.isActive,
             sort_order: Number(form.sortOrder || 0),
+            registration_contact_id: existing?.registration_contact_id ?? null,
             user_id: existing?.user_id ?? null,
             user_full_name: existing?.user_full_name ?? null,
             user_email: existing?.user_email ?? null,
@@ -155,11 +158,11 @@ export function SponsorsManager({
   function linkUser(candidate: SponsorCandidate) {
     if (!editingSponsor) return;
     startTransition(async () => {
-      const result = await setSponsorUserAction({ sponsorId: editingSponsor.sponsor_id, userId: candidate.user_id });
+      const result = await setSponsorContactAction({ sponsorId: editingSponsor.sponsor_id, registrationContactId: candidate.registration_contact_id });
       setMessage({ type: result.success ? 'success' : 'error', text: result.message ?? '' });
       if (result.success) {
         setSponsors((prev) => prev.map((row) => (row.sponsor_id === editingSponsor.sponsor_id
-          ? { ...row, user_id: candidate.user_id, user_full_name: candidate.full_name, user_email: candidate.masked_email }
+          ? { ...row, registration_contact_id: candidate.registration_contact_id, user_id: candidate.user_id, user_full_name: candidate.full_name, user_email: candidate.masked_email }
           : row)));
         setCandidates([]);
         setCandidateTerm('');
@@ -170,11 +173,22 @@ export function SponsorsManager({
   function unlinkUser() {
     if (!editingSponsor) return;
     startTransition(async () => {
-      const result = await setSponsorUserAction({ sponsorId: editingSponsor.sponsor_id, userId: null });
+      const result = await setSponsorContactAction({ sponsorId: editingSponsor.sponsor_id, registrationContactId: null });
       setMessage({ type: result.success ? 'success' : 'error', text: result.message ?? '' });
       if (result.success) {
-        setSponsors((prev) => prev.map((row) => (row.sponsor_id === editingSponsor.sponsor_id ? { ...row, user_id: null, user_full_name: null, user_email: null } : row)));
+        setSponsors((prev) => prev.map((row) => (row.sponsor_id === editingSponsor.sponsor_id ? { ...row, registration_contact_id: null, user_id: null, user_full_name: null, user_email: null } : row)));
       }
+    });
+  }
+
+  function inviteCandidate(candidate: SponsorCandidate) {
+    if (!candidate.participant_id) {
+      setMessage({ type: 'error', text: 'Esta pessoa ainda não possui participação elegível para convite.' });
+      return;
+    }
+    startTransition(async () => {
+      const result = await inviteCadastroFirstAccessAction(candidate.participant_id!);
+      setMessage({ type: result.success ? 'success' : 'error', text: result.message });
     });
   }
 
@@ -335,11 +349,12 @@ export function SponsorsManager({
             </div>
 
             <div>
-              <p className="text-sm font-semibold text-slate-200">Usuário vinculado</p>
-              {editingSponsor.user_id ? (
+              <p className="text-sm font-semibold text-slate-200">Pessoa vinculada</p>
+              {editingSponsor.registration_contact_id ? (
                 <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-200">
                   <div>
-                    <p>{editingSponsor.user_full_name ?? 'Conta vinculada'}</p>
+                    <p>{editingSponsor.user_full_name ?? 'Pessoa vinculada'}</p>
+                    <p className={editingSponsor.user_id ? 'text-xs text-emerald-300' : 'text-xs text-amber-300'}>{editingSponsor.user_id ? 'Conta vinculada' : 'Conta ainda não criada'}</p>
                     {editingSponsor.user_email ? <p className="text-xs text-slate-400">{editingSponsor.user_email}</p> : null}
                   </div>
                   <button type="button" onClick={unlinkUser} disabled={isPending} className="text-xs text-slate-400 underline">Desvincular</button>
@@ -350,7 +365,7 @@ export function SponsorsManager({
                     <input
                       value={candidateTerm}
                       onChange={(event) => setCandidateTerm(event.target.value)}
-                      placeholder="Buscar por nome ou e-mail"
+                      placeholder="Buscar pessoa por nome, CPF ou e-mail"
                       className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm"
                     />
                     <button type="button" onClick={searchCandidates} disabled={isPending} className="shrink-0 rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-200">
@@ -360,15 +375,10 @@ export function SponsorsManager({
                   {candidates.length > 0 ? (
                     <div className="space-y-1.5">
                       {candidates.map((candidate) => (
-                        <button
-                          key={candidate.user_id}
-                          type="button"
-                          onClick={() => linkUser(candidate)}
-                          className="flex w-full items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-left text-xs text-slate-200 hover:border-slate-600"
-                        >
-                          <span>{candidate.full_name}</span>
-                          <span className="text-slate-400">{candidate.masked_email}</span>
-                        </button>
+                        <div key={candidate.registration_contact_id} className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+                          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{candidate.full_name}</p><p className="text-slate-400">{candidate.masked_email} {candidate.masked_cpf ? `· ${candidate.masked_cpf}` : ''}</p><p className={candidate.has_account ? 'text-emerald-300' : 'text-amber-300'}>{candidate.has_account ? 'Conta vinculada' : 'Conta ainda não criada'}</p></div><button type="button" onClick={() => linkUser(candidate)} className="rounded-lg border border-slate-600 px-2 py-1">Vincular</button></div>
+                          {!candidate.has_account ? <button type="button" onClick={() => inviteCandidate(candidate)} className="mt-2 text-amber-200 underline">Enviar convite para criar conta</button> : null}
+                        </div>
                       ))}
                     </div>
                   ) : null}
