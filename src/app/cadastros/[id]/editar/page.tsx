@@ -3,12 +3,17 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { updateCadastroAction } from "./actions";
+import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
+import { DeleteCadastroButton } from "./delete-cadastro-button";
 
 export default async function EditarCadastroPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ erro?: string; sucesso?: string }> }) {
   const { id } = await params;
   const query = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const { data: person, error } = await supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city").eq("id", id).maybeSingle();
+  const [{ data: person, error }, organizationContext] = await Promise.all([
+    supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city").eq("id", id).maybeSingle(),
+    getCurrentOrganizationContext(),
+  ]);
   if (error) throw error;
   if (!person) notFound();
   const action = updateCadastroAction.bind(null, id);
@@ -28,5 +33,10 @@ export default async function EditarCadastroPage({ params, searchParams }: { par
         <label className="space-y-1"><span>Cidade</span><input name="city" defaultValue={person.city ?? ""} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"/></label>
       </div><div className="flex justify-end"><button className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-emerald-950">Salvar cadastro</button></div>
     </form>
+    {organizationContext.isOrgOwner ? <section className="rounded-3xl border border-rose-500/30 bg-rose-500/5 p-6">
+      <h2 className="text-lg font-semibold text-rose-100">Zona de perigo</h2>
+      <p className="mt-1 text-sm text-slate-400">A exclusao e definitiva e so sera permitida se o cadastro nao possuir conta, participacao, pedido, ingresso, item adicional ou patrocinador vinculado.</p>
+      <div className="mt-4"><DeleteCadastroButton contactId={id} fullName={String(person.full_name)}/></div>
+    </section> : null}
   </div></div></main>;
 }

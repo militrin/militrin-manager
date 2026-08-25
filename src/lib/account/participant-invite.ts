@@ -15,6 +15,7 @@ export type ParticipantInviteContext = {
   userResolvableFields: string[];
   openIssueIds: string[];
   requiresPasswordSetup: boolean;
+  anchorKind: 'participant' | 'contact';
 };
 
 const emptyContext = (reason: ParticipantInviteContext['reason']): ParticipantInviteContext => ({
@@ -24,6 +25,7 @@ const emptyContext = (reason: ParticipantInviteContext['reason']): ParticipantIn
   userResolvableFields: [],
   openIssueIds: [],
   requiresPasswordSetup: false,
+  anchorKind: 'participant',
 });
 
 export function getParticipantInviteFailureCopy(reason: ParticipantInviteContext['reason']) {
@@ -54,14 +56,20 @@ export async function getParticipantInviteContext(inviteId: string, user: Authen
   const { data: invite, error } = await admin.from('participant_account_invites').select('*').eq('id', inviteId).maybeSingle();
   if (error || !invite) return emptyContext('not_found');
 
-  const { data: participant } = await admin.from('participants')
-    .select('id,event_id,user_id,registration_contacts(full_name,cpf,birth_date,gender,phone,email,city)')
-    .eq('id', invite.participant_id).maybeSingle();
-  if (!participant) return emptyContext('participant_not_found');
-  const registrationContact = Array.isArray(participant.registration_contacts)
-    ? participant.registration_contacts[0]
-    : participant.registration_contacts;
-  const canonicalParticipant = { ...participant, ...(registrationContact ?? {}) };
+  const isContactInvite = Boolean(invite.registration_contact_id) && !invite.participant_id;
+  const { data: participant } = isContactInvite
+    ? { data: null }
+    : await admin.from('participants')
+      .select('id,event_id,user_id,registration_contacts(full_name,cpf,birth_date,gender,phone,email,city)')
+      .eq('id', invite.participant_id).maybeSingle();
+  const { data: directContact } = isContactInvite
+    ? await admin.from('registration_contacts').select('id,user_id,full_name,cpf,birth_date,gender,phone,email,city').eq('id', invite.registration_contact_id).maybeSingle()
+    : { data: null };
+  if (!participant && !directContact) return emptyContext('participant_not_found');
+  const registrationContact = participant
+    ? (Array.isArray(participant.registration_contacts) ? participant.registration_contacts[0] : participant.registration_contacts)
+    : directContact;
+  const canonicalParticipant = participant ? { ...participant, ...(registrationContact ?? {}) } : directContact!;
 
   const accessFailure = evaluateParticipantInviteAccess({
     inviteId,
@@ -70,19 +78,22 @@ export async function getParticipantInviteContext(inviteId: string, user: Authen
     inviteEmail: invite.email ? String(invite.email) : null,
     authUserId: invite.auth_user_id ? String(invite.auth_user_id) : null,
     claimedUserId: invite.claimed_user_id ? String(invite.claimed_user_id) : null,
-    participantUserId: participant.user_id ? String(participant.user_id) : null,
+    participantUserId: canonicalParticipant.user_id ? String(canonicalParticipant.user_id) : null,
     userId: user.id,
     userEmail: user.email ?? null,
     metadataInviteId: String(user.user_metadata?.participant_invite_id ?? '') || null,
   });
   if (accessFailure) return emptyContext(accessFailure);
 
-  const { data: issues } = await admin.from('participant_data_issues').select('id,field_code,resolution_scope').eq('participant_id', participant.id).eq('status', 'open');
+  const { data: issues } = participant
+    ? await admin.from('participant_data_issues').select('id,field_code,resolution_scope').eq('participant_id', participant.id).eq('status', 'open')
+    : { data: [] };
   return {
     valid: true,
     participant: canonicalParticipant as Record<string, unknown>,
     userResolvableFields: [...new Set((issues ?? []).filter((issue) => issue.resolution_scope === 'user_resolvable').map((issue) => String(issue.field_code)))],
     openIssueIds: (issues ?? []).map((issue) => String(issue.id)),
     requiresPasswordSetup: Boolean(invite.requires_password_setup) && !invite.password_setup_completed_at,
+    anchorKind: isContactInvite ? 'contact' : 'participant',
   };
 }

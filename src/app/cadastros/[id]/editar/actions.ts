@@ -37,3 +37,22 @@ export async function updateCadastroAction(id: string, formData: FormData) {
   revalidatePath(`/cadastros/${id}`);
   redirect(`/cadastros/${id}/editar?sucesso=1`);
 }
+
+export async function deleteCadastroAction(input: { contactId: string; confirmation: string; reason: string }) {
+  const context = await getCurrentOrganizationContext();
+  if (!context.organization?.id || !context.isOrgOwner) {
+    return { success: false as const, message: "Somente o Owner da organizacao pode excluir cadastros." };
+  }
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("owner_delete_empty_registration_contact", {
+    p_registration_contact_id: input.contactId,
+    p_confirmation: input.confirmation,
+    p_reason: input.reason,
+  });
+  if (error) return { success: false as const, message: error.message };
+  const result = data as { success?: boolean } | null;
+  if (!result?.success) return { success: false as const, message: "O cadastro nao foi excluido." };
+  revalidatePath("/cadastros");
+  revalidatePath(`/cadastros/${input.contactId}`);
+  return { success: true as const, message: "Cadastro excluido." };
+}

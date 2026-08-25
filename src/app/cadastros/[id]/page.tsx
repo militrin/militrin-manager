@@ -76,9 +76,27 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     isExistingTeamMember = !teamMemberError && Boolean(isTeamMember);
     teamRoleOptions = (rolesData ?? []).map((role: { id: string; name: string }) => ({ id: String(role.id), name: String(role.name) }));
   }
-  const firstAccessCandidateParticipantId = (linkedParticipants ?? []).find((row) => !row.user_id)?.id
-    ? String((linkedParticipants ?? []).find((row) => !row.user_id)!.id)
-    : null;
+  let inviteEligibility = {
+    canInvite: false,
+    inviteStatus: "forbidden" as "available" | "pending" | "linked" | "blocked" | "forbidden",
+    reason: "Sem permissao para enviar convites.",
+  };
+  if (!contact.user_id && canInviteFirstAccess) {
+    const result = await supabase.rpc("check_registration_contact_account_invite_eligibility", {
+      p_registration_contact_id: id,
+    });
+    const row = (Array.isArray(result.data) ? result.data[0] : result.data) as {
+      eligible?: boolean; reason_code?: string; reason_message?: string;
+    } | null;
+    const reasonCode = result.error ? "evaluation_error" : String(row?.reason_code ?? "evaluation_error");
+    inviteEligibility = {
+      canInvite: !result.error && Boolean(row?.eligible),
+      inviteStatus: reasonCode.startsWith("resend_invite_") ? "pending"
+        : reasonCode === "already_linked" ? "linked"
+          : row?.eligible ? "available" : "blocked",
+      reason: result.error?.message ?? String(row?.reason_message ?? "Nao foi possivel avaliar o convite."),
+    };
+  }
 
   const tickets = (ticketRows ?? []).flatMap((row) => {
     const orderItem = relation(row.order_items);
@@ -139,9 +157,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       {!contactUserId ? (
         <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
           <p className="text-sm text-slate-300">Esta pessoa ainda não possui uma conta vinculada.</p>
-          {firstAccessCandidateParticipantId && canInviteFirstAccess ? (
-            <div className="mt-3"><InviteAccountButton participantId={firstAccessCandidateParticipantId}/></div>
-          ) : null}
+          <div className="mt-3"><InviteAccountButton contactId={id} {...inviteEligibility}/></div>
         </div>
       ) : null}
     </section>

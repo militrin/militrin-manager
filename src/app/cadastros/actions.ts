@@ -103,11 +103,12 @@ async function dispatchFirstAccessEmail(input: { inviteId: string; email: string
   const redirectTo = firstAccessInviteRedirect(input.inviteId);
 
   const { data: invitePerson } = await admin.from("participant_account_invites")
-    .select("participants(registration_contacts(full_name))")
+    .select("registration_contacts(full_name),participants(registration_contacts(full_name))")
     .eq("id", input.inviteId).maybeSingle();
+  const directContactRelation = Array.isArray(invitePerson?.registration_contacts) ? invitePerson.registration_contacts[0] : invitePerson?.registration_contacts;
   const participantRelation = Array.isArray(invitePerson?.participants) ? invitePerson?.participants[0] : invitePerson?.participants;
   const contactRelation = Array.isArray(participantRelation?.registration_contacts) ? participantRelation?.registration_contacts[0] : participantRelation?.registration_contacts;
-  const canonicalFullName = String(contactRelation?.full_name ?? "").trim();
+  const canonicalFullName = String(directContactRelation?.full_name ?? contactRelation?.full_name ?? "").trim();
 
   if (isResend) {
     const result = await admin.auth.signInWithOtp({
@@ -124,16 +125,21 @@ async function dispatchFirstAccessEmail(input: { inviteId: string; email: string
   return { error: result.error, authUserId: result.data.user?.id ?? null, resent: false };
 }
 
-export async function inviteCadastroFirstAccessAction(participantId: string) {
+export async function inviteCadastroFirstAccessAction(id: string, anchor: "participant" | "contact" = "participant") {
   await assertPermission("participants.edit_basic");
   const supabase = await createServerSupabaseClient();
-  const eligibilityResult = await supabase.rpc("check_participant_account_invite_eligibility", { p_participant_id: participantId });
+  if (!UUID_PATTERN.test(id)) return { success: false as const, message: "Cadastro invalido." };
+  const eligibilityResult = anchor === "contact"
+    ? await supabase.rpc("check_registration_contact_account_invite_eligibility", { p_registration_contact_id: id })
+    : await supabase.rpc("check_participant_account_invite_eligibility", { p_participant_id: id });
   const eligibility = (Array.isArray(eligibilityResult.data) ? eligibilityResult.data[0] : eligibilityResult.data) as EligibilityRpcRow | null;
   if (eligibilityResult.error || !eligibility?.eligible) {
     const reasonCode = eligibilityResult.error ? "evaluation_error" : String(eligibility?.reason_code ?? "account_conflict");
     return { success: false as const, inviteState: reasonCode === "already_linked" ? "linked" as const : "conflict" as const, reasonCode, message: eligibilityResult.error?.message ?? String(eligibility?.reason_message ?? "Cadastro não elegível.") };
   }
-  const { data, error } = await supabase.rpc("prepare_participant_account_invite", { p_participant_id: participantId });
+  const { data, error } = anchor === "contact"
+    ? await supabase.rpc("prepare_registration_contact_account_invite", { p_registration_contact_id: id })
+    : await supabase.rpc("prepare_participant_account_invite", { p_participant_id: id });
   if (error) return { success: false as const, message: error.message };
   const prepared = (Array.isArray(data) ? data[0] : data) as { invite_id?: string; email?: string } | null;
   if (!prepared?.invite_id || !prepared.email) return { success: false as const, message: "Convite não preparado." };
@@ -149,6 +155,7 @@ export async function inviteCadastroFirstAccessAction(participantId: string) {
     if (association.error) return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: "Convite enviado, mas a correlação da conta exige a migration 099 antes de um futuro reenvio." };
   }
   revalidatePath("/cadastros");
+  if (anchor === "contact") revalidatePath(`/cadastros/${id}`);
   return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: invited.resent ? "Convite de primeiro acesso reenviado." : "Convite preparado e envio aceito pelo provedor." };
 }
 
