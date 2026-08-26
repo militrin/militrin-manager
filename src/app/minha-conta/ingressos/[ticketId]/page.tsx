@@ -118,6 +118,15 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
   const isOwner = Boolean(user?.id) && String(ticket.owner_user_id ?? '') === user?.id;
   const orderStatus = normalizeStatus(String(order?.status ?? 'pending'));
   const ticketStatus = normalizeStatus(String(ticket.status ?? 'pending'));
+  // Mesma semantica canonica de "pago" usada pelo Dashboard
+  // (resolveCommercialStatus, src/lib/dashboard/commercial-status.ts) e pela
+  // RPC admin_update_ticket_category -- nunca confiar so em orders.status,
+  // que pode ficar preso em valor pre-confirmacao mesmo com o pagamento ja
+  // liquidado em payments.payment_status. So controla quando a UI mostra o
+  // aviso/motivo obrigatorio; a RPC repete a mesma checagem no backend.
+  const isTicketPaidForCategoryLock = orderStatus === 'confirmed'
+    || normalizeStatus(String(orderItem?.status ?? '')) === 'confirmed'
+    || normalizeStatus(String(payment?.payment_status ?? '')) === 'confirmed';
   const { count: ticketIssuanceBlockCount } = participantId
     ? await supabase.from('participant_data_issues').select('id', { count: 'exact', head: true })
       .eq('participant_id', participantId).eq('status', 'open').eq('blocks_ticket_issuance', true)
@@ -502,7 +511,20 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
               <p className="flex flex-wrap items-center gap-2">Titular: <strong>{holderName}</strong><HolderContextAction ticketId={ticketId} hasHolder={hasHolder} /></p>
               <p>Proprietário atual: <strong>{ownerName}</strong></p>
               {order ? <p>Comprador: <strong>{buyerName}</strong> <span className="text-xs text-slate-500">(original)</span></p> : null}
-              {optionalDisplayValue(categoryObj?.name) ? <p className="flex flex-wrap items-center gap-2">Categoria: <strong>{optionalDisplayValue(categoryObj?.name)}</strong><CategoryContextAction ticketId={ticketId} initial={String(orderItem?.ticket_category_id ?? '')} options={adminCategories.map(item=>({value:String(item.id),label:String(item.name ?? 'Categoria')}))}/></p> : null}
+              {optionalDisplayValue(categoryObj?.name) ? (
+                <p className="flex flex-wrap items-center gap-2">
+                  Categoria: <strong>{optionalDisplayValue(categoryObj?.name)}</strong>
+                  {canAdminEdit ? (
+                    <CategoryContextAction
+                      ticketId={ticketId}
+                      initial={String(orderItem?.ticket_category_id ?? '')}
+                      options={adminCategories.map(item=>({value:String(item.id),label:String(item.name ?? 'Categoria')}))}
+                      orderConfirmed={isTicketPaidForCategoryLock}
+                      checkedIn={checkinDone}
+                    />
+                  ) : null}
+                </p>
+              ) : null}
               {(shirtKitItem || shirtType || shirtSize) && canChangeShirt ? <p className="flex flex-wrap items-center gap-2">Camiseta: <strong>{shirtType && shirtSize ? `${shirtType} ${shirtSize}` : 'Nao identificada'}</strong><ShirtContextAction ticketId={ticketId} initial={currentShirtOption} options={shirtOptions.map(option=>({value:`${String(option.shirt_type)}|${String(option.shirt_size)}`,label:String(option.option_label)}))}/></p> : null}
               {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
             </div>

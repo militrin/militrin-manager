@@ -295,6 +295,8 @@ export async function updateTicketCategoryAction(formData: FormData) {
   const supabase = await createServerSupabaseClient();
   const ticketId = String(formData.get('ticket_id') ?? '').trim();
   const ticketCategoryId = String(formData.get('ticket_category_id') ?? '').trim();
+  const confirmAfterPayment = formData.get('confirm_after_payment') === 'true';
+  const overrideReason = String(formData.get('override_reason') ?? '').trim();
 
   if (!ticketId || !ticketCategoryId) {
     return { success: false, message: 'Selecione uma categoria valida.' };
@@ -303,6 +305,8 @@ export async function updateTicketCategoryAction(formData: FormData) {
   const { error } = await supabase.rpc('admin_update_ticket_category', {
     p_ticket_id: ticketId,
     p_ticket_category_id: ticketCategoryId,
+    p_confirm_after_payment: confirmAfterPayment,
+    p_override_reason: overrideReason || null,
   });
 
   if (error) return { success: false, message: error.message };

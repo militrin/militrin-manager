@@ -19,14 +19,42 @@ export function HolderContextAction({ ticketId, hasHolder }: { ticketId: string;
   return <><button type="button" onClick={()=>setOpen(true)} className="text-xs font-medium text-emerald-300 hover:underline">Alterar</button>{notice?<span className="text-xs text-emerald-300">{notice}</span>:null}<Dialog title={hasHolder?'Alterar titular':'Definir titular'} open={open} close={()=>setOpen(false)}><div className="mt-4"><TicketHolderActions ticketId={ticketId} mode={hasHolder?'transfer':'define'} admin onSuccess={(message)=>{setNotice(message);setOpen(false);}}/></div></Dialog></>;
 }
 
-function SelectAction({ label, buttonLabel, initial, options, save }: { label:string; buttonLabel:string; initial:string; options:Option[]; save:(value:string)=>Promise<{success:boolean;message:string}> }) {
-  const [open,setOpen]=useState(false); const [value,setValue]=useState(initial); const [message,setMessage]=useState<string|null>(null); const [pending,startTransition]=useTransition(); const router=useRouter();
-  const submit=()=>startTransition(async()=>{const result=await save(value);setMessage(result.message);if(result.success){router.refresh();setOpen(false);}});
-  return <><button type="button" onClick={()=>{setMessage(null);setOpen(true);}} className="text-xs font-medium text-emerald-300 hover:underline">{buttonLabel}</button>{message&&!open?<span className="text-xs text-emerald-300">{message}</span>:null}<Dialog title={label} open={open} close={()=>setOpen(false)}><div className="mt-4 space-y-4"><select value={value} onChange={e=>setValue(e.target.value)} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3"><option value="">Selecione</option>{options.map(o=><option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}</select>{message?<p className="text-sm text-rose-300">{message}</p>:null}<div className="flex justify-end gap-2"><button type="button" onClick={()=>setOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2">Cancelar</button><button type="button" disabled={pending||!value} onClick={submit} className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-950 disabled:opacity-40">Salvar</button></div></div></Dialog></>;
+// warning+requireReason juntos = override administrativo (ex.: alterar
+// categoria pos-pagamento/check-in): nunca silencioso -- exige um motivo
+// textual, gravado pela propria RPC no audit_logs, igual ao padrao ja usado
+// por owner_cancel_ticket/admin_transfer_ticket_ownership neste projeto.
+function SelectAction({ label, buttonLabel, initial, options, save, warning, requireReason }: { label:string; buttonLabel:string; initial:string; options:Option[]; save:(value:string, reason?:string)=>Promise<{success:boolean;message:string}>; warning?: string; requireReason?: boolean }) {
+  const [open,setOpen]=useState(false); const [value,setValue]=useState(initial); const [reason,setReason]=useState(''); const [message,setMessage]=useState<string|null>(null); const [pending,startTransition]=useTransition(); const router=useRouter();
+  const submit=()=>startTransition(async()=>{const result=await save(value, requireReason ? reason.trim() : undefined);setMessage(result.message);if(result.success){router.refresh();setOpen(false);}});
+  const canSubmit = Boolean(value) && (!requireReason || reason.trim().length > 0);
+  return <><button type="button" onClick={()=>{setMessage(null);setReason('');setOpen(true);}} className="text-xs font-medium text-emerald-300 hover:underline">{buttonLabel}</button>{message&&!open?<span className="text-xs text-emerald-300">{message}</span>:null}<Dialog title={label} open={open} close={()=>setOpen(false)}><div className="mt-4 space-y-4"><select value={value} onChange={e=>setValue(e.target.value)} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3"><option value="">Selecione</option>{options.map(o=><option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}</select>{warning?<div className="rounded-xl border border-amber-600/40 bg-amber-950/20 p-3 text-xs text-amber-100"><p>{warning}</p>{requireReason?<label className="mt-2 block space-y-1"><span className="font-medium">Motivo da alteração (obrigatório)</span><textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} className="w-full rounded-lg border border-amber-700/40 bg-slate-950 px-3 py-2 text-slate-100"/></label>:null}</div>:null}{message?<p className="text-sm text-rose-300">{message}</p>:null}<div className="flex justify-end gap-2"><button type="button" onClick={()=>setOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2">Cancelar</button><button type="button" disabled={pending||!canSubmit} onClick={submit} className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-950 disabled:opacity-40">Salvar</button></div></div></Dialog></>;
 }
 
-export function CategoryContextAction({ ticketId, initial, options }: { ticketId:string; initial:string; options:Option[] }) {
-  return <SelectAction label="Alterar categoria" buttonLabel="Alterar" initial={initial} options={options} save={async value=>{const form=new FormData();form.set('ticket_id',ticketId);form.set('ticket_category_id',value);return updateTicketCategoryAction(form);}}/>;
+export function CategoryContextAction({ ticketId, initial, options, orderConfirmed, checkedIn }: { ticketId:string; initial:string; options:Option[]; orderConfirmed?: boolean; checkedIn?: boolean }) {
+  const requiresOverride = Boolean(orderConfirmed || checkedIn);
+  const warning = checkedIn
+    ? 'Este ingresso já teve check-in realizado. O kit pode já ter sido retirado com a categoria atual -- confirme que essa alteração é intencional e explique o motivo.'
+    : orderConfirmed
+      ? 'Este pedido já está confirmado (pago). Mudar a categoria agora não ajusta o valor pago pelo participante -- confirme que essa alteração é intencional e explique o motivo.'
+      : undefined;
+  return <SelectAction
+    label="Alterar categoria"
+    buttonLabel="Alterar"
+    initial={initial}
+    options={options}
+    warning={warning}
+    requireReason={requiresOverride}
+    save={async (value, reason)=>{
+      const form=new FormData();
+      form.set('ticket_id',ticketId);
+      form.set('ticket_category_id',value);
+      if (requiresOverride) {
+        form.set('confirm_after_payment','true');
+        form.set('override_reason', reason ?? '');
+      }
+      return updateTicketCategoryAction(form);
+    }}
+  />;
 }
 export function ShirtContextAction({ ticketId, initial, options }: { ticketId:string; initial:string; options:Option[] }) {
   return <SelectAction label="Trocar camiseta" buttonLabel="Trocar" initial={initial} options={options} save={value=>adminChangeTicketShirtAction(ticketId,value)}/>;

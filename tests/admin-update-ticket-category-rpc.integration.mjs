@@ -6,6 +6,19 @@
 // DEFINER, migration 20260905000000), que agora e a UNICA forma de mudar
 // ticket_category_id em order_items, com a permissao checada DENTRO da RPC.
 //
+// REVISAO (20260906000000): a RPC ganhou bloqueio pos-pagamento/check-in com
+// override administrativo explicito (p_confirm_after_payment +
+// p_override_reason obrigatorio), usando a mesma semantica canonica de
+// "pago" do Dashboard (resolveCommercialStatus): orders.status OU
+// order_items.status = 'confirmed' OU payments.payment_status = 'paid'.
+// Os testes de divergencia abaixo simulam estados que o fluxo normal de
+// checkout nao produz sozinho (ex.: payments.payment_status='paid' com
+// orders.status revertido pra 'pending' via service role) -- isso modela
+// exatamente o cenario documentado em apply_gateway_payment_status
+// (payment_paid_after_expired/cancelled com needs_manual_reconciliation) e
+// qualquer outra divergencia futura entre as duas fontes, sem depender de
+// reproduzir o webhook real.
+//
 // Roda contra o Supabase local (`supabase start` / `supabase db reset`).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -109,7 +122,18 @@ async function buildFixture() {
     return data.ticket_category_id;
   }
 
-  return { service, org, event, categoryA, categoryB, must, makeUser, createOrder, ticketFor, categoryOf, suffix };
+  // Cria um pedido confirmado+pago (cortesia sempre confirma na hora e ja
+  // emite ticket) e devolve tudo que os testes de divergencia precisam pra
+  // depois reverter campos individuais via service role.
+  async function createConfirmedOrderWithTicket(buyer, categoryId) {
+    const orderId = await createOrder(buyer, categoryId, 'courtesy');
+    const order = await must(service.from('orders').select('id,status,payment_id').eq('id', orderId).single(), 'order');
+    const ticket = await ticketFor(orderId);
+    const orderItem = await must(service.from('order_items').select('id,status').eq('id', ticket.order_item_id).single(), 'order_item');
+    return { orderId, order, ticket, orderItem };
+  }
+
+  return { service, org, event, categoryA, categoryB, must, makeUser, createOrder, createConfirmedOrderWithTicket, ticketFor, categoryOf, suffix };
 }
 
 const fx = await buildFixture();
@@ -126,41 +150,118 @@ test('usuario comum (sem admin_users) nao consegue chamar admin_update_ticket_ca
   assert.equal(categoryAfter, fx.categoryA.id, 'categoria nao deve mudar quando a chamada e recusada');
 });
 
-test('admin com participants.edit_basic consegue alterar a categoria de verdade (bug do UPDATE direto corrigido)', async () => {
+test('admin com participants.edit_basic altera categoria de um ingresso ainda nao pago (fluxo atual preservado)', async () => {
   const buyer = await fx.makeUser('buyer2');
   const admin = await fx.makeUser('admin1', { admin: true });
-  const orderId = await fx.createOrder(buyer, fx.categoryA.id);
-  const ticket = await fx.ticketFor(orderId);
+  const { orderId, ticket, order, orderItem } = await fx.createConfirmedOrderWithTicket(buyer, fx.categoryA.id);
 
-  const before = await fx.categoryOf(ticket.order_item_id);
-  assert.equal(before, fx.categoryA.id);
+  // Simula um ingresso ja emitido mas ainda NAO pago (nenhum dos 3 sinais
+  // canonicos indica confirmado) -- cortesia confirma e paga na hora, entao
+  // revertemos os 3 sinais explicitamente pra testar o caminho "pendente"
+  // isolado.
+  await fx.must(fx.service.from('orders').update({ status: 'pending' }).eq('id', orderId), 'revert order pending');
+  await fx.must(fx.service.from('order_items').update({ status: 'reserved' }).eq('id', orderItem.id), 'revert item reserved');
+  await fx.must(fx.service.from('payments').update({ payment_status: 'pending' }).eq('id', order.payment_id), 'revert payment pending');
 
   const result = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id });
-  assert.equal(result.error, null, 'admin com permissao deve conseguir alterar a categoria');
+  assert.equal(result.error, null, 'pedido pendente nao deve exigir override');
 
   const after = await fx.categoryOf(ticket.order_item_id);
-  assert.equal(after, fx.categoryB.id, 'a categoria deve ter mudado de verdade no banco (nao um sucesso falso)');
+  assert.equal(after, fx.categoryB.id, 'a categoria deve ter mudado de verdade no banco');
 
-  const { data: log } = await fx.service.from('audit_logs').select('id,details').eq('action', 'ticket_category_changed').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
-  assert.ok(log, 'deve registrar audit log da alteracao');
+  const { data: log } = await fx.service.from('audit_logs').select('id,action,details').eq('action', 'ticket_category_changed').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  assert.ok(log, 'deve registrar audit log da alteracao sem override');
+  assert.equal(log.details.was_paid, false);
+  assert.equal(log.details.was_checked_in, false);
 });
 
-test('admin continua podendo alterar categoria mesmo apos pagamento confirmado (nenhuma regra nova inventada)', async () => {
+test('pedido confirmado (orders.status) bloqueia sem override e libera com motivo', async () => {
   const buyer = await fx.makeUser('buyer3');
   const admin = await fx.makeUser('admin2', { admin: true });
-  const orderId = await fx.createOrder(buyer, fx.categoryA.id, 'courtesy');
+  const { orderId, ticket } = await fx.createConfirmedOrderWithTicket(buyer, fx.categoryA.id);
   const { data: order } = await fx.service.from('orders').select('status').eq('id', orderId).single();
   assert.equal(order.status, 'confirmed', 'cortesia confirma o pedido imediatamente');
 
-  const ticket = await fx.ticketFor(orderId);
-  const result = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id });
-  assert.equal(result.error, null, 'a tarefa nao pediu para bloquear o admin apos confirmacao -- comportamento existente preservado');
+  const blocked = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id });
+  assert.ok(blocked.error, 'pedido confirmado deve exigir confirmacao explicita');
+  assert.match(blocked.error.message, /pagamento deste pedido ja esta confirmado/i);
 
+  const noReason = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id, p_confirm_after_payment: true });
+  assert.ok(noReason.error, 'override sem motivo deve ser rejeitado');
+  assert.match(noReason.error.message, /motivo/i);
+
+  const overridden = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id, p_confirm_after_payment: true, p_override_reason: 'Correcao combinada com o comprador via suporte.' });
+  assert.equal(overridden.error, null, 'override com motivo deve ser aceito');
+
+  const after = await fx.categoryOf(ticket.order_item_id);
+  assert.equal(after, fx.categoryB.id);
+
+  const { data: log } = await fx.service.from('audit_logs').select('id,action,details').eq('action', 'ticket_category_changed_after_payment').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  assert.ok(log, 'deve registrar audit log com a acao especifica de override pos-pagamento');
+  assert.equal(log.details.was_paid, true);
+  assert.equal(log.details.was_checked_in, false);
+  assert.equal(log.details.override_reason, 'Correcao combinada com o comprador via suporte.');
+});
+
+test('payments.payment_status=paid bloqueia mesmo com orders.status divergente (nao confia so em orders.status)', async () => {
+  const buyer = await fx.makeUser('buyer5');
+  const admin = await fx.makeUser('admin4', { admin: true });
+  const { orderId, ticket, order, orderItem } = await fx.createConfirmedOrderWithTicket(buyer, fx.categoryA.id);
+
+  // orders.status/order_items.status revertidos pra um valor pre-confirmacao,
+  // mas payments.payment_status continua 'paid' -- reproduz exatamente a
+  // divergencia documentada em resolveCommercialStatus/apply_gateway_payment_status
+  // (orders.status pode ficar preso, payments.payment_status e o sinal mais
+  // confiavel).
+  await fx.must(fx.service.from('orders').update({ status: 'expired' }).eq('id', orderId), 'diverge order status');
+  await fx.must(fx.service.from('order_items').update({ status: 'reserved' }).eq('id', orderItem.id), 'diverge item status');
+  const { data: payment } = await fx.service.from('payments').select('id,payment_status').eq('id', order.payment_id).single();
+  assert.equal(payment.payment_status, 'paid', 'cortesia ja deixa o pagamento como paid');
+
+  const blocked = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id });
+  assert.ok(blocked.error, 'payment_status=paid sozinho ja deve bloquear, mesmo com orders.status divergente');
+
+  const overridden = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id, p_confirm_after_payment: true, p_override_reason: 'Divergencia confirmada com o financeiro.' });
+  assert.equal(overridden.error, null);
   const after = await fx.categoryOf(ticket.order_item_id);
   assert.equal(after, fx.categoryB.id);
 });
 
-test('categoria de outro evento e recusada mesmo para admin', async () => {
+test('order_items.status=confirmed sozinho (sem orders.status/payment confirmados) tambem bloqueia', async () => {
+  const buyer = await fx.makeUser('buyer6');
+  const admin = await fx.makeUser('admin5', { admin: true });
+  const { orderId, ticket, order, orderItem } = await fx.createConfirmedOrderWithTicket(buyer, fx.categoryA.id);
+
+  await fx.must(fx.service.from('orders').update({ status: 'pending' }).eq('id', orderId), 'revert order pending');
+  await fx.must(fx.service.from('payments').update({ payment_status: 'pending' }).eq('id', order.payment_id), 'revert payment pending');
+  const { data: item } = await fx.service.from('order_items').select('status').eq('id', orderItem.id).single();
+  assert.equal(item.status, 'confirmed', 'cortesia ja deixa o order_item como confirmed');
+
+  const blocked = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id });
+  assert.ok(blocked.error, 'order_items.status=confirmed sozinho ja deve bloquear');
+});
+
+test('ticket com check-in realizado bloqueia e override registra causa distinta na auditoria', async () => {
+  const buyer = await fx.makeUser('buyer7');
+  const admin = await fx.makeUser('admin6', { admin: true });
+  const { ticket } = await fx.createConfirmedOrderWithTicket(buyer, fx.categoryA.id);
+
+  await fx.must(fx.service.from('tickets').update({ status: 'used', used_at: new Date().toISOString() }).eq('id', ticket.id), 'mark checked in');
+
+  const blocked = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id });
+  assert.ok(blocked.error, 'ticket com check-in deve bloquear mesmo com override nao enviado');
+  assert.match(blocked.error.message, /check-in/i);
+
+  const overridden = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: fx.categoryB.id, p_confirm_after_payment: true, p_override_reason: 'Ajuste solicitado apos o evento.' });
+  assert.equal(overridden.error, null);
+
+  const { data: log } = await fx.service.from('audit_logs').select('id,action,details').eq('action', 'ticket_category_changed_after_checkin').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  assert.ok(log, 'acao de auditoria deve distinguir check-in de pagamento simples');
+  assert.equal(log.details.was_checked_in, true);
+  assert.equal(log.details.was_paid, true, 'was_paid continua registrado mesmo quando o nome da acao prioriza o check-in');
+});
+
+test('categoria de outro evento e recusada mesmo para admin (mesmo com override valido)', async () => {
   const buyer = await fx.makeUser('buyer4');
   const admin = await fx.makeUser('admin3', { admin: true });
   const orderId = await fx.createOrder(buyer, fx.categoryA.id);
@@ -169,7 +270,10 @@ test('categoria de outro evento e recusada mesmo para admin', async () => {
   const otherEvent = await fx.must(fx.service.from('events').insert({ organization_id: fx.org.id, name: 'Outro Evento', year: 2026, slug: `cat-rpc-other-${fx.suffix}`, is_active: true, registration_enabled: true, starts_at: '2026-12-01T12:00:00-03:00', min_age: 0 }).select('id').single(), 'other event');
   const otherCategory = await fx.must(fx.service.from('ticket_categories').insert({ event_id: otherEvent.id, name: 'Outra', slug: `cat-rpc-othercat-${fx.suffix}`, sort_order: 1, is_active: true, capacity: 10 }).select('id').single(), 'other category');
 
-  const result = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: otherCategory.id });
+  // Cortesia ja confirma o pedido na hora -- passa o override valido pra
+  // garantir que o teste exercite a validacao de evento (nao o bloqueio de
+  // pagamento, ja coberto pelos testes acima).
+  const result = await admin.rpc('admin_update_ticket_category', { p_ticket_id: ticket.id, p_ticket_category_id: otherCategory.id, p_confirm_after_payment: true, p_override_reason: 'Teste de validacao de evento.' });
   assert.ok(result.error, 'categoria de outro evento nunca deve ser aceita');
   assert.match(result.error.message, /nao pertence ao evento/);
 });

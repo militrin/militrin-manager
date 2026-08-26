@@ -1872,38 +1872,6 @@ export async function getEventCategoriesAndBatchesAction(eventId: string) {
   };
 }
 
-export async function assignParticipantCategoryAndBatchAction(input: { participantId: string; eventId: string; categoryId: string; batchId: string }) {
-  await assertPermission("participants.edit_basic");
-  if (!isUuid(input.participantId) || !isUuid(input.eventId) || !isUuid(input.categoryId) || !isUuid(input.batchId)) {
-    return { success: false as const, message: "Selecione categoria e lote." };
-  }
-
-  const supabase = await createServerSupabaseClient();
-  const [{ count: categoryCount }, { count: batchCount }, { count: priceCount }] = await Promise.all([
-    supabase.from("ticket_categories").select("id", { count: "exact", head: true }).eq("id", input.categoryId).eq("event_id", input.eventId).eq("is_active", true),
-    supabase.from("registration_batches").select("id", { count: "exact", head: true }).eq("id", input.batchId).eq("event_id", input.eventId),
-    supabase.from("registration_batch_prices").select("id", { count: "exact", head: true }).eq("batch_id", input.batchId).eq("ticket_category_id", input.categoryId),
-  ]);
-  if (!categoryCount) return { success: false as const, message: "Categoria inválida para este evento." };
-  if (!batchCount) return { success: false as const, message: "Lote inválido para este evento." };
-  if (!priceCount) return { success: false as const, message: "Este lote não tem preço configurado para a categoria escolhida. Configure o preço em Lotes antes de atribuir." };
-
-  const { data: tickets, error: ticketLookupError } = await supabase.from("tickets")
-    .select("id,order_item_id").eq("participant_id", input.participantId).eq("event_id", input.eventId)
-    .neq("status", "cancelled").limit(2);
-  if (ticketLookupError) return { success: false as const, message: ticketLookupError.message };
-  if (tickets?.length !== 1 || !tickets[0].order_item_id) {
-    return { success: false as const, message: "Abra o ingresso especifico para atribuir categoria e lote." };
-  }
-  const { error } = await supabase.from("order_items")
-    .update({ ticket_category_id: input.categoryId, batch_id: input.batchId, updated_at: new Date().toISOString() })
-    .eq("id", tickets[0].order_item_id).eq("event_id", input.eventId);
-  if (error) return { success: false as const, message: error.message };
-
-  revalidatePath("/operacoes");
-  return { success: true as const, message: "Categoria e lote atribuídos com sucesso." };
-}
-
 export async function getPickupParticipantDetailsAction(ticketOrParticipantId: string) {
   await assertPermission("participants.view");
 
