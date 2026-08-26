@@ -1,8 +1,7 @@
-import Link from 'next/link';
+import { QrCode } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
-import { MilitrinCard, MilitrinEmptyState, MilitrinSection, MilitrinTicketCard } from '@/components/militrin';
-import { getStatusLabel } from '@/lib/status-labels';
+import { MilitrinEmptyState, MilitrinLinkButton, MilitrinSection, MilitrinTicketCard, cx, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
 
@@ -164,10 +163,11 @@ export default async function IngressosPage() {
         holderName,
         category: optionalDisplayValue(categoryObj?.name),
         batch: optionalDisplayValue(batchObj?.name),
-        shirt: shirtKitItem && shirtType && shirtSize ? `${shirtType}/${shirtSize}` : null,
+        shirtType: shirtKitItem && shirtType && shirtSize ? shirtType : null,
+        shirtSize: shirtKitItem && shirtType && shirtSize ? shirtSize : null,
         paymentStatus,
-        kitStatus: kitItems.length > 0 ? (kitDelivered ? 'Entregue' : 'Pendente') : null,
-        checkinStatus: ticket?.used_at ? 'Realizado' : 'Pendente',
+        kitStatus: kitItems.length > 0 ? (kitDelivered ? ('delivered' as const) : ('pending' as const)) : null,
+        checkinDone: Boolean(ticket?.used_at),
         status: ticketStatus,
         qrUrl,
         canShowTicket,
@@ -179,117 +179,72 @@ export default async function IngressosPage() {
     }),
   );
 
+  const activeTicketsCount = enhancedItems.filter((item) => item.status === 'active').length;
+  const ticketsSummary = enhancedItems.length === 0
+    ? null
+    : enhancedItems.length === 1
+      ? (activeTicketsCount === 1 ? '1 ingresso ativo' : '1 ingresso')
+      : `${enhancedItems.length} ingressos${activeTicketsCount > 0 ? ` • ${activeTicketsCount} ativo${activeTicketsCount === 1 ? '' : 's'}` : ''}`;
+
   return (
     <MilitrinSection
+      size="compact"
       eyebrow="Meus ingressos"
       title="Ingressos e QR Codes"
-      description="Acesse rapidamente seus ingressos confirmados e veja o status de cada um."
+      description="Acesse seus ingressos confirmados e QR Codes."
+      action={ticketsSummary ? <p className={cx('shrink-0', militrinType.bodyMuted)}>{ticketsSummary}</p> : null}
     >
       {(orderItems ?? []).length === 0 ? (
         <MilitrinEmptyState
-          title="Nenhum ingresso encontrado"
-          description="Quando seu pagamento for confirmado, o ingresso aparecera aqui automaticamente."
+          title="Você ainda não possui ingressos."
+          description="Assim que seu pagamento for confirmado, o ingresso aparece aqui automaticamente."
           actionHref="/minha-conta/comprar"
-          actionLabel="Comprar ingresso"
+          actionLabel="Ver eventos"
         />
       ) : (
         <div className="space-y-3">
-          {enhancedItems.map((item, index) => {
-            if (!item.ticketId) {
-              return (
-                <MilitrinCard key={item.id} className="p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Item #{Number(item.itemPosition ?? index + 1)}</p>
-                      <h3 className="mt-1 text-lg font-semibold text-white">{item.eventName}</h3>
-                      <p className="text-sm text-slate-300">Titular: {item.holderName}</p>
-                    </div>
-                    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs text-amber-100">Ingresso aguardando conferência</span>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
-                    {item.category ? <p>Categoria: {item.category}</p> : null}
-                    {item.batch ? <p>Lote: {item.batch}</p> : null}
-                    {item.shirt ? <p>Camiseta: {item.shirt}</p> : null}
-                    <p>Pagamento: {getStatusLabel(item.paymentStatus)}</p>
-                    {item.kitStatus ? <p>Status kit: {item.kitStatus}</p> : null}
-                    <p>Status check-in: {item.checkinStatus}</p>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {item.orderId && item.isBuyer ? (
-                      <Link
-                        href={`/minha-conta/compras/${item.orderId}`}
-                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900/70 px-3 text-xs font-semibold text-slate-100 transition hover:border-slate-500"
-                      >
-                        Ver compra
-                      </Link>
-                    ) : null}
-                    {item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (
-                      <Link
-                        href={`/minha-conta/compras/${item.orderId}`}
-                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/20"
-                      >
-                        Continuar pagamento
-                      </Link>
-                    ) : null}
-                    {item.ticketId ? (
-                      <Link
-                        href={`/minha-conta/ingressos/${item.ticketId}`}
-                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
-                      >
-                        Ver detalhes
-                      </Link>
-                    ) : null}
-                  </div>
-                </MilitrinCard>
-              );
-            }
-
-            return (
-              <MilitrinTicketCard
-                key={item.ticketId}
-                eventName={item.eventName}
-                date={item.date}
-                location={item.location}
-                holderName={item.holderName}
-                category={item.category}
-                batch={item.batch}
-                shirt={item.shirt}
-                paymentStatus={item.paymentStatus}
-                kitStatus={item.kitStatus}
-                checkinStatus={item.checkinStatus}
-                status={item.status}
-                qrUrl={item.canShowTicket ? item.qrUrl : null}
-                actions={(
-                  <>
-                    {item.orderId && item.isBuyer ? (
-                      <Link
-                        href={`/minha-conta/compras/${item.orderId}`}
-                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900/70 px-3 text-xs font-semibold text-slate-100 transition hover:border-slate-500"
-                      >
-                        Ver compra
-                      </Link>
-                    ) : null}
-                    {item.canShowTicket ? (
-                      <Link
-                        href={`/minha-conta/ingressos/${item.ticketId}`}
-                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
-                      >
-                        Ver detalhes
-                      </Link>
-                    ) : null}
-                    {!item.canShowTicket && item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (
-                      <Link
-                        href={`/minha-conta/compras/${item.orderId}`}
-                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/20"
-                      >
-                        Continuar pagamento
-                      </Link>
-                    ) : null}
-                  </>
-                )}
-              />
-            );
-          })}
+          {enhancedItems.map((item) => (
+            <MilitrinTicketCard
+              key={item.id}
+              eventName={item.eventName}
+              date={item.date}
+              location={item.location}
+              holderName={item.holderName}
+              category={item.category}
+              batch={item.batch}
+              shirtType={item.shirtType}
+              shirtSize={item.shirtSize}
+              paymentStatus={item.paymentStatus}
+              kitStatus={item.kitStatus}
+              checkinDone={item.checkinDone}
+              status={item.status}
+              qrUrl={item.canShowTicket ? item.qrUrl : null}
+              actions={(
+                <>
+                  {item.canShowTicket ? (
+                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}#qr`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
+                      Abrir QR Code
+                    </MilitrinLinkButton>
+                  ) : null}
+                  {item.ticketId ? (
+                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
+                      Ver ingresso
+                    </MilitrinLinkButton>
+                  ) : null}
+                  {item.orderId && item.isBuyer ? (
+                    <MilitrinLinkButton href={`/minha-conta/compras/${item.orderId}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
+                      Ver compra
+                    </MilitrinLinkButton>
+                  ) : null}
+                  {!item.canShowTicket && item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (
+                    <MilitrinLinkButton href={`/minha-conta/compras/${item.orderId}`} variant="warning" size="sm" className="flex-1 sm:flex-none">
+                      Continuar pagamento
+                    </MilitrinLinkButton>
+                  ) : null}
+                </>
+              )}
+            />
+          ))}
         </div>
       )}
     </MilitrinSection>
