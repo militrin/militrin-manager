@@ -1,10 +1,11 @@
 import { ClipboardList, CreditCard, QrCode, Ticket as TicketIcon } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateTimeBR } from '@/lib/utils/date';
-import { MilitrinEmptyState, MilitrinLinkButton, MilitrinPurchaseCard, MilitrinSection } from '@/components/militrin';
+import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinPurchaseCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
+import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { orderDisplayReference } from '@/lib/display-reference';
 import { resolveCommercialStatus } from '@/lib/dashboard/commercial-status';
 
@@ -185,9 +186,10 @@ export default async function MinhasComprasPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [{ data: orders, error }, { data: storeOrders, error: storeError }] = await Promise.all([
+  const [{ data: orders, error }, { data: storeOrders, error: storeError }, headerEvent] = await Promise.all([
     getAccountOrders(supabase, user?.id ?? ''),
     getAccountStoreOrders(supabase, user?.id ?? ''),
+    getPrimaryAccountHeaderEvent(supabase),
   ]);
 
   if (error) {
@@ -211,28 +213,32 @@ export default async function MinhasComprasPage() {
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return (
-    <MilitrinSection
-      size="compact"
-      eyebrow="Minhas compras"
-      title="Pedidos e pagamentos"
-      description="Acompanhe valor final, status e acesso rápido aos ingressos e itens confirmados."
-    >
-      {rows.length === 0 ? (
-        <MilitrinEmptyState
-          title="Você ainda não possui compras."
-          description="Assim que você criar um pedido, ele aparece aqui com status e detalhes."
-          actionHref="/minha-conta/comprar"
-          actionLabel="Ver eventos"
-        />
-      ) : (
-        <div className="space-y-3">
-          {rows.map((row) => (
-            row.kind === 'ticket'
-              ? <TicketOrderCard key={`ticket-${row.order.id}`} order={row.order} />
-              : <StoreOrderCard key={`store-${row.order.id}`} order={row.order} />
-          ))}
+    <section className="space-y-4">
+      {headerEvent ? <MilitrinHeader event={headerEvent} /> : null}
+
+      <section className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-4 sm:p-5')}>
+        <h2 className={militrinType.sectionTitle}>Pedidos e pagamentos</h2>
+        <p className={cx('mt-0.5', militrinType.bodyMuted)}>Acompanhe valor final, status e acesso rápido aos ingressos e itens confirmados.</p>
+
+        <div className="mt-4">
+          {rows.length === 0 ? (
+            <MilitrinEmptyState
+              title="Você ainda não possui compras."
+              description="Assim que você criar um pedido, ele aparece aqui com status e detalhes."
+              actionHref="/minha-conta/comprar"
+              actionLabel="Ver eventos"
+            />
+          ) : (
+            <div className="space-y-3">
+              {rows.map((row) => (
+                row.kind === 'ticket'
+                  ? <TicketOrderCard key={`ticket-${row.order.id}`} order={row.order} />
+                  : <StoreOrderCard key={`store-${row.order.id}`} order={row.order} />
+              ))}
+            </div>
+          )}
         </div>
-      )}
-    </MilitrinSection>
+      </section>
+    </section>
   );
 }

@@ -1,9 +1,10 @@
 import { QrCode } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
-import { MilitrinEmptyState, MilitrinLinkButton, MilitrinSection, MilitrinTicketCard, cx, militrinType } from '@/components/militrin';
+import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinTicketCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -25,7 +26,10 @@ export default async function IngressosPage() {
     );
   }
 
-  const purchasedOrdersResult = await getAccountOrders(supabase, user.id);
+  const [purchasedOrdersResult, headerEvent] = await Promise.all([
+    getAccountOrders(supabase, user.id),
+    getPrimaryAccountHeaderEvent(supabase),
+  ]);
   if (purchasedOrdersResult.error) {
     console.error('[meus-ingressos] erro ao carregar pedidos do comprador', purchasedOrdersResult.error);
     return (
@@ -187,13 +191,19 @@ export default async function IngressosPage() {
       : `${enhancedItems.length} ingressos${activeTicketsCount > 0 ? ` • ${activeTicketsCount} ativo${activeTicketsCount === 1 ? '' : 's'}` : ''}`;
 
   return (
-    <MilitrinSection
-      size="compact"
-      eyebrow="Meus ingressos"
-      title="Ingressos e QR Codes"
-      description="Acesse seus ingressos confirmados e QR Codes."
-      action={ticketsSummary ? <p className={cx('shrink-0', militrinType.bodyMuted)}>{ticketsSummary}</p> : null}
-    >
+    <section className="space-y-4">
+      {headerEvent ? <MilitrinHeader event={headerEvent} /> : null}
+
+      <section className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-4 sm:p-5')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className={militrinType.sectionTitle}>Ingressos e QR Codes</h2>
+            <p className={cx('mt-0.5', militrinType.bodyMuted)}>Acesse seus ingressos confirmados e QR Codes.</p>
+          </div>
+          {ticketsSummary ? <p className={cx('shrink-0', militrinType.bodyMuted)}>{ticketsSummary}</p> : null}
+        </div>
+
+        <div className="mt-4">
       {(orderItems ?? []).length === 0 ? (
         <MilitrinEmptyState
           title="Você ainda não possui ingressos."
@@ -247,6 +257,8 @@ export default async function IngressosPage() {
           ))}
         </div>
       )}
-    </MilitrinSection>
+        </div>
+      </section>
+    </section>
   );
 }

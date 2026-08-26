@@ -8,6 +8,7 @@ import { getCurrentPermissionMap } from '@/lib/admin/permissions';
 import {
   MilitrinBadge,
   MilitrinButton,
+  MilitrinHeader,
   MilitrinLinkButton,
   MilitrinSection,
   MilitrinStatusBadge,
@@ -18,6 +19,7 @@ import {
   militrinType,
   type MilitrinTimelineItem,
 } from '@/components/militrin';
+import { buildAccountHeaderEvent } from '@/lib/account/header-event';
 import { TicketPdfButton } from '@/components/public/TicketPdfButton';
 import {
   reviewTicketItemChangeAction,
@@ -81,7 +83,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
   const canTransferOwnership=Boolean(permissions['tickets.transfer_ownership']);
 
   const ticketSelect =
-  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, events(id, name, location, starts_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), orders(id, order_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
+  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), orders(id, order_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
   
   const ticketResult = await supabase
     .from('tickets')
@@ -242,6 +244,12 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
   const kitDeliveredAt = kitItems.find((item) => String(item.status ?? '') === 'delivered')?.delivered_at as string | null | undefined;
   const checkinChip = checkinStatusChip(checkinDone);
   const eventDateLong = eventObj?.starts_at ? formatDateLongBR(String(eventObj.starts_at)) : null;
+  const headerEvent = buildAccountHeaderEvent({
+    name: eventObj?.name ? String(eventObj.name) : null,
+    starts_at: eventObj?.starts_at ? String(eventObj.starts_at) : null,
+    ends_at: eventObj?.ends_at ? String(eventObj.ends_at) : null,
+    location: eventObj?.location ? String(eventObj.location) : null,
+  });
   // Secao "Administracao" -- so o que exige permissao administrativa
   // (participants.edit_basic ou kits/checkin). Definir/transferir titular
   // (TicketHolderActions) e uma capacidade do PROPRIO dono do ingresso
@@ -334,6 +342,8 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
 
   return (
     <section className="space-y-4">
+      <MilitrinHeader event={headerEvent} showBuyButton={false} />
+
       <Link href="/minha-conta/ingressos" className={cx('inline-flex items-center gap-1.5', militrinType.micro)}>
         ← Voltar para meus ingressos
       </Link>
