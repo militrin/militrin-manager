@@ -282,10 +282,17 @@ export async function reviewTicketItemChangeAction(formData: FormData) {
 }
 
 export async function updateTicketCategoryAction(formData: FormData) {
+  // A permissao e checada AQUI (feedback rapido pro admin) E de novo DENTRO
+  // da RPC admin_update_ticket_category (SECURITY DEFINER) -- a segunda
+  // checagem e a que realmente conta: nenhuma chamada direta a essa RPC,
+  // pulando esta Server Action, escapa da mesma exigencia de permissao.
+  // Auditoria encontrou que a escrita anterior (UPDATE direto via client
+  // vinculado a sessao) nunca funcionava de verdade -- order_items nao tem
+  // nenhuma RLS policy de UPDATE, entao o UPDATE sempre afetava 0 linhas
+  // silenciosamente e esta action reportava sucesso sem mudar nada.
   await assertPermission('participants.edit_basic');
 
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
   const ticketId = String(formData.get('ticket_id') ?? '').trim();
   const ticketCategoryId = String(formData.get('ticket_category_id') ?? '').trim();
 
@@ -293,45 +300,12 @@ export async function updateTicketCategoryAction(formData: FormData) {
     return { success: false, message: 'Selecione uma categoria valida.' };
   }
 
-  const { data: ticket, error } = await supabase
-    .from('tickets')
-    .select('id, order_id, order_item_id, orders!inner(id, event_id), order_items(id, participant_id, ticket_category_id)')
-    .eq('id', ticketId)
-    .maybeSingle();
+  const { error } = await supabase.rpc('admin_update_ticket_category', {
+    p_ticket_id: ticketId,
+    p_ticket_category_id: ticketCategoryId,
+  });
 
   if (error) return { success: false, message: error.message };
-  if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
-
-  const order = Array.isArray(ticket.orders) ? ticket.orders[0] : ticket.orders;
-  const orderItem = Array.isArray(ticket.order_items) ? ticket.order_items[0] : ticket.order_items;
-  const eventId = String(order?.event_id ?? '');
-
-  const { data: allowedCategory } = await supabase
-    .from('ticket_categories')
-    .select('id')
-    .eq('id', ticketCategoryId)
-    .eq('event_id', eventId)
-    .maybeSingle();
-
-  if (!allowedCategory?.id) {
-    return { success: false, message: 'Categoria nao pertence ao evento do ingresso.' };
-  }
-
-  if (orderItem?.id) {
-    await supabase.from('order_items').update({ ticket_category_id: ticketCategoryId, updated_at: new Date().toISOString() }).eq('id', String(orderItem.id));
-  }
-
-await supabase.from('audit_logs').insert({
-  action: 'ticket_category_changed',
-  entity_type: 'tickets',
-  entity_id: ticketId,
-  event_id: eventId,
-  details: {
-    actor_user_id: user?.id ?? null,
-    previous_category_id: orderItem?.ticket_category_id ?? null,
-    ticket_category_id: ticketCategoryId,
-  },
-});
 
   revalidatePath('/minha-conta');
   revalidatePath('/minha-conta/ingressos');
