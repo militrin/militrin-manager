@@ -4,7 +4,7 @@ import { ArrowRight, CalendarDays, ChevronRight, Clock, QrCode, ShieldCheck, Sho
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
 import { resolveAccountHomeTicketCta } from '@/lib/account/home-ticket-cta';
@@ -147,13 +147,18 @@ export default async function MinhaContaPage() {
     .map((row) => ({ id: String(row.sponsor_id), name: String(row.name), bannerUrl: String(row.banner_url), linkUrl: row.link_url ? String(row.link_url) : null }));
   const sponsorCarouselIntervalSeconds = Number(sponsorRows[0]?.carousel_interval_seconds ?? 4);
 
-  const pendingOrder = orders.find((order) => order.status === 'pending') ?? null;
+  // Status comercial canonico (resolveAccountOrderStatus), nao order.status
+  // cru -- um pedido cujo pagamento ja expirou nao deve continuar aparecendo
+  // como "compra pendente" so porque a varredura de expiracao ainda nao
+  // processou orders.status (ver auditoria do ciclo de expiracao moderno).
+  const pendingOrder = orders.find((order) => resolveAccountOrderStatus(order) === 'pending') ?? null;
   const latestOrder = orders[0] ?? null;
   const latestOrderEvent = latestOrder
     ? firstRelation(latestOrder.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined)
     : null;
   const latestOrderItemCount = latestOrder && Array.isArray(latestOrder.order_items) ? latestOrder.order_items.length : 0;
-  const latestOrderActivityTitle = latestOrder?.status === 'confirmed' ? 'Compra realizada' : 'Pedido criado';
+  const latestOrderStatus = latestOrder ? resolveAccountOrderStatus(latestOrder) : null;
+  const latestOrderActivityTitle = latestOrderStatus === 'confirmed' ? 'Compra realizada' : 'Pedido criado';
 
   const ticketCards = await buildAccountHomeTicketCards(supabase, allTickets as Array<{ id: string; status: string | null; order_id: string | null; order_item_id: string | null; event_id: string | null }>);
   const ticketCta = resolveAccountHomeTicketCta(ticketCards);
@@ -393,7 +398,7 @@ export default async function MinhaContaPage() {
                 {latestOrderItemCount > 0 ? ` - ${latestOrderItemCount} ingresso${latestOrderItemCount === 1 ? '' : 's'}` : ''}
               </span>
             </span>
-            <span className="shrink-0"><MilitrinStatusBadge status={String(latestOrder.status)} /></span>
+            <span className="shrink-0"><MilitrinStatusBadge status={String(latestOrderStatus)} /></span>
             <span className={cx('shrink-0', militrinType.micro)}>{formatDateTimeBR(String(latestOrder.confirmed_at ?? latestOrder.created_at ?? ''), ' ')}</span>
             <span className={cx('shrink-0', militrinType.money)}>{money(Number(latestOrder.final_amount ?? 0))}</span>
             <ChevronRight size={16} className="shrink-0 text-slate-500" />

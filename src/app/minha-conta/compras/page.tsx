@@ -4,9 +4,10 @@ import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinEmptyState, MilitrinPurchaseCard, MilitrinSection } from '@/components/militrin';
 import { getStatusLabel } from '@/lib/status-labels';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
 import { orderDisplayReference } from '@/lib/display-reference';
+import { resolveCommercialStatus } from '@/lib/dashboard/commercial-status';
 
 function one<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -29,7 +30,10 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
   const tickets = Array.isArray(order.tickets) ? order.tickets : (order.tickets ? [order.tickets] : []);
   const ticket = tickets[0] ?? null;
   const orderItems = Array.isArray(order.order_items) ? order.order_items as Array<Record<string, unknown>> : (order.order_items ? [order.order_items as Record<string, unknown>] : []);
-  const normalizedOrderStatus = normalizeOrderStatus(String(order.status ?? 'pending'));
+  // Status comercial canonico (mesma fonte do Dashboard admin) -- nao
+  // order.status cru, que pode ficar preso em "pending" quando o pagamento
+  // ja expirou mas a varredura de expiracao ainda nao converteu o pedido.
+  const commercialStatus = resolveAccountOrderStatus(order);
   const normalizedPaymentStatus = normalizeOrderStatus(String((payment as Record<string, unknown> | null)?.payment_status ?? 'pending'));
   const firstTicketFromItems = orderItems
     .map((item) => one(item.tickets as Record<string, unknown> | Record<string, unknown>[] | null))
@@ -52,6 +56,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
   return (
     <MilitrinPurchaseCard
       orderNumber={orderDisplayReference(order.display_number, order.order_number)}
+      status={commercialStatus}
       eventName={(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}
       date={formatDateBR(String(order.created_at))}
       finalAmount={money(Number(order.final_amount ?? 0))}
@@ -89,7 +94,14 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
 function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
   const eventObj = one(order.events as Record<string, unknown> | Record<string, unknown>[] | null);
   const items = Array.isArray(order.store_order_items) ? order.store_order_items as Array<Record<string, unknown>> : [];
-  const normalizedOrderStatus = normalizeOrderStatus(String(order.status ?? 'pending'));
+  // store_orders ja tem status/payment_status/expires_at na propria linha
+  // (sem relacao payments separada) -- mesma fonte canonica, forma mais
+  // direta de chamar.
+  const commercialStatus = resolveCommercialStatus({
+    orderStatus: order.status as string | null,
+    paymentStatus: order.payment_status as string | null,
+    reservationExpiresAt: order.expires_at as string | null,
+  });
   const normalizedPaymentStatus = normalizeOrderStatus(String(order.payment_status ?? 'pending'));
   const itemSummary = items
     .slice(0, 3)
@@ -100,10 +112,12 @@ function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
       return `${item.quantity}x ${(storeItem as Record<string, unknown> | null)?.name ?? 'Item'}${variantText}`;
     })
     .join(' • ');
+  const showExpiration = commercialStatus === 'pending' || commercialStatus === 'expired';
 
   return (
     <MilitrinPurchaseCard
       orderNumber={orderDisplayReference(order.display_number, order.order_number)}
+      status={commercialStatus}
       eventName={`Loja — ${(eventObj as Record<string, unknown> | null)?.name ? String((eventObj as Record<string, unknown>).name) : 'Evento'}`}
       date={formatDateBR(String(order.created_at))}
       finalAmount={money(Number(order.final_amount ?? 0))}
