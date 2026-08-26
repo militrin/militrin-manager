@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -13,8 +12,9 @@ import {
   getPublicOrderSnapshotAction,
   getPublicPricingPreviewAction,
   saveCheckoutBuyerProfileAction,
-  simulatePublicOrderPaymentAction,
+  simulateFakeOrderPaymentAction,
 } from '@/app/inscricao/actions';
+import { PixPaymentCard } from './pix-payment-card';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
   formatCpf,
@@ -125,6 +125,8 @@ type WizardProps = {
     };
   };
   storeItems: StoreItemForPurchase[];
+  /** true somente quando o provider efetivo (server-side, PAYMENT_PROVIDER) e 'fake'. Nunca true com Asaas real. */
+  isFakePaymentProvider: boolean;
 };
 
 type PricingState = {
@@ -387,10 +389,11 @@ export function RegistrationWizard({
   inventory,
   initialBuyer,
   storeItems,
+  isFakePaymentProvider,
 }: WizardProps) {
-  const canSimulatePayment = process.env.NODE_ENV === 'development';
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [isRegeneratingPix, setIsRegeneratingPix] = useState(false);
   // Identidade explicita da jornada de checkout -- nunca o order_id (a
   // jornada existe ANTES do pedido ser criado, nas Etapas 1-2). Comeca vazia
   // nos dois lados (SSR nunca tem window/URL do browser; hidratacao do
@@ -1682,8 +1685,7 @@ export function RegistrationWizard({
   async function handleSimulatePaid() {
     if (!registration) return;
     startTransition(async () => {
-      const method = (form.payment_method === 'pix' ? 'pix' : 'credit_card') as 'pix' | 'credit_card';
-      const paid = await simulatePublicOrderPaymentAction(registration.order_id || '', method);
+      const paid = await simulateFakeOrderPaymentAction(registration.order_id || '');
       if (!paid.success || !('order' in paid)) {
         setErrors([('message' in paid && paid.message) || 'Não foi possível confirmar o pagamento.']);
         return;
@@ -1693,6 +1695,32 @@ export function RegistrationWizard({
       sessionStorage.removeItem(storageKey);
       unlockAndGoTo(4);
     });
+  }
+
+  async function handleRegeneratePix() {
+    if (!registration?.order_id) return;
+    setIsRegeneratingPix(true);
+    try {
+      const pix = await generatePublicOrderPixAction(registration.order_id);
+      if (!pix.success || !pix.payment) {
+        setErrors([('message' in pix && pix.message) || 'Falha ao gerar um novo PIX.']);
+        return;
+      }
+      setRegistration((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment: {
+                ...prev.payment,
+                ...pix.payment,
+              },
+            }
+          : prev,
+      );
+      setLiveMessage('Novo PIX gerado.');
+    } finally {
+      setIsRegeneratingPix(false);
+    }
   }
 
   function restartWizard() {
@@ -2684,36 +2712,29 @@ export function RegistrationWizard({
                   <p>
                     Itens no pedido: <strong>{orderItemsLabel(registration.items)}</strong>
                   </p>
-                  <p>
-                    Valor: <strong className="text-emerald-300">{money(registration.payment.final_amount)}</strong>
-                  </p>
-                  <p>
-                    Pagamento: <strong>{getStatusLabel(registration.payment.payment_status)}</strong>
-                  </p>
-                  <p>
-                    Expira em: <strong>{deadlineText(registration.payment.expires_at)}</strong>
-                  </p>
-                  {countdownSeconds !== null && (
-                    <p>
-                      Tempo restante: <strong>{Math.floor(countdownSeconds / 60)}m {countdownSeconds % 60}s</strong>
-                    </p>
-                  )}
                 </div>
 
-                {(registration.payment.payment_method ?? form.payment_method) === 'pix' && (
-                  <div className="space-y-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
-                    <p className="font-medium">Use o código PIX abaixo:</p>
-                    <textarea readOnly value={registration.payment.pix_code || ''} className="h-28 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs" />
-                    {registration.payment.pix_qrcode && (
-                      <Image
-                        src={registration.payment.pix_qrcode}
-                        alt="QR Code PIX"
-                        width={176}
-                        height={176}
-                        unoptimized
-                        className="h-44 w-44 rounded-xl border border-slate-700 bg-white p-2"
-                      />
-                    )}
+                {(registration.payment.payment_method ?? form.payment_method) === 'pix' ? (
+                  <PixPaymentCard
+                    amount={registration.payment.final_amount}
+                    paymentStatus={registration.payment.payment_status}
+                    pixCode={registration.payment.pix_code}
+                    pixQrCode={registration.payment.pix_qrcode}
+                    countdownSeconds={countdownSeconds}
+                    isFakePaymentProvider={isFakePaymentProvider}
+                    isSimulating={isPending}
+                    onSimulatePayment={handleSimulatePaid}
+                    onRegeneratePix={handleRegeneratePix}
+                    isRegeneratingPix={isRegeneratingPix}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
+                    <p>
+                      Valor: <strong className="text-emerald-300">{money(registration.payment.final_amount)}</strong>
+                    </p>
+                    <p>
+                      Pagamento: <strong>{getStatusLabel(registration.payment.payment_status)}</strong>
+                    </p>
                   </div>
                 )}
 
@@ -2761,16 +2782,6 @@ export function RegistrationWizard({
 
                 {registration.payment.payment_status !== 'paid' ? (
                   <div className="flex flex-wrap gap-2">
-                    {canSimulatePayment ? (
-                      <button
-                        type="button"
-                        onClick={handleSimulatePaid}
-                        disabled={isPending}
-                        className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50"
-                      >
-                        {isPending ? 'Processando...' : 'Pagar agora (simulado dev)'}
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => unlockAndGoTo(4)}
@@ -2780,20 +2791,28 @@ export function RegistrationWizard({
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const ticketId = registration.items?.find((item) => item.ticket_id)?.ticket_id;
-                      if (ticketId) {
-                        router.push(`/minha-conta/ingressos/${ticketId}`);
-                        return;
-                      }
-                      unlockAndGoTo(4);
-                    }}
-                    className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
-                  >
-                    Ver ingresso
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ticketId = registration.items?.find((item) => item.ticket_id)?.ticket_id;
+                        if (ticketId) {
+                          router.push(`/minha-conta/ingressos/${ticketId}`);
+                          return;
+                        }
+                        unlockAndGoTo(4);
+                      }}
+                      className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
+                    >
+                      Ver meu ingresso
+                    </button>
+                    <Link
+                      href="/minha-conta"
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-700 px-6 text-sm text-slate-200"
+                    >
+                      Ir para Minha Conta
+                    </Link>
+                  </div>
                 )}
               </div>
             )}
@@ -2854,15 +2873,19 @@ export function RegistrationWizard({
                   ) : (
                     <div className="mt-4 space-y-3">
                       <p>Pagamento pendente. O QR Code e o PDF serão liberados somente após confirmação.</p>
-                      {canSimulatePayment ? (
-                        <button
-                          type="button"
-                          onClick={handleSimulatePaid}
-                          disabled={isPending}
-                          className="h-10 rounded-xl bg-emerald-500 px-4 text-xs font-semibold text-emerald-950 disabled:opacity-50"
-                        >
-                          {isPending ? 'Processando...' : 'Pagar agora (simulado dev)'}
-                        </button>
+                      {(registration.payment.payment_method ?? form.payment_method) === 'pix' ? (
+                        <PixPaymentCard
+                          amount={registration.payment.final_amount}
+                          paymentStatus={registration.payment.payment_status}
+                          pixCode={registration.payment.pix_code}
+                          pixQrCode={registration.payment.pix_qrcode}
+                          countdownSeconds={countdownSeconds}
+                          isFakePaymentProvider={isFakePaymentProvider}
+                          isSimulating={isPending}
+                          onSimulatePayment={handleSimulatePaid}
+                          onRegeneratePix={handleRegeneratePix}
+                          isRegeneratingPix={isRegeneratingPix}
+                        />
                       ) : null}
                     </div>
                   )}

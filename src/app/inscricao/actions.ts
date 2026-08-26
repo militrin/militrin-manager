@@ -3,6 +3,9 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { isValidCpf, removeCpfMask } from '@/lib/validation/registration';
 import { getPaymentProvider } from '@/lib/payments/get-provider';
+import { cancelPendingExternalCharge } from '@/lib/payments/cancel-stale-charges';
+import { getPaymentGatewayProvider, getPaymentGatewayProviderName } from '@/lib/payments/get-gateway-provider';
+import { todayAsPixDueDate } from '@/lib/payments/pix-due-date';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { calculateAgeAtEventDate, formatDateBR, isMinimumAgeSatisfied } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
@@ -2224,18 +2227,56 @@ export async function generatePublicOrderPixAction(orderId: string) {
     }
   }
 
-  const payload = await paymentProvider.createPix({
-    participantId: orderId,
-    amount: payment.final_amount,
-    expiresInMinutes: 120,
-  });
+  const gateway = getPaymentGatewayProvider();
+
+  const { data: payerRows, error: payerError } = await supabase.rpc('get_order_payer_details', { p_order_id: orderId });
+  if (payerError) return { success: false as const, message: payerError.message };
+  const payerRow = (Array.isArray(payerRows) ? payerRows[0] : payerRows) as Record<string, unknown> | null;
+  if (!payerRow?.payment_id) return { success: false as const, message: 'Pagamento nao encontrado para o pedido.' };
+
+  const payerFullName = payerRow.payer_full_name ? String(payerRow.payer_full_name) : '';
+  const payerEmail = payerRow.payer_email ? String(payerRow.payer_email) : '';
+  const payerCpf = payerRow.payer_cpf ? String(payerRow.payer_cpf) : '';
+
+  if (gateway.name === 'asaas' && (!payerFullName || !payerEmail || !payerCpf)) {
+    return {
+      success: false as const,
+      message: 'Complete seu nome, e-mail e CPF em Meus dados antes de gerar o PIX.',
+    };
+  }
+
+  let payload;
+  try {
+    payload = await gateway.createPixPayment({
+      organizationId: String(payerRow.organization_id ?? ''),
+      orderId,
+      paymentId: String(payerRow.payment_id),
+      amount: payment.final_amount,
+      dueDate: todayAsPixDueDate(),
+      payer: {
+        name: payerFullName,
+        email: payerEmail,
+        cpfCnpj: payerCpf,
+        phone: payerRow.payer_phone ? String(payerRow.payer_phone) : undefined,
+      },
+      description: snapshotResult.snapshot.order_number ? `Pedido ${snapshotResult.snapshot.order_number}` : undefined,
+    });
+  } catch (gatewayError) {
+    console.error('[checkout:pix] gateway_create_pix_failed', {
+      order_id: orderId,
+      provider: gateway.name,
+      error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
+    });
+    return { success: false as const, message: 'Nao foi possivel gerar o PIX agora. Tente novamente em instantes.' };
+  }
 
   const { data, error } = await supabase.rpc('start_order_payment_pix', {
     p_order_id: orderId,
     p_pix_code: payload.pixCode,
-    p_pix_qrcode: payload.pixQrCode,
-    p_gateway_payment_id: payload.gatewayPaymentId,
+    p_pix_qrcode: payload.pixQrCodeImage,
+    p_gateway_payment_id: payload.providerPaymentId,
     p_expires_at: payload.expiresAt,
+    p_provider: gateway.name,
   });
 
   if (error) return { success: false as const, message: error.message };
@@ -2249,24 +2290,27 @@ export async function generatePublicOrderPixAction(orderId: string) {
   };
 }
 
-export async function simulatePublicOrderPaymentAction(orderId: string, method: 'pix' | 'credit_card') {
-  if (process.env.NODE_ENV !== 'development') {
-    return { success: false as const, message: 'A confirmacao simulada esta disponivel apenas em desenvolvimento.' };
+/**
+ * "Simular pagamento aprovado" -- disponivel SOMENTE quando o provider
+ * efetivo for 'fake'. A checagem aqui e so uma conveniencia de UX (falha
+ * cedo, sem round-trip); a validacao que realmente importa e a da RPC
+ * simulate_fake_gateway_payment_paid (SECURITY DEFINER, confere contra
+ * payments.provider gravado no banco -- nunca confia em NODE_ENV nem em
+ * nada vindo do cliente). Reusa 100% o caminho canonico de confirmacao de
+ * pagamento (apply_gateway_payment_status -> confirm_order_payment_and_issue_tickets),
+ * o mesmo que um webhook real da Asaas percorreria -- nenhuma emissao de
+ * ticket paralela.
+ */
+export async function simulateFakeOrderPaymentAction(orderId: string) {
+  if (getPaymentGatewayProviderName() !== 'fake') {
+    return { success: false as const, message: 'Simulacao de pagamento so esta disponivel quando o provider de pagamento e fake.' };
   }
 
   const supabase = await createServerSupabaseClient();
 
-  await paymentProvider.confirmPayment({
-    participantId: orderId,
-    method,
-  });
+  const { error } = await supabase.rpc('simulate_fake_gateway_payment_paid', { p_order_id: orderId });
 
-  const { error } = await supabase.rpc('simulate_order_payment_paid', {
-    p_order_id: orderId,
-    p_payment_method: method,
-  });
-
-  if (error) return { success: false as const, message: error.message };
+  if (error) return { success: false as const, message: translateRegistrationErrorMessage(error.message) };
 
   const snapshot = await getUnifiedOrderSnapshot(supabase, orderId);
   if (!snapshot.success) return snapshot;
@@ -2596,6 +2640,11 @@ export async function applyCartCouponAction(orderId: string, couponCode: string 
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc('apply_cart_coupon', { p_order_id: orderId, p_coupon_code: couponCode ?? '' });
   if (error) return { success: false as const, message: translateCartErrorMessage(error) };
+  // Best-effort: se o total do carrinho mudou e havia uma cobranca externa
+  // (gateway real) associada, apply_cart_coupon ja invalidou o vinculo local
+  // -- isso so cancela a cobranca do LADO DO GATEWAY para que pare de ser
+  // pagavel com o preco antigo. Nunca bloqueia a resposta ao usuario.
+  await cancelPendingExternalCharge(supabase, orderId);
   return getCartOrderDetailsAction(orderId);
 }
 

@@ -9,6 +9,7 @@ import { buildShirtInventoryVariants } from '@/lib/constants/shirts';
 import { getStoreItemsForEvent } from '@/lib/store/get-store-items';
 import { isCategoryConfigurationIncomplete } from '@/lib/checkout/ticket-presentation';
 import { isEmailConfirmed } from '@/lib/account/email-confirmation';
+import { getPaymentGatewayProviderName } from '@/lib/payments/get-gateway-provider';
 import { RegistrationWizard } from './wizard';
 
 type CategoryRow = {
@@ -359,6 +360,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       inventory={inventory}
       initialBuyer={initialBuyer}
       storeItems={storeItems}
+      isFakePaymentProvider={getPaymentGatewayProviderName() === 'fake'}
     />
   );
 }
