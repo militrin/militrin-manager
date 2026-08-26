@@ -606,6 +606,22 @@ export type UnifiedOrderItem = {
   variant_value: string | null;
 };
 
+// Fonte canonica de itens de kit (camiseta inclusa): tabela participant_kit_items,
+// a MESMA usada por Central de Operacoes, ficha do ingresso e
+// src/app/minha-conta/ingressos/[ticketId]/itens/page.tsx -- nenhuma segunda
+// logica de kit criada para o checkout. 'cancelled' nunca aparece aqui (ja
+// filtrado na consulta): item cancelado nao e um item ativo do kit.
+export type UnifiedOrderKitItem = {
+  id: string;
+  kit_item_id: string;
+  ticket_id: string | null;
+  item_name: string;
+  item_type: string;
+  status: 'reserved' | 'confirmed' | 'delivered';
+  variant_label: string | null;
+  delivered_at: string | null;
+};
+
 export type UnifiedOrderSnapshot = {
   order_id: string;
   order_number: string | null;
@@ -630,6 +646,7 @@ export type UnifiedOrderSnapshot = {
     paid_at: string | null;
   };
   items: UnifiedOrderItem[];
+  kit_items: UnifiedOrderKitItem[];
 };
 
 /**
@@ -689,6 +706,9 @@ async function getUnifiedOrderSnapshot(
     payment_status: 'pending', pix_code: null, pix_qrcode: null, gateway_payment_id: null, expires_at: null, paid_at: null,
   };
 
+  const ticketIds = items.map((item) => item.ticket_id).filter((id): id is string => Boolean(id));
+  const kitItems = await getUnifiedOrderKitItems(supabase, ticketIds);
+
   return {
     success: true as const,
     snapshot: {
@@ -717,8 +737,60 @@ async function getUnifiedOrderSnapshot(
           }
         : paymentDefaults,
       items,
+      kit_items: kitItems,
     } satisfies UnifiedOrderSnapshot,
   };
+}
+
+/**
+ * Fonte canonica de itens de kit/camiseta -- MESMA tabela e MESMO join usados
+ * por src/app/minha-conta/ingressos/[ticketId]/itens/page.tsx (Minha Conta) e
+ * pela Central de Operacoes (src/app/operacoes/actions.ts). Filtra por
+ * ticket_id (nunca por participant_id/order_item_id aqui) porque e exatamente
+ * a chave que a policy RLS participant_kit_items_ticket_owner_select usa para
+ * o comprador (tickets.owner_user_id = auth.uid()) -- a mesma policy que ja
+ * protege a pagina de Minha Conta. Sem corrida com a emissao do ticket: o
+ * trigger que preenche participant_kit_items.ticket_id
+ * (attach_order_item_kit_items_to_new_ticket) roda na MESMA transacao do
+ * INSERT em tickets (confirm_order_item_and_issue_ticket), entao por definicao
+ * ja terminou antes dessa transacao commitar e este SELECT (rodando depois,
+ * em outra transacao) sempre ve o ticket_id ja vinculado.
+ */
+async function getUnifiedOrderKitItems(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  ticketIds: string[],
+): Promise<UnifiedOrderKitItem[]> {
+  if (ticketIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('participant_kit_items')
+    .select('id, kit_item_id, ticket_id, variant_data, status, delivered_at, event_kit_items(name, item_type)')
+    .in('ticket_id', ticketIds);
+
+  if (error) {
+    console.error('[checkout:kit-items] fetch_failed', { ticketIds, error: error.message });
+    return [];
+  }
+
+  return (data ?? [])
+    .filter((row) => row.status !== 'cancelled')
+    .map((row) => {
+      const eventKitItem = (Array.isArray(row.event_kit_items) ? row.event_kit_items[0] : row.event_kit_items) as
+        | { name: string; item_type: string }
+        | null;
+      const variantData = (row.variant_data ?? {}) as Record<string, unknown>;
+      const variantLabel = variantData.variant_name ?? variantData.variant_value ?? variantData.shirt_size ?? null;
+      return {
+        id: String(row.id),
+        kit_item_id: String(row.kit_item_id),
+        ticket_id: row.ticket_id ? String(row.ticket_id) : null,
+        item_name: eventKitItem?.name ? String(eventKitItem.name) : 'Item do kit',
+        item_type: eventKitItem?.item_type ? String(eventKitItem.item_type) : 'other',
+        status: row.status as 'reserved' | 'confirmed' | 'delivered',
+        variant_label: variantLabel ? String(variantLabel) : null,
+        delivered_at: row.delivered_at ? String(row.delivered_at) : null,
+      };
+    });
 }
 
 // Reveridica um pedido persistido localmente (sessionStorage do wizard)

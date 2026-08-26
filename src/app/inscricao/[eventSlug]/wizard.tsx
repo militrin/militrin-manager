@@ -15,6 +15,7 @@ import {
   simulateFakeOrderPaymentAction,
 } from '@/app/inscricao/actions';
 import { PixPaymentCard } from './pix-payment-card';
+import { kitItemStatusLabel } from '@/lib/checkout/kit-item-status';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
   formatCpf,
@@ -198,6 +199,16 @@ type OrderSnapshotPayload = {
     variant_name: string | null;
     variant_value: string | null;
   }>;
+  kit_items: Array<{
+    id: string;
+    kit_item_id: string;
+    ticket_id: string | null;
+    item_name: string;
+    item_type: string;
+    status: 'reserved' | 'confirmed' | 'delivered';
+    variant_label: string | null;
+    delivered_at: string | null;
+  }>;
 };
 
 type OrderLineItem = OrderSnapshotPayload['items'][number];
@@ -233,15 +244,7 @@ type RegistrationSnapshot = {
     expires_at: string | null;
     paid_at: string | null;
   };
-  kit_items: Array<{
-    kit_item_id: string;
-    item_name: string;
-    item_type: string;
-    quantity: number;
-    status: string;
-    delivered_at: string | null;
-    variant_data: unknown;
-  }>;
+  kit_items: OrderSnapshotPayload['kit_items'];
   qr_token: string | null;
   order_id: string | null;
   order_number: string | null;
@@ -1170,7 +1173,7 @@ export function RegistrationWizard({
         expires_at: order?.payment?.expires_at || null,
         paid_at: order?.payment?.paid_at || (paid ? new Date().toISOString() : null),
       },
-      kit_items: [],
+      kit_items: Array.isArray(order?.kit_items) ? order.kit_items : [],
       qr_token: firstTicket?.ticket_token || null,
       order_id: order.order_id,
       order_number: order.order_number || null,
@@ -2919,15 +2922,19 @@ export function RegistrationWizard({
                   ) : null}
 
                   {registration.kit_items.length > 0 ? (
-                    <ul className="mt-2 list-disc space-y-1 pl-5">
-                      {registration.kit_items.map((item) => (
-                        <li key={item.kit_item_id}>
-                          {item.item_name} x{item.quantity} - {getStatusLabel(item.status)}
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-slate-100">Itens do kit</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {registration.kit_items.map((item) => (
+                          <li key={item.id}>
+                            {item.item_name}
+                            {item.variant_label ? ` — ${item.variant_label}` : ''} — {kitItemStatusLabel(item.status)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : (
-                    <p className="mt-2">Sem itens de kit vinculados.</p>
+                    <p className="mt-4 text-sm text-slate-400">Nenhum item de kit incluído neste ingresso.</p>
                   )}
                 </div>
 
