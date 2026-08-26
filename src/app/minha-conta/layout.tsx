@@ -14,15 +14,10 @@ import { getMyPublicPin } from '@/lib/account/public-pin';
 import { MilitrinAvatar } from '@/components/militrin';
 import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 import { isAdministrativeIssue, isRequiredUserResolvableIssue } from '@/lib/account/participant-issue-policy';
-import { AlertTriangle, LogOut, UsersRound, Trophy, ArrowRight } from 'lucide-react';
+import { AlertTriangle, LogOut } from 'lucide-react';
 import { StoreCartProvider } from '@/lib/store/cart-context';
 import { CartHeaderLink } from '@/components/store/CartHeaderLink';
 import { AccountSidebarNav, AccountMobileNav } from './account-nav';
-
-const futureNavigation = [
-  { href: '/minha-conta/amigos', label: 'Amigos - Em breve', icon: UsersRound },
-  { href: '/minha-conta/ranking', label: 'Ranking - Em breve', icon: Trophy },
-];
 
 export default async function MinhaContaLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerSupabaseClient();
@@ -109,28 +104,6 @@ export default async function MinhaContaLayout({ children }: { children: React.R
           </div>
 
           <AccountSidebarNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} />
-
-          <div className="mt-5">
-            <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Futuro</p>
-            <div className="space-y-0.5 text-sm">
-              {futureNavigation.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="flex items-center justify-between rounded-xl px-3.5 py-2.5 text-slate-300 transition hover:bg-slate-900/70 hover:text-slate-100"
-                  >
-                    <span className="flex items-center gap-3">
-                      <Icon size={16} />
-                      {item.label}
-                    </span>
-                    <ArrowRight size={13} className="text-slate-500" />
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
 
           <form action={signOutAccountAction} className="mt-5">
             <button type="submit" className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-sm font-medium text-rose-200 transition hover:bg-rose-500/20">

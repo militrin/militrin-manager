@@ -1,10 +1,9 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Hash, MapPin, QrCode, Ticket, Users } from 'lucide-react';
-import { MilitrinStatusBadge } from '@/components/militrin';
+import { Calendar, ChevronLeft, ChevronRight, MapPin, QrCode, Shirt, Ticket, Users } from 'lucide-react';
+import { MilitrinLinkButton, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
 import type { AccountHomeTicketCard } from '@/lib/account/home-ticket-cards';
 import { buildCarouselDotTargets, findActiveDotIndex } from '@/lib/account/carousel-dots';
 
@@ -48,7 +47,7 @@ export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard
         </div>
 
         <div className="p-3.5 sm:p-4">
-          <h3 className="truncate text-base font-semibold text-white sm:text-lg" title={current.eventName}>{current.eventName}</h3>
+          <h3 className={cx('truncate sm:text-lg', militrinType.cardTitle)} title={current.eventName}>{current.eventName}</h3>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-300">
             {current.date ? (
               <span className="inline-flex items-center gap-1"><Calendar size={12} className="text-slate-500" />{current.date}</span>
@@ -58,6 +57,9 @@ export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard
             ) : null}
           </div>
 
+          {/* Categoria/lote/camiseta: os dados que importam pra quem vai ao
+              evento. Nenhum codigo/UUID tecnico aqui -- ver ficha completa do
+              ingresso (Ver ingresso) pra referencias tecnicas. */}
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {current.categoryLabel ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
@@ -69,25 +71,21 @@ export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard
                 <Ticket size={11} />{current.batchLabel}
               </span>
             ) : null}
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium tracking-wide text-slate-400">
-              <Hash size={11} />{current.codeLabel}
-            </span>
+            {current.shirtLabel ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
+                <Shirt size={11} />{current.shirtLabel}
+              </span>
+            ) : null}
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Link
-              href={`/minha-conta/ingressos/${current.ticketId}`}
-              className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-3 text-xs font-semibold text-slate-100 transition hover:border-slate-500 sm:flex-none"
-            >
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-dashed border-slate-800 pt-3">
+            <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
               Ver ingresso
-            </Link>
+            </MilitrinLinkButton>
             {current.canShowTicket ? (
-              <Link
-                href={`/minha-conta/ingressos/${current.ticketId}`}
-                className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25 sm:flex-none"
-              >
-                <QrCode size={14} />Abrir QR Code
-              </Link>
+              <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
+                Abrir QR Code
+              </MilitrinLinkButton>
             ) : null}
           </div>
         </div>

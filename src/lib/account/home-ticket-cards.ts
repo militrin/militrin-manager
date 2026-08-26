@@ -16,7 +16,8 @@ export type AccountHomeTicketCard = {
   /** null quando resolveTicketPresentationMode manda esconder a categoria (0 ou 1 categoria ativa no evento). */
   categoryLabel: string | null;
   batchLabel: string | null;
-  codeLabel: string;
+  /** "Camiseta P", "Baby look M" etc. -- null quando o item nao tem camiseta. */
+  shirtLabel: string | null;
   canShowTicket: boolean;
 };
 
@@ -52,7 +53,7 @@ export async function buildAccountHomeTicketCards(
 
   const [itemsResult, ordersResult, eventsResult] = await Promise.all([
     orderItemIds.length > 0
-      ? supabase.from('order_items').select('id, participant_id, ticket_category_id, batch_id').in('id', orderItemIds)
+      ? supabase.from('order_items').select('id, participant_id, ticket_category_id, batch_id, shirt_type, shirt_size').in('id', orderItemIds)
       : resolved([]),
     orderIds.length > 0
       ? supabase.from('orders').select('id, status').in('id', orderIds)
@@ -62,7 +63,7 @@ export async function buildAccountHomeTicketCards(
       : resolved([]),
   ]);
 
-  const items = (itemsResult.data ?? []) as Array<{ id: string; participant_id: string | null; ticket_category_id: string | null; batch_id: string | null }>;
+  const items = (itemsResult.data ?? []) as Array<{ id: string; participant_id: string | null; ticket_category_id: string | null; batch_id: string | null; shirt_type: string | null; shirt_size: string | null }>;
   const orders = (ordersResult.data ?? []) as Array<{ id: string; status: string | null }>;
   const events = (eventsResult.data ?? []) as Array<{ id: string; name: string | null; starts_at: string | null; location: string | null; banner_card_url: string | null; banner_hero_url: string | null }>;
 
@@ -112,6 +113,9 @@ export async function buildAccountHomeTicketCards(
     const orderStatus = String(order?.status ?? 'pending');
     const ticketIssuanceBlocked = item ? blockedParticipantIds.has(String(item.participant_id ?? '')) : false;
     const canShowTicket = !ticketIssuanceBlocked && orderStatus === 'confirmed' && (ticket.status === 'active' || ticket.status === 'used');
+    const shirtType = optionalDisplayValue(item?.shirt_type ?? null);
+    const shirtSize = optionalDisplayValue(item?.shirt_size ?? null);
+    const shirtLabel = shirtType && shirtSize ? `${shirtType} ${shirtSize}` : shirtType || shirtSize;
 
     return {
       ticketId: ticket.id,
@@ -123,7 +127,7 @@ export async function buildAccountHomeTicketCards(
       status: String(ticket.status ?? 'pending'),
       categoryLabel: presentationMode === 'category_visible' ? categoryName : null,
       batchLabel: presentationMode === 'single' ? null : batchName,
-      codeLabel: ticket.id.replace(/-/g, '').slice(0, 12).toUpperCase(),
+      shirtLabel: shirtLabel ?? null,
       canShowTicket,
     };
   });

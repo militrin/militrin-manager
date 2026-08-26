@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Crown, ShoppingBag, Ticket, Trophy } from 'lucide-react';
+import { Crown, ShoppingBag, Ticket } from 'lucide-react';
+import { militrinType } from '@/components/militrin';
 
 type IndicatorItem = {
   icon: ReactNode;
@@ -10,20 +11,20 @@ type IndicatorItem = {
 
 function Indicator({ icon, iconClassName, value, label }: IndicatorItem) {
   return (
-    <div className="flex flex-1 items-center gap-3 px-4 py-3 sm:px-5">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${iconClassName}`}>{icon}</span>
+    <div className="flex flex-1 items-center gap-2.5 px-3.5 py-2.5 sm:px-4">
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconClassName}`}>{icon}</span>
       <div className="min-w-0">
-        <p className="truncate text-lg font-semibold text-white leading-tight">{value}</p>
-        <p className="truncate text-xs text-slate-400 leading-tight">{label}</p>
+        <p className={`truncate leading-tight ${militrinType.value}`}>{value}</p>
+        <p className={`truncate leading-tight ${militrinType.micro}`}>{label}</p>
       </div>
     </div>
   );
 }
 
-// Faixa compacta (nao cards altos): Compras | Ingressos ativos | Categoria | Nível.
-// Categoria usa o nivel de fidelidade real (mesma fonte de /minha-conta/nivel);
-// Nível continua "Em breve" por nao existir um sistema separado ainda -- e essa
-// e a UNICA linha da Home onde esse texto aparece.
+// Faixa compacta (nao cards altos): Compras | Ingressos ativos | Categoria.
+// Categoria usa o nivel de fidelidade real (mesma fonte de /minha-conta/nivel).
+// Um 4o indicador "Nível" (fixo em "Em breve") foi removido daqui -- a Home
+// nao deve reservar espaco pra uma funcionalidade que ainda nao existe.
 export function HomeIndicators({
   purchaseCount,
   activeTicketCount,
@@ -36,28 +37,22 @@ export function HomeIndicators({
   return (
     <div className="flex flex-col divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60 sm:flex-row sm:divide-x sm:divide-y-0">
       <Indicator
-        icon={<ShoppingBag size={17} className="text-(--brand-300)" />}
+        icon={<ShoppingBag size={15} className="text-(--brand-300)" />}
         iconClassName="bg-(--brand-500)/15"
         value={purchaseCount}
         label="Compras"
       />
       <Indicator
-        icon={<Ticket size={17} className="text-emerald-300" />}
+        icon={<Ticket size={15} className="text-emerald-300" />}
         iconClassName="bg-emerald-500/15"
         value={activeTicketCount}
         label="Ingressos ativos"
       />
       <Indicator
-        icon={<Crown size={17} className="text-amber-300" />}
+        icon={<Crown size={15} className="text-amber-300" />}
         iconClassName="bg-amber-500/15"
         value={categoryName}
         label="Categoria"
-      />
-      <Indicator
-        icon={<Trophy size={17} className="text-purple-300" />}
-        iconClassName="bg-purple-500/15"
-        value={<span className="text-emerald-300">Em breve</span>}
-        label="Nível"
       />
     </div>
   );

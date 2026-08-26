@@ -3,6 +3,7 @@ export * from './MilitrinBadge';
 export * from './MilitrinButton';
 export * from './MilitrinCard';
 export * from './MilitrinEmptyState';
+export * from './MilitrinLinkButton';
 export * from './MilitrinPageHeader';
 export * from './MilitrinProgress';
 export * from './MilitrinPurchaseCard';

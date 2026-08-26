@@ -1,6 +1,6 @@
 import Image from 'next/image';
-import Link from 'next/link';
 import { Calendar, MapPin, ShoppingBag, Star } from 'lucide-react';
+import { MilitrinLinkButton, cx, militrinType } from '@/components/militrin';
 
 export type HomeFeaturedEvent = {
   id: string;
@@ -16,7 +16,7 @@ export type HomeFeaturedEvent = {
 
 export function HomeFeaturedEvents({ events }: { events: HomeFeaturedEvent[] }) {
   if (events.length === 0) {
-    return <p className="text-sm text-slate-300">Nenhum evento em destaque no momento.</p>;
+    return <p className={militrinType.bodyMuted}>Nenhum evento em destaque no momento.</p>;
   }
 
   return (
@@ -35,8 +35,8 @@ export function HomeFeaturedEvents({ events }: { events: HomeFeaturedEvent[] }) 
           </div>
 
           <div className="p-4">
-            <h3 className="truncate text-base font-semibold text-white" title={event.name}>{event.name}</h3>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
+            <h3 className={cx('truncate', militrinType.cardTitle)} title={event.name}>{event.name}</h3>
+            <div className={cx('mt-1 flex flex-wrap gap-x-3 gap-y-1', militrinType.micro)}>
               <span className="inline-flex items-center gap-1"><Calendar size={11} />{event.date}</span>
               <span className="inline-flex items-center gap-1"><MapPin size={11} />{event.location}</span>
             </div>
@@ -54,14 +54,11 @@ export function HomeFeaturedEvents({ events }: { events: HomeFeaturedEvent[] }) 
 
             <div className="mt-3 flex items-center justify-between gap-2">
               {event.startingPrice ? (
-                <p className="text-xs text-slate-400">A partir de<br /><span className="text-sm font-semibold text-slate-100">{event.startingPrice}</span></p>
+                <p className={militrinType.micro}>A partir de<br /><span className={cx('text-sm', militrinType.money)}>{event.startingPrice}</span></p>
               ) : <span />}
-              <Link
-                href={event.buyHref}
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
-              >
-                <ShoppingBag size={13} />Comprar ingresso
-              </Link>
+              <MilitrinLinkButton href={event.buyHref} variant="success" size="sm" iconLeft={<ShoppingBag size={13} />} className="rounded-xl">
+                Comprar ingresso
+              </MilitrinLinkButton>
             </div>
           </div>
         </article>

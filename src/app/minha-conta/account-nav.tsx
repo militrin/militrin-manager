@@ -15,7 +15,6 @@ import {
   Images,
   ShieldCheck,
   ShoppingBag,
-  Star,
   Store,
   Ticket,
   X,
@@ -37,6 +36,7 @@ const navigationGroups: Array<{ title: string; items: NavItem[] }> = [
       { href: '/minha-conta', label: 'Início', icon: LayoutDashboard, isCart: false },
       { href: '/minha-conta/ingressos', label: 'Meus ingressos', icon: Ticket, isCart: false },
       { href: '/minha-conta/compras', label: 'Minhas compras', icon: Coins, isCart: false },
+      { href: '/minha-conta/historico', label: 'Histórico', icon: History, isCart: false },
       { href: '/minha-conta/loja', label: 'Loja', icon: ShoppingBag, isCart: false },
       { href: '/minha-conta/carrinho', label: 'Carrinho de Compras', icon: ShoppingBag, isCart: true },
       { href: '/minha-conta/dados', label: 'Meu perfil', icon: CircleUserRound, isCart: false },
@@ -47,13 +47,6 @@ const navigationGroups: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { href: '/minha-conta/comprar', label: 'Eventos', icon: CalendarDays, isCart: false },
       { href: '/fotos', label: 'Fotos', icon: Images, isCart: false },
-    ],
-  },
-  {
-    title: 'Mais',
-    items: [
-      { href: '/minha-conta/nivel', label: 'Minha categoria - Em breve', icon: Star, isCart: false },
-      { href: '/minha-conta/historico', label: 'Histórico', icon: History, isCart: false },
     ],
   },
 ];

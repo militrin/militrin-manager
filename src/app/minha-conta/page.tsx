@@ -16,7 +16,7 @@ import {
   resolveParticipantFullName,
   resolveParticipantInitials,
 } from '@/lib/account/participant-identity';
-import { MilitrinAvatar, MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
+import { MilitrinAvatar, MilitrinLinkButton, MilitrinSection, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
 import { BetaFeedbackWidget } from '@/components/feedback/BetaFeedbackWidget';
 import { HomeTicketCarousel } from './home-ticket-carousel';
 import { HomeSponsorsCarousel, type HomeSponsor } from './home-sponsors-carousel';
@@ -226,30 +226,30 @@ export default async function MinhaContaPage() {
   return (
     <section className="space-y-5">
       <MilitrinSection
+        size="compact"
         title={`Olá, ${greetingName}!`}
-        description="Bem-vindo à sua conta Militrin."
         className="relative isolate overflow-hidden"
         action={
           ticketCta ? (
             <Link
               href={ticketCta.type === 'ticket' ? `/minha-conta/ingressos/${ticketCta.ticketId}` : '/minha-conta/ingressos'}
-              className="inline-flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 transition hover:bg-emerald-500/15"
+              className="inline-flex items-center gap-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 transition hover:bg-emerald-500/15"
             >
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-500/40 bg-slate-950">
-                <QrCode size={20} className="text-emerald-300" />
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-500/40 bg-slate-950">
+                <QrCode size={17} className="text-emerald-300" />
               </span>
               <span className="min-w-0">
-                <span className="block text-xs text-slate-300">{ticketCta.type === 'ticket' ? 'Acesse seu ingresso' : 'Acesse seus ingressos'}</span>
-                <span className="flex items-center gap-1 text-sm font-bold text-emerald-300">{ticketCta.type === 'ticket' ? 'Ver QR Code' : 'Ver ingressos'}<ChevronRight size={14} /></span>
+                <span className="block text-[11px] text-slate-300">{ticketCta.type === 'ticket' ? 'Acesse seu ingresso' : 'Acesse seus ingressos'}</span>
+                <span className="flex items-center gap-1 text-sm font-bold text-emerald-300">{ticketCta.type === 'ticket' ? 'Ver QR Code' : 'Ver ingressos'}<ChevronRight size={13} /></span>
               </span>
             </Link>
           ) : null
         }
       >
-        <div aria-hidden className="mask-logo pointer-events-none absolute -right-12 -top-10 -z-10 hidden h-72 w-72 rotate-6 opacity-25 md:block" />
-        <div className="flex items-center gap-3">
-          <MilitrinAvatar src={profilePhotoUrl} alt={`Foto do usuário ${displayName}`} initials={greetingInitials} size="md" />
-          <p className="min-w-0 truncate text-sm text-slate-400" title={String(user?.email ?? '')}>{String(user?.email ?? '')}</p>
+        <div aria-hidden className="mask-logo pointer-events-none absolute -right-10 -top-8 -z-10 hidden h-48 w-48 rotate-6 opacity-20 md:block" />
+        <div className="flex items-center gap-2.5">
+          <MilitrinAvatar src={profilePhotoUrl} alt={`Foto do usuário ${displayName}`} initials={greetingInitials} size="sm" />
+          <p className="min-w-0 truncate text-xs text-slate-400" title={String(user?.email ?? '')}>{String(user?.email ?? '')}</p>
         </div>
       </MilitrinSection>
 
@@ -261,31 +261,35 @@ export default async function MinhaContaPage() {
       <div className="grid grid-cols-2 gap-3">
         <Link
           href="/minha-conta/comprar"
-          className="group relative isolate flex min-h-32 flex-col justify-end overflow-hidden rounded-[1.75rem] border border-slate-800/80 p-4 shadow-lg shadow-black/10 transition hover:border-(--brand-400)/50 sm:min-h-40"
+          className="group relative isolate flex min-h-27 flex-col justify-end overflow-hidden rounded-[1.75rem] border border-slate-800/80 p-3.5 shadow-lg shadow-black/10 transition hover:border-(--brand-400)/50 sm:min-h-34"
         >
           {cardEventsRaw[0]?.bannerUrl ? (
-            <Image src={cardEventsRaw[0].bannerUrl} alt="" fill unoptimized className="-z-20 object-cover opacity-70 transition group-hover:opacity-80" />
+            <Image src={cardEventsRaw[0].bannerUrl} alt="" fill unoptimized className="-z-20 object-cover opacity-80 transition group-hover:opacity-90" />
           ) : (
             <div aria-hidden className="absolute inset-0 -z-20 bg-linear-to-br from-(--brand-600)/50 to-slate-950" />
           )}
-          <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950 via-slate-950/50 to-transparent" />
-          <CalendarDays size={18} className="mb-1 text-(--brand-300)" />
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-200">Próximos eventos</p>
+          <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950 via-slate-950/65 to-transparent" />
+          <span className="inline-flex w-fit items-center gap-1.5 text-(--brand-300)">
+            <CalendarDays size={15} />
+            <span className={cx(militrinType.label, 'text-(--brand-200)')}>Próximos eventos</span>
+          </span>
           <span className="mt-1 flex items-center gap-1 text-sm font-bold text-white">Ver eventos<ArrowRight size={14} /></span>
         </Link>
 
         <Link
           href="/minha-conta/loja"
-          className="group relative isolate flex min-h-32 flex-col justify-end overflow-hidden rounded-[1.75rem] border border-slate-800/80 p-4 shadow-lg shadow-black/10 transition hover:border-amber-400/50 sm:min-h-40"
+          className="group relative isolate flex min-h-27 flex-col justify-end overflow-hidden rounded-[1.75rem] border border-slate-800/80 p-3.5 shadow-lg shadow-black/10 transition hover:border-amber-400/50 sm:min-h-34"
         >
           {storeHighlightItem?.imageUrl ? (
-            <Image src={storeHighlightItem.imageUrl} alt="" fill unoptimized className="-z-20 object-cover opacity-70 transition group-hover:opacity-80" />
+            <Image src={storeHighlightItem.imageUrl} alt="" fill unoptimized className="-z-20 object-cover opacity-80 transition group-hover:opacity-90" />
           ) : (
             <div aria-hidden className="absolute inset-0 -z-20 bg-linear-to-br from-amber-500/40 to-slate-950" />
           )}
-          <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950 via-slate-950/50 to-transparent" />
-          <Store size={18} className="mb-1 text-amber-300" />
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-200">Loja Militrin</p>
+          <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950 via-slate-950/65 to-transparent" />
+          <span className="inline-flex w-fit items-center gap-1.5 text-amber-300">
+            <Store size={15} />
+            <span className={cx(militrinType.label, 'text-amber-200')}>Loja Militrin</span>
+          </span>
           <span className="mt-1 flex items-center gap-1 text-sm font-bold text-white">Ir para a loja<ArrowRight size={14} /></span>
         </Link>
       </div>
@@ -293,7 +297,7 @@ export default async function MinhaContaPage() {
       <div className={sponsors.length > 0 ? 'grid gap-5 xl:grid-cols-[1fr_1fr]' : 'grid gap-5'}>
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+            <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
               <TicketIcon size={18} className="text-(--brand-300)" />Seus ingressos
             </h2>
             {ticketCards.length > 0 ? (
@@ -309,7 +313,7 @@ export default async function MinhaContaPage() {
 
         {sponsors.length > 0 ? (
           <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+            <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
               <ShieldCheck size={17} className="text-(--brand-300)" />Patrocinadores
             </h2>
             <div className="mt-4">
@@ -328,7 +332,7 @@ export default async function MinhaContaPage() {
       <div className="grid gap-5 xl:grid-cols-[2fr_1fr]">
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+            <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
               <ShoppingBag size={17} className="text-(--brand-300)" />Eventos em destaque
             </h2>
             <Link href="/eventos" className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
@@ -341,37 +345,37 @@ export default async function MinhaContaPage() {
         </section>
 
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-            <ShoppingBag size={17} className="text-(--brand-300)" />Compra pendente
+          <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
+            <ShoppingBag size={17} className="text-amber-300" />Compra pendente
           </h2>
           {pendingOrder && pendingOrderDetail ? (
-            <div className="mt-4 space-y-2 text-sm text-slate-200">
-              <p className="text-base font-semibold text-white">{pendingOrderDetail.eventName}</p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+            <div className="mt-4 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <p className={militrinType.cardTitle}>{pendingOrderDetail.eventName}</p>
+                <MilitrinStatusBadge status="pending" />
+              </div>
+              <div className={cx('flex flex-wrap gap-x-4 gap-y-1', militrinType.micro)}>
                 {pendingOrderDetail.date ? <span>{pendingOrderDetail.date}</span> : null}
                 {pendingOrderDetail.location ? <span>{pendingOrderDetail.location}</span> : null}
               </div>
-              <p className="text-xs text-slate-400">
+              <p className={militrinType.micro}>
                 {pendingOrderDetail.quantity} ingresso{pendingOrderDetail.quantity === 1 ? '' : 's'}
                 {pendingOrderDetail.categoryLabel ? ` · ${pendingOrderDetail.categoryLabel}` : ''}
               </p>
-              {pendingOrderDetail.batchLabel ? <p className="text-xs text-slate-400">{pendingOrderDetail.batchLabel}</p> : null}
-              <p className="pt-1 text-2xl font-bold text-emerald-300">{money(Number(pendingOrder.final_amount ?? 0))}</p>
-              <Link
-                href={`/minha-conta/compras/${pendingOrder.id}`}
-                className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-r from-(--brand-600) to-(--brand-500) text-sm font-semibold text-white shadow-lg shadow-(--brand-600)/25 transition hover:from-(--brand-500) hover:to-(--brand-400)"
-              >
+              {pendingOrderDetail.batchLabel ? <p className={militrinType.micro}>{pendingOrderDetail.batchLabel}</p> : null}
+              <p className={cx('pt-1 text-2xl', militrinType.money)}>{money(Number(pendingOrder.final_amount ?? 0))}</p>
+              <MilitrinLinkButton href={`/minha-conta/compras/${pendingOrder.id}`} size="md" className="mt-3 w-full">
                 Continuar pagamento
-              </Link>
+              </MilitrinLinkButton>
             </div>
           ) : (
-            <p className="mt-4 text-sm text-slate-300">Nenhuma compra pendente no momento.</p>
+            <p className={cx('mt-4', militrinType.bodyMuted)}>Nenhuma compra pendente no momento.</p>
           )}
         </section>
       </div>
 
       <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+        <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
           <Clock size={17} className="text-(--brand-300)" />Última atividade
         </h2>
         {latestOrder ? (
@@ -383,19 +387,19 @@ export default async function MinhaContaPage() {
               <ShoppingBag size={16} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-white">{latestOrderActivityTitle}</span>
-              <span className="block truncate text-xs text-slate-400">
+              <span className={cx('block', militrinType.cardTitle)}>{latestOrderActivityTitle}</span>
+              <span className={cx('block truncate', militrinType.micro)}>
                 {latestOrderEvent?.name ? String(latestOrderEvent.name) : 'Evento Militrin'}
                 {latestOrderItemCount > 0 ? ` - ${latestOrderItemCount} ingresso${latestOrderItemCount === 1 ? '' : 's'}` : ''}
               </span>
             </span>
             <span className="shrink-0"><MilitrinStatusBadge status={String(latestOrder.status)} /></span>
-            <span className="shrink-0 text-xs text-slate-400">{formatDateTimeBR(String(latestOrder.confirmed_at ?? latestOrder.created_at ?? ''), ' ')}</span>
-            <span className="shrink-0 text-sm font-semibold text-slate-100">{money(Number(latestOrder.final_amount ?? 0))}</span>
+            <span className={cx('shrink-0', militrinType.micro)}>{formatDateTimeBR(String(latestOrder.confirmed_at ?? latestOrder.created_at ?? ''), ' ')}</span>
+            <span className={cx('shrink-0', militrinType.money)}>{money(Number(latestOrder.final_amount ?? 0))}</span>
             <ChevronRight size={16} className="shrink-0 text-slate-500" />
           </Link>
         ) : (
-          <p className="mt-4 text-sm text-slate-300">Seu primeiro pedido aparecerá aqui.</p>
+          <p className={cx('mt-4', militrinType.bodyMuted)}>Seu primeiro pedido aparecerá aqui.</p>
         )}
       </section>
 
