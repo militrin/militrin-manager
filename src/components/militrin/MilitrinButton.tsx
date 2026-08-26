@@ -31,7 +31,7 @@ export function MilitrinButton({
       {...rest}
       disabled={isDisabled}
       className={cx(
-        'inline-flex items-center justify-center gap-2 rounded-2xl font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
+        'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-2xl font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
         militrinTokens.focusRing,
         militrinButtonVariant[variant],
         militrinButtonSize[size],

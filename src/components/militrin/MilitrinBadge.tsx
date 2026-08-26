@@ -15,7 +15,7 @@ type MilitrinBadgeProps = HTMLAttributes<HTMLSpanElement> & { tone?: Tone };
 
 export function MilitrinBadge({ className, children, tone = 'neutral', ...props }: MilitrinBadgeProps) {
   return (
-    <span {...props} className={cx('rounded-full border px-3 py-1 text-xs uppercase tracking-wide', toneClass[tone], className)}>
+    <span {...props} className={cx('whitespace-nowrap rounded-full border px-3 py-1 text-xs uppercase tracking-wide', toneClass[tone], className)}>
       {children}
     </span>
   );

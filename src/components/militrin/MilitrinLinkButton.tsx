@@ -31,7 +31,7 @@ export function MilitrinLinkButton({
     <Link
       {...rest}
       className={cx(
-        'inline-flex items-center justify-center gap-2 rounded-2xl font-semibold transition',
+        'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-2xl font-semibold transition',
         militrinTokens.focusRing,
         militrinButtonVariant[variant],
         militrinButtonSize[size],

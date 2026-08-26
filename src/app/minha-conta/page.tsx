@@ -386,22 +386,32 @@ export default async function MinhaContaPage() {
         {latestOrder ? (
           <Link
             href={`/minha-conta/compras/${latestOrder.id}`}
-            className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 transition hover:border-slate-600 sm:flex-nowrap"
+            className="mt-4 flex flex-col gap-2 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 transition hover:border-slate-600 sm:flex-row sm:items-center sm:gap-3"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-(--brand-500)/15 text-(--brand-300)">
-              <ShoppingBag size={16} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className={cx('block', militrinType.cardTitle)}>{latestOrderActivityTitle}</span>
-              <span className={cx('block truncate', militrinType.micro)}>
-                {latestOrderEvent?.name ? String(latestOrderEvent.name) : 'Evento Militrin'}
-                {latestOrderItemCount > 0 ? ` - ${latestOrderItemCount} ingresso${latestOrderItemCount === 1 ? '' : 's'}` : ''}
+            {/* Linha 1 (mobile): icone + titulo/subtitulo, sempre com espaco
+                de sobra pra truncar sem disputar largura com badge/data/valor.
+                No desktop vira o primeiro grupo de uma unica linha (flex-1). */}
+            <span className="flex min-w-0 items-center gap-3 sm:flex-1">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-(--brand-500)/15 text-(--brand-300)">
+                <ShoppingBag size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cx('block', militrinType.cardTitle)}>{latestOrderActivityTitle}</span>
+                <span className={cx('block truncate', militrinType.micro)}>
+                  {latestOrderEvent?.name ? String(latestOrderEvent.name) : 'Evento Militrin'}
+                  {latestOrderItemCount > 0 ? ` - ${latestOrderItemCount} ingresso${latestOrderItemCount === 1 ? '' : 's'}` : ''}
+                </span>
               </span>
             </span>
-            <span className="shrink-0"><MilitrinStatusBadge status={String(latestOrderStatus)} /></span>
-            <span className={cx('shrink-0', militrinType.micro)}>{formatDateTimeBR(String(latestOrder.confirmed_at ?? latestOrder.created_at ?? ''), ' ')}</span>
-            <span className={cx('shrink-0', militrinType.money)}>{money(Number(latestOrder.final_amount ?? 0))}</span>
-            <ChevronRight size={16} className="shrink-0 text-slate-500" />
+            {/* Linha 2 (mobile): badge + data + valor + seta, distribuidos na
+                largura toda do card -- nunca disputando espaco com o titulo
+                da linha 1. No desktop vira o segundo grupo, alinhado a direita. */}
+            <span className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+              <MilitrinStatusBadge status={String(latestOrderStatus)} />
+              <span className={cx('shrink-0', militrinType.micro)}>{formatDateTimeBR(String(latestOrder.confirmed_at ?? latestOrder.created_at ?? ''), ' ')}</span>
+              <span className={cx('shrink-0', militrinType.money)}>{money(Number(latestOrder.final_amount ?? 0))}</span>
+              <ChevronRight size={16} className="shrink-0 text-slate-500" />
+            </span>
           </Link>
         ) : (
           <p className={cx('mt-4', militrinType.bodyMuted)}>Seu primeiro pedido aparecerá aqui.</p>

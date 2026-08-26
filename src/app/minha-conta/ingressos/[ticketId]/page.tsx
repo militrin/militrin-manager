@@ -1,10 +1,24 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { CalendarDays, CheckCircle2, MapPin, Shirt, Ticket as TicketIcon } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatDateTimeBR } from '@/lib/utils/date';
+import { formatDateLongBR, formatDateTimeBR } from '@/lib/utils/date';
 import { getCurrentPermissionMap } from '@/lib/admin/permissions';
-import { MilitrinButton, MilitrinSection, MilitrinStatusBadge, MilitrinTimeline, type MilitrinTimelineItem } from '@/components/militrin';
-import { TicketViewer } from '@/components/public/TicketViewer';
+import {
+  MilitrinBadge,
+  MilitrinButton,
+  MilitrinLinkButton,
+  MilitrinSection,
+  MilitrinStatusBadge,
+  MilitrinTimeline,
+  checkinStatusChip,
+  cx,
+  militrinTokens,
+  militrinType,
+  type MilitrinTimelineItem,
+} from '@/components/militrin';
+import { TicketPdfButton } from '@/components/public/TicketPdfButton';
 import {
   reviewTicketItemChangeAction,
   updateTicketNotesAction,
@@ -14,6 +28,10 @@ import { TicketHolderActions } from './ticket-holder-actions';
 import { CategoryContextAction, HolderContextAction, ParticipantShirtChangeAction, ShirtContextAction } from './ticket-context-actions';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { orderDisplayReference } from '@/lib/display-reference';
+
+function makeQrUrl(token: string) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`;
+}
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -99,7 +117,6 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
   const isBuyer = Boolean(user?.id) && order?.buyer_type === 'account' && String(order?.user_id ?? '') === user?.id;
   const isOwner = Boolean(user?.id) && String(ticket.owner_user_id ?? '') === user?.id;
   const orderStatus = normalizeStatus(String(order?.status ?? 'pending'));
-  const paymentStatus = normalizeStatus(String(payment?.payment_status ?? 'pending'));
   const ticketStatus = normalizeStatus(String(ticket.status ?? 'pending'));
   const { count: ticketIssuanceBlockCount } = participantId
     ? await supabase.from('participant_data_issues').select('id', { count: 'exact', head: true })
@@ -205,6 +222,25 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     });
   const kitSummary = `${kitDeliveredCount}/${kitItems.length} entregues`;
 
+  // O kit e UMA entrega só pro participante, mesmo com varios registros em
+  // participant_kit_items (camiseta/copo/tirante/porta-copo etc.) --
+  // reaproveita exatamente kitFullyDelivered/kitDeliveredCount (ja
+  // calculados acima, fonte canonica unica) pro rotulo agregado, nunca um
+  // status por item. Item cancelado nao aparece na lista pro participante
+  // (nao faz sentido "incluir" algo cancelado), mas nao muda o calculo do
+  // agregado, que ja e a fonte existente.
+  const kitItemsForDisplay = kitItems.filter((item) => String(item.status ?? '') !== 'cancelled');
+  const kitDeliveredAt = kitItems.find((item) => String(item.status ?? '') === 'delivered')?.delivered_at as string | null | undefined;
+  const checkinChip = checkinStatusChip(checkinDone);
+  const eventDateLong = eventObj?.starts_at ? formatDateLongBR(String(eventObj.starts_at)) : null;
+  // Secao "Administracao" -- so o que exige permissao administrativa
+  // (participants.edit_basic ou kits/checkin). Definir/transferir titular
+  // (TicketHolderActions) e uma capacidade do PROPRIO dono do ingresso
+  // (regra de titularidade existente, gated por isOwner + flags do evento),
+  // nao administrativa -- continua na area do participante, nao aqui.
+  const hasAdminSection = Boolean(canAdminEdit || (participantId && canManageOperationalFlow));
+  const showHolderActions = isOwner && ((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer)));
+
   const timelineItems = [
     {
       id: `ticket-issued-${ticket.id}`,
@@ -229,10 +265,29 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
           {
             id: `order-confirmed-${order.id}`,
             title: 'Pagamento confirmado',
-            subtitle: `Pagamento ${String(paymentStatus)}`,
+            subtitle: payment?.payment_method ? `Via ${String(payment.payment_method).toUpperCase()}` : undefined,
             date: formatDateTimeBR(String(order.confirmed_at), ' às '),
             status: 'confirmed',
           },
+        ]
+      : []),
+    ...(kitItems.length > 0 && order?.confirmed_at
+      ? [
+          kitFullyDelivered
+            ? {
+                id: `kit-delivered-${ticket.id}`,
+                title: 'Kit retirado',
+                subtitle: undefined,
+                date: kitDeliveredAt ? formatDateTimeBR(String(kitDeliveredAt), ' às ') : undefined,
+                status: 'confirmed',
+              }
+            : {
+                id: `kit-pending-${ticket.id}`,
+                title: 'Aguardando retirada do kit',
+                subtitle: 'Apresente o QR Code no evento para retirar.',
+                date: undefined,
+                status: 'pending',
+              },
         ]
       : []),
     ...([...((ticketLogsResult.data ?? []) as Array<Record<string, unknown>>), ...((participantLogsResult.data ?? []) as Array<Record<string, unknown>>), ...((orderItemLogsResult.data ?? []) as Array<Record<string, unknown>>)]
@@ -270,34 +325,82 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
 
   return (
     <section className="space-y-4">
-      <MilitrinSection
-        eyebrow="Ingresso"
-        title={String(eventObj?.name ?? 'Ingresso')}
-        description={`Pedido ${orderDisplayReference(null, order?.order_number)} • ${holderName}`}
-      >
-        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <p className="flex flex-wrap items-center gap-2">Titular: <strong>{holderName}</strong>{canAdminEdit ? <HolderContextAction ticketId={ticketId} hasHolder={hasHolder}/> : null}</p>
-                <p>Proprietário atual: <strong>{ownerName}</strong></p>
-                {order ? <p>Comprador: <strong>{buyerName}</strong> <span className="text-xs text-slate-500">(original)</span></p> : null}
-                {optionalDisplayValue(categoryObj?.name) ? <p className="flex flex-wrap items-center gap-2">Categoria: <strong>{optionalDisplayValue(categoryObj?.name)}</strong>{canAdminEdit ? <CategoryContextAction ticketId={ticketId} initial={String(orderItem?.ticket_category_id ?? '')} options={adminCategories.map(item=>({value:String(item.id),label:String(item.name ?? 'Categoria')}))}/> : null}</p> : null}
-                {optionalDisplayValue(batchObj?.name) ? <p>Lote: {optionalDisplayValue(batchObj?.name)}</p> : null}
-                {(shirtKitItem || shirtType || shirtSize) ? <p className="flex flex-wrap items-center gap-2">Camiseta: <strong>{shirtType && shirtSize ? `${shirtType} ${shirtSize}` : 'Nao identificada'}</strong>{canChangeShirt ? <ShirtContextAction ticketId={ticketId} initial={currentShirtOption} options={shirtOptions.map(option=>({value:`${String(option.shirt_type)}|${String(option.shirt_size)}`,label:String(option.option_label)}))}/> : null}</p> : null}
-                <p>Pagamento: <MilitrinStatusBadge status={paymentStatus} /></p>
-                {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
-                <p>Status check-in: {ticket.used_at ? 'Realizado' : 'Pendente'}</p>
-                <p>Pedido: {orderDisplayReference(null, order?.order_number)}</p>
-                <p>Valor final: {money(Number(order?.final_amount ?? payment?.final_amount ?? 0))}</p>
-                {ticket.issued_at ? <p>Emissão: {formatDateTimeBR(String(ticket.issued_at), ' às ')}</p> : null}
-              </div>
-              {shirtConfigurationIssue ? <p className="mt-3 rounded-xl border border-amber-600/30 bg-amber-950/20 p-3 text-xs text-amber-100">{shirtConfigurationIssue}</p> : null}
-              {participantId && canManageOperationalFlow ? <div className="mt-4 border-t border-slate-800 pt-4"><p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p><TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} hasActiveWristband={false} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/></div> : null}
-            </div>
+      <Link href="/minha-conta/ingressos" className={cx('inline-flex items-center gap-1.5', militrinType.micro)}>
+        ← Voltar para meus ingressos
+      </Link>
 
-            {canShowTicket ? (
-              <div id="qr"><TicketViewer
+      {/* Cabecalho: cartao de identidade do ingresso -- sem termos tecnicos, sem uuid. */}
+      <div className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-5 sm:p-6')}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className={militrinTokens.eyebrow}>Ingresso</p>
+            <h1 className={cx('mt-1 truncate', militrinType.pageTitle)} title={String(eventObj?.name ?? 'Ingresso')}>{String(eventObj?.name ?? 'Ingresso')}</h1>
+            <p className={cx('mt-1', militrinType.micro)}>
+              Pedido {orderDisplayReference(null, order?.order_number)}
+              {ticket.issued_at ? ` • Emitido em ${formatDateTimeBR(String(ticket.issued_at), ' às ')}` : ''}
+            </p>
+          </div>
+          <MilitrinStatusBadge status={ticketStatus} />
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {optionalDisplayValue(batchObj?.name) ? (
+            <div className="min-w-0">
+              <p className={militrinType.label}>Lote</p>
+              <p className={cx('truncate', militrinType.body)}>{optionalDisplayValue(batchObj?.name)}</p>
+            </div>
+          ) : null}
+          {eventDateLong ? (
+            <div className="min-w-0">
+              <p className={militrinType.label}>Data do evento</p>
+              <p className={cx('flex items-center gap-1.5', militrinType.body)}><CalendarDays size={13} className="shrink-0 text-slate-500" /><span className="truncate">{eventDateLong}</span></p>
+            </div>
+          ) : null}
+          {optionalDisplayValue(eventObj?.location) ? (
+            <div className="min-w-0">
+              <p className={militrinType.label}>Local</p>
+              <p className={cx('flex items-center gap-1.5', militrinType.body)}><MapPin size={13} className="shrink-0 text-slate-500" /><span className="truncate">{optionalDisplayValue(eventObj?.location)}</span></p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-slate-800/80 pt-4">
+          <div className="min-w-0">
+            <p className={militrinType.label}>Titular</p>
+            <p className={cx('truncate', militrinType.body)}>{holderName}</p>
+          </div>
+          {optionalDisplayValue(categoryObj?.name) ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
+              <TicketIcon size={11} />{optionalDisplayValue(categoryObj?.name)}
+            </span>
+          ) : null}
+          {shirtSize ? (
+            <div className="min-w-0">
+              <p className={militrinType.label}>Camiseta</p>
+              <p className={cx('flex items-center gap-1.5', militrinType.body)}><Shirt size={13} className="shrink-0 text-slate-500" />{shirtSize}</p>
+            </div>
+          ) : null}
+          <div className="ml-auto">
+            <MilitrinBadge tone={checkinChip.tone}>
+              <span className="inline-flex items-center gap-1"><checkinChip.icon size={11} />{checkinChip.label}</span>
+            </MilitrinBadge>
+          </div>
+        </div>
+      </div>
+
+      {/* Seu ingresso (QR) + Seu kit -- lado a lado no desktop, empilhados no mobile. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
+          <h2 className={militrinType.cardTitle}>Seu ingresso</h2>
+          {canShowTicket ? (
+            <div id="qr" className="mt-4 flex flex-col items-center gap-3">
+              <p className={cx('text-center', militrinType.body)}>
+                Apresente este QR Code para <strong className="text-white">retirar seu kit</strong>.
+              </p>
+              <div className="rounded-2xl border border-slate-700 bg-white p-3">
+                <Image src={makeQrUrl(String(ticket.token ?? ''))} alt="QR Code do ingresso" width={220} height={220} unoptimized className="h-55 w-55" />
+              </div>
+              <TicketPdfButton
                 eventName={String(eventObj?.name ?? 'Evento')}
                 participantName={holderName}
                 status={ticketStatus}
@@ -306,91 +409,144 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
                 eventLocation={eventObj?.location ? String(eventObj.location) : null}
                 token={String(ticket.token ?? '')}
                 orderNumber={orderDisplayReference(null, order?.order_number)}
-                showPdfButton
-              /></div>
-            ) : (
-              <div className="rounded-2xl border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-100">
-                {ticketIssuanceBlocked ? 'Ingresso aguardando conferência. O QR Code ficará disponível após a liberação do organizador.' : 'O QR Code e o PDF ficam disponíveis apenas para pedidos confirmados.'}
+                className={cx('mt-1 inline-flex w-full items-center justify-center gap-2 rounded-2xl font-semibold transition sm:w-auto', militrinTokens.focusRing, 'bg-linear-to-r from-(--brand-600) to-(--brand-500) text-white shadow-lg shadow-(--brand-600)/25 hover:from-(--brand-500) hover:to-(--brand-400) h-11 px-5 text-sm')}
+              />
+            </div>
+          ) : (
+            <div className="mt-4 rounded-2xl border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-100">
+              {ticketIssuanceBlocked ? 'Ingresso aguardando conferência. O QR Code ficará disponível após a liberação do organizador.' : 'O QR Code fica disponível assim que o pagamento é confirmado.'}
+            </div>
+          )}
+        </div>
+
+        {kitItemsForDisplay.length ? (
+          <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className={militrinType.cardTitle}>Seu kit</h2>
+              <MilitrinBadge tone={kitFullyDelivered ? 'success' : 'neutral'}>{kitFullyDelivered ? 'Kit retirado' : 'A retirar'}</MilitrinBadge>
+            </div>
+            <p className={cx('mt-1', militrinType.micro)}>{kitItemsForDisplay.length} {kitItemsForDisplay.length === 1 ? 'item incluído' : 'itens incluídos'}</p>
+            <ul className="mt-3 space-y-2">
+              {kitItemsForDisplay.map((item) => {
+                const isShirtRow = String(item.item_type) === 'shirt';
+                const notLinked = isShirtRow && String(item.status) === 'not_linked';
+                return (
+                  <li key={String(item.kit_item_id)} className="flex items-center gap-2">
+                    <CheckCircle2 size={15} className={notLinked ? 'shrink-0 text-slate-600' : 'shrink-0 text-emerald-400'} />
+                    <span className={militrinType.body}>{String(item.item_name ?? 'Item')}</span>
+                    {isShirtRow && shirtSize ? <span className={militrinType.micro}>— {shirtSize}</span> : null}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className={cx('mt-3 border-t border-slate-800/80 pt-3', militrinType.micro)}>
+              Todos os itens do kit são retirados juntos com o QR Code do seu ingresso.
+              {kitFullyDelivered && kitDeliveredAt ? ` Retirado em ${formatDateTimeBR(String(kitDeliveredAt), ' às ')}.` : ''}
+            </p>
+            {participantShirtChangeEnabled ? (
+              <div className="mt-3 border-t border-slate-800/80 pt-3">
+                <ParticipantShirtChangeAction ticketId={ticketId} kitItemId={shirtKitItemId} currentLabel={`${shirtType} — ${shirtSize}`} options={participantShirtOptions} disabledReason={participantShirtDisabledReason} />
               </div>
-            )}
+            ) : null}
+            {shirtConfigurationIssue ? <p className="mt-3 rounded-xl border border-amber-600/30 bg-amber-950/20 p-3 text-xs text-amber-100">{shirtConfigurationIssue}</p> : null}
           </div>
+        ) : null}
+      </div>
 
-          <div className="space-y-4">
-            {kitItems.length ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Itens ativos do kit</p>
-              <ul className="mt-3 space-y-2">
-                {kitItems.map((item) => <li key={String(item.kit_item_id)} className="flex items-center justify-between gap-3">
-                  <span>{String(item.item_name ?? 'Item')}</span>
-                  <span className="text-xs text-slate-400">{String(item.item_type) === 'shirt' && String(item.status) === 'not_linked' ? 'Camiseta não vinculada' : String(item.status ?? 'pendente')}</span>
-                </li>)}
-              </ul>
-            </div> : null}
-            {isOwner && (((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer))) || participantShirtChangeEnabled) ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ações do ingresso</p>
-              {((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer))) ? <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div> : null}
-              {participantShirtChangeEnabled ? <ParticipantShirtChangeAction ticketId={ticketId} kitItemId={shirtKitItemId} currentLabel={`${shirtType} — ${shirtSize}`} options={participantShirtOptions} disabledReason={participantShirtDisabledReason} /> : null}
-            </div> : null}
+      {/* Detalhes do ingresso -- so informacoes que fazem sentido pro participante, sem uuid/status cru. */}
+      <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
+        <h2 className={militrinType.cardTitle}>Detalhes do ingresso</h2>
+        <div className="mt-3 divide-y divide-slate-800/80 text-sm">
+          {optionalDisplayValue(categoryObj?.name) ? <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Categoria</span><span className={militrinType.body}>{optionalDisplayValue(categoryObj?.name)}</span></div> : null}
+          {optionalDisplayValue(batchObj?.name) ? <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Lote</span><span className={militrinType.body}>{optionalDisplayValue(batchObj?.name)}</span></div> : null}
+          <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Valor pago</span><span className={militrinType.money}>{money(Number(order?.final_amount ?? payment?.final_amount ?? 0))}</span></div>
+          {optionalDisplayValue(payment?.payment_method as string | null) ? <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Forma de pagamento</span><span className={militrinType.body}>{String(payment?.payment_method).toUpperCase()}</span></div> : null}
+          <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Status do pedido</span><MilitrinStatusBadge status={orderStatus} /></div>
+          {ticket.issued_at ? <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Emitido em</span><span className={militrinType.body}>{formatDateTimeBR(String(ticket.issued_at), ' às ')}</span></div> : null}
+        </div>
+      </div>
 
-            {isBuyer && kitItems.length > 0 ? <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <p>Itens: {kitItems.length} vinculado(s)</p>
-              {pendingItemRequests.length ? <p className="mt-2 text-amber-200">{pendingItemRequests.length} alteração(ões) aguardando confirmação</p> : null}
-              <Link href={`/minha-conta/ingressos/${ticketId}/itens`} className="mt-3 inline-flex rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200">Gerenciar itens</Link>
-            </div> : null}
+      {showHolderActions ? (
+        <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
+          <h2 className={militrinType.cardTitle}>Titular do ingresso</h2>
+          <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div>
+        </div>
+      ) : null}
+
+      <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
+        <h2 className={militrinType.cardTitle}>Informações importantes</h2>
+        <ul className="mt-3 space-y-2">
+          <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />Chegue com antecedência para retirar seu kit.</li>
+          <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />O ingresso é pessoal e intransferível.</li>
+          <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />Em caso de dúvidas, fale com a organização.</li>
+        </ul>
+      </div>
+
+      {showTimeline ? (
+        <MilitrinSection eyebrow="Histórico" title="Histórico do ingresso" description="Acompanhe a vida do ingresso em ordem cronológica.">
+          {timelineItems.length ? <MilitrinTimeline items={timelineItems} /> : <p className={militrinType.bodyMuted}>Sem eventos registrados ainda.</p>}
+        </MilitrinSection>
+      ) : null}
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <MilitrinLinkButton href="/minha-conta/ingressos" variant="secondary" size="md" className="w-full sm:w-auto">Voltar para ingressos</MilitrinLinkButton>
+        {orderId && isBuyer ? <MilitrinLinkButton href={`/minha-conta/compras/${orderId}`} variant="secondary" size="md" className="w-full sm:w-auto">Ver compra</MilitrinLinkButton> : null}
+      </div>
+
+      {/* Administracao -- exclusivamente admin/operacional, sempre separado da experiencia do participante acima, independente de quem estiver logado. */}
+      {hasAdminSection ? (
+        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-slate-200 sm:p-5">
+          <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Administração</p>
+          <div className="mt-3 grid gap-3">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <p className="flex flex-wrap items-center gap-2">Titular: <strong>{holderName}</strong><HolderContextAction ticketId={ticketId} hasHolder={hasHolder} /></p>
+              <p>Proprietário atual: <strong>{ownerName}</strong></p>
+              {order ? <p>Comprador: <strong>{buyerName}</strong> <span className="text-xs text-slate-500">(original)</span></p> : null}
+              {optionalDisplayValue(categoryObj?.name) ? <p className="flex flex-wrap items-center gap-2">Categoria: <strong>{optionalDisplayValue(categoryObj?.name)}</strong><CategoryContextAction ticketId={ticketId} initial={String(orderItem?.ticket_category_id ?? '')} options={adminCategories.map(item=>({value:String(item.id),label:String(item.name ?? 'Categoria')}))}/></p> : null}
+              {(shirtKitItem || shirtType || shirtSize) && canChangeShirt ? <p className="flex flex-wrap items-center gap-2">Camiseta: <strong>{shirtType && shirtSize ? `${shirtType} ${shirtSize}` : 'Nao identificada'}</strong><ShirtContextAction ticketId={ticketId} initial={currentShirtOption} options={shirtOptions.map(option=>({value:`${String(option.shirt_type)}|${String(option.shirt_size)}`,label:String(option.option_label)}))}/></p> : null}
+              {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
+            </div>
+
+            {participantId && canManageOperationalFlow ? (
+              <div className="border-t border-slate-800 pt-3">
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p>
+                <TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} hasActiveWristband={false} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/>
+              </div>
+            ) : null}
+
+            {pendingItemRequests.map((request) => {
+              const item = firstRelation(request.event_kit_items as Record<string, unknown> | Record<string, unknown>[] | null); const current = request.current_variant as Record<string, unknown> | null; const requested = request.requested_variant as Record<string, unknown> | null;
+              return <div key={String(request.id)} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+                <p className="font-medium text-amber-100">{String(item?.name ?? 'Item')}</p>
+                <p className="mt-1 text-xs text-amber-200">{String(current?.name ?? current?.value ?? 'Atual')} → {String(requested?.name ?? requested?.value ?? 'Solicitada')}</p>
+                <form action={submitItemRequestReview} className="mt-3 flex flex-wrap gap-2">
+                  <input type="hidden" name="request_id" value={String(request.id)} />
+                  <input type="hidden" name="ticket_id" value={ticketId} />
+                  <button name="decision" value="approved" className="rounded-lg bg-emerald-400 px-3 py-1.5 text-xs font-semibold text-slate-950">Aprovar</button>
+                  <button name="decision" value="rejected" className="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-200">Rejeitar</button>
+                </form>
+              </div>;
+            })}
+            {canAdminEdit && participantId ? (
+              <Link href={adminEditHref ?? `/ingressos/${ticketId}/editar`} className="inline-flex">
+                <MilitrinButton size="sm" variant="secondary">Editar ingresso</MilitrinButton>
+              </Link>
+            ) : null}
+            {canAdminEdit && canTransferOwnership ? <Link href={`${adminEditHref ?? `/ingressos/${ticketId}/editar`}#propriedade`} className="inline-flex"><MilitrinButton size="sm" variant="secondary">Transferir propriedade</MilitrinButton></Link> : null}
 
             {canAdminEdit ? (
-              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-slate-200">
-                <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Administração</p>
-                <div className="mt-3 grid gap-3">
-                  {pendingItemRequests.map((request) => {
-                    const item = firstRelation(request.event_kit_items as Record<string, unknown> | Record<string, unknown>[] | null); const current = request.current_variant as Record<string, unknown> | null; const requested = request.requested_variant as Record<string, unknown> | null;
-                    return <div key={String(request.id)} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-                      <p className="font-medium text-amber-100">{String(item?.name ?? 'Item')}</p>
-                      <p className="mt-1 text-xs text-amber-200">{String(current?.name ?? current?.value ?? 'Atual')} → {String(requested?.name ?? requested?.value ?? 'Solicitada')}</p>
-                      <form action={submitItemRequestReview} className="mt-3 flex flex-wrap gap-2">
-                        <input type="hidden" name="request_id" value={String(request.id)} />
-                        <input type="hidden" name="ticket_id" value={ticketId} />
-                        <button name="decision" value="approved" className="rounded-lg bg-emerald-400 px-3 py-1.5 text-xs font-semibold text-slate-950">Aprovar</button>
-                        <button name="decision" value="rejected" className="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-200">Rejeitar</button>
-                      </form>
-                    </div>;
-                  })}
-                  {participantId ? (
-                    <Link href={adminEditHref ?? `/ingressos/${ticketId}/editar`} className="inline-flex">
-                      <MilitrinButton size="sm" variant="secondary">Editar ingresso</MilitrinButton>
-                    </Link>
-                  ) : null}
-                  {canTransferOwnership?<Link href={`${adminEditHref ?? `/ingressos/${ticketId}/editar`}#propriedade`} className="inline-flex"><MilitrinButton size="sm" variant="secondary">Transferir propriedade</MilitrinButton></Link>:null}
-
-                  <form action={submitTicketNotesChange} className="space-y-3">
-                    <input type="hidden" name="ticket_id" value={String(ticket.id)} />
-                    <label className="block space-y-2 text-sm">
-                      <span className="text-slate-300">Registrar observações</span>
-                      <textarea name="notes" defaultValue={String(participant?.notes ?? orderItem?.notes ?? '')} rows={4} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100" />
-                    </label>
-                    <MilitrinButton type="submit" size="sm" variant="secondary">Salvar observações</MilitrinButton>
-                  </form>
-
-                </div>
-              </div>
+              <form action={submitTicketNotesChange} className="space-y-3">
+                <input type="hidden" name="ticket_id" value={String(ticket.id)} />
+                <label className="block space-y-2 text-sm">
+                  <span className="text-slate-300">Registrar observações</span>
+                  <textarea name="notes" defaultValue={String(participant?.notes ?? orderItem?.notes ?? '')} rows={4} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100" />
+                </label>
+                <MilitrinButton type="submit" size="sm" variant="secondary">Salvar observações</MilitrinButton>
+              </form>
             ) : null}
           </div>
         </div>
-      </MilitrinSection>
-
-      {showTimeline ? <MilitrinSection eyebrow="Histórico" title="Linha do tempo do ingresso" description="Acompanhe a vida do ingresso em ordem cronológica.">
-        {timelineItems.length ? <MilitrinTimeline items={timelineItems} /> : <p className="text-sm text-slate-300">Sem eventos registrados ainda.</p>}
-      </MilitrinSection> : null}
-
-      <div className="flex flex-wrap gap-2">
-        <Link href="/minha-conta/ingressos">
-          <MilitrinButton variant="secondary">Voltar para ingressos</MilitrinButton>
-        </Link>
-        {orderId && isBuyer ? (
-          <Link href={`/minha-conta/compras/${orderId}`}>
-            <MilitrinButton>Ver compra</MilitrinButton>
-          </Link>
-        ) : null}
-      </div>
+      ) : null}
     </section>
   );
 }

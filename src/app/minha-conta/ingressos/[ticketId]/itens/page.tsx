@@ -27,7 +27,11 @@ export default async function TicketItemsPage({ params }: { params: Promise<{ ti
     <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5"><h1 className="text-xl font-semibold">Itens do ingresso</h1><div className="mt-4 grid gap-3">{(links ?? []).map((link) => {
       const item = first(link.event_kit_items); const variants = (item?.event_kit_item_variants ?? []).filter((variant) => variant.is_active).sort((a,b) => a.sort_order-b.sort_order);
       const current = object(link.variant_data); const pending = requests?.find((request) => request.kit_item_id === link.kit_item_id && request.status === 'pending');
-      const canChange = Boolean(event?.allow_participant_item_changes && item?.allow_participant_change && item?.requires_variant && !pending && (item.item_type !== 'shirt' || !deadlinePassed));
+      // Regra do redesign do detalhe do ingresso: pro participante, a UNICA
+      // parte do kit que pode ser alterada e a camiseta -- copo/tirante/
+      // porta-copo/demais itens fixos nunca ganham controle de alteracao
+      // aqui, mesmo que event/item já permitissem individualmente.
+      const canChange = Boolean(item?.item_type === 'shirt' && event?.allow_participant_item_changes && item?.allow_participant_change && item?.requires_variant && !pending && !deadlinePassed);
       const currentLabel = String(current.variant_name ?? current.variant_value ?? current.shirt_size ?? 'Opção única');
       return <article key={link.id} className="rounded-xl border border-slate-800 p-4"><h2 className="font-medium">{item?.name ?? 'Item'}</h2><p className="mt-1 text-sm text-slate-400">{item?.requires_variant ? `Opção atual: ${currentLabel}` : 'Opção única'}</p>
         {pending ? <p className="mt-2 text-sm text-amber-200">Aguardando confirmação do organizador</p> : null}
