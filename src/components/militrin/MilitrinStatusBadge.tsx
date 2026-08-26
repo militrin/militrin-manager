@@ -6,7 +6,10 @@ type MilitrinStatusBadgeProps = {
   label?: string;
 };
 
-function resolveTone(status: string): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+// Exportada -- outras telas (ex.: mini calendario de data em Minhas compras)
+// reusam exatamente esta mesma leitura de tom pra nunca divergir da cor do
+// badge principal de status.
+export function resolveStatusTone(status: string): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
   const normalized = status.toLowerCase();
   if (['paid', 'confirmed', 'active', 'success'].includes(normalized)) return 'success';
   if (['pending', 'warning', 'reserved'].includes(normalized)) return 'warning';
@@ -16,5 +19,5 @@ function resolveTone(status: string): 'neutral' | 'success' | 'warning' | 'dange
 }
 
 export function MilitrinStatusBadge({ status, label }: MilitrinStatusBadgeProps) {
-  return <MilitrinBadge tone={resolveTone(status)}>{label ?? getStatusLabel(status)}</MilitrinBadge>;
+  return <MilitrinBadge tone={resolveStatusTone(status)}>{label ?? getStatusLabel(status)}</MilitrinBadge>;
 }

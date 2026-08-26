@@ -1,41 +1,12 @@
 import Image from 'next/image';
 import type { ReactNode } from 'react';
-import { Calendar, CheckCircle2, Circle, Clock, MapPin, Ticket as TicketIcon, Users, XCircle, type LucideIcon } from 'lucide-react';
+import { Calendar, MapPin, Ticket as TicketIcon, Users } from 'lucide-react';
 import { MilitrinBadge } from './MilitrinBadge';
 import { MilitrinStatusBadge } from './MilitrinStatusBadge';
+import { checkinStatusChip, kitStatusChip, paymentStatusChip, type StatusChip } from './status-chips';
 import { cx } from './utils';
 import { militrinTokens, militrinType } from './tokens';
 import { getStatusLabel } from '@/lib/status-labels';
-
-type StatusChip = { tone: 'success' | 'warning' | 'danger' | 'neutral'; icon: LucideIcon; label: string };
-
-// Chips de estado operacional (nivel 5): traduzem os status crus em
-// linguagem amigavel ao participante. Cor tem significado -- verde so
-// quando concluido, ambar so quando exige atencao real do participante
-// (pagamento pendente bloqueia o proprio ingresso), neutro para o resto.
-function paymentChip(paymentStatus: string): StatusChip {
-  const normalized = paymentStatus.toLowerCase();
-  if (normalized === 'confirmed' || normalized === 'paid') {
-    return { tone: 'success', icon: CheckCircle2, label: 'Pagamento confirmado' };
-  }
-  if (normalized === 'pending' || normalized === 'processing' || normalized === 'reserved') {
-    return { tone: 'warning', icon: Clock, label: 'Pagamento pendente' };
-  }
-  return { tone: 'danger', icon: XCircle, label: `Pagamento ${getStatusLabel(normalized).toLowerCase()}` };
-}
-
-function kitChip(kitStatus: 'delivered' | 'pending' | null): StatusChip | null {
-  if (!kitStatus) return null;
-  return kitStatus === 'delivered'
-    ? { tone: 'success', icon: CheckCircle2, label: 'Kit entregue' }
-    : { tone: 'neutral', icon: Circle, label: 'Kit a retirar' };
-}
-
-function checkinChip(checkinDone: boolean): StatusChip {
-  return checkinDone
-    ? { tone: 'success', icon: CheckCircle2, label: 'Check-in realizado' }
-    : { tone: 'neutral', icon: Circle, label: 'Check-in pendente' };
-}
 
 type MilitrinTicketCardProps = {
   eventName: string;
@@ -76,7 +47,7 @@ export function MilitrinTicketCard({
   // conferencia", como se fosse so uma questao de tempo.
   const TERMINAL_STATUSES = ['cancelled', 'canceled', 'expired', 'refunded'];
   const isTerminal = TERMINAL_STATUSES.includes(status.toLowerCase());
-  const chips = [paymentChip(paymentStatus), kitChip(kitStatus), checkinChip(checkinDone)].filter(
+  const chips = [paymentStatusChip(paymentStatus), kitStatusChip(kitStatus), checkinStatusChip(checkinDone)].filter(
     (chip): chip is StatusChip => chip !== null,
   );
 
@@ -143,7 +114,7 @@ export function MilitrinTicketCard({
               <div className="rounded-xl border border-slate-700 bg-white p-2">
                 <Image src={qrUrl} alt="QR Code do ingresso" width={160} height={160} unoptimized className="h-40 w-40" />
               </div>
-              <p className={cx('text-center', militrinType.micro)}>Apresente este QR Code na entrada</p>
+              <p className={cx('text-center', militrinType.micro)}>Apresente este QR Code para retirar seu kit</p>
             </>
           ) : (
             <div

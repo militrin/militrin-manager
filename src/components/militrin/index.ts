@@ -12,5 +12,6 @@ export * from './MilitrinStat';
 export * from './MilitrinStatusBadge';
 export * from './MilitrinTicketCard';
 export * from './MilitrinTimeline';
+export * from './status-chips';
 export * from './tokens';
 export * from './utils';
