@@ -241,6 +241,14 @@ test('pedido pago sem ticket é detectado; ticket manual legítimo NÃO é órf�
 
   assert.equal(missing.length, 1);
   assert.equal(missing[0].affected_count, 1);
+  // "Abrir pedido" precisa levar direto ao pedido pelo UUID interno (rota
+  // canonica ja usada pelo Dashboard pra este mesmo cenario -- ver
+  // src/app/inscricoes/pedido/[orderId]/page.tsx), nunca pra uma listagem
+  // filtrada por order_number/display_number (bug real corrigido na
+  // migration 20260908000000: o filtro de /pedidos?q= nao batia com o
+  // order_number cru, entao o clique nao abria nada).
+  assert.equal(missing[0].action_href, `/inscricoes/pedido/${brokenOrder.orderId}`);
+  assert.doesNotMatch(missing[0].action_href, /^\/pedidos\?/, 'nao pode mais apontar pra listagem filtrada');
   assert.equal(orphan.length, 0, 'ticket manual legitimo nao pode aparecer como orfao');
 
   const client = await clientFor(admin);
@@ -248,10 +256,39 @@ test('pedido pago sem ticket é detectado; ticket manual legítimo NÃO é órf�
   assert.equal(detail.error, null, detail.error?.message);
   assert.equal(detail.data.length, 1);
   assert.equal(detail.data[0].entity_id, brokenOrder.itemId);
+  assert.equal(detail.data[0].action_href, `/inscricoes/pedido/${brokenOrder.orderId}`, 'entrada individual do drawer tambem deve abrir o pedido certo por UUID');
 
   const manualTicket = await service.from('tickets').select('id,status').eq('order_item_id', manualOrder.itemId).maybeSingle();
   assert.equal(manualTicket.error, null);
   assert.equal(manualTicket.data.status, 'active');
+});
+
+test('multiplos pedidos pagos sem ticket: card agregado conta os 2, e cada um no drawer abre o proprio pedido', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('order-multi');
+  const eventId = await makeEvent(orgId, 'Evento Pedido Pago Multi');
+  await makeFlatBatch(eventId, true);
+
+  const brokenOrderA = await makePaidOrderItem(orgId, eventId, { ownershipStatus: 'unassigned', issueTicket: false });
+  const brokenOrderB = await makePaidOrderItem(orgId, eventId, { ownershipStatus: 'unassigned', issueTicket: false });
+  assert.notEqual(brokenOrderA.orderId, brokenOrderB.orderId, 'fixture deve gerar 2 pedidos distintos');
+
+  const rows = await callDetectorsAs(admin, eventId);
+  const missing = rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET');
+  assert.equal(missing.length, 1, 'a UI agrega por code -- 1 card, nao 2');
+  assert.equal(missing[0].affected_count, 2, 'card agregado deve contar os 2 pedidos afetados');
+
+  // A UI (IssueCard em integrity-center.tsx) so mostra um botao unico quando
+  // totalAffected===1 -- com 2+ afetados ela abre o drawer, que busca aqui.
+  // Cada linha precisa ter SEU PROPRIO action_href (nao um botao generico
+  // que nao sabe qual pedido abrir).
+  const client = await clientFor(admin);
+  const detail = await client.rpc('get_operational_integrity_issue_entities', { p_code: 'PAID_ORDER_WITHOUT_TICKET', p_event_id: eventId });
+  assert.equal(detail.error, null, detail.error?.message);
+  assert.equal(detail.data.length, 2);
+  const hrefsByItemId = new Map(detail.data.map((row) => [row.entity_id, row.action_href]));
+  assert.equal(hrefsByItemId.get(brokenOrderA.itemId), `/inscricoes/pedido/${brokenOrderA.orderId}`);
+  assert.equal(hrefsByItemId.get(brokenOrderB.itemId), `/inscricoes/pedido/${brokenOrderB.orderId}`);
+  assert.notEqual(hrefsByItemId.get(brokenOrderA.itemId), hrefsByItemId.get(brokenOrderB.itemId), 'cada pedido afetado deve abrir seu proprio destino, nunca o mesmo link pros dois');
 });
 
 test('ingresso único: preço não confirmado bloqueia; preço confirmado fica OK', async () => {
