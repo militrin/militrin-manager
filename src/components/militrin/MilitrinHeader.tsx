@@ -1,7 +1,6 @@
-import Link from 'next/link';
 import { CalendarDays, MapPin, ShoppingCart, Ticket as TicketIcon } from 'lucide-react';
 import { cx } from './utils';
-import { militrinTokens } from './tokens';
+import { MilitrinLinkButton } from './MilitrinLinkButton';
 
 export type MilitrinHeaderEvent = {
   name: string;
@@ -30,67 +29,68 @@ function HopWatermark({ className }: { className: string }) {
  * paginas de Minha conta que precisam do mesmo contexto comercial (evento,
  * data, local, CTA de compra) -- fonte unica pra nao divergir estilo entre
  * Pedidos, Ingressos (listagem) e Detalhe do ingresso.
+ *
+ * Paleta: nada hardcoded -- reutiliza exatamente os tokens que o resto da
+ * area logada ja usa (militrinTokens.surface/slate para o fundo/bordas,
+ * var(--brand-*) pra marca, que e dinamica por organizacao via [data-brand]
+ * em globals.css -- hoje verde neste projeto). Trocar o tema de marca da
+ * plataforma atualiza este cabecalho automaticamente, sem editar este
+ * arquivo.
  */
 export function MilitrinHeader({ event, showBuyButton = true, buyHref = '/minha-conta/comprar', className }: MilitrinHeaderProps) {
   return (
     <header
       className={cx(
-        'relative isolate overflow-hidden rounded-[2rem] border border-pink-900/40 bg-gradient-to-br from-[#8A0F4D] to-[#2B0D1F] p-5 shadow-lg shadow-black/20 sm:p-6',
+        'relative isolate overflow-hidden rounded-[2rem] border border-slate-800/80 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-5 shadow-lg shadow-black/30 sm:p-6',
         className,
       )}
     >
-      <HopWatermark className="pointer-events-none absolute -right-4 -top-6 h-40 w-32 rotate-12 text-white opacity-10" />
-      <HopWatermark className="pointer-events-none absolute -bottom-10 left-1/3 hidden h-32 w-24 -rotate-6 text-white opacity-10 sm:block" />
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_45%),radial-gradient(circle_at_bottom_right,_var(--brand-glow-2),_transparent_50%)]" />
+      <HopWatermark className="pointer-events-none absolute -right-4 -top-6 h-40 w-32 rotate-12 text-(--brand-400) opacity-[0.08]" />
+      <HopWatermark className="pointer-events-none absolute -bottom-10 left-1/3 hidden h-32 w-24 -rotate-6 text-(--brand-400) opacity-[0.08] sm:block" />
 
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col divide-y divide-dotted divide-pink-200/25 sm:flex-row sm:items-center sm:divide-x sm:divide-y-0">
+        <div className="flex flex-col divide-y divide-dotted divide-slate-700/70 sm:flex-row sm:items-center sm:divide-x sm:divide-y-0">
           <div className="flex items-center gap-3 pb-4 sm:pb-0 sm:pr-5">
-            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-black ring-1 ring-white/20">
+            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-black ring-1 ring-(--brand-500)/40 shadow-lg shadow-(--brand-600)/20">
               <div aria-hidden className="mask-logo absolute inset-0.5" />
             </div>
             <div className="min-w-0">
               <p className="text-lg font-bold leading-tight text-white">Militrin</p>
-              <p className="text-xs font-semibold tracking-[0.3em] text-pink-200">2026</p>
+              <p className="text-xs font-semibold tracking-[0.3em] text-(--brand-300)">2026</p>
             </div>
           </div>
 
           <div className="flex items-start gap-2 py-4 sm:items-center sm:py-0 sm:px-5">
-            <TicketIcon size={16} className="mt-0.5 shrink-0 text-pink-200 sm:mt-0" />
+            <TicketIcon size={16} className="mt-0.5 shrink-0 text-(--brand-300) sm:mt-0" />
             <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-pink-200/80">Evento</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Evento</p>
               <p className="truncate text-sm font-semibold text-white">{event.name}</p>
             </div>
           </div>
 
           <div className="flex items-start gap-2 py-4 sm:items-center sm:py-0 sm:px-5">
-            <CalendarDays size={16} className="mt-0.5 shrink-0 text-pink-200 sm:mt-0" />
+            <CalendarDays size={16} className="mt-0.5 shrink-0 text-(--brand-300) sm:mt-0" />
             <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-pink-200/80">Data do evento</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Data do evento</p>
               <p className="truncate text-sm font-semibold text-white">{event.date}</p>
-              {event.schedule ? <p className="truncate text-xs text-pink-200/80">{event.schedule}</p> : null}
+              {event.schedule ? <p className="truncate text-xs text-slate-400">{event.schedule}</p> : null}
             </div>
           </div>
 
           <div className="flex items-start gap-2 pt-4 sm:items-center sm:pt-0 sm:pl-5">
-            <MapPin size={16} className="mt-0.5 shrink-0 text-pink-200 sm:mt-0" />
+            <MapPin size={16} className="mt-0.5 shrink-0 text-(--brand-300) sm:mt-0" />
             <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-pink-200/80">Local</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Local</p>
               <p className="truncate text-sm font-semibold text-white">{event.location}</p>
             </div>
           </div>
         </div>
 
         {showBuyButton ? (
-          <Link
-            href={buyHref}
-            className={cx(
-              'inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold uppercase tracking-wide text-[#8A0F4D] shadow-lg shadow-black/20 transition hover:bg-pink-50',
-              militrinTokens.focusRing,
-            )}
-          >
-            <ShoppingCart size={16} />
+          <MilitrinLinkButton href={buyHref} variant="primary" size="md" iconLeft={<ShoppingCart size={16} />} className="shrink-0">
             Comprar ingresso
-          </Link>
+          </MilitrinLinkButton>
         ) : null}
       </div>
     </header>
