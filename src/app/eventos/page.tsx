@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { MilitrinEventArtwork } from '@/components/militrin';
 import { formatDateBR } from '@/lib/utils/date';
 import { getPublicEvents, isEventOpen } from '@/lib/public/events';
 
@@ -26,10 +27,7 @@ export default async function EventsPage() {
                 href={`/eventos/${event.slug}`}
                 className="block overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-900/70 transition hover:border-emerald-500/40"
               >
-                {event.bannerCardUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={event.bannerCardUrl} alt="" className="h-40 w-full object-cover" />
-                ) : null}
+                <MilitrinEventArtwork src={event.bannerCardUrl} hideWhenEmpty />
                 <div className="p-5">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{event.year ?? 'Edicao especial'}</p>
                 <h2 className="mt-2 text-xl font-semibold text-white">{event.name}</h2>

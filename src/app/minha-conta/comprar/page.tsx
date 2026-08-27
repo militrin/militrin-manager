@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { MilitrinEventArtwork } from '@/components/militrin';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 
@@ -46,10 +47,7 @@ export default async function ComprarPage() {
             return (
               <article key={event.id} className="overflow-hidden rounded-[1.75rem] border border-slate-800 bg-slate-950/60">
                 <Link href={`/eventos/${event.slug}`} className="block transition hover:bg-slate-900/60">
-                  {event.banner_card_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={event.banner_card_url} alt="" className="h-40 w-full object-cover" />
-                  ) : null}
+                  <MilitrinEventArtwork src={event.banner_card_url} hideWhenEmpty />
                   <div className="space-y-2 p-5 pb-0">
                     <h3 className="text-xl font-semibold text-white">{event.name}</h3>
                     <p className="text-sm text-slate-300">{event.description ?? 'Sem descrição.'}</p>

@@ -127,10 +127,13 @@ export function AttractionsManager({
           <div className="md:col-span-2">
             <EventBannerUpload
               label="Banner da atração"
-              hint="Recomendado: 1200x675px (16:9)."
+              hint="Banner exibido no card da atração."
               value={form.banner_url}
               onChange={(url) => setForm((prev) => ({ ...prev, banner_url: url }))}
-              aspectClassName="aspect-video"
+              recommendedWidth={1200}
+              recommendedHeight={675}
+              minWidth={960}
+              minHeight={540}
             />
           </div>
         </div>

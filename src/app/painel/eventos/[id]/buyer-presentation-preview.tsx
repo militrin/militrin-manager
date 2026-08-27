@@ -1,3 +1,4 @@
+import { MilitrinEventArtwork } from "@/components/militrin";
 import { resolveTicketPresentationMode } from "@/lib/checkout/ticket-presentation";
 import { formatDateBR } from "@/lib/utils/date";
 
@@ -61,14 +62,7 @@ export function BuyerPresentationPreview({
       </div>
 
       <div className="overflow-hidden">
-        <div className="h-28 w-full bg-slate-900">
-          {bannerUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={bannerUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-600">Sem banner</div>
-          )}
-        </div>
+        <MilitrinEventArtwork src={bannerUrl} />
 
         <div className="space-y-3 p-4">
           <div>

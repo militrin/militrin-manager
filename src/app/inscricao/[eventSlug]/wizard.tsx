@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
+import { MilitrinEventArtwork } from '@/components/militrin';
 import { SHIRT_TYPES, makeShirtInventoryKey, normalizeShirtSize, normalizeShirtType } from '@/lib/constants/shirts';
 import {
   createPublicMultiOrderAction,
@@ -1968,10 +1969,7 @@ export function RegistrationWizard({
             </div>
           </div>
 
-          {event.banner_hero_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={event.banner_hero_url} alt="" className="mt-4 h-40 w-full rounded-2xl object-cover sm:h-52" />
-          ) : null}
+          <MilitrinEventArtwork src={event.banner_hero_url} hideWhenEmpty className="mt-4 rounded-2xl" />
 
           <h1 ref={topRef} tabIndex={-1} className="mt-4 text-2xl font-semibold outline-none sm:text-3xl">
             {event.name}

@@ -1,6 +1,5 @@
-import Image from 'next/image';
 import { Calendar, MapPin, ShoppingBag, Star } from 'lucide-react';
-import { MilitrinLinkButton, cx, militrinType } from '@/components/militrin';
+import { MilitrinEventArtwork, MilitrinLinkButton, cx, militrinType } from '@/components/militrin';
 
 export type HomeFeaturedEvent = {
   id: string;
@@ -23,16 +22,11 @@ export function HomeFeaturedEvents({ events }: { events: HomeFeaturedEvent[] }) 
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
         <article key={event.id} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/60">
-          <div className="relative h-32 w-full bg-slate-900">
-            {event.bannerUrl ? (
-              <Image src={event.bannerUrl} alt="" fill unoptimized className="object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-xs text-slate-600">Sem banner</div>
-            )}
+          <MilitrinEventArtwork src={event.bannerUrl}>
             <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-(--brand-500)/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow">
               <Star size={10} fill="currentColor" />Em alta
             </span>
-          </div>
+          </MilitrinEventArtwork>
 
           <div className="p-4">
             <h3 className={cx('truncate', militrinType.cardTitle)} title={event.name}>{event.name}</h3>

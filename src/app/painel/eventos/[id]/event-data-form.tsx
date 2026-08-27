@@ -180,17 +180,15 @@ export function EventDataForm({
       <div className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4 md:grid-cols-2">
         <EventBannerUpload
           label="Banner de capa"
-          hint="Usado no topo da página pública do evento e da inscrição. Recomendado: 1600x600px (paisagem, ~8:3)."
+          hint="Usado no topo da página pública do evento e da inscrição."
           value={form.banner_hero_url}
           onChange={(url) => setForm((prev) => ({ ...prev, banner_hero_url: url }))}
-          aspectClassName="aspect-[8/3]"
         />
         <EventBannerUpload
-          label="Banner do card (listagem pública)"
-          hint="Usado como miniatura do card na listagem pública de eventos. Recomendado: 800x450px (16:9)."
+          label="Banner do card (listagem, Minha Conta)"
+          hint="Usado como miniatura em listagens e na Minha Conta — pode ser a mesma arte do banner de capa."
           value={form.banner_card_url}
           onChange={(url) => setForm((prev) => ({ ...prev, banner_card_url: url }))}
-          aspectClassName="aspect-video"
         />
       </div>
 

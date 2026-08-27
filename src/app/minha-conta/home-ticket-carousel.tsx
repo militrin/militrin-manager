@@ -1,9 +1,8 @@
 'use client';
 
-import Image from 'next/image';
 import { useMemo, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, MapPin, QrCode, Shirt, Ticket, Users } from 'lucide-react';
-import { MilitrinLinkButton, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
+import { MilitrinEventArtwork, MilitrinLinkButton, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
 import type { AccountHomeTicketCard } from '@/lib/account/home-ticket-cards';
 import { buildCarouselDotTargets, findActiveDotIndex } from '@/lib/account/carousel-dots';
 
@@ -35,16 +34,11 @@ export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard
   return (
     <div>
       <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-        <div className="relative h-36 w-full bg-slate-900 sm:h-40">
-          {current.bannerUrl ? (
-            <Image src={current.bannerUrl} alt="" fill unoptimized className="object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-slate-600">Sem banner</div>
-          )}
+        <MilitrinEventArtwork src={current.bannerUrl}>
           <span className="absolute right-2.5 top-2.5">
             <MilitrinStatusBadge status={current.status} />
           </span>
-        </div>
+        </MilitrinEventArtwork>
 
         <div className="p-3.5 sm:p-4">
           <h3 className={cx('truncate sm:text-lg', militrinType.cardTitle)} title={current.eventName}>{current.eventName}</h3>

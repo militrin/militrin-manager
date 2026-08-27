@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Calendar, MapPin, PencilLine, Users } from "lucide-react";
+import { MilitrinEventArtwork } from "@/components/militrin";
 import { formatDateBR } from "@/lib/utils/date";
 
 export type EventSummaryCardData = {
@@ -32,14 +33,7 @@ export function EventSummaryCard({ event }: { event: EventSummaryCardData }) {
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-950/60 shadow-lg shadow-black/10">
       <div className="flex flex-col sm:flex-row">
-        <div className="h-48 w-full shrink-0 overflow-hidden bg-slate-900 sm:h-auto sm:w-[34%]">
-          {bannerUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={bannerUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full min-h-48 w-full items-center justify-center text-xs text-slate-600">Sem banner</div>
-          )}
-        </div>
+        <MilitrinEventArtwork src={bannerUrl} className="shrink-0 sm:w-[34%]" />
 
         <div className="min-w-0 flex-1 p-6 sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
