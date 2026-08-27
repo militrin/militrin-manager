@@ -170,7 +170,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     canAdminEdit && eventId
       ? supabase.rpc('get_event_ticket_categories', { p_event_id: eventId })
       : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-    supabase.from('ticket_item_change_requests').select('id,kit_item_id,status,current_variant,requested_variant,requested_at,event_kit_items(name)').eq('ticket_id', ticketId).order('requested_at', { ascending: false }),
+    supabase.from('ticket_item_change_requests').select('id,kit_item_id,status,current_variant,requested_variant,requested_at,review_notes,event_kit_items(name)').eq('ticket_id', ticketId).order('requested_at', { ascending: false }),
     canChangeShirt
       ? supabase.rpc('get_admin_ticket_shirt_options', { p_ticket_id: ticketId })
       : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
@@ -222,6 +222,20 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
       : pendingShirtRequest
         ? 'Já existe uma alteração aguardando confirmação do organizador.'
         : null;
+  // Ultima solicitacao de camiseta ja revisada (aprovada/rejeitada), pro
+  // participante ver o desfecho aqui tambem -- sem isso, "aguardando
+  // confirmacao" desaparecia da tela sem nunca mostrar o resultado. itemRequests
+  // ja vem ordenado por requested_at desc, entao o primeiro match e o mais
+  // recente. So mostra quando NAO ha pedido pendente (senao o aviso de
+  // "aguardando" acima ja cobre o estado atual).
+  const latestReviewedShirtRequest = !pendingShirtRequest
+    ? itemRequests.find((request) => String(request.kit_item_id ?? '') === shirtKitItemId && request.status !== 'pending')
+    : null;
+  const shirtLastOutcome = latestReviewedShirtRequest
+    ? latestReviewedShirtRequest.status === 'approved'
+      ? { status: 'approved' as const, label: String((latestReviewedShirtRequest.requested_variant as Record<string, unknown> | null)?.name ?? (latestReviewedShirtRequest.requested_variant as Record<string, unknown> | null)?.value ?? 'novo valor') }
+      : { status: 'rejected' as const, reviewNotes: latestReviewedShirtRequest.review_notes ? String(latestReviewedShirtRequest.review_notes) : null }
+    : null;
   const requireStockForChoice = String(participantShirtRule?.shirt_supply_mode ?? '') === 'stock';
   const participantShirtOptions = participantShirtVariants
     .filter((variant) => Boolean(variant.is_active) && String(variant.id ?? '') !== shirtVariantId)
@@ -464,7 +478,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
             </p>
             {participantShirtChangeEnabled ? (
               <div className="mt-3 border-t border-slate-800/80 pt-3">
-                <ParticipantShirtChangeAction ticketId={ticketId} kitItemId={shirtKitItemId} currentLabel={`${shirtType} — ${shirtSize}`} options={participantShirtOptions} disabledReason={participantShirtDisabledReason} />
+                <ParticipantShirtChangeAction ticketId={ticketId} kitItemId={shirtKitItemId} currentLabel={`${shirtType} — ${shirtSize}`} options={participantShirtOptions} disabledReason={participantShirtDisabledReason} lastOutcome={shirtLastOutcome} />
               </div>
             ) : null}
             {shirtConfigurationIssue ? <p className="mt-3 rounded-xl border border-amber-600/30 bg-amber-950/20 p-3 text-xs text-amber-100">{shirtConfigurationIssue}</p> : null}

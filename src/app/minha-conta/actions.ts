@@ -274,8 +274,30 @@ export async function reviewTicketItemChangeAction(formData: FormData) {
     p_decision: decision,
     p_notes: notes || null,
   });
-  if (error) return { success: false, message: error.message };
+  if (error) {
+    if (error.message.includes('SHIRT_OUT_OF_STOCK')) {
+      return { success: false, message: 'Não há mais estoque disponível para o tamanho solicitado.' };
+    }
+    if (error.message.includes('SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION')) {
+      return { success: false, message: 'Este ingresso já teve kit entregue ou check-in realizado — a aprovação normal está bloqueada. Rejeite esta solicitação e, se necessário, use a correção administrativa na Central de Operações.' };
+    }
+    // Corrida entre duas aprovações concorrentes pedindo a mesma variante com
+    // 1 unidade restante: a checagem de disponibilidade em
+    // admin_change_ticket_shirt nao desconta reserved_quantity (so
+    // delivered_quantity), entao quem realmente barra a segunda aprovacao e o
+    // CHECK (reserved_quantity + delivered_quantity <= total_quantity) da
+    // propria tabela de estoque -- nao o erro estruturado SHIRT_OUT_OF_STOCK.
+    // Mesma mensagem amigavel pro organizador nos dois casos.
+    if (error.message.includes('event_kit_item_variant_inventory_check')) {
+      return { success: false, message: 'Não há mais estoque disponível para o tamanho solicitado.' };
+    }
+    if (error.message.includes('ja revisada')) {
+      return { success: false, message: 'Esta solicitação já foi revisada por outra pessoa.' };
+    }
+    return { success: false, message: error.message };
+  }
   revalidatePath('/operacoes');
+  revalidatePath('/operacoes/solicitacoes');
   revalidatePath(`/minha-conta/ingressos/${ticketId}`);
   revalidatePath(`/minha-conta/ingressos/${ticketId}/itens`);
   return { success: true, message: decision === 'approved' ? 'Solicitação aprovada.' : 'Solicitação rejeitada.' };

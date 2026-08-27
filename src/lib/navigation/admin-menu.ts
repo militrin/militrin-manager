@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  ClipboardCheck,
   ClipboardList,
   FileText,
   Gift,
@@ -77,6 +78,17 @@ export const adminNavGroups: AdminNavGroup[] = [
         permissionAny: ["wristbands.view"],
         requireCapability: (c) => c.hasWristbands,
         landingPriority: 22,
+      },
+      {
+        label: "Solicitações de alteração",
+        icon: ClipboardCheck,
+        href: "/operacoes/solicitacoes",
+        // Mesma permissao que review_ticket_item_change_request ja exige no
+        // backend (fluxo de aprovacao de alteracao de item do kit, ex.:
+        // tamanho de camiseta) -- ver auditoria do fluxo de aprovacao.
+        permissionAny: ["kits.deliver"],
+        requireCapability: (c) => c.hasDistributableItems,
+        landingPriority: 22.5,
       },
       {
         label: "Relatório de Operações",

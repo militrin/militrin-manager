@@ -60,12 +60,19 @@ export function ShirtContextAction({ ticketId, initial, options }: { ticketId:st
   return <SelectAction label="Trocar camiseta" buttonLabel="Trocar" initial={initial} options={options} save={value=>adminChangeTicketShirtAction(ticketId,value)}/>;
 }
 
-export function ParticipantShirtChangeAction({ ticketId, kitItemId, currentLabel, options, disabledReason }: {
+type ShirtRequestOutcome = { status: 'approved'; label: string } | { status: 'rejected'; reviewNotes: string | null };
+
+export function ParticipantShirtChangeAction({ ticketId, kitItemId, currentLabel, options, disabledReason, lastOutcome }: {
   ticketId: string;
   kitItemId: string;
   currentLabel: string;
   options: Option[];
   disabledReason?: string | null;
+  /** Desfecho da ultima solicitacao ja revisada (nao mais pendente) --
+      exibido so quando nao ha pedido pendente no momento (disabledReason ja
+      cobre esse caso). Sem status tecnico de banco: so as duas frases
+      pedidas ("Tamanho alterado para X" / "Solicitação não aprovada"). */
+  lastOutcome?: ShirtRequestOutcome | null;
 }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
@@ -92,6 +99,8 @@ export function ParticipantShirtChangeAction({ ticketId, kitItemId, currentLabel
   return <div className="mt-3 rounded-xl border border-slate-800 p-3">
     <p className="font-medium">Alterar tamanho da camiseta</p>
     <p className="mt-1 text-sm text-slate-400">Tamanho atual: <strong className="text-slate-200">{currentLabel}</strong></p>
+    {!disabledReason && lastOutcome?.status === 'approved' ? <p className="mt-2 text-xs text-emerald-300">Tamanho alterado para {lastOutcome.label}</p> : null}
+    {!disabledReason && lastOutcome?.status === 'rejected' ? <p className="mt-2 text-xs text-rose-300">Solicitação não aprovada{lastOutcome.reviewNotes ? ` — ${lastOutcome.reviewNotes}` : ''}</p> : null}
     {disabledReason ? <p className="mt-2 text-xs text-amber-200">{disabledReason}</p> : <button type="button" onClick={() => { setMessage(null); setValue(""); setOpen(true); }} className="mt-3 rounded-lg border border-emerald-500/40 px-3 py-2 text-sm text-emerald-200">Alterar tamanho</button>}
     {message && !open ? <p className="mt-2 text-xs text-emerald-300">{message}</p> : null}
     <Dialog title="Alterar tamanho da camiseta" open={open} close={() => setOpen(false)}>
