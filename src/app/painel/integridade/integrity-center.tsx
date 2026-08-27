@@ -12,7 +12,7 @@ import {
   summarizeIntegrityReport,
 } from '@/lib/integrity/report';
 import { describeAffected, type IntegrityDetectorCheck } from '@/lib/integrity/checks';
-import { EntityCard, type IntegrityEntity } from './entity-card';
+import { buildCard, EntityCard, type IntegrityEntity } from './entity-card';
 import { getIntegrityIssueEntitiesAction, getIntegrityReportAction } from './actions';
 
 type EventOption = { id: string; name: string; starts_at: string | null };
@@ -59,6 +59,7 @@ type ConsolidatedIssue = {
   description: string;
   totalAffected: number;
   sampleEntityType: string | null;
+  sampleMetadata: unknown;
   actionLabel: string | null;
   actionHref: string | null;
   perEvent: { eventId: string; eventName: string; count: number }[];
@@ -90,6 +91,7 @@ function consolidateByCode(issues: IntegrityIssueSummary[], eventNameById: Map<s
       description: first.description,
       totalAffected,
       sampleEntityType: first.sampleEntityType,
+      sampleMetadata: rows.length === 1 ? first.sampleMetadata : null,
       actionLabel: rows.length === 1 ? first.actionLabel : null,
       actionHref: rows.length === 1 ? first.actionHref : null,
       perEvent,
@@ -335,6 +337,18 @@ function SummaryCard({
 function IssueCard({ issue, onOpen }: { issue: ConsolidatedIssue; onOpen: () => void }) {
   const styles = SEVERITY_STYLES[issue.severity];
   const hasSingleAction = issue.perEvent.length === 0 && issue.totalAffected === 1 && issue.actionHref && issue.actionLabel;
+  // QUEM/QUAL do unico afetado, direto no card resumido (sem precisar abrir
+  // o drawer) -- reusa o mesmo renderer por code do drawer (buildCard) pra
+  // nunca ter duas versoes desse texto. Ver auditoria do caso real #001078:
+  // sem isso o card so dizia "1 pedido afetado", nunca qual pedido/pessoa.
+  const singleCard = hasSingleAction
+    ? buildCard(issue.code, {
+        entity_type: issue.sampleEntityType ?? '', entity_id: '', event_id: null,
+        title: issue.title, description: issue.description,
+        action_label: issue.actionLabel, action_href: issue.actionHref,
+        metadata: issue.sampleMetadata,
+      })
+    : null;
   return (
     <div className={`rounded-2xl border p-4 ${styles.card}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -345,6 +359,7 @@ function IssueCard({ issue, onOpen }: { issue: ConsolidatedIssue; onOpen: () => 
             </span>
           </div>
           <p className="mt-2 text-sm font-semibold text-slate-100">{issue.title}</p>
+          {singleCard?.context && <p className="mt-1 text-xs font-medium text-slate-300">{singleCard.context}</p>}
           <p className="mt-1 text-sm text-slate-400">{issue.description}</p>
           <p className="mt-1 text-xs text-slate-500">{describeAffected(issue.sampleEntityType, issue.totalAffected)}</p>
           {issue.perEvent.length > 0 && (

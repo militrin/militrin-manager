@@ -16,6 +16,7 @@ export type IntegrityIssueSummary = {
   actionHref: string | null;
   sampleEntityType: string | null;
   sampleEntityId: string | null;
+  sampleMetadata: unknown;
 };
 
 export type IntegrityTotals = {
@@ -67,5 +68,6 @@ export function mapReportRow(row: Record<string, unknown>): IntegrityIssueSummar
     actionHref: row.action_href ? String(row.action_href) : null,
     sampleEntityType: row.sample_entity_type ? String(row.sample_entity_type) : null,
     sampleEntityId: row.sample_entity_id ? String(row.sample_entity_id) : null,
+    sampleMetadata: row.sample_metadata ?? null,
   };
 }

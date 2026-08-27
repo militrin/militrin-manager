@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { money } from '@/lib/reports/helpers';
 
 export type IntegrityEntity = {
   entity_type: string;
@@ -40,7 +39,9 @@ type Card = { heading: string; context: string | null; badge: string | null };
 // que continuam genericos porque a RPC agregadora faz array_agg(title)[1] e
 // e usada tambem pelo card resumo/Dashboard). Cobre os 14 detectores da V1;
 // qualquer code novo cai no fallback (heading = titulo generico do detector).
-function buildCard(code: string, entity: IntegrityEntity): Card {
+// Exportada: reusada por integrity-center.tsx pro card resumido (1 afetado)
+// mostrar o mesmo "quem/qual" que o drawer, sem duplicar a logica por code.
+export function buildCard(code: string, entity: IntegrityEntity): Card {
   const metadata = entity.metadata;
   switch (code) {
     case 'TICKET_NAMED_WITHOUT_CANONICAL_HOLDER':
@@ -66,11 +67,15 @@ function buildCard(code: string, entity: IntegrityEntity): Card {
       };
     }
     case 'PAID_ORDER_WITHOUT_TICKET': {
+      // Heading = O QUE ACONTECEU (igual pra toda ocorrencia deste code).
+      // Context = QUEM/QUAL: Pedido · Titular · Evento · Categoria -- o
+      // "quem" que faltava no card resumido (auditoria do caso real
+      // #001078: sem isso o operador nao sabia qual pedido/pessoa olhar sem
+      // abrir o drawer ou a pagina do pedido).
       const orderNumber = str(metadata, 'order_number');
-      const amount = num(metadata, 'final_amount');
       return {
-        heading: str(metadata, 'holder_name') ?? (orderNumber ? `Pedido ${orderNumber}` : 'Pedido'),
-        context: contextLine([str(metadata, 'event_name'), orderNumber ? `Pedido ${orderNumber}` : null, amount !== null ? money(amount) : null]),
+        heading: 'Ingresso não emitido',
+        context: contextLine([orderNumber ? `Pedido ${orderNumber}` : null, str(metadata, 'holder_name'), str(metadata, 'event_name'), str(metadata, 'category_name')]),
         badge: null,
       };
     }

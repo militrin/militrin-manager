@@ -124,7 +124,7 @@ async function makeContact(orgId, fullName, cpf) {
 // Cria order+order_item+payment "pago" e (opcionalmente) o ticket real via
 // confirm_order_item_and_issue_ticket -- o MESMO caminho de escrita usado
 // pelo app, para nao inventar um estado que o sistema real nao produziria.
-async function makePaidOrderItem(orgId, eventId, { categoryId = null, batchId = null, contactId = null, holderName = null, ownershipStatus = 'unassigned', issueTicket = true, shirtType = null, shirtSize = null } = {}) {
+async function makePaidOrderItem(orgId, eventId, { categoryId = null, batchId = null, contactId = null, holderName = null, ownershipStatus = 'unassigned', issueTicket = true, shirtType = null, shirtSize = null, paymentMethod = 'courtesy' } = {}) {
   const orderNumber = `INTQA-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
   const order = await service.from('orders').insert({
     organization_id: orgId, event_id: eventId, order_number: orderNumber, status: 'confirmed',
@@ -144,7 +144,7 @@ async function makePaidOrderItem(orgId, eventId, { categoryId = null, batchId = 
 
   const payment = await service.from('payments').insert({
     organization_id: orgId, event_id: eventId, order_id: orderId, amount: 0, final_amount: 0,
-    payment_method: 'courtesy', payment_status: 'paid', paid_at: new Date().toISOString(),
+    payment_method: paymentMethod, payment_status: 'paid', paid_at: new Date().toISOString(),
   }).select('id').single();
   assert.equal(payment.error, null, payment.error?.message);
   await service.from('orders').update({ payment_id: payment.data.id }).eq('id', orderId);
@@ -156,6 +156,81 @@ async function makePaidOrderItem(orgId, eventId, { categoryId = null, batchId = 
     ticketId = rpc.data;
   }
   return { orderId, itemId, ticketId, orderNumber };
+}
+
+// Um pedido com N order_items de ingresso, emitindo ticket so pros N
+// primeiros -- pra provar que o detector aponta EXATAMENTE o(s) item(ns)
+// sem ticket, nao o pedido inteiro (pedido com 3 itens e so 2 tickets deve
+// dar 1 ocorrencia, nao 3 nem 0).
+async function makeMultiItemPaidOrder(orgId, eventId, { itemCount, ticketsToIssue }) {
+  const orderNumber = `INTQA-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+  const order = await service.from('orders').insert({
+    organization_id: orgId, event_id: eventId, order_number: orderNumber, status: 'confirmed',
+    base_amount: 0, final_amount: 0, buyer_type: 'administrative',
+  }).select('id').single();
+  assert.equal(order.error, null, order.error?.message);
+  const orderId = order.data.id;
+
+  const payment = await service.from('payments').insert({
+    organization_id: orgId, event_id: eventId, order_id: orderId, amount: 0, final_amount: 0,
+    payment_method: 'courtesy', payment_status: 'paid', paid_at: new Date().toISOString(),
+  }).select('id').single();
+  assert.equal(payment.error, null, payment.error?.message);
+  await service.from('orders').update({ payment_id: payment.data.id }).eq('id', orderId);
+
+  const itemIds = [];
+  for (let i = 0; i < itemCount; i += 1) {
+    const item = await service.from('order_items').insert({
+      order_id: orderId, event_id: eventId, quantity: 1, unit_price: 0, final_amount: 0,
+      status: 'confirmed', ownership_status: 'unassigned', item_position: i + 1,
+    }).select('id').single();
+    assert.equal(item.error, null, item.error?.message);
+    itemIds.push(item.data.id);
+  }
+
+  const ticketIds = [];
+  for (let i = 0; i < ticketsToIssue; i += 1) {
+    const rpc = await service.rpc('confirm_order_item_and_issue_ticket', { p_order_item_id: itemIds[i] });
+    assert.equal(rpc.error, null, rpc.error?.message);
+    ticketIds.push(rpc.data);
+  }
+
+  return { orderId, itemIds, ticketIds, orderNumber };
+}
+
+// Item de PRODUTO (compre junto, item_kind='product') pago e sem ticket --
+// e o comportamento CORRETO (produtos nunca emitem ingresso). Prova que o
+// detector nao falso-positiva nesse caso (auditoria do caso real #001078
+// encontrou que a WHERE clause original nao filtrava item_kind).
+async function makeProductOrderItem(orgId, eventId) {
+  const suffix = `${Date.now()}-${userCounter++}`;
+  const storeItem = await service.from('store_items').insert({
+    organization_id: orgId, event_id: eventId, name: 'Camiseta avulsa', slug: `produto-avulso-${suffix}`, price: 0,
+  }).select('id').single();
+  assert.equal(storeItem.error, null, storeItem.error?.message);
+
+  const orderNumber = `INTQA-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+  const order = await service.from('orders').insert({
+    organization_id: orgId, event_id: eventId, order_number: orderNumber, status: 'confirmed',
+    base_amount: 0, final_amount: 0, buyer_type: 'administrative',
+  }).select('id').single();
+  assert.equal(order.error, null, order.error?.message);
+  const orderId = order.data.id;
+
+  const item = await service.from('order_items').insert({
+    order_id: orderId, event_id: eventId, quantity: 1, unit_price: 0, final_amount: 0,
+    status: 'confirmed', ownership_status: 'unassigned', item_kind: 'product', store_item_id: storeItem.data.id,
+  }).select('id').single();
+  assert.equal(item.error, null, item.error?.message);
+
+  const payment = await service.from('payments').insert({
+    organization_id: orgId, event_id: eventId, order_id: orderId, amount: 0, final_amount: 0,
+    payment_method: 'courtesy', payment_status: 'paid', paid_at: new Date().toISOString(),
+  }).select('id').single();
+  assert.equal(payment.error, null, payment.error?.message);
+  await service.from('orders').update({ payment_id: payment.data.id }).eq('id', orderId);
+
+  return { orderId, itemId: item.data.id };
 }
 
 async function callDetectorsAs(user, eventId) {
@@ -289,6 +364,137 @@ test('multiplos pedidos pagos sem ticket: card agregado conta os 2, e cada um no
   assert.equal(hrefsByItemId.get(brokenOrderA.itemId), `/inscricoes/pedido/${brokenOrderA.orderId}`);
   assert.equal(hrefsByItemId.get(brokenOrderB.itemId), `/inscricoes/pedido/${brokenOrderB.orderId}`);
   assert.notEqual(hrefsByItemId.get(brokenOrderA.itemId), hrefsByItemId.get(brokenOrderB.itemId), 'cada pedido afetado deve abrir seu proprio destino, nunca o mesmo link pros dois');
+});
+
+// P0 -- reauditoria do caso real de producao #001078: pedido de cortesia
+// confirmado cujo unico ticket foi cancelado administrativamente (nao
+// reemitido). Confirmado por leitura direta (service_role, so leitura) que
+// NAO e falso positivo -- e um bloqueio real. Os testes abaixo fecham a
+// bateria completa pedida na tarefa (PIX vs cortesia, multi-item exato,
+// titular ausente, ticket cancelado, resolucao fazendo o bloqueio sumir, e
+// produto/add-on nunca gerando falso positivo).
+
+test('PIX pago + ticket emitido -> sem issue; PIX pago + ticket ausente -> bloqueio', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('pix');
+  const eventId = await makeEvent(orgId, 'Evento PIX');
+  await makeFlatBatch(eventId, true);
+
+  const okOrder = await makePaidOrderItem(orgId, eventId, { paymentMethod: 'pix', issueTicket: true });
+  const brokenOrder = await makePaidOrderItem(orgId, eventId, { paymentMethod: 'pix', issueTicket: false });
+
+  const rows = await callDetectorsAs(admin, eventId);
+  const missing = rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET');
+  assert.equal(missing.length, 1, 'so o pedido sem ticket deve gerar ocorrencia');
+  assert.equal(missing[0].affected_count, 1);
+
+  const client = await clientFor(admin);
+  const detail = await client.rpc('get_operational_integrity_issue_entities', { p_code: 'PAID_ORDER_WITHOUT_TICKET', p_event_id: eventId });
+  assert.equal(detail.error, null, detail.error?.message);
+  assert.equal(detail.data.length, 1);
+  assert.equal(detail.data[0].entity_id, brokenOrder.itemId);
+  assert.notEqual(detail.data.some((row) => row.entity_id === okOrder.itemId), true, 'pedido PIX com ticket emitido nao pode aparecer como afetado');
+});
+
+test('pedido R$0 legitimo (preco zerado no lote) com ticket emitido nao gera issue', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('free');
+  const eventId = await makeEvent(orgId, 'Evento Gratuito');
+  await makeFlatBatch(eventId, true); // male_price/female_price = 0 neste helper
+
+  await makePaidOrderItem(orgId, eventId, { issueTicket: true });
+
+  const rows = await callDetectorsAs(admin, eventId);
+  assert.equal(rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'preco R$0 legitimo com ticket emitido nao e uma inconsistencia');
+});
+
+test('ingresso sem titular definido mas com ticket emitido nao gera issue', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('no-holder');
+  const eventId = await makeEvent(orgId, 'Evento Sem Titular');
+  await makeFlatBatch(eventId, true);
+
+  // holderName/contactId nulos de proposito -- ingresso pode existir sem
+  // titular definido ainda (fluxo legitimo, nao deve depender de participant_id).
+  await makePaidOrderItem(orgId, eventId, { holderName: null, contactId: null, issueTicket: true });
+
+  const rows = await callDetectorsAs(admin, eventId);
+  assert.equal(rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'ausencia de titular nao e o mesmo que ausencia de ticket');
+});
+
+test('pedido multi-item: 3 ingressos + 3 tickets -> sem issue; 3 ingressos + 2 tickets -> detecta exatamente 1 item', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('multi-complete');
+  const eventId = await makeEvent(orgId, 'Evento Multi Item');
+  await makeFlatBatch(eventId, true);
+
+  const complete = await makeMultiItemPaidOrder(orgId, eventId, { itemCount: 3, ticketsToIssue: 3 });
+  const partial = await makeMultiItemPaidOrder(orgId, eventId, { itemCount: 3, ticketsToIssue: 2 });
+
+  const rows = await callDetectorsAs(admin, eventId);
+  const missing = rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET');
+  assert.equal(missing.length, 1, 'so o pedido parcial deve gerar ocorrencia');
+  assert.equal(missing[0].affected_count, 1, 'exatamente 1 item faltante, nao o pedido inteiro nem os 3 itens');
+
+  const client = await clientFor(admin);
+  const detail = await client.rpc('get_operational_integrity_issue_entities', { p_code: 'PAID_ORDER_WITHOUT_TICKET', p_event_id: eventId });
+  assert.equal(detail.error, null, detail.error?.message);
+  assert.equal(detail.data.length, 1);
+  assert.equal(detail.data[0].entity_id, partial.itemIds[2], 'deve apontar exatamente o 3o item (o unico sem ticket emitido)');
+  assert.equal(detail.data[0].action_href, `/inscricoes/pedido/${partial.orderId}`);
+
+  const completeItemIds = new Set(complete.itemIds);
+  assert.equal(detail.data.some((row) => completeItemIds.has(row.entity_id)), false, 'pedido completo (3/3) nao pode aparecer');
+});
+
+test('ticket cancelado administrativamente sem substituto: bloqueio real permanece (documenta o caso de producao #001078)', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('cancelled');
+  const eventId = await makeEvent(orgId, 'Evento Ticket Cancelado');
+  await makeFlatBatch(eventId, true);
+
+  const order = await makePaidOrderItem(orgId, eventId, { issueTicket: true });
+  // Reproduz o estado real de producao: ticket emitido e DEPOIS cancelado
+  // administrativamente (ex.: admin_ticket_cancelled / owner_cancel_ticket),
+  // sem nenhum ticket substituto emitido. order_items.status permanece
+  // 'confirmed' -- esse desalinhamento e exatamente o que o detector precisa
+  // continuar pegando.
+  await service.from('tickets').update({ status: 'cancelled', cancelled_at: new Date().toISOString() }).eq('id', order.ticketId);
+
+  const rows = await callDetectorsAs(admin, eventId);
+  const missing = rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET');
+  assert.equal(missing.length, 1, 'ticket cancelado sem substituto continua sendo um bloqueio real, nao um falso positivo');
+  assert.equal(missing[0].affected_count, 1);
+
+  const item = await service.from('order_items').select('status').eq('id', order.itemId).single();
+  assert.equal(item.data.status, 'confirmed', 'documentando o comportamento atual: cancelar o ticket nao reverte o status do order_item');
+});
+
+test('resolver a inconsistencia (emitir o ticket faltante) e atualizar a Integridade faz o bloqueio desaparecer', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('resolve');
+  const eventId = await makeEvent(orgId, 'Evento Resolucao');
+  await makeFlatBatch(eventId, true);
+
+  const order = await makePaidOrderItem(orgId, eventId, { issueTicket: false });
+
+  const before = await callDetectorsAs(admin, eventId);
+  assert.equal(before.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 1, 'deve comecar bloqueado');
+
+  // "Resolver" = emitir o ticket faltante pelo caminho canonico (nunca
+  // marcar como resolvido manualmente pra esconder o problema -- a
+  // Integridade precisa refletir o estado real do banco).
+  const issued = await service.rpc('confirm_order_item_and_issue_ticket', { p_order_item_id: order.itemId });
+  assert.equal(issued.error, null, issued.error?.message);
+  assert.ok(issued.data, 'deve emitir um ticket novo de verdade');
+
+  const after = await callDetectorsAs(admin, eventId);
+  assert.equal(after.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'apos a emissao real do ticket, o bloqueio deve desaparecer sozinho (refletindo o banco, nao um estado marcado a mao)');
+});
+
+test('item de produto/add-on (item_kind=product) pago sem ticket nunca gera falso positivo', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('product');
+  const eventId = await makeEvent(orgId, 'Evento Produto Avulso');
+  await makeFlatBatch(eventId, true);
+
+  await makeProductOrderItem(orgId, eventId);
+
+  const rows = await callDetectorsAs(admin, eventId);
+  assert.equal(rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'produto pago e sem ticket e o comportamento correto, nunca uma inconsistencia');
 });
 
 test('ingresso único: preço não confirmado bloqueia; preço confirmado fica OK', async () => {

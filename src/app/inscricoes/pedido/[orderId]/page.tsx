@@ -47,7 +47,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const [{ data: items }, { data: payments }, { data: tickets }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id,item_position,status,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email)")
+      .select("id,item_position,status,item_kind,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email)")
       .eq("order_id", orderId)
       .order("item_position", { ascending: true }),
     supabase
@@ -55,10 +55,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       .select("id,payment_status,payment_method,final_amount,created_at,paid_at")
       .eq("order_id", orderId)
       .order("created_at", { ascending: false }),
-    supabase.from("tickets").select("id,order_item_id").eq("order_id", orderId),
+    supabase.from("tickets").select("id,order_item_id,status").eq("order_id", orderId),
   ]);
 
-  const ticketByItem = new Map((tickets ?? []).map((ticket) => [String(ticket.order_item_id ?? ""), ticket.id]));
+  // Auditoria do caso real #001078 (Integridade Operacional, P0): esta pagina
+  // tratava "existe uma linha em tickets" como "ingresso valido" e mostrava
+  // "Ver ingresso" -- mesmo quando o unico ticket daquele item estava
+  // CANCELADO (ex.: cancelamento administrativo sem reemissao). O item
+  // continuava com status='confirmed' e a UI escondia o problema real.
+  // confirm_order_item_and_issue_ticket bloqueia deliberadamente reativar um
+  // ticket cancelado (20260897000000_harden_ticket_reactivation_guard.sql),
+  // entao hoje NAO existe uma acao segura de "reemitir" pra este estado --
+  // a pagina precisa expor isso claramente, nunca esconder atras de um botao
+  // que parece funcionar mas nao muda nada.
+  const ticketByItem = new Map((tickets ?? []).map((ticket) => [String(ticket.order_item_id ?? ""), { id: String(ticket.id), status: String(ticket.status ?? "") }]));
   const latestPayment = (payments ?? [])[0] ?? null;
 
   let buyerName: string | null = null;
@@ -113,12 +123,24 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               <div className="space-y-2">
                 {items.map((item) => {
                   const participant = one(item.participants);
-                  const ticketId = ticketByItem.get(String(item.id));
+                  const ticket = ticketByItem.get(String(item.id));
                   const category = one(item.ticket_categories);
                   const batch = one(item.registration_batches);
                   const name = item.holder_full_name ?? participant?.full_name ?? "Titular não definido";
+
+                  // Mesma semantica do detector PAID_ORDER_WITHOUT_TICKET
+                  // (nao duplicar regra, so refletir): so e um problema real
+                  // quando o ITEM (nao o pedido) representa ingresso
+                  // (item_kind='ticket'), ja esta comercialmente confirmado,
+                  // e nao tem ticket ativo (cancelado nao conta como ativo).
+                  const isTicketItem = (item.item_kind ?? "ticket") === "ticket";
+                  const isConfirmedItem = item.status === "confirmed" || item.status === "transferred";
+                  const hasActiveTicket = Boolean(ticket) && ticket!.status !== "cancelled";
+                  const hasCancelledOnlyTicket = Boolean(ticket) && ticket!.status === "cancelled";
+                  const missingTicket = isTicketItem && isConfirmedItem && !hasActiveTicket;
+
                   return (
-                    <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
+                    <div key={item.id} className={`rounded-xl border p-3 text-sm ${missingTicket ? "border-rose-500/40 bg-rose-500/5" : "border-slate-800 bg-slate-900/60"}`}>
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-slate-100">Item {item.item_position ?? "—"} · {name}</p>
@@ -130,14 +152,29 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                             CPF {maskCpf(participant?.cpf)}
                             {canViewFinancial ? ` · ${money(item.final_amount ?? 0)}` : ""}
                           </p>
+                          {missingTicket ? (
+                            <p className="mt-2 text-xs text-rose-200">
+                              {hasCancelledOnlyTicket
+                                ? "O ingresso emitido para este item foi cancelado administrativamente e não há substituto emitido. Não há uma ação automática segura para reemitir — requer regularização manual."
+                                : "O pedido foi confirmado, mas este item ainda não possui ingresso emitido. Revise o pedido e emita ou regularize o ingresso."}
+                            </p>
+                          ) : null}
                         </div>
-                        {ticketId ? (
-                          <Link href={`/ingressos/${ticketId}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
-                            Ver ingresso
-                          </Link>
-                        ) : (
-                          <span className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400">Ingresso não emitido</span>
-                        )}
+                        {isTicketItem ? (
+                          hasActiveTicket ? (
+                            <Link href={`/ingressos/${ticket!.id}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
+                              Ver ingresso
+                            </Link>
+                          ) : hasCancelledOnlyTicket ? (
+                            <Link href={`/ingressos/${ticket!.id}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-rose-500/40 px-2.5 text-xs text-rose-200">
+                              Ver ingresso cancelado
+                            </Link>
+                          ) : missingTicket ? (
+                            <span className="shrink-0 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200">Ingresso não emitido</span>
+                          ) : (
+                            <span className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400">Aguardando pagamento</span>
+                          )
+                        ) : null}
                       </div>
                     </div>
                   );
