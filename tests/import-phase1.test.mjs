@@ -1453,7 +1453,11 @@ test('primeiro acesso valida senha no servidor e conclui estado somente apos upd
   const updateIndex = action.indexOf("supabase.auth.updateUser({ password: newPassword })");
   const completionIndex = action.indexOf("password_setup_completed_at: new Date().toISOString()");
   const claimIndex = action.indexOf("claim_participant_account_invite");
-  assert.ok(updateIndex >= 0 && completionIndex > updateIndex && claimIndex > completionIndex);
+  // Ordem correta e ja coberta por tests/participant-first-access-invite.test.mjs
+  // ("claim atomico ocorre antes de senha e perfil"): o convite reivindica o
+  // cadastro ANTES de mexer em senha/perfil (serializa o vinculo canonico
+  // antes de qualquer efeito colateral), nao depois da marcacao de conclusao.
+  assert.ok(claimIndex >= 0 && claimIndex < updateIndex && updateIndex < completionIndex);
   assert.match(action, /passwordUpdate\.error[\s\S]*return \{ success: false[\s\S]*passwordInviteContext = await getParticipantInviteContext/);
   assert.match(action, /passwordInviteContext\.valid[\s\S]*passwordInviteContext\.requiresPasswordSetup/);
   assert.match(action, /\.eq\('auth_user_id', user\.id\)/);

@@ -6,6 +6,7 @@ import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { resendParticipantTicketAction } from "@/app/inscricoes/actions";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
+import { appBaseUrl } from "@/lib/urls/app-base-url";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -90,7 +91,16 @@ export async function grantStoreItemToContactAction(payload: {
 }
 
 function firstAccessInviteRedirect(inviteId: string) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  // Mesmo helper canonico usado por signUp/resetPasswordForEmail
+  // (src/lib/urls/app-base-url.ts) -- em producao ele ignora a variavel de
+  // ambiente publica de URL do app e sempre resolve pro dominio real
+  // (https://www.militrin.com.br). Ler aquela variavel direto aqui (como
+  // antes) fazia o link de convite cair em http://localhost:3000 sempre que
+  // ela estivesse ausente/errada no runtime de producao -- o Supabase Auth
+  // entao recusa silenciosamente esse redirect_to (fora da allowlist do
+  // projeto) e cai no Site URL configurado, que os usuarios percebiam como
+  // "o link me leva pro login".
+  const appUrl = appBaseUrl();
   const destination = `/primeiro-acesso?invite=${encodeURIComponent(inviteId)}&next=${encodeURIComponent("/minha-conta/ingressos")}`;
   return `${appUrl}/auth/callback?next=${encodeURIComponent(destination)}`;
 }
