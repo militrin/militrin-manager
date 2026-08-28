@@ -21,6 +21,8 @@ type CartItem = {
   status: string;
   quantity: number;
   unit_price: number;
+  /** Preco do produto ANTES do desconto proprio -- null para item_kind="ticket" (get_cart_order_details). */
+  product_base_unit_price: number | null;
   discount_amount: number;
   final_amount: number;
   category_name: string | null;
@@ -569,7 +571,17 @@ export function CartStep({
                   <p className="truncate text-sm font-medium text-slate-100">
                     {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ""}
                   </p>
-                  <p className="text-xs text-slate-400">{item.quantity}x {money(item.unit_price)}</p>
+                  <p className="text-xs text-slate-400">
+                    {item.quantity}x{' '}
+                    {item.product_base_unit_price !== null && item.product_base_unit_price > item.unit_price ? (
+                      <>
+                        <span className="text-slate-500 line-through">{money(item.product_base_unit_price)}</span>{' '}
+                        <span className="font-semibold text-emerald-300">{money(item.unit_price)}</span>
+                      </>
+                    ) : (
+                      money(item.unit_price)
+                    )}
+                  </p>
                   {urgencyLabel ? (
                     <p className={`text-[11px] font-medium ${availableQuantity === 1 ? "text-rose-400" : "text-amber-400"}`}>{urgencyLabel}</p>
                   ) : null}

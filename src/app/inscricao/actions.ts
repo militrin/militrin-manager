@@ -583,6 +583,8 @@ export type UnifiedOrderItem = {
   status: string;
   quantity: number;
   unit_price: number;
+  /** Preco do produto ANTES do desconto proprio (compute_store_item_final_price) -- null para item_kind='ticket'. Fonte: order_items.product_base_unit_price (get_cart_order_details). */
+  product_base_unit_price: number | null;
   discount_amount: number;
   final_amount: number;
   item_position: number | null;
@@ -677,6 +679,7 @@ async function getUnifiedOrderSnapshot(
       status: String(row.status ?? 'reserved'),
       quantity: Number(row.quantity ?? 1),
       unit_price: Number(row.unit_price ?? 0),
+      product_base_unit_price: row.product_base_unit_price !== null && row.product_base_unit_price !== undefined ? Number(row.product_base_unit_price) : null,
       discount_amount: Number(row.discount_amount ?? 0),
       final_amount: Number(row.final_amount ?? 0),
       item_position: row.item_position !== null && row.item_position !== undefined ? Number(row.item_position) : index + 1,
