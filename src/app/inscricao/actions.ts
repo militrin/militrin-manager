@@ -2347,7 +2347,7 @@ export async function generatePublicOrderPixAction(orderId: string) {
     p_pix_code: payload.pixCode,
     p_pix_qrcode: payload.pixQrCodeImage,
     p_gateway_payment_id: payload.providerPaymentId,
-    p_expires_at: payload.expiresAt,
+    p_expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     p_provider: gateway.name,
   });
 

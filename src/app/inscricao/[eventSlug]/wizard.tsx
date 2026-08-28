@@ -846,6 +846,15 @@ export function RegistrationWizard({
             paymentExpiresAt: payment?.expires_at,
           });
 
+                    if (fresh.success && payment?.payment_status === 'paid') {
+            setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
+            setCartOrder(null);
+            setCartSnapshot(null);
+            setStep(4);
+            setMaxUnlockedStep(4);
+            return;
+          }
+
           if (!stillEditable || !fresh.success) {
             sessionStorage.removeItem(storageKey);
             return;
@@ -917,6 +926,62 @@ export function RegistrationWizard({
     }, 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // Enquanto um PIX estiver pendente na Etapa 3, revalida o snapshot canonico
+  // do pedido. O webhook do gateway atualiza o banco; este polling apenas
+  // reflete essa mudanca na UI e avanca automaticamente para Concluido.
+  useEffect(() => {
+    if (
+      step !== 3
+      || !registration?.order_id
+      || registration.payment.payment_status !== 'pending'
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let requestInFlight = false;
+    const orderId = registration.order_id;
+
+    async function refreshPaymentStatus() {
+      if (requestInFlight || cancelled) return;
+
+      requestInFlight = true;
+      try {
+        const fresh = await getPublicOrderSnapshotAction(orderId);
+        if (cancelled || !fresh.success) return;
+
+        const freshPaymentStatus = String(
+          fresh.snapshot.payment?.payment_status ?? 'pending',
+        );
+
+        if (freshPaymentStatus === 'paid') {
+          setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
+          setCartOrder(null);
+          setCartSnapshot(null);
+          setLiveMessage('Pagamento confirmado.');
+          setMaxUnlockedStep(4);
+          setStep(4);
+        }
+      } finally {
+        requestInFlight = false;
+      }
+    }
+
+    void refreshPaymentStatus();
+
+    const timer = window.setInterval(() => {
+      void refreshPaymentStatus();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+
+    // mapOrderToRegistration le apenas closures usadas como fallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, registration?.order_id, registration?.payment?.payment_status]);
 
   useEffect(() => {
     topRef.current?.focus();
@@ -1696,7 +1761,6 @@ export function RegistrationWizard({
       }
       setRegistration(mapOrderToRegistration(paid.order));
       setLiveMessage('Pagamento confirmado.');
-      sessionStorage.removeItem(storageKey);
       unlockAndGoTo(4);
     });
   }
