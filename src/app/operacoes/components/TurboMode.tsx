@@ -1,12 +1,13 @@
 'use client';
 
 import { useCallback, useReducer, useRef } from 'react';
-import type { OperationEvent, OperationTicketDetails, OrderItemProductDetails, TurboStoreItemDetails } from '../types';
+import type { OperationEvent, OperationTicketDetails } from '../types';
+import type { OperationalProductItem } from '@/lib/operations/operational-product-item';
+import { SOURCE_LABEL } from '@/lib/operations/operational-product-item';
 import {
-  deliverAdditionalStoreItemAction,
   deliverKitAndCheckinAction,
   deliverKitCheckinAndLinkWristbandAction,
-  deliverOrderItemProductAction,
+  deliverOperationalProductItemAction,
   resolveTurboScanAction,
 } from '../actions';
 import { getOperationalErrorTitle } from '../error-messages';
@@ -17,18 +18,23 @@ const AUTO_RETURN_MS = 1600;
 // Maquina de estados explicita (pedido: nunca vários booleans concorrentes
 // que deixem a UI num estado impossível). Cada tela do Turbo corresponde a
 // exatamente um "kind" aqui; a transição sempre passa pelo reducer abaixo.
+//
+// "product_review"/"product_already_delivered" cobrem QUALQUER um dos dois
+// canais de produto (loja standalone OU "compre junto") -- o formato
+// canonico OperationalProductItem ja carrega `source` pra quando a acao
+// precisar saber em qual dominio atuar (deliverOperationalProductItemAction),
+// mas a UI nunca mais bifurca por canal.
 type TurboScreen =
   | { kind: 'scanning_initial' }
   | { kind: 'ticket_review'; participant: OperationTicketDetails }
   | { kind: 'scanning_wristband'; participant: OperationTicketDetails }
   | { kind: 'ticket_success'; message: string; extra: string | null }
-  | { kind: 'product_review'; item: TurboStoreItemDetails }
-  // Produto "compre junto" (order_items) -- dominio DIFERENTE de
-  // product_review acima (store_order_items). Tela propria, NUNCA
-  // reaproveita ProductReview (que nao tem pedido/comprador/evento/status
-  // de pagamento pra mostrar, e nunca deveria -- os dois dominios nao se
-  // confundem nem na tela).
-  | { kind: 'order_item_product_review'; item: OrderItemProductDetails }
+  | { kind: 'product_review'; item: OperationalProductItem }
+  // Segunda leitura (ou qualquer leitura depois da primeira entrega) do
+  // MESMO QR: nunca reprocessa, nunca mostra so um erro/toast -- abre o
+  // resumo da entrega original (produto/pedido/comprador/evento/data-hora/
+  // operador), com um botao explicito de volta ao leitor.
+  | { kind: 'product_already_delivered'; item: OperationalProductItem }
   | { kind: 'product_success' }
   // participant presente so quando o erro veio da ETAPA de pulseira -- deixa
   // o operador tentar outra pulseira pro MESMO ingresso (sem re-escanear o
@@ -37,8 +43,8 @@ type TurboScreen =
 
 type TurboAction =
   | { type: 'SCAN_TICKET'; participant: OperationTicketDetails }
-  | { type: 'SCAN_PRODUCT'; item: TurboStoreItemDetails }
-  | { type: 'SCAN_ORDER_ITEM_PRODUCT'; item: OrderItemProductDetails }
+  | { type: 'SCAN_PRODUCT'; item: OperationalProductItem }
+  | { type: 'SCAN_PRODUCT_DELIVERED'; item: OperationalProductItem }
   | { type: 'SCAN_ERROR'; title: string; message: string }
   | { type: 'GO_TO_WRISTBAND' }
   | { type: 'RETRY_WRISTBAND'; participant: OperationTicketDetails }
@@ -53,8 +59,8 @@ function reducer(state: TurboScreen, action: TurboAction): TurboScreen {
       return { kind: 'ticket_review', participant: action.participant };
     case 'SCAN_PRODUCT':
       return { kind: 'product_review', item: action.item };
-    case 'SCAN_ORDER_ITEM_PRODUCT':
-      return { kind: 'order_item_product_review', item: action.item };
+    case 'SCAN_PRODUCT_DELIVERED':
+      return { kind: 'product_already_delivered', item: action.item };
     case 'SCAN_ERROR':
       return { kind: 'error', title: action.title, message: action.message, ticketId: null, participant: null };
     case 'GO_TO_WRISTBAND':
@@ -184,30 +190,13 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         return;
       }
 
-      if (result.kind === 'store_item') {
-        if (result.item.status === 'delivered') {
-          dispatch({ type: 'SCAN_ERROR', title: 'Produto já entregue', message: 'Este item já foi entregue anteriormente.' });
-        } else if (result.item.status === 'cancelled') {
-          dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
-        } else if (result.item.status === 'reserved') {
-          dispatch({
-            type: 'SCAN_ERROR',
-            title: 'Pagamento pendente',
-            message: 'Este pedido ainda não foi confirmado (pagamento pendente).',
-          });
-        } else {
-          dispatch({ type: 'SCAN_PRODUCT', item: result.item });
-        }
-        return;
-      }
-
-      // result.kind === 'order_item_product' -- dominio order_items (compre
-      // junto), DIFERENTE do store_item acima (store_order_items). Evento
-      // derivado do proprio item (event_id, ja resolvido no backend a
-      // partir de order_item -> order -> event_id) -- so validado AQUI,
-      // contra o evento ja selecionado, igual ao ingresso acima. Nunca
-      // exigido do cliente pra resolver o QR.
-      if (result.item.event_id !== event.id) {
+      // result.kind === 'product' -- QUALQUER canal (loja standalone ou
+      // "compre junto", ja distinguido internamente por result.item.source).
+      // Evento derivado do proprio item (resolvido no backend, nunca exigido
+      // do cliente pra resolver o QR) -- so validado AQUI, contra o evento
+      // ja selecionado, igual ao ingresso acima. event_id pode ser null
+      // (produto global da loja, sem evento) -- nesse caso nunca bloqueia.
+      if (result.item.event_id && result.item.event_id !== event.id) {
         dispatch({
           type: 'SCAN_ERROR',
           title: 'Evento diferente',
@@ -215,18 +204,20 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         });
         return;
       }
-      if (result.item.status === 'delivered') {
-        dispatch({ type: 'SCAN_ERROR', title: 'Produto já entregue', message: 'Este item já foi entregue anteriormente.' });
-      } else if (result.item.status === 'reserved') {
+      if (result.item.delivery_status === 'delivered') {
+        // Segunda leitura (ou enesima): nunca um erro/toast que so some --
+        // abre o resumo da entrega original, com botao explicito de volta.
+        dispatch({ type: 'SCAN_PRODUCT_DELIVERED', item: result.item });
+      } else if (result.item.delivery_status === 'cancelled') {
+        dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
+      } else if (result.item.delivery_status === 'not_applicable') {
         dispatch({
           type: 'SCAN_ERROR',
           title: 'Pagamento pendente',
           message: 'Este pedido ainda não foi confirmado (pagamento pendente).',
         });
-      } else if (result.item.status !== 'confirmed') {
-        dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
       } else {
-        dispatch({ type: 'SCAN_ORDER_ITEM_PRODUCT', item: result.item });
+        dispatch({ type: 'SCAN_PRODUCT', item: result.item });
       }
     } catch (error) {
       dispatch({
@@ -312,42 +303,15 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     }
   }
 
-  async function handleProductConfirm(item: TurboStoreItemDetails) {
+  // Entrega de produto -- QUALQUER canal, via o dispatcher unico
+  // (deliverOperationalProductItemAction) que ja sabe, a partir de
+  // item.source, qual RPC domain-specific chamar. Nenhum "if store/else
+  // checkout" aqui.
+  async function handleProductConfirm(item: OperationalProductItem) {
     if (processingRef.current) return;
     processingRef.current = true;
     try {
-      const response = await deliverAdditionalStoreItemAction(item.id);
-      if (!response.success) {
-        dispatch({
-          type: 'FAIL',
-          title: getOperationalErrorTitle(undefined, response.message ?? ''),
-          message: response.message ?? 'Não foi possível concluir a operação.',
-          ticketId: null,
-        });
-        return;
-      }
-      dispatch({ type: 'PRODUCT_DONE' });
-      scheduleReturn();
-    } catch (error) {
-      dispatch({
-        type: 'FAIL',
-        title: 'Erro de rede',
-        message: error instanceof Error ? error.message : 'Falha inesperada.',
-        ticketId: null,
-      });
-    } finally {
-      processingRef.current = false;
-    }
-  }
-
-  // Entrega de produto "compre junto" -- dominio DIFERENTE de
-  // handleProductConfirm acima (store_order_items). Reusa PRODUCT_DONE (a
-  // mensagem de sucesso ja e generica o bastante pros dois dominios).
-  async function handleOrderItemProductConfirm(item: OrderItemProductDetails) {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    try {
-      const response = await deliverOrderItemProductAction(item.order_item_id);
+      const response = await deliverOperationalProductItemAction({ source: item.source, item_id: item.item_id });
       if (!response.success) {
         dispatch({
           type: 'FAIL',
@@ -375,7 +339,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     <Chrome event={event} onExit={() => onExit()}>
       {screen.kind === 'scanning_initial' ? (
         <div className="flex flex-1 flex-col justify-center gap-4">
-          <p className="text-center text-lg text-slate-300">Escaneie o QR do ingresso ou de um produto da loja.</p>
+          <p className="text-center text-lg text-slate-300">Escaneie o QR do ingresso ou de um produto.</p>
           <QrScanner title="Leitor Turbo" onRead={handleInitialScan} />
         </div>
       ) : null}
@@ -410,8 +374,8 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         <ProductReview item={screen.item} onConfirm={() => void handleProductConfirm(screen.item)} onCancel={backToScanner} />
       ) : null}
 
-      {screen.kind === 'order_item_product_review' ? (
-        <OrderItemProductReview item={screen.item} onConfirm={() => void handleOrderItemProductConfirm(screen.item)} onCancel={backToScanner} />
+      {screen.kind === 'product_already_delivered' ? (
+        <ProductAlreadyDelivered item={screen.item} onBack={backToScanner} />
       ) : null}
 
       {screen.kind === 'product_success' ? (
@@ -518,25 +482,31 @@ function TicketReview({
   );
 }
 
+// Revisao de produto -- QUALQUER canal (source distingue internamente, so
+// pra badge/entrega -- a experiencia operacional e IDENTICA pros dois).
 function ProductReview({
   item,
   onConfirm,
   onCancel,
 }: {
-  item: TurboStoreItemDetails;
+  item: OperationalProductItem;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex flex-col items-center gap-3 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center">
-        {item.image_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.image_url} alt={item.store_item_name} className="h-40 w-40 rounded-2xl object-cover" />
-        ) : null}
-        <p className="text-2xl font-black">{item.store_item_name}</p>
-        {item.variant_label ? <p className="text-slate-400">{item.variant_label}</p> : null}
-        <p className="text-lg text-slate-300">Quantidade: {item.quantity}</p>
+        <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-400">{SOURCE_LABEL[item.source]}</span>
+        <p className="text-2xl font-black">{item.quantity}x {item.product_name}</p>
+        {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
+
+        <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
+          <InfoTile label="Pedido" value={item.order_reference} />
+          <InfoTile label="Comprador" value={item.buyer} />
+          <InfoTile label="Evento" value={item.event_name} />
+          <InfoTile label="Pagamento" value="Pago" />
+        </div>
+
         <p className="text-sm uppercase tracking-wide text-amber-300">A entregar</p>
       </div>
 
@@ -550,40 +520,36 @@ function ProductReview({
   );
 }
 
-// Produto "compre junto" (order_items) -- dominio DIFERENTE de ProductReview
-// acima (store_order_items). Mostra pedido/comprador/evento/status, exigido
-// pelo fluxo operacional deste dominio (o outro nao precisa: item de loja
-// solo ja chega ate aqui sempre pago, sem ambiguidade de evento).
-function OrderItemProductReview({
-  item,
-  onConfirm,
-  onCancel,
-}: {
-  item: OrderItemProductDetails;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
+// Resumo da entrega -- aberto em QUALQUER leitura depois da primeira
+// (2a, 3a, 10a...) do MESMO QR, pros dois canais. Nunca reprocessa entrega
+// nem estoque (o backend ja e idempotente -- isto e so leitura); sempre
+// mostra data/hora e operador da PRIMEIRA entrega (nunca do usuario atual).
+function ProductAlreadyDelivered({ item, onBack }: { item: OperationalProductItem; onBack: () => void }) {
   return (
     <div className="flex flex-1 flex-col gap-4">
-      <div className="flex flex-col items-center gap-3 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center">
-        <p className="text-2xl font-black">{item.quantity}x {item.store_item_name}</p>
-        {item.variant_label ? <p className="text-slate-400">{item.variant_label}</p> : null}
+      <div className="flex flex-col items-center gap-3 rounded-3xl border border-cyan-500/30 bg-slate-900 p-6 text-center">
+        <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-400">{SOURCE_LABEL[item.source]}</span>
+        <p className="text-xl font-black uppercase tracking-wide text-cyan-300">Item já entregue</p>
+        <p className="text-2xl font-black">{item.quantity}x {item.product_name}</p>
+        {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
 
         <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
-          <InfoTile label="Pedido" value={item.order_number ?? '-'} />
-          <InfoTile label="Comprador" value={item.buyer_name} />
+          <InfoTile label="Pedido" value={item.order_reference} />
+          <InfoTile label="Comprador" value={item.buyer} />
           <InfoTile label="Evento" value={item.event_name} />
-          <InfoTile label="Pagamento" value="Pago" />
+          <InfoTile label="Status" value="Entregue" />
         </div>
 
-        <p className="text-sm uppercase tracking-wide text-amber-300">A retirar</p>
+        <div className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+          <p className="text-[11px] uppercase tracking-wide text-slate-500">Primeira entrega</p>
+          <p className="font-semibold text-slate-100">{item.delivered_at ? new Date(item.delivered_at).toLocaleString('pt-BR') : '—'}</p>
+          <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-500">Operador</p>
+          <p className="font-semibold text-slate-100">{item.delivered_by ?? 'Não identificado'}</p>
+        </div>
       </div>
 
-      <div className="mt-auto flex flex-col gap-2">
-        <BigButton onClick={onConfirm}>Confirmar entrega</BigButton>
-        <BigButton tone="neutral" onClick={onCancel}>
-          Cancelar
-        </BigButton>
+      <div className="mt-auto">
+        <BigButton onClick={onBack}>Voltar ao leitor</BigButton>
       </div>
     </div>
   );

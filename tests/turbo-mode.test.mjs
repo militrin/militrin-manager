@@ -63,26 +63,29 @@ test("botao Sair renderiza fora do switch de telas -- funciona em qualquer estad
 // frontend
 // ============================================================
 
-test("resolveTurboScanAction resolve ticket OU item de loja no backend, sem receber um 'tipo' do cliente", () => {
+test("resolveTurboScanAction resolve ticket OU produto (qualquer canal) no backend, sem receber um 'tipo' do cliente", () => {
   const fn = slice(actions, "export async function resolveTurboScanAction", "export async function deliverKitCheckinAndLinkWristbandAction");
   assert.match(fn, /rawValue: string/);
-  assert.doesNotMatch(fn, /kind\s*[:=]\s*['"](ticket|store_item)['"].*payload|payload\.kind/);
+  assert.doesNotMatch(fn, /kind\s*[:=]\s*['"](ticket|product)['"].*payload|payload\.kind/);
   assert.match(fn, /await assertPermission\("participants\.view"\)/);
   assert.match(fn, /\.from\("tickets"\)/);
-  assert.match(fn, /resolveTurboStoreItemByQr/);
+  assert.match(fn, /resolveOperationalProductByQr/);
   assert.match(fn, /await assertPermission\("store\.deliver"\)/);
 });
 
-test("resolucao de item de loja usa store_order_items.qr_token (nunca order_number, nunca id adulteravel sem lookup)", () => {
-  const helper = slice(actions, "async function resolveTurboStoreItemByQr", "export async function resolveTurboScanAction");
+test("resolucao de item de loja (dentro da resolucao unificada) usa store_order_items.qr_token (nunca order_number, nunca id adulteravel sem lookup)", () => {
+  const helper = slice(actions, "async function resolveStoreOrderItemByQr", "// Produto \"compre junto\"");
   assert.match(helper, /\.from\("store_order_items"\)/);
   assert.match(helper, /\.eq\("qr_token", tokenCandidate\)/);
 });
 
-test("entrega de ingresso e de produto reaproveitam as actions/RPCs canonicas ja existentes -- nenhuma RPC de entrega duplicada", () => {
+test("entrega de ingresso e de produto (qualquer canal) reaproveitam as actions/RPCs canonicas ja existentes, via o dispatcher unico deliverOperationalProductItemAction -- nenhuma RPC de entrega duplicada", () => {
   assert.match(turbo, /deliverKitAndCheckinAction\(/);
-  assert.match(turbo, /deliverAdditionalStoreItemAction\(/);
-  assert.doesNotMatch(turbo, /rpc\(["']deliver_store_order_item["']/);
+  assert.match(turbo, /deliverOperationalProductItemAction\(/);
+  assert.doesNotMatch(turbo, /rpc\(["']deliver_store_order_item["']|rpc\(["']deliver_order_item_product["']/);
+  const dispatcher = slice(actions, "export async function deliverOperationalProductItemAction", "export async function deliverKitCheckinAndLinkWristbandAction");
+  assert.match(dispatcher, /deliverAdditionalStoreItemAction\(item\.item_id\)/);
+  assert.match(dispatcher, /deliverOrderItemProductAction\(item\.item_id\)/);
 });
 
 // ============================================================
@@ -147,34 +150,32 @@ test("sucesso do ingresso mostra 'Pulseira vinculada e check-in realizado' e com
 // Fluxo B -- produto da loja
 // ============================================================
 
-test("QR de produto (store_order_items) abre product_review com imagem/nome/variante/quantidade -- nunca a ficha do ingresso/pedido inteiro, nem dados de order_items (dominio separado, ver OrderItemProductReview)", () => {
-  // Delimitado ate OrderItemProductReview (nao ate InfoTile): a partir desta
-  // sessao existe uma SEGUNDA tela de revisao de produto entre as duas
-  // (OrderItemProductReview, dominio order_items -- ver
-  // order-item-product-turbo-central-regression.test.mjs), que mostra
-  // buyer_name de proposito (dominio diferente, exigencia propria). Sem
-  // este limite o slice varreria as duas funcoes juntas e o
-  // doesNotMatch(buyer_name) abaixo falsearia uma regressao inexistente.
-  const productReview = slice(turbo, "function ProductReview(", "function OrderItemProductReview(");
-  assert.match(productReview, /item\.store_item_name/);
-  assert.match(productReview, /item\.variant_label/);
-  assert.match(productReview, /Quantidade: \{item\.quantity\}/);
+test("QR de produto (qualquer canal, unificado nesta sessao) abre product_review com produto/variante/quantidade/pedido/comprador/evento -- nunca a ficha do ingresso inteiro", () => {
+  const productReview = slice(turbo, "function ProductReview(", "function ProductAlreadyDelivered(");
+  assert.match(productReview, /item\.product_name/);
+  assert.match(productReview, /item\.variant/);
+  assert.match(productReview, /item\.quantity\}x/);
   assert.match(productReview, /Confirmar entrega/);
-  assert.doesNotMatch(productReview, /order_tickets|buyer_name|additional_items/);
+  assert.doesNotMatch(productReview, /order_tickets|additional_items/);
 });
 
-test("produto ja entregue, cancelado ou com pagamento pendente bloqueia ANTES de abrir product_review", () => {
+test("produto cancelado ou com pagamento pendente bloqueia ANTES de abrir product_review; produto ja entregue abre o RESUMO da entrega (nunca um erro que so reseta o leitor)", () => {
   const fn = slice(turbo, "async function handleInitialScan", "async function handleNext");
-  assert.match(fn, /result\.item\.status === 'delivered'/);
-  assert.match(fn, /Produto já entregue/);
-  assert.match(fn, /result\.item\.status === 'cancelled'/);
-  assert.match(fn, /result\.item\.status === 'reserved'/);
+  assert.match(fn, /result\.item\.delivery_status === 'delivered'/);
+  assert.match(fn, /SCAN_PRODUCT_DELIVERED/);
+  assert.match(fn, /result\.item\.delivery_status === 'cancelled'/);
+  assert.match(fn, /result\.item\.delivery_status === 'not_applicable'/);
   assert.match(fn, /SCAN_PRODUCT/);
+  // "delivered" NUNCA cai no branch de erro generico -- tem despacho proprio.
+  const deliveredBranchIdx = fn.indexOf("result.item.delivery_status === 'delivered'");
+  const nextErrorIdx = fn.indexOf("SCAN_ERROR", deliveredBranchIdx);
+  const dispatchDeliveredIdx = fn.indexOf("SCAN_PRODUCT_DELIVERED", deliveredBranchIdx);
+  assert.ok(dispatchDeliveredIdx !== -1 && (nextErrorIdx === -1 || dispatchDeliveredIdx < nextErrorIdx));
 });
 
-test("confirmar entrega usa deliverAdditionalStoreItemAction (store.deliver, idempotente) e retorna ao leitor sozinho", () => {
+test("confirmar entrega usa o dispatcher unico deliverOperationalProductItemAction (que por tras chama deliverAdditionalStoreItemAction/deliverOrderItemProductAction conforme item.source, store.deliver, idempotente) e retorna ao leitor sozinho", () => {
   const fn = slice(turbo, "async function handleProductConfirm", "return (\n    <Chrome");
-  assert.match(fn, /deliverAdditionalStoreItemAction\(item\.id\)/);
+  assert.match(fn, /deliverOperationalProductItemAction\(\{ source: item\.source, item_id: item\.item_id \}\)/);
   assert.match(fn, /PRODUCT_DONE/);
   assert.match(fn, /scheduleReturn\(\)/);
 });
@@ -250,8 +251,10 @@ test("nenhum estado do Turbo e persistido em localStorage/sessionStorage -- F5 s
   assert.doesNotMatch(persistedPayload, /showTurbo/);
 });
 
-test("tipos do Modo Turbo (TurboScanResult/TurboStoreItemDetails) sao explicitos, sem 'any'", () => {
-  assert.match(types, /export type TurboStoreItemDetails = \{/);
+test("tipos do Modo Turbo (TurboScanResult/OperationalProductItem) sao explicitos, sem 'any'", async () => {
+  const canonicalType = await readFile(new URL("../src/lib/operations/operational-product-item.ts", import.meta.url), "utf8");
+  assert.match(canonicalType, /export type OperationalProductItem = \{/);
+  assert.doesNotMatch(canonicalType, /:\s*any\b/);
   assert.match(types, /export type TurboScanResult =/);
-  assert.doesNotMatch(slice(types, "export type TurboStoreItemDetails", "export const EMPTY_PICKUP_FILTERS"), /:\s*any\b/);
+  assert.doesNotMatch(slice(types, "export type TurboScanResult", "export const EMPTY_PICKUP_FILTERS"), /:\s*any\b/);
 });

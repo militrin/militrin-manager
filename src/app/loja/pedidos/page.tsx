@@ -1,11 +1,13 @@
-import Link from "next/link";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { AdminEmptyState, AdminFilterBar, AdminPageHeader, AdminSection } from "@/components/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { requireAnyPermission } from "@/lib/admin/permissions";
+import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { StoreSubNav } from "../store-sub-nav";
-import { StoreOrderCard, type StoreOrderRow } from "./store-order-card";
+import { OperationalProductItemCard } from "./operational-product-item-card";
+import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { orderDisplayReference } from "@/lib/display-reference";
+import Link from "next/link";
 
 type SearchParams = Promise<{
   status?: string;
@@ -32,6 +34,25 @@ function toDateOnly(value: string | undefined, endOfDay: boolean) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+type RawOperationalProductItemRow = {
+  source: "store" | "checkout";
+  item_id: string;
+  order_id: string;
+  order_number: string;
+  display_number: number | null;
+  product_name: string;
+  variant: string | null;
+  quantity: number;
+  event_id: string | null;
+  event_name: string;
+  buyer: string;
+  payment_status: string;
+  delivery_status: OperationalProductItem["delivery_status"];
+  delivered_at: string | null;
+  delivered_by_user_id: string | null;
+  created_at: string;
+};
+
 export default async function StoreOrdersPage({ searchParams }: { searchParams: SearchParams }) {
   await requireAnyPermission(["store.view", "store.deliver"]);
 
@@ -45,30 +66,53 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
 
   const supabase = await createServerSupabaseClient();
   const friendlySearch = q.trim().match(/^#?(\d{1,12})$/);
-  const [{ data: eventsData, error: eventsError }, { data: orderRows, error: ordersError }] = await Promise.all([
+  const [{ data: eventsData, error: eventsError }, { data: itemRows, error: itemsError }] = await Promise.all([
     supabase.from("events").select("id, name, year").order("is_active", { ascending: false }).order("year", { ascending: false }),
-    supabase.rpc("list_store_orders_for_admin", {
+    // Consolida os dois canais de venda de produto (loja standalone e
+    // "compre junto" no checkout de ingresso) numa unica leitura -- nenhuma
+    // tabela nova, nenhum dado duplicado, so UNION ALL em list_operational_
+    // product_items (20260918000000). 1 linha por ITEM, nunca por pedido.
+    supabase.rpc("list_operational_product_items", {
       p_status: status === "all" ? null : status,
       p_event_id: eventId || null,
-      p_global_only: globalOnly,
       p_search: friendlySearch ? null : q.trim() || null,
       p_date_from: toDateOnly(dateFrom, false),
       p_date_to: toDateOnly(dateTo, true),
     }),
   ]);
   if (eventsError) throw eventsError;
-  if (ordersError) throw ordersError;
+  if (itemsError) throw itemsError;
 
   const events = (eventsData ?? []).map((event: Record<string, unknown>) => ({ id: String(event.id), name: String(event.name), year: event.year as number | null }));
-  const rawOrders = (orderRows ?? []) as StoreOrderRow[];
-  const { data: displayRows, error: displayError } = rawOrders.length
-    ? await supabase.from("store_orders").select("id,display_number,order_number").in("id", rawOrders.map((order) => order.store_order_id))
-    : { data: [], error: null };
-  if (displayError) throw displayError;
-  const displayById = new Map((displayRows ?? []).map((row) => [String(row.id), orderDisplayReference(row.display_number, row.order_number)]));
-  const orders = rawOrders
-    .map((order) => ({ ...order, order_number: displayById.get(order.store_order_id) ?? "sem número" }))
-    .filter((order) => !friendlySearch || order.order_number === `#${friendlySearch[1].padStart(6, "0")}`);
+  const rawItems = (itemRows ?? []) as RawOperationalProductItemRow[];
+
+  // delivered_by so existe em audit_logs como user_id -- resolvido em lote
+  // aqui (reusa o unico resolvedor canonico de "nome a partir de user_id"
+  // pra acoes administrativas, o mesmo usado pelos resolvers de QR do
+  // Turbo/Central), nunca inventado a partir do usuario atual.
+  const deliveredByIds = [...new Set(rawItems.map((row) => row.delivered_by_user_id).filter((id): id is string => Boolean(id)))];
+  const operatorNames = await resolveOperatorNames(deliveredByIds);
+
+  const items: OperationalProductItem[] = rawItems.map((row) => ({
+    source: row.source,
+    item_id: row.item_id,
+    order_id: row.order_id,
+    order_reference: orderDisplayReference(row.display_number, row.order_number),
+    product_name: row.product_name,
+    variant: row.variant,
+    quantity: row.quantity,
+    event_id: row.event_id,
+    event_name: row.event_name,
+    buyer: row.buyer,
+    payment_status: row.payment_status,
+    delivery_status: row.delivery_status,
+    delivered_at: row.delivered_at,
+    delivered_by: row.delivered_by_user_id ? operatorNames.get(row.delivered_by_user_id) ?? "Operador administrativo" : null,
+  }));
+
+  const orders = items
+    .filter((item) => !friendlySearch || item.order_reference === `#${friendlySearch[1].padStart(6, "0")}`)
+    .filter((item) => !globalOnly || (item.source === "store" && !item.event_id));
 
   function statusHref(code: string) {
     const qs = new URLSearchParams();
@@ -86,7 +130,7 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
       <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
         <Sidebar />
         <div className="flex-1 space-y-6">
-          <AdminPageHeader title="Loja" subtitle="Pedidos feitos na loja -- vinculados a evento ou 100% globais" />
+          <AdminPageHeader title="Loja" subtitle="Produtos vendidos na loja e no checkout de ingresso (compre junto) -- visao unica de entrega" />
 
           <StoreSubNav active="pedidos" />
 
@@ -129,13 +173,13 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
             </form>
           </AdminFilterBar>
 
-          <AdminSection title="Pedidos" description={`${orders.length} pedido(s) encontrado(s)`}>
+          <AdminSection title="Produtos" description={`${orders.length} item(ns) encontrado(s)`}>
             {orders.length === 0 ? (
-              <AdminEmptyState title="Nenhum pedido encontrado" description="Ajuste os filtros ou aguarde novas compras na loja." />
+              <AdminEmptyState title="Nenhum item encontrado" description="Ajuste os filtros ou aguarde novas compras." />
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {orders.map((order) => (
-                  <StoreOrderCard key={order.store_order_id} order={order} />
+                {orders.map((item) => (
+                  <OperationalProductItemCard key={`${item.source}:${item.item_id}`} item={item} />
                 ))}
               </div>
             )}

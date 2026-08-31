@@ -1,3 +1,5 @@
+import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
+
 /** Shape comum devolvido pelos handlers de acao (page.tsx, via runAction) --
  * usado pelos componentes pra decidir se abrem o modal obrigatorio de
  * pulseira (code === 'WRISTBAND_REQUIRED') sem precisar conhecer o formato
@@ -451,46 +453,19 @@ export type WristbandHistoryEntry = {
   created_at: string;
 };
 
-// Modo Turbo -- leitor unico continuo. "item" cobre so o que o produto
-// precisa mostrar (nunca dados do pedido/comprador inteiro); a entrega
-// reaproveita deliverAdditionalStoreItemAction/deliver_store_order_item ja
-// existentes, aqui so o formato devolvido pela resolucao do QR do item.
-export type TurboStoreItemDetails = {
-  id: string;
-  store_item_name: string;
-  variant_label: string | null;
-  quantity: number;
-  status: "reserved" | "confirmed" | "delivered" | "cancelled";
-  image_url: string | null;
-  order_number: string | null;
-};
-
-// Produto "compre junto" -- dominio order_items (orders + order_items),
-// NUNCA store_orders/store_order_items (dois dominios paralelos e
-// desconectados por decisao de projeto -- ver 20260916000000/20260917000000).
-// "kind" embutido no proprio tipo (mesma convencao ja usada por
-// TicketBackedOperationEntry/ParticipantOnlyLegacyOperationEntry acima) --
-// nunca reaproveita TurboStoreItemDetails nem qualquer forma que confunda
-// os dois dominios de produto.
-export type OrderItemProductDetails = {
-  kind: "order_item_product";
-  order_item_id: string;
-  order_id: string;
-  event_id: string;
-  event_name: string;
-  order_number: string | null;
-  buyer_name: string;
-  store_item_name: string;
-  variant_label: string | null;
-  quantity: number;
-  status: "reserved" | "confirmed" | "delivered" | "cancelled" | "expired" | "refunded" | "transferred";
-  delivered_at: string | null;
-};
+// Produto (Modo Turbo + Central) -- QUALQUER um dos dois canais (loja
+// standalone OU "compre junto" no checkout), resolvido pelo MESMO formato
+// canonico (OperationalProductItem, src/lib/operations/operational-product-item.ts)
+// -- as tabelas continuam separadas, `source`+`item_id`+`order_id` sao
+// preservados pra que a entrega saiba em qual dominio atuar, mas a UI nunca
+// mais precisa de um "if store_item / else order_item_product" -- so um
+// formato so, consumido por uma tela so pra revisao e uma tela so pra
+// "ja entregue".
+export type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 
 export type TurboScanResult =
   | { success: true; kind: "ticket"; participant: OperationTicketDetails }
-  | { success: true; kind: "store_item"; item: TurboStoreItemDetails }
-  | { success: true; kind: "order_item_product"; item: OrderItemProductDetails }
+  | { success: true; kind: "product"; item: OperationalProductItem }
   | { success: false; message: string };
 
 export const EMPTY_PICKUP_FILTERS: PickupFilters = {

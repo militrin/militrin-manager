@@ -18,7 +18,12 @@ const migration = await readFile(new URL("../supabase/migrations/20260869000000_
 const lojaPage = await readFile(new URL("../src/app/loja/page.tsx", import.meta.url), "utf8");
 const subNav = await readFile(new URL("../src/app/loja/store-sub-nav.tsx", import.meta.url), "utf8");
 const ordersListPage = await readFile(new URL("../src/app/loja/pedidos/page.tsx", import.meta.url), "utf8");
-const orderCard = await readFile(new URL("../src/app/loja/pedidos/store-order-card.tsx", import.meta.url), "utf8");
+// store-order-card.tsx (por PEDIDO) foi substituido por
+// operational-product-item-card.tsx (por ITEM, consolidando loja standalone
+// e "compre junto" -- ver operational-product-items-listing-regression.test.mjs
+// pra cobertura completa da consolidacao). Continua sendo "o card da
+// listagem" pros propositos deste arquivo.
+const orderCard = await readFile(new URL("../src/app/loja/pedidos/operational-product-item-card.tsx", import.meta.url), "utf8");
 const orderDetailPage = await readFile(new URL("../src/app/loja/pedidos/[orderId]/page.tsx", import.meta.url), "utf8");
 const orderDetailActions = await readFile(new URL("../src/app/loja/pedidos/[orderId]/order-detail-actions.tsx", import.meta.url), "utf8");
 const lojaActions = await readFile(new URL("../src/app/loja/actions.ts", import.meta.url), "utf8");
@@ -89,17 +94,15 @@ test("desconto do pedido e a diferenca entre base_amount e final_amount -- nao u
   assert.match(fn, /'discount_amount', round\(v_order\.base_amount - v_order\.final_amount, 2\)/);
 });
 
-test("card da listagem mostra numero do pedido, comprador, evento ou 'Produto global', itens, valor, desconto, status do pedido/pagamento/entrega e data", () => {
-  assert.match(orderCard, /order\.order_number/);
-  assert.match(orderCard, /order\.buyer_name/);
+test("card da listagem (agora por ITEM, consolidando os dois canais) mostra numero do pedido, comprador, produto/quantidade, evento ou 'Produto global', status de pagamento/entrega e origem", () => {
+  assert.match(orderCard, /item\.order_reference/);
+  assert.match(orderCard, /item\.buyer/);
   assert.match(orderCard, /Produto global \/ Sem evento/);
-  assert.match(orderCard, /order\.item_count/);
-  assert.match(orderCard, /money\(order\.final_amount\)/);
-  assert.match(orderCard, /const discount = Math\.max\(order\.base_amount - order\.final_amount, 0\)/);
-  assert.match(orderCard, /<AdminStatusBadge status=\{order\.status\} \/>/);
-  assert.match(orderCard, /<AdminStatusBadge status=\{order\.payment_status\} \/>/);
-  assert.match(orderCard, /deliveryLabel\(order\.delivery_status\)/);
-  assert.match(orderCard, /new Date\(order\.created_at\)\.toLocaleString\('pt-BR'\)/);
+  assert.match(orderCard, /item\.quantity/);
+  assert.match(orderCard, /item\.product_name/);
+  assert.match(orderCard, /<AdminStatusBadge status=\{item\.payment_status\} \/>/);
+  assert.match(orderCard, /deliveryStatusLabel\(item\.delivery_status\)/);
+  assert.match(orderCard, /SOURCE_LABEL\[item\.source\]/);
 });
 
 test("historico do pedido resolve nome do ator a partir de audit_logs.details->>'actor_user_id' -- reaproveita o mesmo padrao ja usado em toda RPC de auditoria do projeto", () => {

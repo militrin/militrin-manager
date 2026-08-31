@@ -11,17 +11,16 @@ import type {
   OperationParticipantDetails,
   OperationTicketDetails,
   OperationTicketRow,
-  OrderItemProductDetails,
   TicketBackedOperationEntry,
   PickupCapabilities,
   PickupDetails,
   PickupEvent,
   ReasonCode,
   TurboScanResult,
-  TurboStoreItemDetails,
   WristbandHistoryEntry,
 } from "./types";
 import { REASON_CODES } from "./types";
+import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 
@@ -1976,8 +1975,14 @@ export async function searchPickupParticipantAction(query: string) {
   return getOperationTicketDetailsAction(matchedTicketId);
 }
 
+// Mesmo formato de resultado do Turbo (TurboScanResult): "kind" no nivel do
+// wrapper, nunca so dentro do payload -- Central e Turbo agora reconhecem o
+// MESMO QR (ingresso OU produto de qualquer canal) atraves da MESMA
+// interface, sem "if store_item / else order_item_product" espalhado pela
+// UI (page.tsx so verifica response.kind === "product").
 export async function searchPickupParticipantByQrAction(rawValue: string): Promise<
-  | { success: true; participant: PickupDetails | OrderItemProductDetails }
+  | { success: true; kind: "ticket"; participant: PickupDetails }
+  | { success: true; kind: "product"; item: OperationalProductItem }
   | { success: false; message: string }
 > {
   await assertPermission("participants.view");
@@ -2000,19 +2005,19 @@ export async function searchPickupParticipantByQrAction(rawValue: string): Promi
 
   if (ticket?.id) {
     const detail = await getOperationTicketDetailsAction(String(ticket.id));
-    if (!detail.success || !detail.participant) return { success: false, message: detail.message ?? "Não foi possível carregar o ingresso." };
-    return { success: true, participant: detail.participant };
+    if (!detail.success || !detail.participant || detail.participant.kind !== "ticket") {
+      return { success: false, message: detail.message ?? "Não foi possível carregar o ingresso." };
+    }
+    return { success: true, kind: "ticket", participant: detail.participant };
   }
 
-  // Produto "compre junto" (order_items) -- dominio DIFERENTE de
-  // store_orders/store_order_items (esta acao nunca resolveu, nem deveria
-  // resolver, aquele dominio -- retirada de loja solo tem sua propria tela).
-  // Resolucao SEMPRE por qr_token (text), nunca id (uuid) -- o token
-  // escaneado nao e um uuid.
-  const orderItemProduct = await resolveOrderItemProductByQr(supabase, tokenCandidate);
-  if (orderItemProduct) {
+  // Produto (loja standalone OU "compre junto") -- MESMA resolucao unificada
+  // ja usada pelo Turbo (resolveOperationalProductByQr). Resolucao SEMPRE
+  // por qr_token (text), nunca id (uuid) -- o token escaneado nao e um uuid.
+  const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
+  if (item) {
     await assertPermission("store.deliver");
-    return { success: true, participant: orderItemProduct };
+    return { success: true, kind: "product", item };
   }
 
   return { success: false, message: "Ingresso não encontrado para este QR Code." };
@@ -2312,6 +2317,17 @@ export async function deliverOrderItemProductAction(orderItemId: string) {
   }
   revalidatePath("/operacoes");
   return { success: true, message: "Produto entregue com sucesso." };
+}
+
+// Unico ponto de entrega chamado pela UI operacional (Turbo/Central) --
+// nunca precisa saber qual RPC chamar, so o `source` ja devolvido pela
+// resolucao do QR (resolveOperationalProductByQr). Cada RPC por tras
+// continua domain-specific (deliver_store_order_item/deliver_order_item_product)
+// e ja e idempotente por si so -- este dispatcher nao adiciona logica nova,
+// so evita "if source==='store'" espalhado pelos componentes.
+export async function deliverOperationalProductItemAction(item: { source: "store" | "checkout"; item_id: string }) {
+  if (item.source === "store") return deliverAdditionalStoreItemAction(item.item_id);
+  return deliverOrderItemProductAction(item.item_id);
 }
 
 export async function checkinEntryAction(payload: { ticket_id: string; wristband_code?: string }) {
@@ -2673,14 +2689,46 @@ export async function searchLinkedWristbandsAction(payload: { eventId: string; q
 // a torna obrigatoria.
 // ============================================================
 
-async function resolveTurboStoreItemByQr(
+// Nome do operador da PRIMEIRA entrega, a partir de audit_logs -- nenhum dos
+// dois dominios tem coluna propria de "quem entregou" (so delivered_at).
+// deliver_store_order_item/deliver_order_item_product sao IDEMPOTENTES
+// (retornam early em status='delivered', ANTES de qualquer insert em
+// audit_logs) -- garante no maximo 1 linha daquela acao por item, entao
+// nunca ha ambiguidade sobre qual e "a primeira" entrega. Reusa
+// resolveOperatorNames (unico resolvedor canonico de "nome a partir de
+// user_id" pra ACOES administrativas neste projeto) -- nunca inventa o nome
+// a partir do usuario atual.
+async function resolveDeliveredByName(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  action: "store_order_item_delivered" | "order_item_product_delivered",
+  itemId: string,
+): Promise<string | null> {
+  const { data: log } = await supabase
+    .from("audit_logs")
+    .select("details")
+    .eq("action", action)
+    .eq("entity_id", itemId)
+    .limit(1)
+    .maybeSingle();
+  const actorUserId = log?.details && typeof log.details === "object" ? String((log.details as Record<string, unknown>).actor_user_id ?? "") : "";
+  if (!actorUserId) return null;
+  const names = await resolveOperatorNames([actorUserId]);
+  return names.get(actorUserId) ?? "Operador administrativo";
+}
+
+// Produto da LOJA STANDALONE (store_orders/store_order_items). Resolve
+// SEMPRE por qr_token (coluna text) -- nunca por id (uuid): o token
+// escaneado nao e um uuid, comparar contra uma coluna text nunca tenta um
+// cast. Devolve o formato canonico OperationalProductItem (source='store')
+// -- a UI nunca mais precisa saber que esta tabela existe.
+async function resolveStoreOrderItemByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
-): Promise<TurboStoreItemDetails | null> {
+): Promise<OperationalProductItem | null> {
   const { data: line } = await supabase
     .from("store_order_items")
     .select(
-      "id, quantity, status, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number)",
+      "id, store_order_id, quantity, status, delivered_at, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name))",
     )
     .eq("qr_token", tokenCandidate)
     .limit(1)
@@ -2692,39 +2740,47 @@ async function resolveTurboStoreItemByQr(
   const variant = getRelation(
     line.store_item_variants as { name: string; value: string } | Array<{ name: string; value: string }> | null,
   );
-  const order = getRelation(line.store_orders as { order_number: string } | { order_number: string }[] | null);
+  const order = getRelation(
+    line.store_orders as { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null }> | null,
+  );
+  const event = order ? getRelation(order.events) : null;
 
-  const { data: image } = await supabase
-    .from("store_item_images")
-    .select("image_url")
-    .eq("store_item_id", String(line.store_item_id))
-    .eq("is_primary", true)
-    .limit(1)
-    .maybeSingle();
+  let buyerName = "Comprador não identificado";
+  const buyerUserId = order?.user_id ? String(order.user_id) : null;
+  if (buyerUserId && order?.event_id) {
+    const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(order.event_id) });
+    const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
+    if (buyer?.full_name) buyerName = String(buyer.full_name);
+  }
+
+  const status = String(line.status ?? "reserved");
+  const deliveryStatus: OperationalProductItem["delivery_status"] = status === "delivered" ? "delivered" : status === "cancelled" ? "cancelled" : "to_deliver";
 
   return {
-    id: String(line.id),
-    store_item_name: storeItem?.name ?? "Item",
-    variant_label: variant ? `${variant.name}: ${variant.value}` : null,
+    source: "store",
+    item_id: String(line.id),
+    order_id: String(line.store_order_id),
+    order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
+    product_name: storeItem?.name ?? "Item",
+    variant: variant ? `${variant.name}: ${variant.value}` : null,
     quantity: Number(line.quantity ?? 1),
-    status: (line.status as TurboStoreItemDetails["status"]) ?? "reserved",
-    image_url: image?.image_url ?? null,
-    order_number: order?.order_number ?? null,
+    event_id: order?.event_id ? String(order.event_id) : null,
+    event_name: event?.name ?? "Produto global",
+    buyer: buyerName,
+    payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
+    delivery_status: deliveryStatus,
+    delivered_at: line.delivered_at ? String(line.delivered_at) : null,
+    delivered_by: deliveryStatus === "delivered" ? await resolveDeliveredByName(supabase, "store_order_item_delivered", String(line.id)) : null,
   };
 }
 
 // Produto "compre junto" (order_items.item_kind='product', dominio orders +
 // order_items -- NUNCA store_orders/store_order_items, ver 20260916000000).
-// Resolve SEMPRE por qr_token (coluna text) -- nunca por id (uuid): o token
-// escaneado ("ITEM-xxxxxxxxxxxx") nao e um uuid, e comparar contra uma
-// coluna text nunca tenta um cast. buyer_name reusa get_operation_buyers,
-// a mesma RPC ja usada por getOperationTicketDetailsAction pra resolver
-// comprador a partir de orders.user_id -- nenhuma segunda forma de achar
-// nome de comprador.
+// Mesmo formato canonico (source='checkout').
 async function resolveOrderItemProductByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
-): Promise<OrderItemProductDetails | null> {
+): Promise<OperationalProductItem | null> {
   const { data: line } = await supabase
     .from("order_items")
     .select(
@@ -2754,20 +2810,40 @@ async function resolveOrderItemProductByQr(
     if (buyer?.full_name) buyerName = String(buyer.full_name);
   }
 
+  const status = String(line.status ?? "reserved");
+  const deliveryStatus: OperationalProductItem["delivery_status"] =
+    status === "delivered" ? "delivered" : ["cancelled", "expired", "refunded", "transferred"].includes(status) ? "cancelled" : "to_deliver";
+
   return {
-    kind: "order_item_product",
-    order_item_id: String(line.id),
+    source: "checkout",
+    item_id: String(line.id),
     order_id: String(line.order_id),
+    order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
+    product_name: storeItem?.name ?? "Item",
+    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    quantity: Number(line.quantity ?? 1),
     event_id: String(line.event_id),
     event_name: event?.name ?? "Evento",
-    order_number: order ? orderDisplayReference(order.display_number, order.order_number) : null,
-    buyer_name: buyerName,
-    store_item_name: storeItem?.name ?? "Item",
-    variant_label: variant ? `${variant.name}: ${variant.value}` : null,
-    quantity: Number(line.quantity ?? 1),
-    status: (line.status as OrderItemProductDetails["status"]) ?? "reserved",
+    buyer: buyerName,
+    payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
+    delivery_status: deliveryStatus,
     delivered_at: line.delivered_at ? String(line.delivered_at) : null,
+    delivered_by: deliveryStatus === "delivered" ? await resolveDeliveredByName(supabase, "order_item_product_delivered", String(line.id)) : null,
   };
+}
+
+// Unico ponto de resolucao de produto por QR, reusado por Central
+// (searchPickupParticipantByQrAction) e Turbo (resolveTurboScanAction) --
+// tenta loja standalone primeiro, depois "compre junto"; nunca confunde os
+// dois (o formato devolvido ja carrega `source`), e nunca precisa que o
+// chamador saiba qual tabela tentar.
+async function resolveOperationalProductByQr(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<OperationalProductItem | null> {
+  const storeItem = await resolveStoreOrderItemByQr(supabase, tokenCandidate);
+  if (storeItem) return storeItem;
+  return resolveOrderItemProductByQr(supabase, tokenCandidate);
 }
 
 export async function resolveTurboScanAction(rawValue: string): Promise<TurboScanResult> {
@@ -2792,23 +2868,14 @@ export async function resolveTurboScanAction(rawValue: string): Promise<TurboSca
     return { success: true, kind: "ticket", participant: detail.participant as OperationTicketDetails };
   }
 
-  const item = await resolveTurboStoreItemByQr(supabase, tokenCandidate);
+  const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
   if (item) {
-    // So exige store.deliver quando o QR realmente resolveu pra um item de
-    // loja -- assim um operador sem essa permissao continua recebendo
-    // "nao encontrado" pra qualquer outro QR, e uma mensagem especifica de
-    // permissao so quando o item existe de verdade.
+    // So exige store.deliver quando o QR realmente resolveu pra um produto
+    // (de qualquer um dos dois canais) -- assim um operador sem essa
+    // permissao continua recebendo "nao encontrado" pra qualquer outro QR,
+    // e uma mensagem especifica de permissao so quando o item existe.
     await assertPermission("store.deliver");
-    return { success: true, kind: "store_item", item };
-  }
-
-  // Produto "compre junto" (order_items) -- dominio DIFERENTE de store_item
-  // acima (store_order_items). Mesma permissao canonica (store.deliver),
-  // mesmo raciocinio de so exigi-la depois de confirmar que o QR resolveu.
-  const orderItemProduct = await resolveOrderItemProductByQr(supabase, tokenCandidate);
-  if (orderItemProduct) {
-    await assertPermission("store.deliver");
-    return { success: true, kind: "order_item_product", item: orderItemProduct };
+    return { success: true, kind: "product", item };
   }
 
   return { success: false, message: "QR Code não corresponde a nenhum ingresso ou produto." };
