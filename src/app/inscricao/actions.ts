@@ -646,6 +646,14 @@ export type UnifiedOrderSnapshot = {
     gateway_payment_id: string | null;
     expires_at: string | null;
     paid_at: string | null;
+    /** 'absorb'|'pass_through'|'split'|null (null = sem payment_method escolhido ainda, ou pedido gratuito). Fonte: payments.payment_fee_mode (get_cart_order_details). */
+    payment_fee_mode: string | null;
+    /** Taxa TEORICA total calculada pela regra do metodo escolhido, antes de dividir entre comprador/organizador. */
+    payment_fee_calculated_amount: number;
+    /** Fatia da taxa somada a final_amount e efetivamente cobrada do comprador -- 0 quando payment_fee_mode='absorb'. */
+    payment_fee_customer_amount: number;
+    /** Fatia da taxa absorvida pelo organizador -- nunca cobrada do comprador. */
+    payment_fee_organizer_amount: number;
   };
   items: UnifiedOrderItem[];
   kit_items: UnifiedOrderKitItem[];
@@ -707,6 +715,7 @@ async function getUnifiedOrderSnapshot(
   const paymentDefaults = {
     payment_id: '', amount: 0, discount_amount: 0, final_amount: 0, payment_method: null,
     payment_status: 'pending', pix_code: null, pix_qrcode: null, gateway_payment_id: null, expires_at: null, paid_at: null,
+    payment_fee_mode: null, payment_fee_calculated_amount: 0, payment_fee_customer_amount: 0, payment_fee_organizer_amount: 0,
   };
 
   const ticketIds = items.map((item) => item.ticket_id).filter((id): id is string => Boolean(id));
@@ -737,6 +746,10 @@ async function getUnifiedOrderSnapshot(
             gateway_payment_id: rawPayment.gateway_payment_id ? String(rawPayment.gateway_payment_id) : null,
             expires_at: rawPayment.expires_at ? String(rawPayment.expires_at) : null,
             paid_at: rawPayment.paid_at ? String(rawPayment.paid_at) : null,
+            payment_fee_mode: rawPayment.payment_fee_mode ? String(rawPayment.payment_fee_mode) : null,
+            payment_fee_calculated_amount: Number(rawPayment.payment_fee_calculated_amount ?? 0),
+            payment_fee_customer_amount: Number(rawPayment.payment_fee_customer_amount ?? 0),
+            payment_fee_organizer_amount: Number(rawPayment.payment_fee_organizer_amount ?? 0),
           }
         : paymentDefaults,
       items,
@@ -2723,10 +2736,32 @@ export async function applyCartCouponAction(orderId: string, couponCode: string 
   return getCartOrderDetailsAction(orderId);
 }
 
-export async function finalizeCartOrderAction(orderId: string, paymentMethod: string) {
+export async function finalizeCartOrderAction(orderId: string, paymentMethod: string, installments: number = 1) {
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc('finalize_cart_order_payment', { p_order_id: orderId, p_payment_method: paymentMethod });
+  // finalize_cart_order_payment grava direto em payments.payment_method,
+  // que so aceita o dominio do banco ('pix'|'credit_card'|'cash'|'courtesy'
+  // -- payments_method_check). 'credit_card_single'/'credit_card_installments'
+  // sao granularidade so de UI/config (event_payment_methods) -- colados aqui
+  // com o MESMO toDbPaymentMethod ja usado pelos outros dois checkouts
+  // (create_registration/create_multi_ticket_order_checkout_legacy), pra
+  // nunca violar a constraint nem duplicar a regra de colagem.
+  const normalizedMethod = normalizeCheckoutPaymentMethod(paymentMethod) ?? 'pix';
+  const dbPaymentMethod = toDbPaymentMethod(normalizedMethod);
+  const resolvedInstallments = normalizedMethod === 'credit_card_installments' ? Math.max(1, Math.floor(installments || 1)) : 1;
+
+  const { error } = await supabase.rpc('finalize_cart_order_payment', {
+    p_order_id: orderId,
+    p_payment_method: dbPaymentMethod,
+    p_installments: resolvedInstallments,
+  });
   if (error) return { success: false as const, message: translateRegistrationErrorMessage(error.message) };
+
+  // Best-effort: se a taxa recalculada pro metodo escolhido mudou o total e
+  // havia uma cobranca externa (gateway real) ja associada (ex.: troca de
+  // metodo depois de um PIX ja gerado), finalize_cart_order_payment ja
+  // invalidou o vinculo local (mesmo mecanismo de apply_cart_coupon) -- isso
+  // so cancela a cobranca do LADO DO GATEWAY. Nunca bloqueia a resposta.
+  await cancelPendingExternalCharge(supabase, orderId);
 
   const snapshot = await getUnifiedOrderSnapshot(supabase, orderId);
   if (!snapshot.success) return snapshot;

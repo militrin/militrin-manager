@@ -1,5 +1,5 @@
 import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "./types";
-import { vendasFunil, vendasPedidos } from "./queries/vendas";
+import { vendasFunil, vendasPedidos, financeiroTaxasPagamento } from "./queries/vendas";
 import { kitsPorOperador, kitsEntregasDetalhado } from "./queries/kits";
 import { pulseirasResumo, pulseirasHistorico } from "./queries/pulseiras";
 import { estoqueSaldo, estoqueMovimentacoes } from "./queries/estoque";
@@ -17,6 +17,7 @@ type ReportQueryFn = (supabase: ReportSupabaseClient, ctx: ReportQueryContext) =
 export const REPORT_REGISTRY: Record<string, ReportQueryFn> = {
   "vendas-funil": vendasFunil,
   "vendas-pedidos": vendasPedidos,
+  "financeiro-taxas-pagamento": financeiroTaxasPagamento,
   "kits-por-operador": kitsPorOperador,
   "kits-entregas-detalhado": kitsEntregasDetalhado,
   "pulseiras-resumo": pulseirasResumo,

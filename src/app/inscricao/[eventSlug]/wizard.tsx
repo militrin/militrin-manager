@@ -171,6 +171,10 @@ type OrderSnapshotPayload = {
     gateway_payment_id: string | null;
     expires_at: string | null;
     paid_at: string | null;
+    payment_fee_mode: string | null;
+    payment_fee_calculated_amount: number;
+    payment_fee_customer_amount: number;
+    payment_fee_organizer_amount: number;
   };
   items: Array<{
     order_item_id: string;
@@ -244,6 +248,10 @@ type RegistrationSnapshot = {
     gateway_payment_id: string | null;
     expires_at: string | null;
     paid_at: string | null;
+    payment_fee_mode: string | null;
+    payment_fee_calculated_amount: number;
+    payment_fee_customer_amount: number;
+    payment_fee_organizer_amount: number;
   };
   kit_items: OrderSnapshotPayload['kit_items'];
   qr_token: string | null;
@@ -1238,6 +1246,10 @@ export function RegistrationWizard({
         gateway_payment_id: order?.payment?.gateway_payment_id || null,
         expires_at: order?.payment?.expires_at || null,
         paid_at: order?.payment?.paid_at || (paid ? new Date().toISOString() : null),
+        payment_fee_mode: order?.payment?.payment_fee_mode ?? null,
+        payment_fee_calculated_amount: Number(order?.payment?.payment_fee_calculated_amount ?? 0),
+        payment_fee_customer_amount: Number(order?.payment?.payment_fee_customer_amount ?? 0),
+        payment_fee_organizer_amount: Number(order?.payment?.payment_fee_organizer_amount ?? 0),
       },
       kit_items: Array.isArray(order?.kit_items) ? order.kit_items : [],
       qr_token: firstTicket?.ticket_token || null,
@@ -2779,6 +2791,23 @@ export function RegistrationWizard({
                   </p>
                 </div>
 
+                {registration.payment.payment_fee_customer_amount > 0 ? (
+                  <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Subtotal</span>
+                      <span>{money(registration.payment.amount - registration.payment.discount_amount)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Taxa de pagamento</span>
+                      <span>{money(registration.payment.payment_fee_customer_amount)}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between border-t border-slate-800 pt-1 font-semibold text-emerald-200">
+                      <span>Total</span>
+                      <span>{money(registration.payment.final_amount)}</span>
+                    </div>
+                  </div>
+                ) : null}
+
                 {(registration.payment.payment_method ?? form.payment_method) === 'pix' ? (
                   <PixPaymentCard
                     amount={registration.payment.final_amount}
@@ -2918,6 +2947,9 @@ export function RegistrationWizard({
                     <p><strong>Camiseta:</strong> {registration.shirt_type || '-'} / {registration.shirt_size || '-'}</p>
                     <p><strong>Valor original:</strong> {money(registration.payment.amount)}</p>
                     <p><strong>Desconto:</strong> {money(registration.payment.discount_amount)}</p>
+                    {registration.payment.payment_fee_customer_amount > 0 ? (
+                      <p><strong>Taxa de pagamento:</strong> {money(registration.payment.payment_fee_customer_amount)}</p>
+                    ) : null}
                     <p><strong>Valor final:</strong> {money(registration.payment.final_amount)}</p>
                     <p><strong>Pagamento:</strong> {getStatusLabel(registration.payment.payment_status)}</p>
                   </div>

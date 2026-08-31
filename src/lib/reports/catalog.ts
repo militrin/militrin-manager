@@ -142,6 +142,16 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     needsDateRange: true,
   },
   {
+    id: "financeiro-taxas-pagamento",
+    label: "Taxa de pagamento repassada ao comprador",
+    category: "financeiro",
+    kind: "detalhado",
+    description: "Por pedido: valor dos itens, modo da taxa, taxa calculada, fatia repassada ao comprador e fatia absorvida pelo organizador.",
+    permission: "finance.view",
+    needsEvent: "required",
+    needsDateRange: true,
+  },
+  {
     id: "cupons-uso",
     label: "Uso de cupons",
     category: "cupons",

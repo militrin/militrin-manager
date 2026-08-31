@@ -392,6 +392,17 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     pix_enabled: Boolean(paymentMethodsRow?.pix_enabled ?? true),
     credit_card_single_enabled: Boolean(paymentMethodsRow?.credit_card_single_enabled ?? true),
     credit_card_installments_enabled: Boolean(paymentMethodsRow?.credit_card_installments_enabled ?? true),
+    pix_fee_mode: String(paymentMethodsRow?.pix_fee_mode ?? 'absorb') as 'absorb' | 'pass_through' | 'split',
+    pix_fee_fixed_amount: Number(paymentMethodsRow?.pix_fee_fixed_amount ?? 0),
+    pix_fee_percentage: Number(paymentMethodsRow?.pix_fee_percentage ?? 0),
+    pix_customer_fee_share_percent: Number(paymentMethodsRow?.pix_customer_fee_share_percent ?? 0),
+    credit_card_single_fee_mode: String(paymentMethodsRow?.credit_card_single_fee_mode ?? 'absorb') as 'absorb' | 'pass_through' | 'split',
+    credit_card_single_fee_fixed_amount: Number(paymentMethodsRow?.credit_card_single_fee_fixed_amount ?? 0),
+    credit_card_single_fee_percentage: Number(paymentMethodsRow?.credit_card_single_fee_percentage ?? 0),
+    credit_card_single_customer_fee_share_percent: Number(paymentMethodsRow?.credit_card_single_customer_fee_share_percent ?? 0),
+    credit_card_installments_fee_mode: String(paymentMethodsRow?.credit_card_installments_fee_mode ?? 'absorb') as 'absorb' | 'pass_through' | 'split',
+    credit_card_installments_customer_fee_share_percent: Number(paymentMethodsRow?.credit_card_installments_customer_fee_share_percent ?? 0),
+    installment_fees: (Array.isArray(paymentMethodsRow?.installment_fees) ? paymentMethodsRow.installment_fees : []) as Array<{ installments: number; fixed_fee: number; percentage_fee: number }>,
   };
 
   return (

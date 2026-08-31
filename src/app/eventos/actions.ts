@@ -130,11 +130,32 @@ const eventScheduleSchema = z.object({
   is_visible_to_users: z.boolean().default(true),
 });
 
+const paymentFeeModeSchema = z.enum(['absorb', 'pass_through', 'split']);
+const feePercentSchema = z.number().min(0).max(100).default(0);
+const feeFixedAmountSchema = z.number().min(0).default(0);
+
+const installmentFeeSchema = z.object({
+  installments: z.number().int().min(1),
+  fixed_fee: feeFixedAmountSchema,
+  percentage_fee: feePercentSchema,
+});
+
 const eventPaymentMethodsSchema = z.object({
   event_id: z.string().uuid(),
   pix_enabled: z.boolean().default(true),
   credit_card_single_enabled: z.boolean().default(true),
   credit_card_installments_enabled: z.boolean().default(true),
+  pix_fee_mode: paymentFeeModeSchema.default('absorb'),
+  pix_fee_fixed_amount: feeFixedAmountSchema,
+  pix_fee_percentage: feePercentSchema,
+  pix_customer_fee_share_percent: feePercentSchema,
+  credit_card_single_fee_mode: paymentFeeModeSchema.default('absorb'),
+  credit_card_single_fee_fixed_amount: feeFixedAmountSchema,
+  credit_card_single_fee_percentage: feePercentSchema,
+  credit_card_single_customer_fee_share_percent: feePercentSchema,
+  credit_card_installments_fee_mode: paymentFeeModeSchema.default('absorb'),
+  credit_card_installments_customer_fee_share_percent: feePercentSchema,
+  installment_fees: z.array(installmentFeeSchema).default([]),
 });
 
 function parseTs(value?: string | null) {
@@ -478,6 +499,17 @@ export async function upsertEventPaymentMethodsAction(payload: z.infer<typeof ev
       p_pix_enabled: parsed.data.pix_enabled,
       p_credit_card_single_enabled: parsed.data.credit_card_single_enabled,
       p_credit_card_installments_enabled: parsed.data.credit_card_installments_enabled,
+      p_pix_fee_mode: parsed.data.pix_fee_mode,
+      p_pix_fee_fixed_amount: parsed.data.pix_fee_fixed_amount,
+      p_pix_fee_percentage: parsed.data.pix_fee_percentage,
+      p_pix_customer_fee_share_percent: parsed.data.pix_customer_fee_share_percent,
+      p_credit_card_single_fee_mode: parsed.data.credit_card_single_fee_mode,
+      p_credit_card_single_fee_fixed_amount: parsed.data.credit_card_single_fee_fixed_amount,
+      p_credit_card_single_fee_percentage: parsed.data.credit_card_single_fee_percentage,
+      p_credit_card_single_customer_fee_share_percent: parsed.data.credit_card_single_customer_fee_share_percent,
+      p_credit_card_installments_fee_mode: parsed.data.credit_card_installments_fee_mode,
+      p_credit_card_installments_customer_fee_share_percent: parsed.data.credit_card_installments_customer_fee_share_percent,
+      p_installment_fees: parsed.data.installment_fees,
     });
 
     if (error) throw error;

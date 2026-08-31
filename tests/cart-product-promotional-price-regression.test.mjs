@@ -76,8 +76,11 @@ test('definicao VIGENTE de set_cart_order_item_quantity esta na migration de cor
 });
 
 test('definicao VIGENTE de get_cart_order_details devolve product_base_unit_price por item (unico campo que faltava pro frontend mostrar o preco original riscado a partir do snapshot canonico)', async () => {
-  const { source, definedInFile } = await resolveCurrentFunctionDefinition('get_cart_order_details');
-  assert.equal(definedInFile, '20260912000000_fix_cart_product_promotional_price_regression.sql');
+  const { source } = await resolveCurrentFunctionDefinition('get_cart_order_details');
+  // Nao trava no nome do arquivo: get_cart_order_details foi redefinida de
+  // novo em 20260913000000 (feature de taxa de pagamento, campo novo no
+  // bloco payment) -- o que importa aqui e que o campo desta correcao
+  // (product_base_unit_price) sobreviveu a essa redefinicao seguinte.
   assert.match(source, /'product_base_unit_price', oi\.product_base_unit_price/);
 });
 

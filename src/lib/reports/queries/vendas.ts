@@ -62,6 +62,99 @@ export async function vendasFunil(supabase: ReportSupabaseClient, ctx: ReportQue
   });
 }
 
+// Distingue explicitamente 2 conceitos que o enunciado pediu para nunca
+// confundir: taxa CALCULADA (payment_fee_calculated_amount) e sua fatia
+// repassada ao comprador (payment_fee_customer_amount) x absorvida pelo
+// organizador (payment_fee_organizer_amount) sao a taxa TEORICA, decidida
+// ANTES da cobranca pela config do evento -- ja disponivel para qualquer
+// pedido finalizado. A taxa REAL cobrada pelo gateway (payments.fee_amount/
+// net_amount, 20260895000000) so existe DEPOIS que o webhook confirma o
+// pagamento e o provider reporta o valor exato -- nunca inventado aqui
+// quando ausente (fica "-").
+export async function financeiroTaxasPagamento(supabase: ReportSupabaseClient, ctx: ReportQueryContext): Promise<ReportResult> {
+  const resolved = await resolveRequiredEvent(supabase, ctx.eventId, ctx.organizationId);
+  if ("error" in resolved) return reportError(resolved.error);
+
+  let query = supabase
+    .from("orders")
+    .select("order_number,display_number,status,final_amount,discount_amount,created_at,payments(payment_method,installments,final_amount,payment_fee_mode,payment_fee_calculated_amount,payment_fee_customer_amount,payment_fee_organizer_amount,fee_amount,net_amount,payment_status)")
+    .eq("event_id", resolved.event.id)
+    .order("created_at", { ascending: false })
+    .limit(2001);
+  if (ctx.dateFrom) query = query.gte("created_at", `${ctx.dateFrom}T00:00:00`);
+  if (ctx.dateTo) query = query.lte("created_at", `${ctx.dateTo}T23:59:59`);
+  const { data, error } = await query;
+  if (error) return reportError(error.message);
+
+  const orders = data ?? [];
+  let totalItemsNet = 0;
+  let totalCalculatedFee = 0;
+  let totalCustomerFee = 0;
+  let totalOrganizerFee = 0;
+  let totalCharged = 0;
+
+  const rows = orders.map((order) => {
+    const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
+    const itemsNet = Number(order.final_amount ?? 0);
+    const calculatedFee = Number(payment?.payment_fee_calculated_amount ?? 0);
+    const customerFee = Number(payment?.payment_fee_customer_amount ?? 0);
+    const organizerFee = Number(payment?.payment_fee_organizer_amount ?? 0);
+    const charged = Number(payment?.final_amount ?? itemsNet);
+
+    if (order.status === "confirmed") {
+      totalItemsNet += itemsNet;
+      totalCalculatedFee += calculatedFee;
+      totalCustomerFee += customerFee;
+      totalOrganizerFee += organizerFee;
+      totalCharged += charged;
+    }
+
+    return {
+      pedido: orderDisplayReference(order.display_number, order.order_number),
+      status: STATUS_LABELS[String(order.status ?? "")] ?? String(order.status ?? ""),
+      pagamento: payment?.payment_method ? String(payment.payment_method) : "-",
+      parcelas: payment?.installments ? String(payment.installments) : "-",
+      valor_itens: money(itemsNet),
+      modo_taxa: payment?.payment_fee_mode ? String(payment.payment_fee_mode) : "-",
+      taxa_calculada: money(calculatedFee),
+      taxa_repassada_cliente: money(customerFee),
+      taxa_absorvida_organizador: money(organizerFee),
+      total_cobrado: money(charged),
+      taxa_real_gateway: payment?.fee_amount != null ? money(Number(payment.fee_amount)) : "-",
+      criado_em: formatDateTimeBR(String(order.created_at ?? "")),
+    };
+  });
+
+  return reportSuccess({
+    reportId: "financeiro-taxas-pagamento",
+    title: "Taxa de pagamento repassada ao comprador",
+    subtitle: `Evento: ${resolved.event.name} · ${rows.length} pedido(s)${dateRangeLabel(ctx.dateFrom, ctx.dateTo)}`,
+    generatedAt: new Date().toISOString(),
+    summaryCards: [
+      { label: "Itens (pedidos confirmados)", value: money(totalItemsNet) },
+      { label: "Taxa calculada total", value: money(totalCalculatedFee) },
+      { label: "Taxa repassada ao comprador", value: money(totalCustomerFee) },
+      { label: "Taxa absorvida pelo organizador", value: money(totalOrganizerFee) },
+      { label: "Total cobrado dos compradores", value: money(totalCharged) },
+    ],
+    columns: [
+      { key: "pedido", label: "Pedido" },
+      { key: "status", label: "Status" },
+      { key: "pagamento", label: "Forma de pagamento" },
+      { key: "parcelas", label: "Parcelas" },
+      { key: "valor_itens", label: "Valor dos itens", align: "right" },
+      { key: "modo_taxa", label: "Modo da taxa" },
+      { key: "taxa_calculada", label: "Taxa calculada", align: "right" },
+      { key: "taxa_repassada_cliente", label: "Repassada ao comprador", align: "right" },
+      { key: "taxa_absorvida_organizador", label: "Absorvida pelo organizador", align: "right" },
+      { key: "total_cobrado", label: "Total cobrado", align: "right" },
+      { key: "taxa_real_gateway", label: "Taxa real do gateway", align: "right" },
+      { key: "criado_em", label: "Criado em" },
+    ],
+    rows,
+  });
+}
+
 export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQueryContext): Promise<ReportResult> {
   const resolved = await resolveRequiredEvent(supabase, ctx.eventId, ctx.organizationId);
   if ("error" in resolved) return reportError(resolved.error);
