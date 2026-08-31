@@ -11,8 +11,10 @@ import type {
   OperationParticipantDetails,
   OperationTicketDetails,
   OperationTicketRow,
+  OrderItemProductDetails,
   TicketBackedOperationEntry,
   PickupCapabilities,
+  PickupDetails,
   PickupEvent,
   ReasonCode,
   TurboScanResult,
@@ -1974,14 +1976,17 @@ export async function searchPickupParticipantAction(query: string) {
   return getOperationTicketDetailsAction(matchedTicketId);
 }
 
-export async function searchPickupParticipantByQrAction(rawValue: string) {
+export async function searchPickupParticipantByQrAction(rawValue: string): Promise<
+  | { success: true; participant: PickupDetails | OrderItemProductDetails }
+  | { success: false; message: string }
+> {
   await assertPermission("participants.view");
 
   const supabase = await createServerSupabaseClient();
   const tokenCandidate = parseTokenCandidate(rawValue);
 
   if (!tokenCandidate) {
-    return { success: false as const, message: "QR Code vazio." };
+    return { success: false, message: "QR Code vazio." };
   }
 
   const { data: ticket, error } = await supabase
@@ -1991,14 +1996,26 @@ export async function searchPickupParticipantByQrAction(rawValue: string) {
     .limit(1)
     .maybeSingle();
 
-  if (error || !ticket?.id) {
-    return {
-      success: false as const,
-      message: error?.message ?? "Ingresso não encontrado para este QR Code.",
-    };
+  if (error) return { success: false, message: error.message };
+
+  if (ticket?.id) {
+    const detail = await getOperationTicketDetailsAction(String(ticket.id));
+    if (!detail.success || !detail.participant) return { success: false, message: detail.message ?? "Não foi possível carregar o ingresso." };
+    return { success: true, participant: detail.participant };
   }
 
-  return getOperationTicketDetailsAction(String(ticket.id));
+  // Produto "compre junto" (order_items) -- dominio DIFERENTE de
+  // store_orders/store_order_items (esta acao nunca resolveu, nem deveria
+  // resolver, aquele dominio -- retirada de loja solo tem sua propria tela).
+  // Resolucao SEMPRE por qr_token (text), nunca id (uuid) -- o token
+  // escaneado nao e um uuid.
+  const orderItemProduct = await resolveOrderItemProductByQr(supabase, tokenCandidate);
+  if (orderItemProduct) {
+    await assertPermission("store.deliver");
+    return { success: true, participant: orderItemProduct };
+  }
+
+  return { success: false, message: "Ingresso não encontrado para este QR Code." };
 }
 
 function validateReasonPayload(payload: { reason_code: string; reason_text?: string }) {
@@ -2269,6 +2286,32 @@ export async function deliverAdditionalStoreItemAction(storeOrderItemId: string)
   }
   revalidatePath("/operacoes");
   return { success: true, message: "Item adicional entregue com sucesso." };
+}
+
+// Entrega de produto "compre junto" (order_items.item_kind='product') --
+// dominio DIFERENTE de deliverAdditionalStoreItemAction (store_order_items)
+// acima. RPC propria (deliver_order_item_product, 20260917000000): mesma
+// permissao canonica store.deliver, mesmo padrao idempotente/auditado de
+// deliver_store_order_item, nunca reaproveita a RPC do outro dominio.
+export async function deliverOrderItemProductAction(orderItemId: string) {
+  await assertPermission("store.deliver");
+  if (!isUuid(orderItemId)) return { success: false, message: "Identificador inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("deliver_order_item_product", { p_order_item_id: orderItemId });
+  if (error) {
+    const serialized = `${error.message ?? ""} ${(error as { details?: string }).details ?? ""}`;
+    if (serialized.includes("PRODUCT_OUT_OF_STOCK")) {
+      try {
+        const detail = JSON.parse((error as { details?: string }).details ?? "{}") as { message?: string };
+        return { success: false, message: detail.message ?? "Estoque insuficiente. A entrega não foi confirmada." };
+      } catch {
+        return { success: false, message: "Estoque insuficiente. A entrega não foi confirmada." };
+      }
+    }
+    return { success: false, message: error.message };
+  }
+  revalidatePath("/operacoes");
+  return { success: true, message: "Produto entregue com sucesso." };
 }
 
 export async function checkinEntryAction(payload: { ticket_id: string; wristband_code?: string }) {
@@ -2670,6 +2713,63 @@ async function resolveTurboStoreItemByQr(
   };
 }
 
+// Produto "compre junto" (order_items.item_kind='product', dominio orders +
+// order_items -- NUNCA store_orders/store_order_items, ver 20260916000000).
+// Resolve SEMPRE por qr_token (coluna text) -- nunca por id (uuid): o token
+// escaneado ("ITEM-xxxxxxxxxxxx") nao e um uuid, e comparar contra uma
+// coluna text nunca tenta um cast. buyer_name reusa get_operation_buyers,
+// a mesma RPC ja usada por getOperationTicketDetailsAction pra resolver
+// comprador a partir de orders.user_id -- nenhuma segunda forma de achar
+// nome de comprador.
+async function resolveOrderItemProductByQr(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<OrderItemProductDetails | null> {
+  const { data: line } = await supabase
+    .from("order_items")
+    .select(
+      "id, order_id, event_id, quantity, status, delivered_at, store_item_id, store_items(name), store_item_variants(name, value), orders(order_number, display_number, user_id), events(name)",
+    )
+    .eq("qr_token", tokenCandidate)
+    .eq("item_kind", "product")
+    .limit(1)
+    .maybeSingle();
+
+  if (!line?.id) return null;
+
+  const storeItem = getRelation(line.store_items as { name: string } | { name: string }[] | null);
+  const variant = getRelation(
+    line.store_item_variants as { name: string; value: string } | Array<{ name: string; value: string }> | null,
+  );
+  const order = getRelation(
+    line.orders as { order_number: string; display_number: string | null; user_id: string | null } | Array<{ order_number: string; display_number: string | null; user_id: string | null }> | null,
+  );
+  const event = getRelation(line.events as { name: string } | { name: string }[] | null);
+
+  let buyerName = "Comprador não identificado";
+  const buyerUserId = order?.user_id ? String(order.user_id) : null;
+  if (buyerUserId) {
+    const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(line.event_id ?? "") });
+    const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
+    if (buyer?.full_name) buyerName = String(buyer.full_name);
+  }
+
+  return {
+    kind: "order_item_product",
+    order_item_id: String(line.id),
+    order_id: String(line.order_id),
+    event_id: String(line.event_id),
+    event_name: event?.name ?? "Evento",
+    order_number: order ? orderDisplayReference(order.display_number, order.order_number) : null,
+    buyer_name: buyerName,
+    store_item_name: storeItem?.name ?? "Item",
+    variant_label: variant ? `${variant.name}: ${variant.value}` : null,
+    quantity: Number(line.quantity ?? 1),
+    status: (line.status as OrderItemProductDetails["status"]) ?? "reserved",
+    delivered_at: line.delivered_at ? String(line.delivered_at) : null,
+  };
+}
+
 export async function resolveTurboScanAction(rawValue: string): Promise<TurboScanResult> {
   await assertPermission("participants.view");
 
@@ -2700,6 +2800,15 @@ export async function resolveTurboScanAction(rawValue: string): Promise<TurboSca
     // permissao so quando o item existe de verdade.
     await assertPermission("store.deliver");
     return { success: true, kind: "store_item", item };
+  }
+
+  // Produto "compre junto" (order_items) -- dominio DIFERENTE de store_item
+  // acima (store_order_items). Mesma permissao canonica (store.deliver),
+  // mesmo raciocinio de so exigi-la depois de confirmar que o QR resolveu.
+  const orderItemProduct = await resolveOrderItemProductByQr(supabase, tokenCandidate);
+  if (orderItemProduct) {
+    await assertPermission("store.deliver");
+    return { success: true, kind: "order_item_product", item: orderItemProduct };
   }
 
   return { success: false, message: "QR Code não corresponde a nenhum ingresso ou produto." };

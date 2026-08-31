@@ -29,11 +29,13 @@ import { OperationsFilters } from "./components/OperationsFilters";
 import { OperationsHeader } from "./components/OperationsHeader";
 import { OperationsTable } from "./components/OperationsTable";
 import { QrScannerModal } from "./components/QrScannerModal";
+import { OrderItemProductQrModal } from "./components/OrderItemProductQrModal";
 import { BatchMaterializeItemsDialog } from "./components/MaterializeItemsDialog";
 import { OperationalErrorDialog } from "./components/OperationalErrorDialog";
 import { getOperationalErrorTitle } from "./error-messages";
 import {
   EMPTY_PICKUP_FILTERS,
+  type OrderItemProductDetails,
   type PickupCapabilities,
   type PickupDetails,
   type PickupEvent,
@@ -298,6 +300,7 @@ function KitPickupPageContent() {
   const [message, setMessage] = useState<string | null>(null);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
   const [showScanner, setShowScanner] = useState(false);
+  const [orderItemProductModal, setOrderItemProductModal] = useState<OrderItemProductDetails | null>(null);
   const [capabilities, setCapabilities] = useState<PickupCapabilities>({
     canDeliverKit: false,
     canCheckin: false,
@@ -754,8 +757,23 @@ function KitPickupPageContent() {
     setMessage(null);
     const response = await searchPickupParticipantByQrAction(value);
 
-    if (!response.success || !response.participant) {
+    if (!response.success) {
       setMessage(response.message ?? "Participante não encontrado.");
+      return;
+    }
+
+    // Produto "compre junto" (order_items) -- dominio DIFERENTE de ingresso,
+    // resolve pra uma tela propria (modal), nunca entra na tabela de
+    // participantes. O evento e derivado do proprio order_item/order (nunca
+    // exigido do cliente pra resolver o QR) -- so validado AQUI, depois da
+    // resolucao, igual ao ingresso logo abaixo.
+    if (response.participant.kind === "order_item_product") {
+      if (response.participant.event_id !== selectedEvent?.id) {
+        setMessage("Produto encontrado em outro evento. Selecione o evento correspondente para operar.");
+        return;
+      }
+      setShowScanner(false);
+      setOrderItemProductModal(response.participant);
       return;
     }
 
@@ -945,6 +963,14 @@ function KitPickupPageContent() {
         <QrScannerModal
           onClose={() => setShowScanner(false)}
           onRead={handleQrRead}
+        />
+      ) : null}
+
+      {orderItemProductModal ? (
+        <OrderItemProductQrModal
+          item={orderItemProductModal}
+          onClose={() => setOrderItemProductModal(null)}
+          onDelivered={() => setOrderItemProductModal(null)}
         />
       ) : null}
 

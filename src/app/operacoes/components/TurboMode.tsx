@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useReducer, useRef } from 'react';
-import type { OperationEvent, OperationTicketDetails, TurboStoreItemDetails } from '../types';
+import type { OperationEvent, OperationTicketDetails, OrderItemProductDetails, TurboStoreItemDetails } from '../types';
 import {
   deliverAdditionalStoreItemAction,
   deliverKitAndCheckinAction,
   deliverKitCheckinAndLinkWristbandAction,
+  deliverOrderItemProductAction,
   resolveTurboScanAction,
 } from '../actions';
 import { getOperationalErrorTitle } from '../error-messages';
@@ -22,6 +23,12 @@ type TurboScreen =
   | { kind: 'scanning_wristband'; participant: OperationTicketDetails }
   | { kind: 'ticket_success'; message: string; extra: string | null }
   | { kind: 'product_review'; item: TurboStoreItemDetails }
+  // Produto "compre junto" (order_items) -- dominio DIFERENTE de
+  // product_review acima (store_order_items). Tela propria, NUNCA
+  // reaproveita ProductReview (que nao tem pedido/comprador/evento/status
+  // de pagamento pra mostrar, e nunca deveria -- os dois dominios nao se
+  // confundem nem na tela).
+  | { kind: 'order_item_product_review'; item: OrderItemProductDetails }
   | { kind: 'product_success' }
   // participant presente so quando o erro veio da ETAPA de pulseira -- deixa
   // o operador tentar outra pulseira pro MESMO ingresso (sem re-escanear o
@@ -31,6 +38,7 @@ type TurboScreen =
 type TurboAction =
   | { type: 'SCAN_TICKET'; participant: OperationTicketDetails }
   | { type: 'SCAN_PRODUCT'; item: TurboStoreItemDetails }
+  | { type: 'SCAN_ORDER_ITEM_PRODUCT'; item: OrderItemProductDetails }
   | { type: 'SCAN_ERROR'; title: string; message: string }
   | { type: 'GO_TO_WRISTBAND' }
   | { type: 'RETRY_WRISTBAND'; participant: OperationTicketDetails }
@@ -45,6 +53,8 @@ function reducer(state: TurboScreen, action: TurboAction): TurboScreen {
       return { kind: 'ticket_review', participant: action.participant };
     case 'SCAN_PRODUCT':
       return { kind: 'product_review', item: action.item };
+    case 'SCAN_ORDER_ITEM_PRODUCT':
+      return { kind: 'order_item_product_review', item: action.item };
     case 'SCAN_ERROR':
       return { kind: 'error', title: action.title, message: action.message, ticketId: null, participant: null };
     case 'GO_TO_WRISTBAND':
@@ -174,18 +184,49 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         return;
       }
 
+      if (result.kind === 'store_item') {
+        if (result.item.status === 'delivered') {
+          dispatch({ type: 'SCAN_ERROR', title: 'Produto já entregue', message: 'Este item já foi entregue anteriormente.' });
+        } else if (result.item.status === 'cancelled') {
+          dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
+        } else if (result.item.status === 'reserved') {
+          dispatch({
+            type: 'SCAN_ERROR',
+            title: 'Pagamento pendente',
+            message: 'Este pedido ainda não foi confirmado (pagamento pendente).',
+          });
+        } else {
+          dispatch({ type: 'SCAN_PRODUCT', item: result.item });
+        }
+        return;
+      }
+
+      // result.kind === 'order_item_product' -- dominio order_items (compre
+      // junto), DIFERENTE do store_item acima (store_order_items). Evento
+      // derivado do proprio item (event_id, ja resolvido no backend a
+      // partir de order_item -> order -> event_id) -- so validado AQUI,
+      // contra o evento ja selecionado, igual ao ingresso acima. Nunca
+      // exigido do cliente pra resolver o QR.
+      if (result.item.event_id !== event.id) {
+        dispatch({
+          type: 'SCAN_ERROR',
+          title: 'Evento diferente',
+          message: 'Este produto pertence a outro evento. Selecione o evento correspondente para operar.',
+        });
+        return;
+      }
       if (result.item.status === 'delivered') {
         dispatch({ type: 'SCAN_ERROR', title: 'Produto já entregue', message: 'Este item já foi entregue anteriormente.' });
-      } else if (result.item.status === 'cancelled') {
-        dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
       } else if (result.item.status === 'reserved') {
         dispatch({
           type: 'SCAN_ERROR',
           title: 'Pagamento pendente',
           message: 'Este pedido ainda não foi confirmado (pagamento pendente).',
         });
+      } else if (result.item.status !== 'confirmed') {
+        dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
       } else {
-        dispatch({ type: 'SCAN_PRODUCT', item: result.item });
+        dispatch({ type: 'SCAN_ORDER_ITEM_PRODUCT', item: result.item });
       }
     } catch (error) {
       dispatch({
@@ -299,6 +340,37 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     }
   }
 
+  // Entrega de produto "compre junto" -- dominio DIFERENTE de
+  // handleProductConfirm acima (store_order_items). Reusa PRODUCT_DONE (a
+  // mensagem de sucesso ja e generica o bastante pros dois dominios).
+  async function handleOrderItemProductConfirm(item: OrderItemProductDetails) {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    try {
+      const response = await deliverOrderItemProductAction(item.order_item_id);
+      if (!response.success) {
+        dispatch({
+          type: 'FAIL',
+          title: getOperationalErrorTitle(undefined, response.message ?? ''),
+          message: response.message ?? 'Não foi possível concluir a operação.',
+          ticketId: null,
+        });
+        return;
+      }
+      dispatch({ type: 'PRODUCT_DONE' });
+      scheduleReturn();
+    } catch (error) {
+      dispatch({
+        type: 'FAIL',
+        title: 'Erro de rede',
+        message: error instanceof Error ? error.message : 'Falha inesperada.',
+        ticketId: null,
+      });
+    } finally {
+      processingRef.current = false;
+    }
+  }
+
   return (
     <Chrome event={event} onExit={() => onExit()}>
       {screen.kind === 'scanning_initial' ? (
@@ -336,6 +408,10 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
       {screen.kind === 'product_review' ? (
         <ProductReview item={screen.item} onConfirm={() => void handleProductConfirm(screen.item)} onCancel={backToScanner} />
+      ) : null}
+
+      {screen.kind === 'order_item_product_review' ? (
+        <OrderItemProductReview item={screen.item} onConfirm={() => void handleOrderItemProductConfirm(screen.item)} onCancel={backToScanner} />
       ) : null}
 
       {screen.kind === 'product_success' ? (
@@ -462,6 +538,45 @@ function ProductReview({
         {item.variant_label ? <p className="text-slate-400">{item.variant_label}</p> : null}
         <p className="text-lg text-slate-300">Quantidade: {item.quantity}</p>
         <p className="text-sm uppercase tracking-wide text-amber-300">A entregar</p>
+      </div>
+
+      <div className="mt-auto flex flex-col gap-2">
+        <BigButton onClick={onConfirm}>Confirmar entrega</BigButton>
+        <BigButton tone="neutral" onClick={onCancel}>
+          Cancelar
+        </BigButton>
+      </div>
+    </div>
+  );
+}
+
+// Produto "compre junto" (order_items) -- dominio DIFERENTE de ProductReview
+// acima (store_order_items). Mostra pedido/comprador/evento/status, exigido
+// pelo fluxo operacional deste dominio (o outro nao precisa: item de loja
+// solo ja chega ate aqui sempre pago, sem ambiguidade de evento).
+function OrderItemProductReview({
+  item,
+  onConfirm,
+  onCancel,
+}: {
+  item: OrderItemProductDetails;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex flex-1 flex-col gap-4">
+      <div className="flex flex-col items-center gap-3 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center">
+        <p className="text-2xl font-black">{item.quantity}x {item.store_item_name}</p>
+        {item.variant_label ? <p className="text-slate-400">{item.variant_label}</p> : null}
+
+        <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
+          <InfoTile label="Pedido" value={item.order_number ?? '-'} />
+          <InfoTile label="Comprador" value={item.buyer_name} />
+          <InfoTile label="Evento" value={item.event_name} />
+          <InfoTile label="Pagamento" value="Pago" />
+        </div>
+
+        <p className="text-sm uppercase tracking-wide text-amber-300">A retirar</p>
       </div>
 
       <div className="mt-auto flex flex-col gap-2">

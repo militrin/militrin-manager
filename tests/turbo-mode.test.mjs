@@ -147,8 +147,15 @@ test("sucesso do ingresso mostra 'Pulseira vinculada e check-in realizado' e com
 // Fluxo B -- produto da loja
 // ============================================================
 
-test("QR de produto abre product_review com imagem/nome/variante/quantidade -- nunca a ficha do ingresso/pedido inteiro", () => {
-  const productReview = slice(turbo, "function ProductReview(", "function InfoTile(");
+test("QR de produto (store_order_items) abre product_review com imagem/nome/variante/quantidade -- nunca a ficha do ingresso/pedido inteiro, nem dados de order_items (dominio separado, ver OrderItemProductReview)", () => {
+  // Delimitado ate OrderItemProductReview (nao ate InfoTile): a partir desta
+  // sessao existe uma SEGUNDA tela de revisao de produto entre as duas
+  // (OrderItemProductReview, dominio order_items -- ver
+  // order-item-product-turbo-central-regression.test.mjs), que mostra
+  // buyer_name de proposito (dominio diferente, exigencia propria). Sem
+  // este limite o slice varreria as duas funcoes juntas e o
+  // doesNotMatch(buyer_name) abaixo falsearia uma regressao inexistente.
+  const productReview = slice(turbo, "function ProductReview(", "function OrderItemProductReview(");
   assert.match(productReview, /item\.store_item_name/);
   assert.match(productReview, /item\.variant_label/);
   assert.match(productReview, /Quantidade: \{item\.quantity\}/);
