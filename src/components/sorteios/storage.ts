@@ -23,6 +23,7 @@ export function generateSorteioId(date = new Date()): string {
 
 export function createEmptySession(): SorteioSession {
   return {
+    databaseId: null,
     id: generateSorteioId(),
     createdAt: new Date().toISOString(),
     importedFileName: null,
@@ -35,6 +36,11 @@ export function createEmptySession(): SorteioSession {
     disqualifications: [],
     confirmedWinner: null,
     history: [],
+    source: "csv",
+    instagramMediaId: null,
+    instagramMediaPermalink: null,
+    instagramIntegrationId: null,
+    snapshotFrozenAt: null,
   };
 }
 
@@ -45,7 +51,16 @@ export function loadSession(): SorteioSession {
     if (!raw) return createEmptySession();
     const parsed = JSON.parse(raw) as SorteioSession;
     if (!parsed || typeof parsed !== "object" || !parsed.id) return createEmptySession();
-    return parsed;
+    return {
+      ...parsed,
+      databaseId: parsed.databaseId ?? null,
+      entries: Array.isArray(parsed.entries) ? parsed.entries.map((entry) => ({ ...entry, commentCreatedAt: entry.commentCreatedAt ?? null })) : [],
+      source: parsed.source ?? "csv",
+      instagramMediaId: parsed.instagramMediaId ?? null,
+      instagramMediaPermalink: parsed.instagramMediaPermalink ?? null,
+      instagramIntegrationId: parsed.instagramIntegrationId ?? null,
+      snapshotFrozenAt: parsed.snapshotFrozenAt ?? null,
+    };
   } catch {
     return createEmptySession();
   }
@@ -81,5 +96,5 @@ export function loadArchivedSessions(): ArchivedSession[] {
 }
 
 export function makeHistoryEventId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return crypto.randomUUID();
 }

@@ -8,9 +8,10 @@ type DisqualifyModalProps = {
   winner: ParticipationEntry | null;
   onClose: () => void;
   onConfirm: (reason: DisqualificationReason, reasonLabel: string, otherDetail?: string) => void;
+  pending?: boolean;
 };
 
-export function DisqualifyModal({ open, winner, onClose, onConfirm }: DisqualifyModalProps) {
+export function DisqualifyModal({ open, winner, onClose, onConfirm, pending = false }: DisqualifyModalProps) {
   const [reason, setReason] = useState<DisqualificationReason>("not_following");
   const [otherDetail, setOtherDetail] = useState("");
   const [touched, setTouched] = useState(false);
@@ -78,6 +79,7 @@ export function DisqualifyModal({ open, winner, onClose, onConfirm }: Disqualify
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
+            disabled={pending}
             onClick={onClose}
             className="rounded-xl border border-slate-700 px-3 py-2 text-xs font-medium text-slate-200"
           >
@@ -85,10 +87,11 @@ export function DisqualifyModal({ open, winner, onClose, onConfirm }: Disqualify
           </button>
           <button
             type="button"
+            disabled={pending}
             onClick={handleConfirm}
             className="rounded-xl bg-rose-500 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-400"
           >
-            DESCLASSIFICAR E REALIZAR NOVO SORTEIO
+            {pending ? "SALVANDO..." : "DESCLASSIFICAR E REALIZAR NOVO SORTEIO"}
           </button>
         </div>
       </div>

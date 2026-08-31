@@ -8,6 +8,7 @@ export type ParticipationEntry = {
   mentionsCount: number | null;
   mentions: string;
   commentUrl: string;
+  commentCreatedAt: string | null;
   chance: string;
   status: ParticipationStatus;
 };
@@ -73,6 +74,7 @@ export type ConfirmedWinner = {
 };
 
 export type SorteioSession = {
+  databaseId: string | null;
   id: string;
   createdAt: string;
   importedFileName: string | null;
@@ -85,6 +87,11 @@ export type SorteioSession = {
   disqualifications: DisqualificationRecord[];
   confirmedWinner: ConfirmedWinner | null;
   history: HistoryEvent[];
+  source: "csv" | "instagram";
+  instagramMediaId: string | null;
+  instagramMediaPermalink: string | null;
+  instagramIntegrationId: string | null;
+  snapshotFrozenAt: string | null;
 };
 
 export type ArchivedSession = SorteioSession & { archivedAt: string };

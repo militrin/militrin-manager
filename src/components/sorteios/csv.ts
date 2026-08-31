@@ -166,6 +166,7 @@ export function parseSorteioCsv(text: string): CsvImportResult {
       mentionsCount: Number.isFinite(mentionsCountParsed) ? mentionsCountParsed : null,
       mentions: get(row, "mentions"),
       commentUrl: get(row, "comment_url"),
+      commentCreatedAt: null,
       chance: get(row, "chance"),
       status: "active",
     });

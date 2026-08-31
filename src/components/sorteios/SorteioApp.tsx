@@ -30,6 +30,8 @@ import { ParticipationsTable } from "./ParticipationsTable";
 import { TransparencyPanel } from "./TransparencyPanel";
 import { downloadComprovantePdf } from "./pdf";
 import { downloadShareImage } from "./share-image";
+import { InstagramImport } from "./InstagramImport";
+import { persistGiveawaySession } from "@/app/sorteios/actions";
 import {
   EMPTY_CHECKLIST,
   INSTAGRAM_HANDLE,
@@ -53,7 +55,7 @@ function formatDateTime(iso: string | null) {
   return new Date(iso).toLocaleString("pt-BR");
 }
 
-export function SorteioApp() {
+export function SorteioApp({ initialSession = null }: { initialSession?: SorteioSession | null }) {
   const [session, setSession] = useState<SorteioSession | null>(null);
   const [archived, setArchived] = useState<ArchivedSession[]>([]);
   const [tab, setTab] = useState<Tab>("sorteio");
@@ -67,19 +69,58 @@ export function SorteioApp() {
   const [showConfirmWinner, setShowConfirmWinner] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const persistenceQueue = useRef<Promise<void>>(Promise.resolve());
+  const databaseIdRef = useRef<string | null>(initialSession?.databaseId ?? null);
+  const autosaveTimerRef = useRef<number | null>(null);
+  const criticalPendingRef = useRef(false);
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [criticalPending, setCriticalPending] = useState(false);
 
   useEffect(() => {
     // Leitura do localStorage é síncrona, mas adiada para o próximo microtask
     // para não disparar setState diretamente no corpo do efeito de montagem.
     queueMicrotask(() => {
-      setSession(loadSession());
+      const loaded = initialSession ?? loadSession();
+      databaseIdRef.current = loaded.databaseId;
+      setSession(loaded);
       setArchived(loadArchivedSessions());
     });
-  }, []);
+  }, [initialSession]);
 
   useEffect(() => {
     if (session) saveSession(session);
   }, [session]);
+
+  const persistQueued = useCallback((candidate: SorteioSession) => {
+    let resolved!: SorteioSession;
+    const operation = persistenceQueue.current.catch(() => undefined).then(async () => {
+      const prepared = { ...candidate, databaseId: databaseIdRef.current ?? candidate.databaseId };
+      const result = await persistGiveawaySession(prepared);
+      databaseIdRef.current = result.databaseId;
+      resolved = { ...prepared, databaseId: result.databaseId, snapshotFrozenAt: result.snapshotFrozenAt };
+    });
+    persistenceQueue.current = operation.catch(() => undefined);
+    return operation.then(() => resolved);
+  }, []);
+
+  useEffect(() => {
+    if (!session || session.entries.length === 0) return;
+    autosaveTimerRef.current = window.setTimeout(async () => {
+      try {
+        const persisted = await persistQueued(session);
+        setPersistenceError(null);
+        if (session.databaseId !== persisted.databaseId || session.snapshotFrozenAt !== persisted.snapshotFrozenAt) {
+          setSession((current) => current ? { ...current, databaseId: persisted.databaseId, snapshotFrozenAt: persisted.snapshotFrozenAt } : current);
+        }
+      } catch (value) {
+        setPersistenceError(value instanceof Error ? value.message : "Falha ao persistir o sorteio.");
+      }
+    }, 350);
+    return () => {
+      if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    };
+  }, [persistQueued, session]);
 
   const updateSession = useCallback((updater: (prev: SorteioSession) => SorteioSession) => {
     setSession((prev) => (prev ? updater(prev) : prev));
@@ -88,8 +129,9 @@ export function SorteioApp() {
   if (!session) {
     return <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">Carregando sorteio…</div>;
   }
+  const currentSession = session;
 
-  const isCsvLocked = session.status !== "empty" && session.status !== "ready";
+  const isCsvLocked = session.snapshotFrozenAt !== null || (session.status !== "empty" && session.status !== "ready");
   const uniqueParticipants = new Set(session.entries.map((e) => e.username.toLowerCase())).size;
   const activePool = session.entries.filter((e) => e.status === "active");
   const winnerEntry = session.entries.find((e) => e.commentId === session.currentWinnerCommentId) ?? null;
@@ -112,6 +154,11 @@ export function SorteioApp() {
       updateSession((prev) => ({
         ...prev,
         entries: result.entries,
+        source: "csv",
+        instagramMediaId: null,
+        instagramMediaPermalink: null,
+        instagramIntegrationId: null,
+        snapshotFrozenAt: null,
         importedFileName: file.name,
         importedAt: new Date().toISOString(),
         status: "ready",
@@ -133,6 +180,29 @@ export function SorteioApp() {
     reader.readAsText(file, "utf-8");
   }
 
+  function handleInstagramImported(value: { entries: ParticipationEntry[]; mediaId: string; permalink: string; integrationId: string; syncedAt: string }) {
+    setImportError(null);
+    setImportSummary(null);
+    updateSession((prev) => ({
+      ...prev,
+      entries: value.entries,
+      source: "instagram",
+      instagramMediaId: value.mediaId,
+      instagramMediaPermalink: value.permalink,
+      instagramIntegrationId: value.integrationId,
+      importedFileName: null,
+      importedAt: value.syncedAt,
+      snapshotFrozenAt: null,
+      status: "ready",
+      currentWinnerCommentId: null,
+      currentDrawAt: null,
+      currentChecklist: { ...EMPTY_CHECKLIST },
+      disqualifications: [],
+      confirmedWinner: null,
+      history: [...prev.history, historyEvent("import", "Comentários sincronizados pela API oficial da Meta", `${value.entries.length} comentários · mídia ${value.mediaId}`)],
+    }));
+  }
+
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) processFile(file);
@@ -146,62 +216,71 @@ export function SorteioApp() {
     if (file) processFile(file);
   }
 
-  function startDraw(kind: "draw_started" | "redraw_started", pool: ParticipationEntry[]) {
+  async function persistCritical(candidate: SorteioSession) {
+    if (criticalPendingRef.current) return null;
+    if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
+    criticalPendingRef.current = true;
+    setCriticalPending(true);
+    setPersistenceError(null);
+    try {
+      const persisted = await persistQueued(candidate);
+      setSession(persisted);
+      return persisted;
+    } catch (value) {
+      setPersistenceError(value instanceof Error ? value.message : "Falha ao persistir a operacao critica.");
+      return null;
+    } finally {
+      criticalPendingRef.current = false;
+      setCriticalPending(false);
+    }
+  }
+
+  async function startDraw(kind: "draw_started" | "redraw_started", pool: ParticipationEntry[], base: SorteioSession = currentSession) {
     const winner = pickSecureRandomEntry(pool);
-    setDrawPool(pool);
-    setDrawAttempt((n) => n + 1);
-    updateSession((prev) => ({
-      ...prev,
+    const candidate: SorteioSession = {
+      ...base,
       status: "drawing",
       currentWinnerCommentId: winner.commentId,
       currentDrawAt: new Date().toISOString(),
       currentChecklist: { ...EMPTY_CHECKLIST },
       history: [
-        ...prev.history,
+        ...base.history,
         historyEvent(kind, kind === "draw_started" ? "Sorteio iniciado" : "Novo sorteio iniciado"),
       ],
-    }));
+    };
+    if (!await persistCritical(candidate)) return;
+    setDrawPool(pool);
+    setDrawAttempt((n) => n + 1);
   }
 
-  function handleDrawClick() {
-    if (session!.status !== "ready" || activePool.length === 0) return;
-    startDraw("draw_started", activePool);
+  async function handleDrawClick() {
+    if (currentSession.status !== "ready" || activePool.length === 0 || criticalPending) return;
+    await startDraw("draw_started", activePool);
   }
 
-  function handleAnimationComplete() {
-    updateSession((prev) => {
-      const winner = prev.entries.find((e) => e.commentId === prev.currentWinnerCommentId);
-      return {
-        ...prev,
-        status: "awaiting_validation",
-        history: [
-          ...prev.history,
-          historyEvent("winner_selected", `@${winner?.username ?? "?"} selecionado(a)`),
-        ],
-      };
-    });
+  async function handleAnimationComplete() {
+    const winner = currentSession.entries.find((entry) => entry.commentId === currentSession.currentWinnerCommentId);
+    await persistCritical({ ...currentSession, status: "awaiting_validation", history: [...currentSession.history, historyEvent("winner_selected", `@${winner?.username ?? "?"} selecionado(a)`)] });
   }
 
   function handleChecklistToggle(key: keyof ValidationChecklistState) {
     updateSession((prev) => ({ ...prev, currentChecklist: { ...prev.currentChecklist, [key]: !prev.currentChecklist[key] } }));
   }
 
-  function handleDisqualifyConfirm(reason: DisqualificationReason, reasonLabel: string, otherDetail?: string) {
+  async function handleDisqualifyConfirm(reason: DisqualificationReason, reasonLabel: string, otherDetail?: string) {
     if (!winnerEntry) return;
-    setShowDisqualify(false);
-
-    updateSession((prev) => {
-      const entries = prev.entries.map((e) =>
+    const entries = currentSession.entries.map((e) =>
         e.commentId === winnerEntry.commentId ? { ...e, status: "disqualified" as const } : e,
       );
-      return {
-        ...prev,
+    const candidate: SorteioSession = {
+        ...currentSession,
         entries,
         currentWinnerCommentId: null,
         currentChecklist: { ...EMPTY_CHECKLIST },
         status: "ready",
         disqualifications: [
-          ...prev.disqualifications,
+          ...currentSession.disqualifications,
           {
             id: makeHistoryEventId(),
             commentId: winnerEntry.commentId,
@@ -214,7 +293,7 @@ export function SorteioApp() {
           },
         ],
         history: [
-          ...prev.history,
+          ...currentSession.history,
           historyEvent(
             "disqualified",
             "Participante desclassificado",
@@ -222,33 +301,36 @@ export function SorteioApp() {
           ),
         ],
       };
-    });
+    const persisted = await persistCritical(candidate);
+    if (!persisted) return;
+    setShowDisqualify(false);
 
-    const remainingPool = activePool.filter((e) => e.commentId !== winnerEntry.commentId);
+    const remainingPool = entries.filter((entry) => entry.status === "active");
     if (remainingPool.length > 0) {
-      setTimeout(() => startDraw("redraw_started", remainingPool), 0);
+      await startDraw("redraw_started", remainingPool, persisted);
     }
   }
 
-  function handleConfirmWinnerFinal() {
-    setShowConfirmWinner(false);
-    updateSession((prev) => ({
-      ...prev,
+  async function handleConfirmWinnerFinal() {
+    const candidate: SorteioSession = {
+      ...currentSession,
       status: "finalized",
-      confirmedWinner: prev.currentWinnerCommentId
-        ? { commentId: prev.currentWinnerCommentId, confirmedAt: new Date().toISOString() }
+      confirmedWinner: currentSession.currentWinnerCommentId
+        ? { commentId: currentSession.currentWinnerCommentId, confirmedAt: new Date().toISOString() }
         : null,
       history: [
-        ...prev.history,
+        ...currentSession.history,
         historyEvent("winner_confirmed", `Ganhador confirmado: @${winnerEntry?.username ?? "?"}`),
       ],
-    }));
+    };
+    if (await persistCritical(candidate)) setShowConfirmWinner(false);
   }
 
   function handleResetConfirmed() {
     setShowResetConfirm(false);
     archiveSession(session!);
     setArchived(loadArchivedSessions());
+    databaseIdRef.current = null;
     setSession(createEmptySession());
     setImportSummary(null);
     setImportError(null);
@@ -290,7 +372,7 @@ export function SorteioApp() {
           </button>
           <button
             type="button"
-            disabled={session.status === "empty"}
+            disabled={session.status === "empty" || criticalPending}
             onClick={() => setShowResetConfirm(true)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -335,6 +417,8 @@ export function SorteioApp() {
           </div>
 
           <AdminSection compact title="Importar comentários" description="CSV exportado do Instagram: entry_number, comment_id, username, comment, mentions_count, mentions, comment_url, chance.">
+            <InstagramImport locked={isCsvLocked} onImported={handleInstagramImported} />
+            <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wider text-slate-500"><span className="h-px flex-1 bg-slate-800" />ou CSV<span className="h-px flex-1 bg-slate-800" /></div>
             {isCsvLocked ? (
               <AdminEmptyState
                 title="Sorteio em andamento"
@@ -368,6 +452,7 @@ export function SorteioApp() {
             {importError ? (
               <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{importError}</p>
             ) : null}
+            {persistenceError ? <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">Supabase: {persistenceError}</p> : null}
 
             {importSummary ? (
               <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">
@@ -396,6 +481,7 @@ export function SorteioApp() {
                     <p className="mt-1 text-sm text-slate-300">{activePool.length} chances carregadas.</p>
                     <button
                       type="button"
+                      disabled={criticalPending}
                       onClick={handleDrawClick}
                       className="mx-auto mt-4 inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-300"
                     >
@@ -465,7 +551,7 @@ export function SorteioApp() {
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        disabled={!checklistComplete}
+                        disabled={!checklistComplete || criticalPending}
                         onClick={() => setShowConfirmWinner(true)}
                         className="flex-1 rounded-xl bg-emerald-400 px-3 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -473,6 +559,7 @@ export function SorteioApp() {
                       </button>
                       <button
                         type="button"
+                        disabled={criticalPending}
                         onClick={() => setShowDisqualify(true)}
                         className="flex-1 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2.5 text-sm font-semibold text-rose-200 hover:bg-rose-500/20"
                       >
@@ -548,6 +635,7 @@ export function SorteioApp() {
         winner={winnerEntry}
         onClose={() => setShowDisqualify(false)}
         onConfirm={handleDisqualifyConfirm}
+        pending={criticalPending}
       />
 
       <StrongConfirmModal
@@ -557,6 +645,7 @@ export function SorteioApp() {
         confirmLabel="SIM, CONFIRMAR GANHADOR"
         onCancel={() => setShowConfirmWinner(false)}
         onConfirm={handleConfirmWinnerFinal}
+        pending={criticalPending}
       />
 
       <StrongConfirmModal

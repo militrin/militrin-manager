@@ -8,6 +8,7 @@ type StrongConfirmModalProps = {
   tone?: "emerald" | "rose";
   onCancel: () => void;
   onConfirm: () => void;
+  pending?: boolean;
 };
 
 export function StrongConfirmModal({
@@ -18,6 +19,7 @@ export function StrongConfirmModal({
   tone = "emerald",
   onCancel,
   onConfirm,
+  pending = false,
 }: StrongConfirmModalProps) {
   if (!open) return null;
 
@@ -32,11 +34,11 @@ export function StrongConfirmModal({
         <h3 className="text-lg font-semibold text-white">{title}</h3>
         <p className="mt-2 text-sm text-slate-300">{description}</p>
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="rounded-xl border border-slate-700 px-3 py-2 text-xs font-medium text-slate-200">
+          <button type="button" disabled={pending} onClick={onCancel} className="rounded-xl border border-slate-700 px-3 py-2 text-xs font-medium text-slate-200 disabled:opacity-50">
             Cancelar
           </button>
-          <button type="button" onClick={onConfirm} className={`rounded-xl px-3 py-2 text-xs font-semibold ${confirmClasses}`}>
-            {confirmLabel}
+          <button type="button" disabled={pending} onClick={onConfirm} className={`rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50 ${confirmClasses}`}>
+            {pending ? "SALVANDO..." : confirmLabel}
           </button>
         </div>
       </div>
