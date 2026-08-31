@@ -2644,6 +2644,21 @@ export async function getPublicRegistrationSnapshotAction(participantId: string)
   };
 }
 
+// Preview de taxa de pagamento (Etapa "3. Revisao", ANTES de o pedido
+// existir): reusa o RPC puro preview_event_payment_fees, que por sua vez
+// reusa resolve_event_payment_fee_config/compute_payment_fee -- a MESMA
+// formula que _recompute_order_payment_fee grava depois em payments. Nunca
+// cria pedido/PIX/pagamento so pra calcular; nao persiste nada.
+export async function previewEventPaymentFeesAction(eventId: string, baseAmount: number) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('preview_event_payment_fees', {
+    p_event_id: eventId,
+    p_base_amount: baseAmount,
+  });
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, preview: data as Record<string, unknown> };
+}
+
 // ============================================================
 // Carrinho: ingresso + "compre junto" (produtos da loja) no mesmo pedido,
 // e cupom com escopo configuravel. O pedido ja existe (criado sem cupom ao

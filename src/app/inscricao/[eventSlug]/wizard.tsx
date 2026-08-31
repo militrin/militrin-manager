@@ -12,6 +12,7 @@ import {
   getPublicBuyerTicketHolderStatusAction,
   getPublicOrderSnapshotAction,
   getPublicPricingPreviewAction,
+  previewEventPaymentFeesAction,
   saveCheckoutBuyerProfileAction,
   simulateFakeOrderPaymentAction,
 } from '@/app/inscricao/actions';
@@ -63,6 +64,18 @@ type EventData = {
 };
 
 type CheckoutPaymentMethod = 'pix' | 'credit_card_single' | 'credit_card_installments';
+
+// Espelha 1:1 o retorno de preview_event_payment_fees (RPC canonico --
+// reusa resolve_event_payment_fee_config/compute_payment_fee, a MESMA
+// formula que o backend grava depois em payments). Nunca recalculado aqui.
+type FeeMethodPreview = { fee_mode: string; calculated_fee: number; customer_fee: number; organizer_fee: number };
+type FeeInstallmentOption = { installments: number; fee_mode: string; calculated_fee: number; customer_fee: number; organizer_fee: number };
+type FeePreview = {
+  base_amount: number;
+  pix: FeeMethodPreview;
+  credit_card_single: FeeMethodPreview;
+  credit_card_installments: { options: FeeInstallmentOption[] };
+};
 
 type Category = {
   id: string;
@@ -273,6 +286,8 @@ type FormState = {
   city: string;
   category_id: string;
   payment_method: CheckoutPaymentMethod;
+  /** So relevante quando payment_method='credit_card_installments' (2-12, mesmo teto da grade de configuracao do organizador). Ignorado pelos demais metodos. */
+  installments: number;
   coupon_code: string;
   shirt_type: string;
   shirt_size: string;
@@ -285,7 +300,10 @@ type KitSelectionsState = {
   shirtSize: string;
 };
 
-const STORAGE_VERSION = 'v5';
+// v6: FormState ganhou installments (preview de taxa por parcela) --
+// sessoes v5 persistidas nao tem esse campo, versao nova invalida a chave
+// antiga em vez de restaurar um form incompleto.
+const STORAGE_VERSION = 'v6';
 const CHECKOUT_JOURNEY_PARAM = 'checkout';
 const EDIT_ORDER_PARAM = 'editOrder';
 // Ingresso especifico a focar dentro da Etapa 1 em modo edicao -- identidade
@@ -336,6 +354,7 @@ function buildInitialForm(initialBuyer: WizardProps['initialBuyer'], categories:
       return eligible.length === 1 ? eligible[0].id : '';
     })(),
     payment_method: sanitizePaymentMethod('pix', event),
+    installments: 2,
     coupon_code: '',
     shirt_type: '',
     shirt_size: '',
@@ -346,6 +365,34 @@ function buildInitialForm(initialBuyer: WizardProps['initialBuyer'], categories:
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+}
+
+// Leitura pura do snapshot ja calculado pelo backend (FeePreview) -- nunca
+// reaplica fixed/percentage/share por conta propria. installments so
+// importa para credit_card_installments; ausencia de opcao pra aquele
+// numero de parcelas (fora do teto 2-12 ja coberto pela RPC) cai no
+// primeiro option como fallback nunca-quebra, nao em 0 inventado.
+function feeMethodPreview(preview: FeePreview | null, method: CheckoutPaymentMethod, installments: number): FeeMethodPreview | null {
+  if (!preview) return null;
+  if (method === 'pix') return preview.pix;
+  if (method === 'credit_card_single') return preview.credit_card_single;
+  const options = preview.credit_card_installments.options;
+  return options.find((option) => option.installments === installments) ?? options[0] ?? null;
+}
+
+// Texto curto pro <option> da forma de pagamento: taxa exata (pix/a vista)
+// ou "a partir de" o menor valor entre as parcelas configuradas (parcelado,
+// antes de o comprador escolher quantas parcelas).
+function feeOptionSuffix(preview: FeePreview | null, method: CheckoutPaymentMethod): string {
+  if (!preview) return '';
+  if (method === 'credit_card_installments') {
+    const options = preview.credit_card_installments.options;
+    if (options.length === 0) return '';
+    const minFee = Math.min(...options.map((option) => option.customer_fee));
+    return minFee <= 0 ? ' — Sem taxa' : ` — Taxa a partir de ${money(minFee)}`;
+  }
+  const methodPreview = method === 'pix' ? preview.pix : preview.credit_card_single;
+  return methodPreview.customer_fee <= 0 ? ' — Sem taxa' : ` — Taxa: ${money(methodPreview.customer_fee)}`;
 }
 
 function categoryPriceLabel(category: Category) {
@@ -437,6 +484,13 @@ export function RegistrationWizard({
   // preenche exatamente essa lacuna -- nunca e uma segunda fonte de calculo
   // financeiro, so espelha o que get_cart_order_details ja devolveu.
   const [cartSnapshot, setCartSnapshot] = useState<OrderSnapshotPayload | null>(null);
+  // Preview de taxa (Etapa "3. Revisao" em diante, enquanto o pedido ainda
+  // nao foi finalizado -- uma vez que registration existe, a taxa REAL ja
+  // vem de registration.payment.payment_fee_customer_amount, sem precisar
+  // de preview). Cobre os 3 metodos numa chamada so (preview_event_payment_fees)
+  // -- trocar a forma de pagamento ou o numero de parcelas nunca dispara
+  // uma nova chamada, so relê este mesmo snapshot.
+  const [feePreview, setFeePreview] = useState<FeePreview | null>(null);
   // Setado (uma vez, pelo effect de ?editOrder=) quando esta jornada esta
   // editando um pedido ja existente -- nunca um order_id gerado por
   // createPublicMultiOrderAction. Enquanto truthy, a Etapa 1 renderiza
@@ -795,6 +849,7 @@ export function RegistrationWizard({
                 ? parsed.form.category_id
                 : '',
             payment_method: sanitizePaymentMethod(parsed.form.payment_method, event),
+            installments: Math.max(2, Math.min(12, Number(parsed.form.installments) || 2)),
             quantity: restoredQuantity,
           });
           syncItemCount(restoredQuantity, parsed.checkoutItems);
@@ -1969,11 +2024,44 @@ export function RegistrationWizard({
     : [];
   const firstCartSnapshotTicket = cartSnapshot ? ticketLines(cartSnapshot.items)[0] ?? null : null;
 
+  // Base sobre a qual a taxa de pagamento incide ENQUANTO o pedido ainda nao
+  // foi finalizado (sem registration ainda -- uma vez finalizado, a taxa REAL
+  // ja vem de registration.payment, sem precisar de preview): cartSnapshot.final_amount
+  // (pedido real, ja liquido de item+cupom) ou itemTotals.total (rascunho
+  // pre-pedido). So busca o preview a partir da Etapa de Revisao (onde a
+  // forma de pagamento passa a ser escolhida) -- evita chamadas desde a
+  // Etapa 1, quando o metodo de pagamento ainda nem e relevante.
+  const previewBaseAmount = cartSnapshot ? cartSnapshot.final_amount : itemTotals.total;
+  const shouldPreviewFee = !registration && step >= 3 && previewBaseAmount > 0;
+
+  useEffect(() => {
+    if (!shouldPreviewFee) return;
+    let active = true;
+    (async () => {
+      const result = await previewEventPaymentFeesAction(event.id, previewBaseAmount);
+      if (!active) return;
+      if (result.success) setFeePreview(result.preview as unknown as FeePreview);
+    })();
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldPreviewFee, event.id, previewBaseAmount]);
+
+  // Preview so vale se corresponder ao valor-base ATUAL (evita mostrar, por
+  // uma fracao de segundo, a taxa calculada sobre um total anterior --
+  // ex.: acabou de aplicar cupom e o preview antigo ainda nao voltou).
+  const activeFeePreview = feePreview && Math.round(feePreview.base_amount * 100) === Math.round(previewBaseAmount * 100)
+    ? feeMethodPreview(feePreview, form.payment_method, form.installments)
+    : null;
+  const previewedCustomerFee = activeFeePreview?.customer_fee ?? 0;
+
   // Regra unica: registration (pedido com PIX/confirmado) > cartSnapshot
   // (pedido real existente, ainda sem PIX) > rascunho pre-pedido
   // (checkoutItems/form.quantity, so enquanto nenhum order_id existe ainda).
   // Nunca o contrario -- o rascunho pre-pedido so alimenta este resumo
-  // antes de cartOrder/registration existirem.
+  // antes de cartOrder/registration existirem. A taxa de pagamento segue a
+  // MESMA regra: registration usa o valor REAL ja persistido
+  // (payment_fee_customer_amount); antes disso, so o preview (nunca um
+  // calculo paralelo).
   const summaryValues = registration
     ? {
         event: registration.event_name || event.name,
@@ -1983,6 +2071,8 @@ export function RegistrationWizard({
         coupon: registration.applied_coupon_code || 'Não selecionado',
         original: money(registration.base_amount),
         discount: money(registration.discount_amount),
+        fee: money(registration.payment.payment_fee_customer_amount),
+        showFee: registration.payment.payment_fee_customer_amount > 0,
         total: money(registration.payment.final_amount),
         groupedShirts: registrationGroupedShirts,
         productLines: registrationProductLines,
@@ -1996,7 +2086,9 @@ export function RegistrationWizard({
           coupon: cartSnapshot.applied_coupon_code || 'Não selecionado',
           original: money(cartSnapshot.base_amount),
           discount: money(cartSnapshot.discount_amount),
-          total: money(cartSnapshot.final_amount),
+          fee: money(previewedCustomerFee),
+          showFee: previewedCustomerFee > 0,
+          total: money(cartSnapshot.final_amount + previewedCustomerFee),
           groupedShirts: cartSnapshotGroupedShirts,
           productLines: cartSnapshotProductLines,
         }
@@ -2008,7 +2100,9 @@ export function RegistrationWizard({
           coupon: form.coupon_code || 'Não selecionado',
           original: money(itemTotals.original),
           discount: money(itemTotals.discount),
-          total: money(itemTotals.total),
+          fee: money(previewedCustomerFee),
+          showFee: previewedCustomerFee > 0,
+          total: money(itemTotals.total + previewedCustomerFee),
           groupedShirts,
           productLines: registrationProductLines,
         };
@@ -2117,6 +2211,7 @@ export function RegistrationWizard({
                   <p>Cupom: {summaryValues.coupon}</p>
                   <p className="mt-3">Valor original: {summaryValues.original}</p>
                   <p>Desconto: {summaryValues.discount}</p>
+                  {summaryValues.showFee ? <p>Taxa de pagamento: {summaryValues.fee}</p> : null}
                   <p className="text-emerald-300">Total: {summaryValues.total}</p>
                 </div>
               ) : null}
@@ -2725,13 +2820,26 @@ export function RegistrationWizard({
                         className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
                       >
                         {availablePaymentMethods.map((method) => (
-                          <option key={method} value={method}>{paymentMethodLabel(method)}</option>
+                          <option key={method} value={method}>{paymentMethodLabel(method)}{feeOptionSuffix(feePreview, method)}</option>
                         ))}
                       </select>
+                      {form.payment_method === 'credit_card_installments' && feePreview && feePreview.credit_card_installments.options.length > 0 ? (
+                        <select
+                          value={form.installments}
+                          onChange={(event_) => setField('installments', Number(event_.target.value))}
+                          className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
+                        >
+                          {feePreview.credit_card_installments.options.map((option) => (
+                            <option key={option.installments} value={option.installments}>
+                              {option.installments}x{option.customer_fee > 0 ? ` — Taxa: ${money(option.customer_fee)}` : ' — Sem taxa'}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
                     </label>
                   ) : itemTotals.total > 0 ? (
                     <p className="sm:col-span-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-200">
-                      Forma de pagamento: <strong>{paymentMethodLabel(form.payment_method)}</strong>
+                      Forma de pagamento: <strong>{paymentMethodLabel(form.payment_method)}{feeOptionSuffix(feePreview, form.payment_method)}</strong>
                     </p>
                   ) : (
                     <p className="sm:col-span-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-100">
@@ -2772,6 +2880,7 @@ export function RegistrationWizard({
                 orderId={cartOrder.orderId}
                 eventId={event.id}
                 paymentMethod={form.payment_method}
+                installments={form.payment_method === 'credit_card_installments' ? form.installments : 1}
                 onContinue={(order) => void handleCartFinalized(order as OrderSnapshotPayload)}
                 onEditTicket={editModeOrderId ? handleEditTicketItem : undefined}
                 onSnapshotChange={(cart) => setCartSnapshot(cart as unknown as OrderSnapshotPayload)}
@@ -3088,6 +3197,7 @@ export function RegistrationWizard({
                 <div className="mt-4 border-t border-slate-800 pt-3">
                   <p>Valor original: {summaryValues.original}</p>
                   <p>Desconto: {summaryValues.discount}</p>
+                  {summaryValues.showFee ? <p>Taxa de pagamento: {summaryValues.fee}</p> : null}
                   <p className="font-semibold text-emerald-300">Total: {summaryValues.total}</p>
                 </div>
               </div>

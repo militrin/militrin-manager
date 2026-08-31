@@ -363,6 +363,7 @@ export function CartStep({
   orderId,
   eventId,
   paymentMethod,
+  installments,
   onContinue,
   onEditTicket,
   onSnapshotChange,
@@ -370,6 +371,8 @@ export function CartStep({
   orderId: string;
   eventId: string;
   paymentMethod: string;
+  /** So relevante quando paymentMethod='credit_card_installments' -- ignorado pelos demais metodos (mesmo default 1 de finalizeCartOrderAction). */
+  installments?: number;
   onContinue: (order: unknown) => void;
   /** Presente somente em modo edicao de pedido (?editOrder=) -- clicar num
    * card de ingresso navega direto pra Etapa 1 com aquele ingresso em
@@ -471,7 +474,7 @@ export function CartStep({
   async function handleContinue() {
     setBusy(true);
     setMessage(null);
-    const result = await finalizeCartOrderAction(orderId, paymentMethod);
+    const result = await finalizeCartOrderAction(orderId, paymentMethod, installments ?? 1);
     setBusy(false);
     if (!result.success) { setMessage({ type: "error", text: result.message }); return; }
     onContinue(result.order);
