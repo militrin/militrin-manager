@@ -57,9 +57,9 @@ async function resolveCurrentFunctionDefinition(functionName) {
 // Meta-teste: a definicao VIGENTE (ultima no historico) e a nova migration
 // de correcao, nao mais a 890 regressiva -- e ela aplica o preco promocional.
 // ============================================================
-test('definicao VIGENTE (ultima entre todas as migrations) de add_product_to_cart_order esta na migration de correcao e aplica compute_store_item_final_price', async () => {
+test('definicao VIGENTE (ultima entre todas as migrations) de add_product_to_cart_order aplica compute_store_item_final_price -- redefinida de novo em 20260916000000 (QR de produto), mas so pra acrescentar qr_token no INSERT, preco promocional continua intocado', async () => {
   const { source, definedInFile } = await resolveCurrentFunctionDefinition('add_product_to_cart_order');
-  assert.equal(definedInFile, '20260912000000_fix_cart_product_promotional_price_regression.sql');
+  assert.equal(definedInFile, '20260916000000_order_item_product_qr.sql');
   assert.match(source, /v_base_unit_price := v_store_item\.price;/);
   assert.match(source, /v_unit_price := public\.compute_store_item_final_price\(v_base_unit_price, v_store_item\.discount_type, v_store_item\.discount_value\);/);
   assert.match(source, /product_base_unit_price = v_base_unit_price/);

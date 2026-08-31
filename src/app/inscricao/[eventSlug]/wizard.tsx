@@ -3118,6 +3118,19 @@ export function RegistrationWizard({
                           <li key={item.order_item_id}>
                             {item.store_item_name}{item.variant_name ? ` · ${item.variant_name} ${item.variant_value}` : ''} - {item.quantity}x {money(item.unit_price)} - Subtotal: {money(item.unit_price * item.quantity)}
                             {item.discount_amount > 0 ? ` (desconto -${money(item.discount_amount)}, total ${money(item.final_amount)})` : ''}
+                            {registration.order_id ? (
+                              <>
+                                {' '}
+                                <a
+                                  href={`/api/inscricao/pedidos/${registration.order_id}/itens/${item.order_item_id}/qrcode?inline=1`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-emerald-300 underline underline-offset-2"
+                                >
+                                  Ver QR Code
+                                </a>
+                              </>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
