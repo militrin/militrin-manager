@@ -16,6 +16,7 @@ import {
   ShoppingBag,
   Tag,
   Ticket,
+  Trophy,
   UserPlus,
   UserRoundCog,
   Users,
@@ -191,6 +192,15 @@ export const adminNavGroups: AdminNavGroup[] = [
         icon: Gift,
         href: "/cupons",
         permissionAny: ["coupons.view"],
+      },
+      {
+        label: "Sorteios",
+        icon: Trophy,
+        href: "/sorteios",
+        // Ferramenta interna de sorteio (Instagram) -- sem permissao dedicada:
+        // liberada a qualquer conta com acesso ao painel administrativo,
+        // igual a "Ir para Minha Conta" no rodape da sidebar.
+        permissionAny: [],
       },
       {
         label: "Fotos",

@@ -51,6 +51,7 @@ export async function middleware(request: NextRequest) {
     '/plataforma',
     '/pedidos',
     '/relatorios',
+    '/sorteios',
   ];
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 
