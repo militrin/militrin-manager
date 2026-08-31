@@ -188,10 +188,13 @@ test("entrega de item continua exclusivamente por deliver_store_order_item -- mi
   assert.doesNotMatch(migration, /create or replace function public\.deliver_store_order_item/);
 });
 
-test("rota de QR por item exige store.deliver ou store.manage e usa qr_token (nao order_number) como conteudo", () => {
+test("rota de QR por item permite o proprietario do pedido OU store.deliver OU store.manage -- so bloqueia quem nao e nenhum dos tres -- e usa qr_token (nao order_number) como conteudo", () => {
   assert.match(itemQrRoute, /hasPermission\("store\.deliver"\)/);
   assert.match(itemQrRoute, /hasPermission\("store\.manage"\)/);
-  assert.match(itemQrRoute, /if \(!canDeliver && !canManage\)/);
+  // Autorizacao: proprietario do pedido (order.user_id === user.id) sempre pode
+  // ver/gerar o QR do proprio item -- so bloqueia (403) quem nao e o dono E nao
+  // tem nenhuma das duas permissoes administrativas.
+  assert.match(itemQrRoute, /if \(order\?\.user_id !== user\.id && !canDeliver && !canManage\)/);
   assert.match(itemQrRoute, /data=\$\{encodeURIComponent\(String\(item\.qr_token\)\)\}/);
   assert.match(storeOrderDetailActions, /\/api\/loja\/pedidos\/\$\{storeOrderId\}\/itens\/\$\{itemId\}\/qrcode/);
 });
