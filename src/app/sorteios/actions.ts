@@ -12,6 +12,19 @@ import { decryptInstagramToken, encryptInstagramToken } from "@/lib/instagram/cr
 import { instagramAuthorizeUrl, listInstagramComments, listInstagramMedia, refreshInstagramAccessToken } from "@/lib/instagram/meta-api";
 import type { ParticipationEntry, SorteioSession } from "@/components/sorteios/types";
 import { assertFrozenSnapshotInvariant, assertUniqueCommentIds, normalizeUniqueInstagramComments, resolveOwnedInstagramMedia } from "@/lib/instagram/normalize";
+import { isMissingGiveawaySchemaError, resolveOptionalGiveawaySchema } from "@/lib/instagram/database-readiness";
+
+export type InstagramIntegrationStatus = {
+  state: "available" | "not_configured" | "database_not_ready";
+  connected: boolean;
+  username?: string;
+  expiresAt?: string | null;
+};
+
+export type GiveawayBootstrap = {
+  session: SorteioSession | null;
+  persistence: "available" | "database_not_ready";
+};
 
 const sessionSchema = z.object({
   databaseId: z.string().uuid().nullable(), id: z.string().min(1).max(80),
@@ -37,10 +50,17 @@ async function context() {
   return { user, organization, admin: createServiceRoleSupabaseClient() };
 }
 
-export async function getInstagramStatus() {
+export async function getInstagramStatus(): Promise<InstagramIntegrationStatus> {
   const { organization, admin } = await context();
-  const { data } = await admin.from("instagram_integrations").select("id,instagram_username,token_expires_at,connected_at").eq("organization_id", organization.id).is("disconnected_at", null).maybeSingle();
-  return data ? { connected: true as const, username: String(data.instagram_username), expiresAt: data.token_expires_at as string | null } : { connected: false as const };
+  const { data, error } = await admin.from("instagram_integrations").select("id,instagram_username,token_expires_at,connected_at").eq("organization_id", organization.id).is("disconnected_at", null).maybeSingle();
+  if (error) {
+    if (isMissingGiveawaySchemaError(error)) return { state: "database_not_ready", connected: false };
+    throw new Error("Nao foi possivel consultar o status da integracao Instagram.");
+  }
+  if (!process.env.META_INSTAGRAM_APP_ID || !process.env.META_INSTAGRAM_APP_SECRET || !process.env.META_INSTAGRAM_REDIRECT_URI || !process.env.META_GRAPH_API_VERSION || !process.env.INSTAGRAM_TOKEN_ENCRYPTION_KEY) {
+    return { state: "not_configured", connected: false };
+  }
+  return data ? { state: "available", connected: true, username: String(data.instagram_username), expiresAt: data.token_expires_at as string | null } : { state: "available", connected: false };
 }
 
 export async function disconnectInstagram() {
@@ -140,18 +160,22 @@ export async function persistGiveawaySession(input: SorteioSession) {
   return { databaseId: giveawayId, snapshotFrozenAt: frozenAt };
 }
 
-export async function loadLatestGiveawaySession(): Promise<SorteioSession | null> {
+export async function loadLatestGiveawaySession(): Promise<GiveawayBootstrap> {
   const { organization, admin } = await context();
   const { data: giveaway, error } = await admin.from("giveaways").select("*").eq("organization_id", organization.id).order("updated_at", { ascending: false }).limit(1).maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!giveaway) return null;
+  const giveawayResult = resolveOptionalGiveawaySchema(giveaway, error);
+  if (!giveawayResult.databaseReady) return { session: null, persistence: "database_not_ready" };
+  if (!giveaway) return { session: null, persistence: "available" };
   const [{ data: rows, error: entriesError }, { data: events, error: eventsError }] = await Promise.all([
     admin.from("giveaway_entries").select("*").eq("giveaway_id", giveaway.id).order("entry_number"),
     admin.from("giveaway_audit_events").select("*").eq("giveaway_id", giveaway.id).order("created_at"),
   ]);
-  if (entriesError || eventsError) throw new Error(entriesError?.message ?? eventsError?.message);
+  if (entriesError || eventsError) {
+    if (isMissingGiveawaySchemaError(entriesError) || isMissingGiveawaySchemaError(eventsError)) return { session: null, persistence: "database_not_ready" };
+    throw new Error(entriesError?.message ?? eventsError?.message);
+  }
   const state = (giveaway.state ?? {}) as { currentChecklist?: SorteioSession["currentChecklist"]; disqualifications?: SorteioSession["disqualifications"] };
-  return {
+  const session: SorteioSession = {
     databaseId: String(giveaway.id), id: String(giveaway.public_id), createdAt: String(giveaway.created_at), importedFileName: giveaway.source_file_name as string | null,
     importedAt: giveaway.imported_at as string | null,
     entries: (rows ?? []).map((row) => ({ entryNumber: Number(row.entry_number), commentId: String(row.comment_id), username: String(row.author_username), comment: String(row.comment_text), mentionsCount: Array.isArray(row.mentions) ? row.mentions.length : 0, mentions: Array.isArray(row.mentions) ? row.mentions.join(" ") : "", commentUrl: String(row.comment_url ?? ""), commentCreatedAt: row.comment_created_at ? String(row.comment_created_at) : null, chance: "1", status: row.status as "active" | "disqualified" })),
@@ -162,4 +186,5 @@ export async function loadLatestGiveawaySession(): Promise<SorteioSession | null
     source: giveaway.source as "csv" | "instagram", instagramMediaId: giveaway.instagram_media_id as string | null, instagramMediaPermalink: giveaway.instagram_media_permalink as string | null,
     instagramIntegrationId: giveaway.instagram_integration_id as string | null, snapshotFrozenAt: giveaway.snapshot_frozen_at as string | null,
   };
+  return { session, persistence: "available" };
 }

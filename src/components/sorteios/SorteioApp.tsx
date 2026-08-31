@@ -31,7 +31,7 @@ import { TransparencyPanel } from "./TransparencyPanel";
 import { downloadComprovantePdf } from "./pdf";
 import { downloadShareImage } from "./share-image";
 import { InstagramImport } from "./InstagramImport";
-import { persistGiveawaySession } from "@/app/sorteios/actions";
+import { persistGiveawaySession, type InstagramIntegrationStatus } from "@/app/sorteios/actions";
 import {
   EMPTY_CHECKLIST,
   INSTAGRAM_HANDLE,
@@ -55,7 +55,7 @@ function formatDateTime(iso: string | null) {
   return new Date(iso).toLocaleString("pt-BR");
 }
 
-export function SorteioApp({ initialSession = null }: { initialSession?: SorteioSession | null }) {
+export function SorteioApp({ initialSession = null, persistenceAvailable = true, initialInstagramStatus }: { initialSession?: SorteioSession | null; persistenceAvailable?: boolean; initialInstagramStatus: InstagramIntegrationStatus }) {
   const [session, setSession] = useState<SorteioSession | null>(null);
   const [archived, setArchived] = useState<ArchivedSession[]>([]);
   const [tab, setTab] = useState<Tab>("sorteio");
@@ -104,7 +104,7 @@ export function SorteioApp({ initialSession = null }: { initialSession?: Sorteio
   }, []);
 
   useEffect(() => {
-    if (!session || session.entries.length === 0) return;
+    if (!persistenceAvailable || !session || session.entries.length === 0) return;
     autosaveTimerRef.current = window.setTimeout(async () => {
       try {
         const persisted = await persistQueued(session);
@@ -120,7 +120,7 @@ export function SorteioApp({ initialSession = null }: { initialSession?: Sorteio
       if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
     };
-  }, [persistQueued, session]);
+  }, [persistQueued, persistenceAvailable, session]);
 
   const updateSession = useCallback((updater: (prev: SorteioSession) => SorteioSession) => {
     setSession((prev) => (prev ? updater(prev) : prev));
@@ -217,6 +217,11 @@ export function SorteioApp({ initialSession = null }: { initialSession?: Sorteio
   }
 
   async function persistCritical(candidate: SorteioSession) {
+    if (!persistenceAvailable) {
+      setPersistenceError(null);
+      setSession(candidate);
+      return candidate;
+    }
     if (criticalPendingRef.current) return null;
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = null;
@@ -417,7 +422,7 @@ export function SorteioApp({ initialSession = null }: { initialSession?: Sorteio
           </div>
 
           <AdminSection compact title="Importar comentários" description="CSV exportado do Instagram: entry_number, comment_id, username, comment, mentions_count, mentions, comment_url, chance.">
-            <InstagramImport locked={isCsvLocked} onImported={handleInstagramImported} />
+            <InstagramImport locked={isCsvLocked} initialStatus={initialInstagramStatus} onImported={handleInstagramImported} />
             <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wider text-slate-500"><span className="h-px flex-1 bg-slate-800" />ou CSV<span className="h-px flex-1 bg-slate-800" /></div>
             {isCsvLocked ? (
               <AdminEmptyState
