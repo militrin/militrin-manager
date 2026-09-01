@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinPurchaseCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
+import { getAccountOrders, resolveAccountOrderStatus, accountTicketItems } from '@/lib/account/portal-orders-and-tickets';
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { orderDisplayReference } from '@/lib/display-reference';
@@ -34,10 +34,14 @@ function titularSummary(totalItems: number, definedCount: number) {
 }
 
 function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
-  const participant = one(order.participants as Record<string, unknown> | Record<string, unknown>[] | null);
   const eventObj = one(order.events as Record<string, unknown> | Record<string, unknown>[] | null);
   const payment = one(order.payments as Record<string, unknown> | Record<string, unknown>[] | null);
-  const orderItems = Array.isArray(order.order_items) ? order.order_items as Array<Record<string, unknown>> : (order.order_items ? [order.order_items as Record<string, unknown>] : []);
+  // item_kind e a fonte canonica: produto "compre junto" nunca conta como
+  // ingresso nem participa do resumo de titularidade (mesma regra do
+  // detector de Integridade e do detalhe do pedido admin).
+  const allItems = Array.isArray(order.order_items) ? order.order_items as Array<Record<string, unknown>> : (order.order_items ? [order.order_items as Record<string, unknown>] : []);
+  const orderItems = accountTicketItems(order);
+  const productItemCount = allItems.length - orderItems.length;
   // Status comercial canonico (mesma fonte do Dashboard admin) -- nao
   // order.status cru, que pode ficar preso em "pending" quando o pagamento
   // ja expirou mas a varredura de expiracao ainda nao converteu o pedido.
@@ -57,12 +61,20 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
   };
 
   let summaryLine: string;
-  if (orderItems.length <= 1) {
-    const singleHolder = orderItems[0] ? holderName(orderItems[0]) : ((participant as Record<string, unknown> | null)?.full_name as string | undefined);
+  if (orderItems.length === 0) {
+    summaryLine = productItemCount > 0 ? `${productItemCount} produto${productItemCount === 1 ? '' : 's'}` : 'Sem itens';
+  } else if (orderItems.length === 1) {
+    const singleHolder = holderName(orderItems[0]);
     summaryLine = `1 ingresso • Titular: ${singleHolder || 'Titular ainda não definido'}`;
   } else {
     const definedCount = orderItems.filter((item) => Boolean(holderName(item))).length;
     summaryLine = `${orderItems.length} ingressos • ${titularSummary(orderItems.length, definedCount)}`;
+  }
+  // Preserva a compra como um todo no resumo: produto "compre junto" nao
+  // conta como ingresso, mas continua visivel no card (detalhe completo em
+  // "Ver detalhes", que ja lista produtos separadamente).
+  if (productItemCount > 0 && orderItems.length > 0) {
+    summaryLine += ` • +${productItemCount} produto${productItemCount === 1 ? '' : 's'}`;
   }
 
   // payments.expires_at e a fonte canonica de validade do pagamento no fluxo

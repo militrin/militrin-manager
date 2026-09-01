@@ -2,7 +2,7 @@
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
-import type { OrderRow, OrderItemRow, OrdersFilterInput } from "./types";
+import type { OrderRow, OrderItemRow, OrderProductItemRow, OrdersFilterInput } from "./types";
 import { ORDER_PAGE_SIZE } from "./types";
 import { orderDisplayReference } from "@/lib/display-reference";
 
@@ -83,19 +83,42 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
   }
 
   // ── 3. Order items em lote ───────────────────────────────────────────
+  // item_kind e a mesma fonte canonica ja usada pelo detector de Integridade
+  // e pelo detalhe do pedido (order_items.item_kind, nunca nome/preco/lote):
+  // separa aqui, uma unica vez, o que e ingresso do que e produto "compre
+  // junto" (nunca gera ticket por design).
   const { data: itemsRaw } = await supabase
     .from("order_items")
     .select(`
-      id, order_id, item_position, ownership_status, holder_full_name,
+      id, order_id, item_position, ownership_status, holder_full_name, item_kind, quantity, status,
       ticket_categories(name),
-      tickets(id, status, token)
+      tickets(id, status, token),
+      store_items(name),
+      store_item_variants(name, value)
     `)
     .in("order_id", orderIds)
     .order("item_position", { ascending: true });
 
   const itemsByOrder = new Map<string, OrderItemRow[]>();
+  const productItemsByOrder = new Map<string, OrderProductItemRow[]>();
   for (const item of itemsRaw ?? []) {
     const oid = String(item.order_id ?? "");
+
+    if ((item.item_kind ?? "ticket") === "product") {
+      const storeItem = Array.isArray(item.store_items) ? item.store_items[0] : (item.store_items as { name?: string } | null);
+      const variant = Array.isArray(item.store_item_variants) ? item.store_item_variants[0] : (item.store_item_variants as { name?: string; value?: string } | null);
+      const productRow: OrderProductItemRow = {
+        id: String(item.id),
+        productName: storeItem?.name ? String(storeItem.name) : null,
+        variant: variant ? `${variant.name}: ${variant.value}` : null,
+        quantity: Number(item.quantity ?? 1),
+        status: String(item.status ?? "reserved"),
+      };
+      if (!productItemsByOrder.has(oid)) productItemsByOrder.set(oid, []);
+      productItemsByOrder.get(oid)!.push(productRow);
+      continue;
+    }
+
     const cat = item.ticket_categories as { name?: string } | null;
     const tkt = Array.isArray(item.tickets) ? item.tickets[0] : (item.tickets as { id?: string; status?: string; token?: string } | null);
 
@@ -122,6 +145,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
       : (o.participants as Record<string, unknown> | null);
     const payment = paymentByOrder.get(oid) ?? { method: null, status: "pending" };
     const items = itemsByOrder.get(oid) ?? [];
+    const productItems = productItemsByOrder.get(oid) ?? [];
     const categoryNames = [...new Set(items.map((i) => i.categoryName).filter(Boolean))] as string[];
 
     return {
@@ -144,6 +168,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
       categoryNames,
       hasDiscount: Number(o.discount_amount ?? 0) > 0,
       items,
+      productItems,
     };
   });
 

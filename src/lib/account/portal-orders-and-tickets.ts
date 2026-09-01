@@ -34,7 +34,26 @@ export function resolveAccountOrderStatus(order: Record<string, unknown>): Comme
 // pedido, orders.participant_id) e fica null em pedidos modernos -- nao e
 // mais selecionada aqui pra evitar reintroduzir essa fonte incorreta.
 export const ACCOUNT_ORDERS_SELECT =
-  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status, expires_at), tickets(id, token, status), order_items(id, item_position, status, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
+  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status, expires_at), tickets(id, token, status), order_items(id, item_position, status, item_kind, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
+
+// Fonte canonica ticket x produto em toda a Minha Conta: order_items.item_kind
+// (nunca nome/preco/lote/QR -- mesma regra ja usada pelo detector de
+// Integridade e pelo detalhe do pedido admin). Produto "compre junto" nunca
+// gera ticket por design e nao deve contar como "ingresso" nem participar de
+// resumo de titularidade. Centralizado aqui (em vez de cada tela da Minha
+// Conta reimplementar o proprio filtro) para nao divergir de novo.
+export function accountTicketItems(order: Record<string, unknown>): Array<Record<string, unknown>> {
+  const items = Array.isArray(order.order_items)
+    ? (order.order_items as Array<Record<string, unknown>>)
+    : order.order_items
+      ? [order.order_items as Record<string, unknown>]
+      : [];
+  return items.filter((item) => (item.item_kind ?? 'ticket') === 'ticket');
+}
+
+export function accountTicketItemCount(order: Record<string, unknown>): number {
+  return accountTicketItems(order).length;
+}
 
 export async function getAccountOrders(supabase: ServerSupabaseClient, userId: string) {
   return supabase

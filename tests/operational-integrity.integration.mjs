@@ -497,6 +497,73 @@ test('item de produto/add-on (item_kind=product) pago sem ticket nunca gera fals
   assert.equal(rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'produto pago e sem ticket e o comportamento correto, nunca uma inconsistencia');
 });
 
+// Reproduz o caso real de producao (MIL-2026-00001086: 1 ingresso + 2
+// produtos "compre junto" no MESMO pedido) que gerou 3 falsos positivos na
+// Central de Integridade -- o detector testava QUALQUER order_item pago
+// contra "existe ticket?", inclusive linhas item_kind='product' que nunca
+// deveriam ter ticket. Cobre os cenarios "pedido misto" e "2 ingressos +
+// produto" pedidos na auditoria: produto nunca conta, ingresso sempre conta.
+async function addProductItemToOrder(orgId, eventId, orderId) {
+  const suffix = `${Date.now()}-${userCounter++}`;
+  const storeItem = await service.from('store_items').insert({
+    organization_id: orgId, event_id: eventId, name: 'Copo avulso', slug: `copo-avulso-${suffix}`, price: 0,
+  }).select('id').single();
+  assert.equal(storeItem.error, null, storeItem.error?.message);
+  const item = await service.from('order_items').insert({
+    order_id: orderId, event_id: eventId, quantity: 1, unit_price: 0, final_amount: 0,
+    status: 'confirmed', ownership_status: 'unassigned', item_kind: 'product', store_item_id: storeItem.data.id,
+  }).select('id').single();
+  assert.equal(item.error, null, item.error?.message);
+  return item.data.id;
+}
+
+test('pedido misto (ingresso emitido + produtos) nunca bloqueia por causa dos produtos', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('mixed-ok');
+  const eventId = await makeEvent(orgId, 'Evento Misto OK');
+  await makeFlatBatch(eventId, true);
+
+  const order = await makePaidOrderItem(orgId, eventId, { issueTicket: true });
+  await addProductItemToOrder(orgId, eventId, order.orderId);
+  await addProductItemToOrder(orgId, eventId, order.orderId);
+
+  const rows = await callDetectorsAs(admin, eventId);
+  assert.equal(rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'ingresso emitido + produtos pagos sem ticket nao pode bloquear');
+});
+
+test('pedido misto (ingresso NAO emitido + produtos) bloqueia somente pelo ingresso, nunca pelos produtos', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('mixed-blocked');
+  const eventId = await makeEvent(orgId, 'Evento Misto Bloqueado');
+  await makeFlatBatch(eventId, true);
+
+  const order = await makePaidOrderItem(orgId, eventId, { issueTicket: false });
+  await addProductItemToOrder(orgId, eventId, order.orderId);
+  await addProductItemToOrder(orgId, eventId, order.orderId);
+
+  const rows = await callDetectorsAs(admin, eventId);
+  const missing = rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET');
+  assert.equal(missing.length, 1, 'deve bloquear exatamente 1 vez, pelo item de ingresso');
+  assert.equal(missing[0].affected_count, 1, 'os 2 produtos do mesmo pedido nao podem inflar a contagem');
+
+  const client = await clientFor(admin);
+  const detail = await client.rpc('get_operational_integrity_issue_entities', { p_code: 'PAID_ORDER_WITHOUT_TICKET', p_event_id: eventId });
+  assert.equal(detail.error, null, detail.error?.message);
+  assert.equal(detail.data.length, 1);
+  assert.equal(detail.data[0].entity_id, order.itemId, 'a entidade apontada deve ser o item de ingresso, nunca um dos produtos');
+});
+
+test('dois ingressos emitidos + um produto no mesmo pedido: nenhum falso positivo', async () => {
+  const { orgId, admin } = await makeOrgWithAdmin('two-tickets-product');
+  const eventId = await makeEvent(orgId, 'Evento Dois Ingressos Produto');
+  await makeFlatBatch(eventId, true);
+
+  const orderA = await makePaidOrderItem(orgId, eventId, { issueTicket: true });
+  await makePaidOrderItem(orgId, eventId, { issueTicket: true });
+  await addProductItemToOrder(orgId, eventId, orderA.orderId);
+
+  const rows = await callDetectorsAs(admin, eventId);
+  assert.equal(rows.filter((r) => r.code === 'PAID_ORDER_WITHOUT_TICKET').length, 0, 'ambos os ingressos emitidos + 1 produto sem ticket nao pode gerar issue');
+});
+
 test('ingresso único: preço não confirmado bloqueia; preço confirmado fica OK', async () => {
   const { orgId, admin } = await makeOrgWithAdmin('price');
 

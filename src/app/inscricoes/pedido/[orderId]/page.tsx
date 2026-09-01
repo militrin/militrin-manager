@@ -47,7 +47,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const [{ data: items }, { data: payments }, { data: tickets }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id,item_position,status,item_kind,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email)")
+      .select("id,item_position,status,item_kind,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
       .eq("order_id", orderId)
       .order("item_position", { ascending: true }),
     supabase
@@ -78,6 +78,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
     if (buyer?.full_name) buyerName = String(buyer.full_name);
   }
 
+  // Mesmo discriminador canonico do detector PAID_ORDER_WITHOUT_TICKET
+  // (order_items.item_kind) -- produto "compre junto" (item_kind='product')
+  // nunca gera ticket por design e nao deve ser contado nem rotulado como
+  // ingresso (auditoria da Central de Integridade, falsos positivos em
+  // MIL-2026-00001086/00001089).
+  const ticketItems = (items ?? []).filter((item) => (item.item_kind ?? "ticket") === "ticket") as Row[];
+  const productItems = (items ?? []).filter((item) => item.item_kind === "product") as Row[];
+
   const firstItem = (items ?? [])[0] as Row | undefined;
   const holderName = firstItem?.holder_full_name ?? one(firstItem?.participants)?.full_name ?? null;
   const buyerPresentation = resolveBuyerPresentation({
@@ -98,7 +106,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
         <div className="min-w-0 flex-1 space-y-6">
           <AdminPageHeader
             title={`Pedido ${orderDisplayReference(order.display_number, order.order_number)}`}
-            subtitle={`${eventRelation?.name ?? "Evento"} · ${(items ?? []).length} item(ns)`}
+            subtitle={`${eventRelation?.name ?? "Evento"} · ${ticketItems.length} ingresso(s)${productItems.length ? ` · ${productItems.length} item(ns) adicional(is)` : ""}`}
             actions={<Link href="/inscricoes" className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">Voltar</Link>}
           />
 
@@ -118,10 +126,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
             ) : null}
           </AdminSection>
 
-          <AdminSection title={`Ingresso(s) do pedido (${(items ?? []).length})`}>
-            {!items?.length ? <AdminEmptyState title="Nenhum item encontrado" description="Este pedido não tem itens registrados." /> : (
+          <AdminSection title={`Ingresso(s) do pedido (${ticketItems.length})`}>
+            {!ticketItems.length ? <AdminEmptyState title="Nenhum ingresso encontrado" description="Este pedido não tem itens de ingresso registrados." /> : (
               <div className="space-y-2">
-                {items.map((item) => {
+                {ticketItems.map((item) => {
                   const participant = one(item.participants);
                   const ticket = ticketByItem.get(String(item.id));
                   const category = one(item.ticket_categories);
@@ -130,14 +138,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
 
                   // Mesma semantica do detector PAID_ORDER_WITHOUT_TICKET
                   // (nao duplicar regra, so refletir): so e um problema real
-                  // quando o ITEM (nao o pedido) representa ingresso
-                  // (item_kind='ticket'), ja esta comercialmente confirmado,
-                  // e nao tem ticket ativo (cancelado nao conta como ativo).
-                  const isTicketItem = (item.item_kind ?? "ticket") === "ticket";
+                  // quando o ITEM ja esta comercialmente confirmado e nao tem
+                  // ticket ativo (cancelado nao conta como ativo). Esta
+                  // secao ja so recebe item_kind='ticket' (filtrado acima).
                   const isConfirmedItem = item.status === "confirmed" || item.status === "transferred";
                   const hasActiveTicket = Boolean(ticket) && ticket!.status !== "cancelled";
                   const hasCancelledOnlyTicket = Boolean(ticket) && ticket!.status === "cancelled";
-                  const missingTicket = isTicketItem && isConfirmedItem && !hasActiveTicket;
+                  const missingTicket = isConfirmedItem && !hasActiveTicket;
 
                   return (
                     <div key={item.id} className={`rounded-xl border p-3 text-sm ${missingTicket ? "border-rose-500/40 bg-rose-500/5" : "border-slate-800 bg-slate-900/60"}`}>
@@ -160,21 +167,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                             </p>
                           ) : null}
                         </div>
-                        {isTicketItem ? (
-                          hasActiveTicket ? (
-                            <Link href={`/ingressos/${ticket!.id}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
-                              Ver ingresso
-                            </Link>
-                          ) : hasCancelledOnlyTicket ? (
-                            <Link href={`/ingressos/${ticket!.id}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-rose-500/40 px-2.5 text-xs text-rose-200">
-                              Ver ingresso cancelado
-                            </Link>
-                          ) : missingTicket ? (
-                            <span className="shrink-0 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200">Ingresso não emitido</span>
-                          ) : (
-                            <span className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400">Aguardando pagamento</span>
-                          )
-                        ) : null}
+                        {hasActiveTicket ? (
+                          <Link href={`/ingressos/${ticket!.id}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
+                            Ver ingresso
+                          </Link>
+                        ) : hasCancelledOnlyTicket ? (
+                          <Link href={`/ingressos/${ticket!.id}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-rose-500/40 px-2.5 text-xs text-rose-200">
+                            Ver ingresso cancelado
+                          </Link>
+                        ) : missingTicket ? (
+                          <span className="shrink-0 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200">Ingresso não emitido</span>
+                        ) : (
+                          <span className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400">Aguardando pagamento</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -182,6 +187,40 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               </div>
             )}
           </AdminSection>
+
+          {productItems.length ? (
+            <AdminSection title={`Itens / produtos do pedido (${productItems.length})`}>
+              <div className="space-y-2">
+                {productItems.map((item) => {
+                  const storeItem = one(item.store_items);
+                  const variant = one(item.store_item_variants);
+                  const name = storeItem?.name ?? "Produto";
+                  const variantText = variant ? `${variant.name}: ${variant.value}` : null;
+                  const deliveryLabel =
+                    item.status === "delivered" ? "Entregue" : item.status === "cancelled" || item.status === "expired" || item.status === "refunded" ? "Cancelado" : "Aguardando retirada";
+                  const deliveryClass =
+                    item.status === "delivered"
+                      ? "border-emerald-500/40 text-emerald-200"
+                      : item.status === "cancelled" || item.status === "expired" || item.status === "refunded"
+                        ? "border-slate-700 text-slate-400"
+                        : "border-amber-500/40 text-amber-200";
+
+                  return (
+                    <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-slate-100">{item.quantity}x {name}</p>
+                          <p className="text-xs text-slate-400">{variantText ?? "Sem variante"}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">{canViewFinancial ? money(item.final_amount ?? 0) : ""}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${deliveryClass}`}>{deliveryLabel}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </AdminSection>
+          ) : null}
 
           {payments?.length ? (
             <AdminSection title="Tentativas de pagamento">

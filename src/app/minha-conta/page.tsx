@@ -4,7 +4,7 @@ import { ArrowRight, CalendarDays, ChevronRight, Clock, QrCode, ShieldCheck, Sho
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
+import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus, accountTicketItemCount } from '@/lib/account/portal-orders-and-tickets';
 import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
 import { resolveAccountHomeTicketCta } from '@/lib/account/home-ticket-cta';
@@ -156,7 +156,7 @@ export default async function MinhaContaPage() {
   const latestOrderEvent = latestOrder
     ? firstRelation(latestOrder.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined)
     : null;
-  const latestOrderItemCount = latestOrder && Array.isArray(latestOrder.order_items) ? latestOrder.order_items.length : 0;
+  const latestOrderItemCount = latestOrder ? accountTicketItemCount(latestOrder) : 0;
   const latestOrderStatus = latestOrder ? resolveAccountOrderStatus(latestOrder) : null;
   const latestOrderActivityTitle = latestOrderStatus === 'confirmed' ? 'Compra realizada' : 'Pedido criado';
 
@@ -204,10 +204,14 @@ export default async function MinhaContaPage() {
     const eventObj = firstRelation(pendingOrder.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
     const eventId = String(pendingOrder.event_id ?? '');
     const [itemsResult, categoriesRpc] = await Promise.all([
-      supabase.from('order_items').select('ticket_category_id, batch_id').eq('order_id', String(pendingOrder.id)),
+      supabase.from('order_items').select('ticket_category_id, batch_id, item_kind').eq('order_id', String(pendingOrder.id)),
       eventId ? supabase.rpc('get_event_ticket_categories', { p_event_id: eventId }) : Promise.resolve({ data: null }),
     ]);
-    const items = (itemsResult.data ?? []) as Array<{ ticket_category_id: string | null; batch_id: string | null }>;
+    // Quantidade exibida como "N ingresso(s)" -- produto "compre junto" no
+    // mesmo pedido pendente nao conta (item_kind, mesma fonte canonica de
+    // sempre, nunca nome/preco/lote).
+    const items = ((itemsResult.data ?? []) as Array<{ ticket_category_id: string | null; batch_id: string | null; item_kind: string | null }>)
+      .filter((item) => (item.item_kind ?? 'ticket') === 'ticket');
     const firstItem = items[0] ?? null;
     const categoryRows = (Array.isArray(categoriesRpc.data) ? categoriesRpc.data : []) as Array<{ is_active: boolean; available_slots: number | null; current_batch_name: string | null }>;
     const activeCategoryCount = categoryRows.filter((row) => row.is_active && (row.available_slots === null || row.available_slots > 0) && row.current_batch_name !== null).length;

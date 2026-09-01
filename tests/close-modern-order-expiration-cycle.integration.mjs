@@ -125,7 +125,122 @@ async function buildFixture() {
     return data;
   }
 
-  return { service, buyer, org, event, category, must, createOrder, startAsaasPix, availableSlots, orderItemIds, participantsFor, suffix };
+  // ---- helpers de produto "compre junto" (item_kind='product'), pra
+  // auditoria do vazamento de reserved_quantity (store_item_inventory /
+  // event_kit_item_variant_inventory) em _apply_terminal_order_payment_status
+  // e remove_cart_order_item -- ver 20260926000000_fix_product_stock_
+  // reservation_release.sql. ----
+  async function createStoreItem(totalQuantity) {
+    const itemSuffix = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const item = await must(service.from('store_items').insert({
+      organization_id: org.id, event_id: event.id, name: `Produto Teste ${itemSuffix}`, slug: `produto-teste-${itemSuffix}`,
+      price: 10, supply_mode: 'stock', visibility: 'public', is_active: true, requires_variant: false,
+    }).select('id').single(), 'create store item');
+    await must(service.from('store_item_inventory').insert({
+      organization_id: org.id, event_id: event.id, store_item_id: item.id, variant_id: null,
+      total_quantity: totalQuantity, reserved_quantity: 0, delivered_quantity: 0,
+    }), 'create store item inventory');
+    return item.id;
+  }
+
+  // Item vinculado ao kit do evento (linked_event_kit_item_id): estoque real
+  // vive em event_kit_item_variant_inventory, NUNCA em store_item_inventory
+  // (roteamento de reserve_store_item_stock/release_store_item_reservation/
+  // deliver_store_item_stock, 20260854000000). remove_cart_order_item tocava
+  // store_item_inventory direto e nunca liberava esse estoque -- exatamente o
+  // caso que este fixture prova.
+  async function createLinkedStoreItem(totalQuantity) {
+    const itemSuffix = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const kitItem = await must(service.from('event_kit_items').insert({
+      organization_id: org.id, event_id: event.id, name: `Kit Item ${itemSuffix}`, slug: `kit-item-${itemSuffix}`,
+      item_type: 'other', requires_variant: true, is_required: false, is_active: true, shirt_supply_mode: 'stock',
+    }).select('id').single(), 'create event kit item');
+    const kitVariant = await must(service.from('event_kit_item_variants').insert({
+      kit_item_id: kitItem.id, name: 'Tamanho', value: 'Único', sort_order: 1, is_active: true,
+    }).select('id').single(), 'create event kit item variant');
+    await must(service.from('event_kit_item_variant_inventory').insert({
+      organization_id: org.id, event_id: event.id, kit_item_id: kitItem.id, variant_id: kitVariant.id,
+      total_quantity: totalQuantity, reserved_quantity: 0, delivered_quantity: 0,
+    }), 'create kit variant inventory');
+    const storeItem = await must(service.from('store_items').insert({
+      organization_id: org.id, event_id: event.id, name: `Produto Vinculado ${itemSuffix}`, slug: `produto-vinculado-${itemSuffix}`,
+      price: 10, supply_mode: 'stock', visibility: 'public', is_active: true, requires_variant: true,
+      linked_event_kit_item_id: kitItem.id,
+    }).select('id').single(), 'create linked store item');
+    const storeVariant = await must(service.from('store_item_variants').insert({
+      store_item_id: storeItem.id, name: 'Tamanho', value: 'Único', is_active: true, sort_order: 1,
+      linked_event_kit_item_variant_id: kitVariant.id,
+    }).select('id').single(), 'create linked store item variant');
+    return { storeItemId: storeItem.id, variantId: storeVariant.id, kitItemId: kitItem.id, kitVariantId: kitVariant.id };
+  }
+
+  // Pedido SEM ingresso -- so pra anexar produto (add_product_to_cart_order
+  // exige um pedido 'pending' existente, mas nao exige item de ingresso
+  // nele). Evita consumir a capacidade compartilhada da categoria de
+  // ingresso (fx.category, capacity=10) em testes que so importam pra
+  // reserva de PRODUTO -- createOrder() sempre emite um ticket de verdade
+  // via create_multi_ticket_order_checkout, e testes de reconciliacao nunca
+  // liberam esse ticket (so mexem no order_item de produto), o que esgotaria
+  // a capacidade compartilhada entre muitos testes no mesmo arquivo.
+  async function createProductOnlyOrder() {
+    const orderSuffix = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const order = await must(service.from('orders').insert({
+      organization_id: org.id, event_id: event.id, user_id: buyerCreated.user.id, order_number: `PROD-ONLY-${orderSuffix}`,
+      status: 'pending', base_amount: 0, final_amount: 0, buyer_type: 'account',
+    }).select('id').single(), 'create product-only order');
+    // start_order_payment_pix exige um payments row 'pending' ja existente
+    // pro pedido (o mesmo que create_multi_ticket_order_checkout ja cria
+    // pra pedido de ingresso) -- reproduzido aqui pra permitir o mesmo fluxo
+    // PIX -> apply_gateway_payment_status nos testes que so precisam de
+    // produto (sem ticket).
+    const payment = await must(service.from('payments').insert({
+      organization_id: org.id, event_id: event.id, order_id: order.id, amount: 0, final_amount: 0,
+      payment_method: 'pix', payment_status: 'pending',
+    }).select('id').single(), 'create pending payment for product-only order');
+    await must(service.from('orders').update({ payment_id: payment.id }).eq('id', order.id), 'link payment to product-only order');
+    return order.id;
+  }
+
+  async function addProduct(orderId, storeItemId, quantity, variantId = null) {
+    const r = await buyer.rpc('add_product_to_cart_order', {
+      p_order_id: orderId, p_store_item_id: storeItemId, p_variant_id: variantId, p_quantity: quantity,
+    });
+    if (r.error) throw new Error(`add product: ${JSON.stringify(r.error)}`);
+    return r.data.order_item_ids[0];
+  }
+
+  async function storeInventoryOf(storeItemId) {
+    const { data, error } = await service.from('store_item_inventory')
+      .select('total_quantity,reserved_quantity,delivered_quantity')
+      .eq('store_item_id', storeItemId).is('variant_id', null).single();
+    if (error) throw new Error(JSON.stringify(error));
+    return data;
+  }
+
+  async function kitInventoryOf(kitItemId, variantId) {
+    const { data, error } = await service.from('event_kit_item_variant_inventory')
+      .select('total_quantity,reserved_quantity,delivered_quantity')
+      .eq('kit_item_id', kitItemId).eq('variant_id', variantId).single();
+    if (error) throw new Error(JSON.stringify(error));
+    return data;
+  }
+
+  async function createStandaloneStoreOrderItem(storeItemId, quantity, status = 'reserved') {
+    const orderSuffix = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const storeOrder = await must(service.from('store_orders').insert({
+      organization_id: org.id, event_id: event.id, user_id: buyerCreated.user.id, order_number: `LOJA-${orderSuffix}`,
+      status: 'pending', payment_status: 'pending', base_amount: 10, final_amount: 10,
+    }).select('id').single(), 'create store order');
+    const item = await must(service.from('store_order_items').insert({
+      store_order_id: storeOrder.id, store_item_id: storeItemId, variant_id: null, quantity, unit_price: 10, final_amount: 10 * quantity, status,
+    }).select('id').single(), 'create store order item');
+    return item.id;
+  }
+
+  return {
+    service, buyer, org, event, category, must, createOrder, startAsaasPix, availableSlots, orderItemIds, participantsFor, suffix,
+    createStoreItem, createLinkedStoreItem, addProduct, storeInventoryOf, kitInventoryOf, createStandaloneStoreOrderItem, createProductOnlyOrder,
+  };
 }
 
 const fx = await buildFixture();
@@ -308,4 +423,304 @@ test('cortesia (payment_method=courtesy, ja paga, sem expires_at) nunca e varrid
   assert.equal(paymentAfter.payment_status, 'paid', 'cortesia paga nunca deve virar expired');
   const { data: orderAfter } = await fx.service.from('orders').select('status').eq('id', orderId).single();
   assert.equal(orderAfter.status, 'confirmed');
+});
+
+// ============================================================
+// Reserva de estoque de produto "compre junto" (order_items.item_kind=
+// 'product') -- auditoria confirmou que _apply_terminal_order_payment_status
+// nunca liberava reserved_quantity, e remove_cart_order_item nunca liberava
+// o estoque de item vinculado a kit do evento. Corrigido em
+// 20260926000000_fix_product_stock_reservation_release.sql.
+// ============================================================
+
+test('adicionar produto ao pedido aumenta reserved_quantity corretamente', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  await fx.addProduct(orderId, storeItemId, 3);
+  const inv = await fx.storeInventoryOf(storeItemId);
+  assert.equal(inv.reserved_quantity, 3);
+});
+
+test('expirar PIX libera exatamente a reserva do produto (2 unidades), sem tocar o ingresso', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  await fx.addProduct(orderId, storeItemId, 2);
+  await fx.startAsaasPix(orderId, PAST);
+
+  const before = await fx.storeInventoryOf(storeItemId);
+  assert.equal(before.reserved_quantity, 2, 'reserva deve ficar em 2 antes de expirar');
+
+  await fx.must(fx.service.rpc('expire_stale_order_payments', { p_organization_id: fx.org.id }), 'expire com produto');
+
+  const after = await fx.storeInventoryOf(storeItemId);
+  assert.equal(after.reserved_quantity, 0, 'as 2 unidades reservadas do produto devem ser liberadas ao expirar');
+
+  const items = await fx.orderItemIds(orderId);
+  assert.ok(items.every((i) => i.status === 'expired'), 'ingresso e produto do mesmo pedido devem expirar juntos');
+});
+
+test('pedido misto (1 ingresso + 1 produto) expirado libera capacidade do ingresso E reserva do produto, independentemente', async () => {
+  const before = await fx.availableSlots();
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  await fx.addProduct(orderId, storeItemId, 5);
+  await fx.startAsaasPix(orderId, PAST);
+
+  assert.equal((await fx.availableSlots()).available, before.available - 1, 'ingresso deve consumir 1 vaga');
+  assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 5, 'produto deve reservar 5 unidades');
+
+  await fx.must(fx.service.rpc('expire_stale_order_payments', { p_organization_id: fx.org.id }), 'expire misto');
+
+  assert.equal((await fx.availableSlots()).available, before.available, 'vaga do ingresso deve voltar');
+  assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 0, 'reserva do produto tambem deve ser liberada');
+});
+
+test('retry de _apply_terminal_order_payment_status (mesmo payment, 2x) nao libera a reserva do produto duas vezes', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  await fx.addProduct(orderId, storeItemId, 2);
+  await fx.startAsaasPix(orderId, PAST);
+  const { data: payment } = await fx.service.from('payments').select('id').eq('order_id', orderId).single();
+
+  await fx.must(fx.service.rpc('_apply_terminal_order_payment_status', { p_payment_id: payment.id, p_target_status: 'expired' }), 'apply 1');
+  assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 0, 'primeira chamada deve liberar a reserva');
+
+  // Chamada direta da funcao "privada" (service_role) simula exatamente o
+  // retry que a idempotencia precisa proteger -- os callers reais
+  // (expire_stale_order_payments/apply_gateway_payment_status) ja evitam
+  // reprocessar o mesmo payment, mas a funcao precisa ser segura por si so.
+  await fx.must(fx.service.rpc('_apply_terminal_order_payment_status', { p_payment_id: payment.id, p_target_status: 'expired' }), 'apply 2 (retry)');
+  const afterRetry = await fx.storeInventoryOf(storeItemId);
+  assert.equal(afterRetry.reserved_quantity, 0, 'retry nao pode liberar de novo (ficaria negativo sem o clamp, ou vazaria pra outro pedido)');
+});
+
+test('release_store_item_reservation nunca deixa reserved_quantity negativa mesmo pedindo mais do que o reservado', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  await fx.must(fx.service.rpc('release_store_item_reservation', { p_store_item_id: storeItemId, p_variant_id: null, p_quantity: 999 }), 'release excessivo sem nunca ter reservado nada');
+  const inv = await fx.storeInventoryOf(storeItemId);
+  assert.equal(inv.reserved_quantity, 0, 'nunca deve ficar negativa');
+});
+
+test('cancelar pedido (refunded) libera a reserva do produto', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  await fx.addProduct(orderId, storeItemId, 4);
+  const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
+
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+  }), 'confirma pagamento');
+  assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 4, 'reserva permanece apos confirmar pagamento (so libera na entrega fisica)');
+
+  const { data: payment } = await fx.service.from('payments').select('id').eq('order_id', orderId).single();
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'REFUNDED', p_internal_status: 'refunded',
+  }), 'estorna pagamento');
+  void payment;
+
+  const inv = await fx.storeInventoryOf(storeItemId);
+  assert.equal(inv.reserved_quantity, 0, 'estorno deve liberar a reserva do produto ainda nao entregue');
+  const { data: order } = await fx.service.from('orders').select('status').eq('id', orderId).single();
+  assert.equal(order.status, 'refunded');
+});
+
+test('confirmar pagamento normalmente NAO libera a reserva do produto por acidente', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  await fx.addProduct(orderId, storeItemId, 3);
+  const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
+
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+  }), 'confirma pagamento');
+
+  const inv = await fx.storeInventoryOf(storeItemId);
+  assert.equal(inv.reserved_quantity, 3, 'confirmar pagamento e um evento comercial, nunca de estoque -- reserva so muda na entrega fisica ou num cancelamento/expiracao');
+});
+
+test('produto ja entregue nao sofre liberacao indevida quando o pagamento e estornado depois', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createOrder(1);
+  const itemId = await fx.addProduct(orderId, storeItemId, 2);
+  const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+  }), 'confirma pagamento');
+
+  // Simula a entrega fisica (deliver_store_item_stock move reserved->delivered).
+  await fx.must(fx.service.rpc('deliver_store_item_stock', { p_store_item_id: storeItemId, p_variant_id: null, p_quantity: 2 }), 'entrega fisica');
+  await fx.must(fx.service.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', itemId), 'marca item como entregue');
+
+  const beforeRefund = await fx.storeInventoryOf(storeItemId);
+  assert.equal(beforeRefund.reserved_quantity, 0);
+  assert.equal(beforeRefund.delivered_quantity, 2);
+
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'REFUNDED', p_internal_status: 'refunded',
+  }), 'estorna pagamento apos entrega');
+
+  const afterRefund = await fx.storeInventoryOf(storeItemId);
+  assert.equal(afterRefund.reserved_quantity, 0, 'nao pode ficar negativa nem mexer na reserva de outras unidades do mesmo produto');
+  assert.equal(afterRefund.delivered_quantity, 2, 'quantidade entregue e um fato fisico -- estorno nao desfaz a entrega');
+
+  const { data: item } = await fx.service.from('order_items').select('status').eq('id', itemId).single();
+  assert.equal(item.status, 'delivered', 'item ja entregue deve permanecer delivered, nunca virar refunded silenciosamente');
+});
+
+// ============================================================
+// reconcile_store_item_inventory_reservation (20260927000000) -- limpeza
+// pontual do residuo ja acumulado ANTES da correcao de 20260926000000
+// existir. Cenario reproduzido aqui: order_item marcado 'expired' via
+// UPDATE direto (service_role), SEM passar por release_store_item_
+// reservation -- exatamente o estado que o bug historico deixava (a
+// correcao de 20260926 so previne casos NOVOS; nao reescreve o passado).
+// ============================================================
+
+test('reconciliacao: 2 reservas legitimas + 2 orfas (simulando o bug ja corrigido) -- sobra so a legitima, sem alterar pedidos', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const legitOrderA = await fx.createProductOnlyOrder();
+  await fx.addProduct(legitOrderA, storeItemId, 1);
+  const legitOrderB = await fx.createProductOnlyOrder();
+  await fx.addProduct(legitOrderB, storeItemId, 1);
+
+  const orphanOrderA = await fx.createProductOnlyOrder();
+  const orphanItemA = await fx.addProduct(orphanOrderA, storeItemId, 1);
+  const orphanOrderB = await fx.createProductOnlyOrder();
+  const orphanItemB = await fx.addProduct(orphanOrderB, storeItemId, 1);
+  await fx.must(fx.service.from('order_items').update({ status: 'expired' }).in('id', [orphanItemA, orphanItemB]), 'simula orfaos (estado pre-20260926)');
+
+  const before = await fx.storeInventoryOf(storeItemId);
+  assert.equal(before.reserved_quantity, 4, 'estado inflado: 2 legitimas + 2 orfas');
+
+  const result = await fx.must(fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null }), 'reconcile');
+  const row = Array.isArray(result) ? result[0] : result;
+  assert.equal(row.previous_reserved, 4);
+  assert.equal(row.corrected_reserved, 2);
+  assert.equal(row.delivered_quantity, 0);
+
+  const after = await fx.storeInventoryOf(storeItemId);
+  assert.equal(after.reserved_quantity, 2, 'so as 2 reservas legitimas devem sobrar');
+
+  // Nunca toca pedidos/order_items -- os 2 itens continuam exatamente 'expired'.
+  const orphans = await fx.must(fx.service.from('order_items').select('status').in('id', [orphanItemA, orphanItemB]), 'orfaos depois');
+  assert.ok(orphans.every((o) => o.status === 'expired'));
+});
+
+test('reconciliacao rodada 2x: segunda chamada e no-op (idempotente)', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const legitOrder = await fx.createProductOnlyOrder();
+  await fx.addProduct(legitOrder, storeItemId, 1);
+  const orphanOrder = await fx.createProductOnlyOrder();
+  const orphanItem = await fx.addProduct(orphanOrder, storeItemId, 2);
+  await fx.must(fx.service.from('order_items').update({ status: 'cancelled' }).eq('id', orphanItem), 'simula orfao via cancelamento');
+
+  const first = await fx.must(fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null }), 'reconcile 1');
+  const firstRow = Array.isArray(first) ? first[0] : first;
+  assert.equal(firstRow.corrected_reserved, 1);
+
+  const second = await fx.must(fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null }), 'reconcile 2 (retry)');
+  const secondRow = Array.isArray(second) ? second[0] : second;
+  assert.equal(secondRow.previous_reserved, 1, 'segunda chamada deve ver o valor ja corrigido como ponto de partida');
+  assert.equal(secondRow.corrected_reserved, 1, 'nao deve mudar de novo');
+
+  const after = await fx.storeInventoryOf(storeItemId);
+  assert.equal(after.reserved_quantity, 1);
+});
+
+test('reconciliacao sem nenhum orfao nao altera nada', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createProductOnlyOrder();
+  await fx.addProduct(orderId, storeItemId, 3);
+
+  const before = await fx.storeInventoryOf(storeItemId);
+  const result = await fx.must(fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null }), 'reconcile sem orfao');
+  const row = Array.isArray(result) ? result[0] : result;
+  assert.equal(row.previous_reserved, 3);
+  assert.equal(row.corrected_reserved, 3, 'reserva 100% legitima nao pode ser alterada');
+
+  const after = await fx.storeInventoryOf(storeItemId);
+  assert.deepEqual(after, before, 'nenhum campo da linha de estoque deve mudar quando nao ha excesso');
+});
+
+test('reconciliacao nunca toca delivered_quantity, mesmo com entrega parcial no meio de orfaos', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const deliveredOrder = await fx.createProductOnlyOrder();
+  const deliveredItem = await fx.addProduct(deliveredOrder, storeItemId, 2);
+  const gatewayPaymentId = await fx.startAsaasPix(deliveredOrder, FUTURE);
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', { p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid' }), 'paga');
+  await fx.must(fx.service.rpc('deliver_store_item_stock', { p_store_item_id: storeItemId, p_variant_id: null, p_quantity: 2 }), 'entrega fisica');
+  await fx.must(fx.service.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', deliveredItem), 'marca entregue');
+
+  const orphanOrder = await fx.createProductOnlyOrder();
+  const orphanItem = await fx.addProduct(orphanOrder, storeItemId, 5);
+  await fx.must(fx.service.from('order_items').update({ status: 'refunded' }).eq('id', orphanItem), 'simula orfao via estorno');
+
+  const before = await fx.storeInventoryOf(storeItemId);
+  assert.equal(before.delivered_quantity, 2);
+  assert.equal(before.reserved_quantity, 5, 'orfao de 5 unidades, nenhuma reserva legitima restante');
+
+  await fx.must(fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null }), 'reconcile');
+
+  const after = await fx.storeInventoryOf(storeItemId);
+  assert.equal(after.reserved_quantity, 0, 'orfao inteiro deve ser removido (nenhuma reserva legitima)');
+  assert.equal(after.delivered_quantity, 2, 'delivered_quantity nunca deve mudar');
+  assert.equal(after.total_quantity, before.total_quantity, 'total_quantity (estoque fisico) nunca deve mudar');
+});
+
+test('reconciliacao considera reserva da loja standalone (store_order_items) na soma legitima -- pedido misto entre os dois dominios', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const checkoutOrder = await fx.createProductOnlyOrder();
+  await fx.addProduct(checkoutOrder, storeItemId, 2);
+  const standaloneItemId = await fx.createStandaloneStoreOrderItem(storeItemId, 3, 'reserved');
+  void standaloneItemId;
+  // store_order_items inserido direto (sem passar por create_store_order)
+  // nao bate reserved_quantity sozinho -- simula manualmente o estado real
+  // (2 do checkout via RPC + 3 da loja) antes de inflar com o orfao.
+  await fx.must(fx.service.from('store_item_inventory').update({ reserved_quantity: 2 + 3 }).eq('store_item_id', storeItemId).is('variant_id', null), 'ajusta reserva combinada dos 2 dominios');
+
+  const orphanOrder = await fx.createProductOnlyOrder();
+  const orphanItem = await fx.addProduct(orphanOrder, storeItemId, 4);
+  await fx.must(fx.service.from('order_items').update({ status: 'expired' }).eq('id', orphanItem), 'simula orfao');
+  await fx.must(fx.service.from('store_item_inventory').update({ reserved_quantity: 2 + 3 + 4 }).eq('store_item_id', storeItemId).is('variant_id', null), 'inflaciona com o orfao (estado pre-fix)');
+
+  const result = await fx.must(fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null }), 'reconcile misto');
+  const row = Array.isArray(result) ? result[0] : result;
+  assert.equal(row.previous_reserved, 9);
+  assert.equal(row.corrected_reserved, 5, '2 (checkout) + 3 (loja standalone) = 5 legitimas, 4 orfas removidas');
+});
+
+test('reconciliacao levanta excecao (nunca infla silenciosamente) quando a soma legitima e MAIOR que reserved_quantity atual', async () => {
+  const storeItemId = await fx.createStoreItem(20);
+  const orderId = await fx.createProductOnlyOrder();
+  await fx.addProduct(orderId, storeItemId, 3);
+  // Corrompe deliberadamente pra menos do que a soma legitima -- cenario que
+  // NUNCA deveria acontecer; a funcao precisa abortar, nunca "consertar"
+  // aumentando a reserva sozinha.
+  await fx.must(fx.service.from('store_item_inventory').update({ reserved_quantity: 1 }).eq('store_item_id', storeItemId).is('variant_id', null), 'corrompe pra menos que o legitimo');
+
+  const result = await fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: storeItemId, p_variant_id: null });
+  assert.notEqual(result.error, null, 'deve falhar em vez de aumentar reserved_quantity silenciosamente');
+});
+
+test('reconciliacao nunca toca event_kit_item_variant_inventory -- item vinculado a kit nao tem linha em store_item_inventory e a funcao falha explicitamente', async () => {
+  const linked = await fx.createLinkedStoreItem(20);
+  const result = await fx.service.rpc('reconcile_store_item_inventory_reservation', { p_store_item_id: linked.storeItemId, p_variant_id: linked.variantId });
+  assert.notEqual(result.error, null, 'item vinculado a kit nunca tem linha em store_item_inventory -- a funcao deve falhar, nunca criar uma');
+  const kitInv = await fx.kitInventoryOf(linked.kitItemId, linked.kitVariantId);
+  assert.equal(kitInv.reserved_quantity, 0, 'estoque do kit deve permanecer intocado');
+});
+
+test('remover produto do carrinho libera a reserva mesmo quando o produto e vinculado ao estoque do kit do evento', async () => {
+  const linked = await fx.createLinkedStoreItem(20);
+  const orderId = await fx.createProductOnlyOrder();
+  const itemId = await fx.addProduct(orderId, linked.storeItemId, 3, linked.variantId);
+
+  const before = await fx.kitInventoryOf(linked.kitItemId, linked.kitVariantId);
+  assert.equal(before.reserved_quantity, 3, 'reserva deve rotear para o estoque do kit do evento, nunca store_item_inventory');
+
+  const removeResult = await fx.buyer.rpc('remove_cart_order_item', { p_order_item_id: itemId });
+  assert.equal(removeResult.error, null, removeResult.error?.message);
+
+  const after = await fx.kitInventoryOf(linked.kitItemId, linked.kitVariantId);
+  assert.equal(after.reserved_quantity, 0, 'remover do carrinho deve liberar a reserva do estoque do kit tambem para item vinculado');
 });

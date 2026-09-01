@@ -59,7 +59,7 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const emptyResult = { data: [], error: null };
   const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
-    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
     enabled.has('operations') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
     enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,created_at,paid_at,participants(full_name)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
@@ -82,7 +82,14 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     enabled.has('inventory') ? scope(supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')) : emptyResult,
   ]);
   for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult]) if (result.error) throw result.error;
-  const participants = (participantsResult.data ?? []) as Row[]; const items = (itemsResult.data ?? []) as Row[]; const tickets = (ticketsResult.data ?? []) as Row[];
+  const participants = (participantsResult.data ?? []) as Row[];
+  // Fonte canonica ticket x produto: order_items.item_kind (nunca nome/preco/
+  // lote/QR). Metricas e listas desta secao ("Inscricoes comerciais" etc.) sao
+  // semanticamente sobre INGRESSO -- produto "compre junto" (item_kind=
+  // 'product') e filtrado aqui, uma unica vez, pra nenhum consumidor abaixo
+  // precisar reaplicar a regra (auditoria da Central de Integridade).
+  const items = ((itemsResult.data ?? []) as Row[]).filter((item) => (item.item_kind ?? 'ticket') === 'ticket');
+  const tickets = (ticketsResult.data ?? []) as Row[];
   const payments = (paymentsResult.data ?? []) as Row[]; const rawInventory = (inventoryResult.data ?? []) as Row[]; const kits = (kitsResult.data ?? []) as Row[];
   const kitDefinitions = (kitDefinitionsResult.data ?? []) as Row[]; const issues = (issuesResult.data ?? []) as Row[]; const movements = (movementsResult.data ?? []) as Row[];
 

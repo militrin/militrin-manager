@@ -230,6 +230,25 @@ export default async function PedidosPage({
                         </table>
                       )}
 
+                      {order.productItems.length > 0 && (
+                        <div className="mt-3 border-t border-slate-800/60 pt-3">
+                          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                            Itens / produtos ({order.productItems.length})
+                          </p>
+                          <ul className="space-y-1.5">
+                            {order.productItems.map((product) => (
+                              <li key={product.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <span className="text-slate-300">
+                                  {product.quantity}x {product.productName ?? "Produto"}
+                                  {product.variant ? ` · ${product.variant}` : ""}
+                                </span>
+                                <span className="text-slate-500">{product.status}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
                       <div className="mt-3 flex gap-3">
                         <Link
                           href={`/inscricoes/${order.id}`}

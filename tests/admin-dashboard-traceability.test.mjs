@@ -24,6 +24,22 @@ test('canonical dashboard separates people, commercial items and tickets', async
   assert.doesNotMatch(source, /participant_data_issues'\)\.select\([^']*order_item_id/);
 });
 
+// Auditoria da Central de Integridade: produto "compre junto" (order_items.
+// item_kind='product') nunca deve inflar "Inscrições comerciais" nem
+// aparecer rotulado "Ingresso único" nas métricas do Dashboard. items e
+// filtrado uma unica vez, logo apos a leitura, antes de qualquer put(...)
+// -- nao uma heuristica por metrica.
+test('dashboard filtra order_items por item_kind=ticket antes de calcular qualquer metrica de inscricao', async () => {
+  const source = await read('src/lib/dashboard/admin-dashboard-data.ts');
+  const itemsDeclarationIndex = source.indexOf('const items = ((itemsResult.data ?? []) as Row[]).filter((item) => (item.item_kind ?? \'ticket\') === \'ticket\');');
+  assert.ok(itemsDeclarationIndex >= 0, 'items deve ser filtrado por item_kind logo na leitura de itemsResult');
+  const firstPutIndex = source.indexOf("put('registrations'");
+  assert.ok(firstPutIndex > itemsDeclarationIndex, 'o filtro por item_kind precisa vir ANTES de qualquer metrica usar items');
+  // order_items select precisa trazer item_kind -- sem ele o filtro seria
+  // sempre um no-op (item.item_kind sempre undefined).
+  assert.match(source, /supabase\.from\('order_items'\)\.select\('id,event_id,status,item_kind,/);
+});
+
 test('shirt stock and consistency follow physical and ticket-first semantics', async () => {
   const source = await read('src/lib/dashboard/admin-dashboard-data.ts');
   assert.match(source, /total_quantity \?\? 0\) - Number\(row\.delivered_quantity/);

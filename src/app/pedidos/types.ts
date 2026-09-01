@@ -9,6 +9,14 @@ export type OrderItemRow = {
   ownershipStatus: string;
 };
 
+export type OrderProductItemRow = {
+  id: string;
+  productName: string | null;
+  variant: string | null;
+  quantity: number;
+  status: string;
+};
+
 export type OrderRow = {
   id: string;
   orderNumber: string;
@@ -29,6 +37,7 @@ export type OrderRow = {
   categoryNames: string[];
   hasDiscount: boolean;
   items: OrderItemRow[];
+  productItems: OrderProductItemRow[];
 };
 
 export type OrdersFilterInput = {
