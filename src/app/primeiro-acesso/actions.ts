@@ -3,13 +3,28 @@
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
-import { isValidCpf } from '@/lib/validation/registration';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { updateCustomerProfileCompat } from '@/lib/account/update-customer-profile';
 import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
 import { getParticipantInviteContext, getParticipantInviteFailureCopy } from '@/lib/account/participant-invite';
 import { REQUIRED_PARTICIPANT_FIELD_CODES } from '@/lib/account/participant-issue-policy';
+import { validateFirstAccessProfile, type FirstAccessFieldErrors } from '@/lib/account/first-access-validation';
+
+export type CompleteFirstAccessResult = {
+  success: boolean;
+  message: string;
+  code?: string;
+  field_errors?: FirstAccessFieldErrors & Partial<Record<'new_password' | 'confirm_password', string>>;
+  redirect_to?: string;
+};
+
+function validationFailure(
+  fieldErrors: NonNullable<CompleteFirstAccessResult['field_errors']>,
+  message = 'Revise os campos destacados para concluir seu cadastro.',
+): CompleteFirstAccessResult {
+  return { success: false, message, field_errors: fieldErrors };
+}
 
 const missingFieldLabels: Record<string, string> = {
   full_name: 'Nome completo',
@@ -39,33 +54,7 @@ function translateFirstAccessPersistError(rawMessage: string) {
   return 'Nao foi possivel concluir seu cadastro. Tente novamente.';
 }
 
-function normalizeCpf(value: unknown) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  return digits.length === 11 ? digits : null;
-}
-
-function normalizeDateInput(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-
-  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!match) return null;
-
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
-    return null;
-  }
-
-  return `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-}
-
-export async function completeFirstAccessAction(formData: FormData) {
+export async function completeFirstAccessAction(formData: FormData): Promise<CompleteFirstAccessResult> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -75,12 +64,8 @@ export async function completeFirstAccessAction(formData: FormData) {
     return { success: false, message: 'Sessao expirada. Entre novamente.' };
   }
 
-  const privacyAcceptedRaw = formData.get('privacyAccepted');
-  const acceptedPrivacy = privacyAcceptedRaw === 'on' || privacyAcceptedRaw === 'true';
-
   console.info('[first-access:submit]', {
     userIdPresent: Boolean(user.id),
-    privacyReceived: acceptedPrivacy,
   });
 
   const { data: profileData, error: profileError } = await supabase.rpc('get_customer_profile', {
@@ -97,38 +82,31 @@ export async function completeFirstAccessAction(formData: FormData) {
     profileFound: Boolean(profile),
   });
 
-  const fullName = String(formData.get('full_name') ?? '').trim();
-  const cpf = normalizeCpf(formData.get('cpf'));
-  const birthDate = normalizeDateInput(String(formData.get('birth_date') ?? ''));
-  const gender = String(formData.get('gender') ?? '').trim();
-  const phone = String(formData.get('phone') ?? '').replace(/\D/g, '');
-  const city = String(formData.get('city') ?? '').trim();
   const authEmail = String(user.email ?? '').trim().toLowerCase();
+  const validation = validateFirstAccessProfile({
+    full_name: formData.get('full_name'),
+    cpf: formData.get('cpf'),
+    birth_date: formData.get('birth_date'),
+    gender: formData.get('gender'),
+    phone: formData.get('phone'),
+    email: authEmail,
+    city: formData.get('city'),
+  });
+  if (!validation.success) return validationFailure(validation.fieldErrors);
+  const {
+    full_name: fullName,
+    cpf,
+    birth_date: birthDate,
+    gender,
+    phone,
+    city,
+  } = validation.values;
   const nextPath = sanitizePostFirstAccessNextPath(String(formData.get('next_path') ?? ''), '/minha-conta');
   const inviteId = String(formData.get('invite_id') ?? '').trim();
 
   const inviteContext = inviteId ? await getParticipantInviteContext(inviteId, user) : null;
-  if (inviteId) {
-    if (!inviteContext?.valid) {
-      return { success: false, message: getParticipantInviteFailureCopy(inviteContext?.reason).actionMessage };
-    }
-
-    // Reivindica o cadastro antes de alterar senha/perfil. O RPC serializa o
-    // participante e o convite, valida e-mail/conta e e idempotente para o
-    // mesmo usuario. Assim, duas sessoes ou uma conta criada em paralelo nao
-    // deixam uma conta ativada sem o vinculo canonico correspondente.
-    const { error: claimError } = inviteContext?.anchorKind === 'contact'
-      ? await supabase.rpc('claim_registration_contact_account_invite', { p_invite_id: inviteId })
-      : await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
-    if (claimError) return { success: false, message: claimError.message };
-  }
-
-  if (!fullName || !cpf || !birthDate || phone.length < 10 || !city || !authEmail) {
-    return { success: false, message: 'Preencha todos os dados obrigatórios para concluir o primeiro acesso.' };
-  }
-
-  if (!isValidCpf(cpf)) {
-    return { success: false, message: 'Informe um CPF válido.' };
+  if (inviteId && !inviteContext?.valid) {
+    return { success: false, message: getParticipantInviteFailureCopy(inviteContext?.reason).actionMessage };
   }
 
   // Mesma checagem de src/app/inscricao/actions.ts (signUpPublicAccountAction):
@@ -165,18 +143,23 @@ export async function completeFirstAccessAction(formData: FormData) {
   const confirmPassword = String(formData.get('confirm_password') ?? '').trim();
 
   if (mustChangePassword) {
-    if (newPassword.length < 8) {
-      return { success: false, message: 'A nova senha precisa ter no mínimo 8 caracteres.' };
-    }
+    const passwordErrors: NonNullable<CompleteFirstAccessResult['field_errors']> = {};
+    if (newPassword.length < 8) passwordErrors.new_password = 'A nova senha precisa ter no mínimo 8 caracteres.';
+    else if (newPassword === cpf) passwordErrors.new_password = 'A senha não pode ser igual ao CPF.';
+    if (newPassword !== confirmPassword) passwordErrors.confirm_password = 'A confirmação de senha não confere.';
+    if (Object.keys(passwordErrors).length) return validationFailure(passwordErrors);
+  }
 
-    if (newPassword !== confirmPassword) {
-      return { success: false, message: 'A confirmação de senha não confere.' };
-    }
+  if (inviteId) {
+    // Validacao do formulario, senha, convite e CPF acontece antes da primeira
+    // mutacao. O claim permanece canonico e idempotente para preservar o fluxo.
+    const { error: claimError } = inviteContext?.anchorKind === 'contact'
+      ? await supabase.rpc('claim_registration_contact_account_invite', { p_invite_id: inviteId })
+      : await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
+    if (claimError) return { success: false, message: claimError.message };
+  }
 
-    if (newPassword === cpf) {
-      return { success: false, message: 'A senha não pode ser igual ao CPF.' };
-    }
-
+  if (mustChangePassword) {
     const passwordUpdate = await supabase.auth.updateUser({ password: newPassword });
     if (passwordUpdate.error) {
       return { success: false, message: 'Não foi possível atualizar a senha. Tente novamente.' };
@@ -240,28 +223,6 @@ export async function completeFirstAccessAction(formData: FormData) {
     });
   }
 
-  const completedAt = new Date().toISOString();
-  const accountUpdate = await updateCustomerProfileCompat(supabase, user.id, {
-    must_change_password: false,
-    must_complete_profile: false,
-    account_status: 'active',
-    activation_completed_at: completedAt,
-  });
-
-  console.info('[first-access:account-update]', {
-    userIdPresent: Boolean(user.id),
-    updateExecuted: true,
-    appliedColumns: accountUpdate.appliedColumns,
-  });
-
-  if (accountUpdate.error) {
-    console.error('[first-access:account-update-error]', {
-      userIdPresent: Boolean(user.id),
-      error: accountUpdate.error.message,
-    });
-    return { success: false, message: translateFirstAccessPersistError(accountUpdate.error.message) };
-  }
-
   if (inviteId) {
     const participantId = String(inviteContext?.participant?.id ?? '');
     const allowed = new Set(inviteContext?.userResolvableFields ?? []);
@@ -311,6 +272,31 @@ export async function completeFirstAccessAction(formData: FormData) {
       p_values: { full_name: fullName, cpf, birth_date: birthDate, gender, phone, email: authEmail, city },
     });
     if (contactUpdate.error) return { success: false, message: contactUpdate.error.message };
+  }
+
+  // Libera a conta apenas depois que perfil, pendencias do convite e contatos
+  // vinculados foram persistidos. Falhas anteriores mantem o primeiro acesso
+  // pendente e permitem uma nova tentativa segura.
+  const completedAt = new Date().toISOString();
+  const accountUpdate = await updateCustomerProfileCompat(supabase, user.id, {
+    must_change_password: false,
+    must_complete_profile: false,
+    account_status: 'active',
+    activation_completed_at: completedAt,
+  });
+
+  console.info('[first-access:account-update]', {
+    userIdPresent: Boolean(user.id),
+    updateExecuted: true,
+    appliedColumns: accountUpdate.appliedColumns,
+  });
+
+  if (accountUpdate.error) {
+    console.error('[first-access:account-update-error]', {
+      userIdPresent: Boolean(user.id),
+      error: accountUpdate.error.message,
+    });
+    return { success: false, message: translateFirstAccessPersistError(accountUpdate.error.message) };
   }
 
   await supabase.rpc('recalculate_customer_loyalty', {

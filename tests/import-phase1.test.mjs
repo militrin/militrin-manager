@@ -1126,7 +1126,7 @@ test('primeiro acesso carrega e resolve somente o participant indicado pelo conv
   assert.doesNotMatch(inviteContext, /participants[^\n]*eq\('email'/);
   assert.match(page, /preferParticipant\('full_name'\)/);
   assert.match(page, /preferParticipant\('birth_date'\)/);
-  assert.match(form, /Dado já informado/);
+  assert.match(form, /Dado válido/);
   assert.match(form, /Preenchimento necessário/);
   assert.match(action, /claim_participant_account_invite/);
   assert.match(action, /resolve_ticket_data_issues/);
@@ -1146,16 +1146,18 @@ test('primeiro acesso B — convite carrega os dados do participant explicito', 
   const context = await readFile(new URL('../src/lib/account/participant-invite.ts', import.meta.url), 'utf8');
   const page = await readFile(new URL('../src/app/primeiro-acesso/page.tsx', import.meta.url), 'utf8');
   assert.match(context, /invite\.participant_id/);
-  for (const field of ['full_name', 'cpf', 'birth_date', 'gender', 'phone', 'email', 'city']) assert.match(page, new RegExp(`preferParticipant\\('${field}'\\)`));
+  for (const field of ['full_name', 'cpf', 'birth_date', 'gender', 'phone', 'city']) assert.match(page, new RegExp(`preferParticipant\\('${field}'\\)`));
+  assert.match(page, /email: String\(user\.email/);
 });
 
 test('primeiro acesso C — somente nascimento pendente permanece editavel', async () => {
   const page = await readFile(new URL('../src/app/primeiro-acesso/page.tsx', import.meta.url), 'utf8');
   const form = await readFile(new URL('../src/app/primeiro-acesso/FirstAccessForm.tsx', import.meta.url), 'utf8');
-  assert.match(page, /editableFields\.add\('birth_date'\)/);
+  assert.match(page, /validateFirstAccessProfile\(initialValues\)/);
+  assert.match(page, /Object\.keys\(initialValidation\.fieldErrors\)/);
   assert.match(form, /disabled=\{!editable\.has\('birth_date'\)\}/);
   assert.match(form, /readOnly=\{!editable\.has\('cpf'\)\}/);
-  assert.match(form, /Dado já informado/);
+  assert.match(form, /Dado válido/);
 });
 
 test('primeiro acesso D — pendencia admin permanece em conferencia', async () => {

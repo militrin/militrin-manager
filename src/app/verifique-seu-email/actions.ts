@@ -1,6 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { signupConfirmationRedirect } from '@/lib/account/auth-redirects';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 
@@ -36,7 +37,11 @@ export async function resendConfirmationEmailAction(email: string) {
   }
 
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.auth.resend({ type: 'signup', email: normalized });
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: normalized,
+    options: { emailRedirectTo: signupConfirmationRedirect() },
+  });
   if (error) {
     return { success: false as const, message: translateResendError(error.message) };
   }
@@ -104,7 +109,11 @@ export async function changeEmailBeforeConfirmationAction(input: {
     return { success: false as const, message: updateResult.error.message };
   }
 
-  const resend = await supabase.auth.resend({ type: 'signup', email: newEmail });
+  const resend = await supabase.auth.resend({
+    type: 'signup',
+    email: newEmail,
+    options: { emailRedirectTo: signupConfirmationRedirect() },
+  });
   if (resend.error) {
     return {
       success: true as const,

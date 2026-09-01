@@ -5,7 +5,7 @@ import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import Link from 'next/link';
 import { FirstAccessForm } from './FirstAccessForm';
 import { getParticipantInviteContext, getParticipantInviteFailureCopy } from '@/lib/account/participant-invite';
-import { isValidCpf } from '@/lib/validation/registration';
+import { validateFirstAccessProfile } from '@/lib/account/first-access-validation';
 import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 
 export default async function PrimeiroAcessoPage({ searchParams }: { searchParams: Promise<{ next?: string; invite?: string }> }) {
@@ -107,15 +107,14 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
     birth_date: preferParticipant('birth_date'),
     gender: preferParticipant('gender'),
     phone: preferParticipant('phone'),
-    email: preferParticipant('email') || String(user.email ?? ''),
+    // E-mail e identidade do Auth e nao pode ser substituido por dado do
+    // participante/importacao, mesmo que esse dado apareca preenchido.
+    email: String(user.email ?? ''),
     city: preferParticipant('city'),
   };
-  const editableFields = new Set(inviteContext?.userResolvableFields ?? status.missingFields);
-  if (!initialValues.full_name) editableFields.add('full_name');
-  if (!isValidCpf(initialValues.cpf)) editableFields.add('cpf');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(initialValues.birth_date)) editableFields.add('birth_date');
-  if (!initialValues.phone.replace(/\D/g, '') || initialValues.phone.replace(/\D/g, '').length < 10) editableFields.add('phone');
-  if (!initialValues.city) editableFields.add('city');
+  const editableFields = new Set([...(inviteContext?.userResolvableFields ?? []), ...status.missingFields]);
+  const initialValidation = validateFirstAccessProfile(initialValues);
+  for (const field of Object.keys(initialValidation.fieldErrors)) editableFields.add(field);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">

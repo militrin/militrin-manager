@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { isEmailConfirmed } from '@/lib/account/email-confirmation';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 
 function getSupabaseKey() {
@@ -54,6 +55,14 @@ export async function middleware(request: NextRequest) {
     '/sorteios',
   ];
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  const protectedApiPrefixes = [
+    '/api/ingressos',
+    '/api/inscricao',
+    '/api/instagram',
+    '/api/loja',
+    '/api/relatorios',
+  ];
+  const isProtectedApi = protectedApiPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 
   const loginRedirect = request.nextUrl.clone();
   loginRedirect.pathname = '/entrar';
@@ -64,7 +73,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginRedirect);
   }
 
+  if ((requiresAuth || isProtectedApi) && user && !isEmailConfirmed(user)) {
+    const confirmationRedirect = request.nextUrl.clone();
+    confirmationRedirect.pathname = '/verifique-seu-email';
+    confirmationRedirect.search = '';
+    if (user.email) confirmationRedirect.searchParams.set('email', user.email);
+    return NextResponse.redirect(confirmationRedirect);
+  }
+
   if (pathname === '/entrar' && user) {
+    if (!isEmailConfirmed(user)) {
+      const confirmationRedirect = request.nextUrl.clone();
+      confirmationRedirect.pathname = '/verifique-seu-email';
+      confirmationRedirect.search = '';
+      if (user.email) confirmationRedirect.searchParams.set('email', user.email);
+      return NextResponse.redirect(confirmationRedirect);
+    }
     const destination = sanitizePostFirstAccessNextPath(request.nextUrl.searchParams.get('next'), '/minha-conta');
     return NextResponse.redirect(new URL(destination, request.url));
   }

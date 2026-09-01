@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { isEmailConfirmed } from '@/lib/account/email-confirmation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export type PermissionCode = string;
@@ -20,7 +21,7 @@ export async function hasPermission(permissionCode: PermissionCode, userId?: str
   } = await supabase.auth.getUser();
 
   const actorUserId = user?.id ?? null;
-  if (!actorUserId) return false;
+  if (!actorUserId || !isEmailConfirmed(user)) return false;
 
   if (userId && userId !== actorUserId) {
     const { data, error } = await supabase.rpc('user_has_permission', {

@@ -1,5 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { isValidCpf } from '@/lib/validation/registration';
+import { validateFirstAccessProfile } from '@/lib/account/first-access-validation';
 
 export type ProfileCompletionStatus = {
   exists: boolean;
@@ -11,52 +11,9 @@ export type ProfileCompletionStatus = {
   error: string | null;
 };
 
-function hasText(value: unknown) {
-  return String(value ?? '').trim().length > 0;
-}
-
-function hasValidCpf(value: unknown) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  return digits.length === 11 && isValidCpf(digits);
-}
-
-function hasValidBirthDate(value: unknown) {
-  const normalized = String(value ?? '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(normalized);
-}
-
-function hasValidPhone(value: unknown) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  return digits.length >= 10;
-}
-
-function hasValidEmail(value: unknown) {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  return normalized.includes('@') && normalized.includes('.');
-}
-
 function getMissingRequiredProfileFields(profile: Record<string, unknown> | null, authEmail: string | null) {
-  const missingEmail = !hasValidEmail(authEmail);
-
-  if (!profile) {
-    return [
-      'full_name',
-      'cpf',
-      'birth_date',
-      'phone',
-      'city',
-      missingEmail ? 'email' : null,
-    ].filter(Boolean) as string[];
-  }
-
-  return [
-    !hasText(profile.full_name) ? 'full_name' : null,
-    !hasValidCpf(profile.cpf) ? 'cpf' : null,
-    !hasValidBirthDate(profile.birth_date) ? 'birth_date' : null,
-    !hasValidPhone(profile.phone) ? 'phone' : null,
-    !hasText(profile.city) ? 'city' : null,
-    missingEmail ? 'email' : null,
-  ].filter(Boolean) as string[];
+  const validation = validateFirstAccessProfile({ ...(profile ?? {}), email: authEmail });
+  return Object.keys(validation.fieldErrors);
 }
 
 export async function getProfileCompletionStatus(userId: string, authEmailInput?: string | null): Promise<ProfileCompletionStatus> {

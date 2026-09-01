@@ -1,3 +1,4 @@
+import { isEmailConfirmed } from '@/lib/account/email-confirmation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 /** Retorna true se o usuário autenticado é um platform_user ativo. */
@@ -52,6 +53,9 @@ export async function requirePlatformAccess(): Promise<string> {
   } = await supabase.auth.getUser();
 
   if (!user) redirect('/entrar?next=/plataforma');
+  if (!isEmailConfirmed(user)) {
+    redirect(`/verifique-seu-email?email=${encodeURIComponent(user!.email ?? '')}`);
+  }
 
   const allowed = await isPlatformUser(user!.id);
   if (!allowed) redirect('/acesso-negado');

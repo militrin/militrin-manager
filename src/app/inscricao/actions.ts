@@ -11,11 +11,12 @@ import { calculateAgeAtEventDate, formatDateBR, isMinimumAgeSatisfied } from '@/
 import { getEmailProvider } from '@/lib/email/fake-provider';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
 import { canAccessAdministrativePanel } from '@/lib/admin/panel-access';
-import { resolvePostAuthDestination, sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
+import { resolvePostAuthDestination } from '@/lib/utils/safe-navigation';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkout/pricing';
 import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBuyerToNewOrder } from '@/lib/registrations/active-ticket-holder';
 import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from '@/lib/account/email-confirmation';
+import { firstAccessRouteWithNext, signupConfirmationRedirect } from '@/lib/account/auth-redirects';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
 
@@ -280,11 +281,6 @@ function isMethodAllowedByConfig(
   return false;
 }
 
-function firstAccessRouteWithNext(nextPath: string) {
-  const safeNext = sanitizePostFirstAccessNextPath(nextPath, '/minha-conta');
-  return `/primeiro-acesso?next=${encodeURIComponent(safeNext)}`;
-}
-
 async function resolvePostAuthPath(params: {
   userId: string;
   authEmail?: string | null;
@@ -292,13 +288,6 @@ async function resolvePostAuthPath(params: {
   nextPath?: string | null;
   wizardPath?: string | null;
 }) {
-  const administrativeAccess = await canAccessAdministrativePanel(params.userId);
-  const destination = resolvePostAuthDestination({
-    nextPath: params.nextPath,
-    wizardPath: params.wizardPath,
-    fallback: administrativeAccess ? '/painel' : '/minha-conta',
-  });
-
   // Gate mais fundamental que qualquer outro (bloqueio, perfil incompleto):
   // sem e-mail confirmado, a conta nao anda pra frente em lugar nenhum.
   // Isso normalmente nem chega a rodar (o Supabase Auth ja recusa sessao
@@ -306,6 +295,11 @@ async function resolvePostAuthPath(params: {
   // e so a rede de seguranca canonica caso uma sessao exista mesmo assim
   // (ex.: conta criada via Admin API sem confirmar).
   if (!params.emailConfirmed) {
+    const destination = resolvePostAuthDestination({
+      nextPath: params.nextPath,
+      wizardPath: params.wizardPath,
+      fallback: '/minha-conta',
+    });
     return {
       destination,
       isBlocked: false,
@@ -314,6 +308,13 @@ async function resolvePostAuthPath(params: {
       redirectTo: `/verifique-seu-email?email=${encodeURIComponent(params.authEmail ?? '')}`,
     };
   }
+
+  const administrativeAccess = await canAccessAdministrativePanel(params.userId);
+  const destination = resolvePostAuthDestination({
+    nextPath: params.nextPath,
+    wizardPath: params.wizardPath,
+    fallback: administrativeAccess ? '/painel' : '/minha-conta',
+  });
 
   const flags = await getFirstAccessFlags(params.userId, params.authEmail ?? null);
   const isBlocked = flags.isBlocked;
@@ -1219,6 +1220,25 @@ export async function signInPublicAccountAction(input: {
       return { success: false, code: translateAuthErrorCode(raw), message: translateAuthErrorMessage(raw) };
     }
 
+    const postAuth = await resolvePostAuthPath({
+      userId: data.user.id,
+      authEmail: data.user.email ?? normalized,
+      emailConfirmed: isEmailConfirmed(data.user),
+      nextPath: input.next_path,
+      wizardPath: input.wizard_path,
+    });
+
+    if (postAuth.emailConfirmationRequired) {
+      return {
+        success: true,
+        user_id: data.user.id,
+        email: data.user.email ?? normalized,
+        email_confirmation_required: true,
+        first_access_required: false,
+        redirect_to: postAuth.redirectTo,
+      };
+    }
+
     const ensuredProfile = await ensureCustomerProfileForSignedUser({
       supabase,
       userId: data.user.id,
@@ -1231,14 +1251,6 @@ export async function signInPublicAccountAction(input: {
         phone: typeof data.user.user_metadata?.phone === 'string' ? data.user.user_metadata.phone : undefined,
         city: typeof data.user.user_metadata?.city === 'string' ? data.user.user_metadata.city : undefined,
       },
-    });
-
-    const postAuth = await resolvePostAuthPath({
-      userId: data.user.id,
-      authEmail: data.user.email ?? normalized,
-      emailConfirmed: isEmailConfirmed(data.user),
-      nextPath: input.next_path,
-      wizardPath: input.wizard_path,
     });
 
     if (!ensuredProfile.success) {
@@ -1356,7 +1368,7 @@ export async function signUpPublicAccountAction(input: {
     wizardPath: input.wizard_path,
     fallback: '/minha-conta',
   });
-  const emailRedirectTo = `${appBaseUrl()}/auth/callback?next=${encodeURIComponent(firstAccessRouteWithNext(postSignupDestination))}`;
+  const emailRedirectTo = signupConfirmationRedirect(postSignupDestination);
   const { data, error } = await supabase.auth.signUp({
     email: normalized,
     password: input.password,

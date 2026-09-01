@@ -1,5 +1,5 @@
 export const REQUIRED_PARTICIPANT_FIELD_CODES = [
-  'full_name', 'cpf', 'birth_date', 'phone', 'email', 'city',
+  'full_name', 'cpf', 'birth_date', 'gender', 'phone', 'email', 'city',
 ] as const;
 export const REQUIRED_PARTICIPANT_FIELDS = new Set<string>(REQUIRED_PARTICIPANT_FIELD_CODES);
 
