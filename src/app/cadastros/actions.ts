@@ -18,23 +18,45 @@ async function assertCurrentOrganizationOwner() {
   return context.organization.id;
 }
 
+// Cancelamento de ingresso usa o MESMO idioma de autorizacao do resto do
+// sistema (org-scope + Owner-ou-permissao-especifica), nao o Owner-only
+// exclusivo de assertCurrentOrganizationOwner -- ver auditoria em
+// owner_cancel_ticket (20260924000000_ticket_cancellation_replacement_intent.sql):
+// orders.cancel foi desenhada de proposito pra ser concedida a admins/
+// moderadores, e /ingressos/[ticketId]/editar ja libera essa acao pra quem
+// tem essa permissao. A RPC e quem valida de fato; isto so evita a viagem
+// ao banco quando o pedido nem tem organizacao ativa.
+async function assertCanCancelTicket() {
+  const context = await getCurrentOrganizationContext();
+  if (!context.organization?.id) throw new Error("Organização não encontrada.");
+  if (!context.isOrgOwner && !(await hasPermission("orders.cancel"))) throw new Error("Sem permissão para cancelar ingressos.");
+  return context.organization.id;
+}
+
 function validateAdministrativeDeleteReason(reasonCode: string, reasonText?: string) {
   if (!ADMIN_DELETE_REASONS.has(reasonCode)) return "Selecione um motivo válido.";
   if (reasonCode === "other" && !reasonText?.trim()) return "Descreva o motivo da exclusão.";
   return null;
 }
 
-export async function cancelCadastroTicketAction(payload: { contactId: string; ticketId: string; reasonCode: string; reasonText?: string }) {
-  try { await assertCurrentOrganizationOwner(); } catch (error) { return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão." }; }
+export async function cancelCadastroTicketAction(payload: { contactId: string; ticketId: string; reasonCode: string; reasonText?: string; replacementRequired: boolean }) {
+  try { await assertCanCancelTicket(); } catch (error) { return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão." }; }
   if (![payload.contactId, payload.ticketId].every((value) => UUID_PATTERN.test(value))) return { success: false as const, message: "Cadastro ou ingresso inválido." };
   const reasonError = validateAdministrativeDeleteReason(payload.reasonCode, payload.reasonText);
   if (reasonError) return { success: false as const, message: reasonError };
+  if (typeof payload.replacementRequired !== "boolean") return { success: false as const, message: "Informe se este ingresso precisa ser substituído." };
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc("owner_cancel_ticket", { p_ticket_id: payload.ticketId, p_reason_code: payload.reasonCode, p_reason_text: payload.reasonText?.trim() || null });
+  const { data, error } = await supabase.rpc("owner_cancel_ticket", {
+    p_ticket_id: payload.ticketId,
+    p_reason_code: payload.reasonCode,
+    p_reason_text: payload.reasonText?.trim() || null,
+    p_replacement_required: payload.replacementRequired,
+  });
   if (error) return { success: false as const, message: error.message };
   revalidatePath(`/cadastros/${payload.contactId}`);
   revalidatePath(`/ingressos/${payload.ticketId}`);
-  return { success: true as const, message: "Ingresso cancelado com sucesso." };
+  const reclassified = (data as { reclassified?: boolean } | null)?.reclassified;
+  return { success: true as const, message: reclassified ? "Decisão sobre este ingresso atualizada." : "Ingresso cancelado com sucesso." };
 }
 
 export async function cancelCadastroAdditionalItemAction(payload: { contactId: string; itemId: string; reasonCode: string; reasonText?: string }) {

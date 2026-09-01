@@ -9,9 +9,27 @@ const ui = await readFile(new URL('../src/app/cadastros/administrative-delete-ac
 
 function fn(name) { const start=migration.indexOf(`create or replace function public.${name}`); const end=migration.indexOf('$$;',start); return migration.slice(start,end+3); }
 
-test('botoes e actions sao exclusivos do Owner nas tres camadas',()=>{
-  assert.match(page,/isOrganizationOwner \? <OwnerCancelAdditionalItemButton/); assert.match(page,/isOrganizationOwner && ticket\.status !== "cancelled" \? <OwnerCancelTicketButton/);
-  assert.match(actions,/assertCurrentOrganizationOwner/); assert.match(migration,/is_organization_owner\(v_actor,v_ticket\.organization_id\)/); assert.match(migration,/is_organization_owner\(v_actor,v_order\.organization_id\)/);
+test('item adicional continua exclusivo do Owner nas tres camadas (nao alterado pela auditoria de autorizacao de ingresso)',()=>{
+  assert.match(page,/isOrganizationOwner \? <OwnerCancelAdditionalItemButton/);
+  const itemAction=actions.slice(actions.indexOf('cancelCadastroAdditionalItemAction'));
+  assert.match(itemAction,/assertCurrentOrganizationOwner/);
+  assert.match(migration,/is_organization_owner\(v_actor,v_order\.organization_id\)/);
+});
+
+// A auditoria de autorizacao (revisao pre-push das migrations 20260922/23/24)
+// encontrou aqui a inconsistencia relatada: /ingressos/[ticketId]/editar ja
+// usa assertPermission('orders.cancel') e mostra o botao de cancelar pra
+// qualquer admin/moderador com essa permissao, mas owner_cancel_ticket (nesta
+// migration 20260891) so aceitava Owner -- "frontend permite, RPC rejeita".
+// Corrigido em 20260924000000_ticket_cancellation_replacement_intent.sql,
+// que SUBSTITUI (create or replace) a definicao original abaixo pelo mesmo
+// idioma usado no resto do sistema: user_can_access_organization(actor,org)
+// AND (is_active_owner(actor) OR resolve_user_permission(actor,'orders.cancel')).
+// Os testes desta migration continuam validos como registro historico da
+// versao original; a autorizacao EFETIVA de ingresso hoje vem da migration
+// 924 (coberta em tests/ticket-cancellation-replacement-intent.test.mjs).
+test('versao original (20260891) documentada aqui era Owner-only -- substituida pela 20260924 para ingresso',()=>{
+  assert.match(migration,/is_organization_owner\(v_actor,v_ticket\.organization_id\)/);
   assert.match(fn('admin_cancel_ticket'),/owner_cancel_ticket\(p_ticket_id,'administrative_correction',p_reason\)/);
 });
 

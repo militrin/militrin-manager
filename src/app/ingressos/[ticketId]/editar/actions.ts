@@ -58,12 +58,13 @@ export async function transferTicketHolderAction(ticketId: string, registrationC
   return { success: true as const, message: (data as { changed?: boolean })?.changed === false ? "Nenhuma alteração necessária." : payload.p_registration_contact_id ? "Titularidade atualizada." : "Titular removido com sucesso." };
 }
 
-export async function cancelTicketAction(ticketId: string, reason: string, confirmed: boolean) {
+export async function cancelTicketAction(ticketId: string, reason: string, confirmed: boolean, replacementRequired: boolean) {
   await assertPermission("orders.cancel");
   if (!confirmed) return { success: false as const, message: "Confirmação explícita obrigatória." };
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc("admin_cancel_ticket", { p_ticket_id: ticketId, p_reason: reason });
+  const { data, error } = await supabase.rpc("admin_cancel_ticket", { p_ticket_id: ticketId, p_reason: reason, p_replacement_required: replacementRequired });
   if (error) return { success: false as const, message: error.message };
   revalidatePath(`/ingressos/${ticketId}`); revalidatePath(`/ingressos/${ticketId}/editar`);
-  return { success: true as const, message: (data as { changed?: boolean })?.changed === false ? "Ingresso já estava cancelado." : "Ingresso cancelado." };
+  const result = data as { changed?: boolean; reclassified?: boolean } | null;
+  return { success: true as const, message: result?.changed === false ? "Nenhuma alteração: essa já era a decisão registrada." : result?.reclassified ? "Decisão sobre este ingresso atualizada." : "Ingresso cancelado." };
 }

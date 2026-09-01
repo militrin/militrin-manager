@@ -187,6 +187,7 @@ test('ticket cancelado por decisao administrativa NAO e reativado por reprocessa
 
   const cancelResult = await fx.must(fx.admin.rpc('owner_cancel_ticket', {
     p_ticket_id: ticketBefore.id, p_reason_code: 'other', p_reason_text: 'Teste Fase 1 Asaas: cancelamento administrativo',
+    p_replacement_required: true,
   }), 'owner_cancel_ticket');
   assert.equal(cancelResult.status, 'cancelled');
 

@@ -85,9 +85,22 @@ export async function getParticipantInviteContext(inviteId: string, user: Authen
   });
   if (accessFailure) return emptyContext(accessFailure);
 
+  // BUG CORRIGIDO: convites ancorados em registration_contact (o caminho
+  // canonico do import "contact-first") tinham `issues` fixado em [] aqui --
+  // nunca consultavam participant_data_issues de verdade. Resultado real:
+  // resolve_ticket_data_issues/finalize_imported_ticket_after_issue_resolution
+  // (em primeiro-acesso/actions.ts) ficavam com openIssueIds sempre vazio e
+  // NUNCA eram chamadas, entao nenhuma pendencia criada por dado ausente na
+  // importacao (genero, CPF, data de nascimento, telefone, e-mail, cidade)
+  // era reavaliada quando o proprio usuario preenchia o dado no primeiro
+  // acesso -- a pendencia ficava "open" para sempre, mesmo com o cadastro
+  // corrigido. participant_data_issues ja grava registration_contact_id em
+  // todo fluxo de criacao atual (ver contact_first_import_phase2 em diante),
+  // entao consultar por esse campo e o equivalente correto ao `participant_id`
+  // usado no ramo participant-anchored abaixo.
   const { data: issues } = participant
     ? await admin.from('participant_data_issues').select('id,field_code,resolution_scope').eq('participant_id', participant.id).eq('status', 'open')
-    : { data: [] };
+    : await admin.from('participant_data_issues').select('id,field_code,resolution_scope').eq('registration_contact_id', invite.registration_contact_id).eq('status', 'open');
   return {
     valid: true,
     participant: canonicalParticipant as Record<string, unknown>,

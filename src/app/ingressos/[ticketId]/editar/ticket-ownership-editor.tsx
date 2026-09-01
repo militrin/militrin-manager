@@ -41,6 +41,7 @@ export function TicketOwnershipEditor(props: Props) {
   const [displayedHolder, setDisplayedHolder] = useState(props.currentHolder);
   const [cancelReason, setCancelReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [replacementRequired, setReplacementRequired] = useState<"" | "yes" | "no">("");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [ownerTerm,setOwnerTerm]=useState("");
@@ -137,8 +138,9 @@ export function TicketOwnershipEditor(props: Props) {
       {props.blockedByCheckin ? <p className="text-sm text-amber-200">Desfaça o check-in antes de cancelar.</p> : null}
       {props.blockedByDelivery ? <p className="text-sm text-amber-200">Desfaça a entrega dos itens antes de cancelar.</p> : null}
       <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Motivo obrigatório" disabled={props.status === "cancelled" || props.blockedByCheckin || props.blockedByDelivery} className="w-full rounded-lg border border-slate-700 bg-slate-950 p-3" />
+      <label className="grid gap-1 text-sm"><span className="font-medium">Precisa de um ingresso substituto?</span><select value={replacementRequired} onChange={(event) => setReplacementRequired(event.target.value as "" | "yes" | "no")} disabled={props.status === "cancelled" || props.blockedByCheckin || props.blockedByDelivery} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"><option value="">Selecione</option><option value="no">Não — o entitlement acaba aqui</option><option value="yes">Sim — um novo ingresso ainda precisa ser emitido</option></select></label>
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />Confirmo o cancelamento sem reembolso automático.</label>
-      <button disabled={pending || props.status === "cancelled" || props.blockedByCheckin || props.blockedByDelivery || !cancelReason.trim() || !confirmed} onClick={() => start(async () => setMessage((await cancelTicketAction(props.ticketId, cancelReason, confirmed)).message))} className="rounded-lg bg-rose-500 px-3 py-2 font-semibold text-white disabled:opacity-50">Cancelar ingresso</button>
+      <button disabled={pending || props.status === "cancelled" || props.blockedByCheckin || props.blockedByDelivery || !cancelReason.trim() || !confirmed || !replacementRequired} onClick={() => start(async () => setMessage((await cancelTicketAction(props.ticketId, cancelReason, confirmed, replacementRequired === "yes")).message))} className="rounded-lg bg-rose-500 px-3 py-2 font-semibold text-white disabled:opacity-50">Cancelar ingresso</button>
     </section> : null}
     {message ? <p role="status" className="text-sm text-slate-300">{message}</p> : null}
   </div>;
