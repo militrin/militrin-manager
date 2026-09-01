@@ -62,7 +62,7 @@ test('server action valida formulario e senha antes da primeira mutacao', async 
   const profileMutationAt = action.indexOf('upsertCustomerProfileCompat(supabase');
   assert.ok(validationAt > 0 && validationAt < claimAt);
   assert.ok(passwordValidationAt > validationAt && passwordValidationAt < claimAt);
-  assert.ok(claimAt < passwordMutationAt && claimAt < profileMutationAt);
+  assert.ok(passwordMutationAt < profileMutationAt && profileMutationAt < claimAt);
   assert.doesNotMatch(action, /privacyAccepted/);
 });
 

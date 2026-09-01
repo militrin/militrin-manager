@@ -11,7 +11,7 @@ export default async function EditarCadastroPage({ params, searchParams }: { par
   const query = await searchParams;
   const supabase = await createServerSupabaseClient();
   const [{ data: person, error }, organizationContext] = await Promise.all([
-    supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city").eq("id", id).maybeSingle(),
+    supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city,user_id").eq("id", id).maybeSingle(),
     getCurrentOrganizationContext(),
   ]);
   if (error) throw error;
@@ -35,8 +35,8 @@ export default async function EditarCadastroPage({ params, searchParams }: { par
     </form>
     {organizationContext.isOrgOwner ? <section className="rounded-3xl border border-rose-500/30 bg-rose-500/5 p-6">
       <h2 className="text-lg font-semibold text-rose-100">Zona de perigo</h2>
-      <p className="mt-1 text-sm text-slate-400">A exclusao e definitiva e so sera permitida se o cadastro nao possuir conta, participacao, pedido, ingresso, item adicional ou patrocinador vinculado.</p>
-      <div className="mt-4"><DeleteCadastroButton contactId={id} fullName={String(person.full_name)}/></div>
+      <p className="mt-1 text-sm text-slate-400">A exclusao e definitiva. Uma conta de acesso vinculada tambem sera removida; historico operacional, financeiro ou de participacao bloqueia a exclusao.</p>
+      <div className="mt-4"><DeleteCadastroButton contactId={id} fullName={String(person.full_name)} hasLinkedAccount={Boolean(person.user_id)}/></div>
     </section> : null}
   </div></div></main>;
 }

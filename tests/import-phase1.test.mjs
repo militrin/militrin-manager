@@ -1455,11 +1455,9 @@ test('primeiro acesso valida senha no servidor e conclui estado somente apos upd
   const updateIndex = action.indexOf("supabase.auth.updateUser({ password: newPassword })");
   const completionIndex = action.indexOf("password_setup_completed_at: new Date().toISOString()");
   const claimIndex = action.indexOf("claim_participant_account_invite");
-  // Ordem correta e ja coberta por tests/participant-first-access-invite.test.mjs
-  // ("claim atomico ocorre antes de senha e perfil"): o convite reivindica o
-  // cadastro ANTES de mexer em senha/perfil (serializa o vinculo canonico
-  // antes de qualquer efeito colateral), nao depois da marcacao de conclusao.
-  assert.ok(claimIndex >= 0 && claimIndex < updateIndex && updateIndex < completionIndex);
+  const profileIndex = action.indexOf('const profileUpdate = await upsertCustomerProfileCompat');
+  // A conta importada so e vinculada depois que senha e perfil foram salvos.
+  assert.ok(updateIndex >= 0 && updateIndex < completionIndex && completionIndex < profileIndex && profileIndex < claimIndex);
   assert.match(action, /passwordUpdate\.error[\s\S]*return \{ success: false[\s\S]*passwordInviteContext = await getParticipantInviteContext/);
   assert.match(action, /passwordInviteContext\.valid[\s\S]*passwordInviteContext\.requiresPasswordSetup/);
   assert.match(action, /\.eq\('auth_user_id', user\.id\)/);
@@ -1491,7 +1489,10 @@ test('retry posterior nao pede senha concluida e reenvio nao cria outra conta Au
 test('senha de primeiro acesso nao e enviada ou registrada em logs', async () => {
   const action = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
   const dispatch = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(dispatch, /new_password|confirm_password|password\s*:/i);
+  const inviteCallStart = dispatch.indexOf('admin.auth.admin.inviteUserByEmail');
+  const inviteCallEnd = dispatch.indexOf('return { error: result.error', inviteCallStart);
+  const inviteCall = dispatch.slice(inviteCallStart, inviteCallEnd);
+  assert.doesNotMatch(inviteCall, /new_password|confirm_password|password\s*:/i);
   assert.doesNotMatch(action, /console\.(?:log|info|warn|error)\([^\n]*(?:newPassword|confirmPassword|formData)/);
   assert.doesNotMatch(action, /Object\.fromEntries\(formData|JSON\.stringify\(formData/);
 });

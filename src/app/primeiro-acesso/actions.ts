@@ -150,15 +150,6 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     if (Object.keys(passwordErrors).length) return validationFailure(passwordErrors);
   }
 
-  if (inviteId) {
-    // Validacao do formulario, senha, convite e CPF acontece antes da primeira
-    // mutacao. O claim permanece canonico e idempotente para preservar o fluxo.
-    const { error: claimError } = inviteContext?.anchorKind === 'contact'
-      ? await supabase.rpc('claim_registration_contact_account_invite', { p_invite_id: inviteId })
-      : await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
-    if (claimError) return { success: false, message: claimError.message };
-  }
-
   if (mustChangePassword) {
     const passwordUpdate = await supabase.auth.updateUser({ password: newPassword });
     if (passwordUpdate.error) {
@@ -211,6 +202,16 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
       error: profileUpdate.error.message,
     });
     return { success: false, message: translateFirstAccessPersistError(profileUpdate.error.message) };
+  }
+
+  if (inviteId) {
+    // A vinculacao e posterior a senha e ao perfil. Se Auth ou persistencia
+    // falhar, o convite continua pendente e o cadastro importado nao ganha
+    // user_id/status claimed prematuramente.
+    const { error: claimError } = inviteContext?.anchorKind === 'contact'
+      ? await supabase.rpc('claim_registration_contact_account_invite', { p_invite_id: inviteId })
+      : await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
+    if (claimError) return { success: false, message: claimError.message };
   }
 
   const { error: contactError } = await supabase.rpc('ensure_registration_contact_for_user', {

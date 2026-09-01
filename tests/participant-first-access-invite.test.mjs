@@ -50,13 +50,13 @@ test('convite individual e em massa usam o mesmo primeiro acesso autenticado', (
   assert.match(callback, /verifyOtp/);
 });
 
-test('claim atomico ocorre antes de senha e perfil e continua idempotente no banco', () => {
+test('senha e perfil sao persistidos antes do claim idempotente do convite', () => {
   const actionBody = actions.slice(actions.indexOf('export async function completeFirstAccessAction'));
   const claimAt = actionBody.indexOf("rpc('claim_participant_account_invite'");
   const passwordAt = actionBody.indexOf('supabase.auth.updateUser');
   const profileAt = actionBody.indexOf('upsertCustomerProfileCompat');
   assert.ok(claimAt > 0);
-  assert.ok(claimAt < passwordAt);
-  assert.ok(claimAt < profileAt);
+  assert.ok(passwordAt < profileAt);
+  assert.ok(profileAt < claimAt);
   assert.equal(actionBody.match(/rpc\('claim_participant_account_invite'/g)?.length, 1);
 });

@@ -107,13 +107,40 @@ function firstAccessInviteRedirect(inviteId: string) {
 
 type EligibilityRpcRow = { eligible?: boolean; reason_code?: string; reason_message?: string; email?: string | null };
 
+async function requireFirstAccessPassword(inviteId: string) {
+  const admin = createServiceRoleSupabaseClient();
+  const result = await admin.from("participant_account_invites")
+    .update({ requires_password_setup: true, updated_at: new Date().toISOString() })
+    .eq("id", inviteId)
+    .is("password_setup_completed_at", null)
+    .select("id")
+    .maybeSingle();
+  return result.error;
+}
+
+async function markInvitedAccountPending(userId: string, mustChangePassword = true) {
+  const admin = createServiceRoleSupabaseClient();
+  const result = await admin.from("customer_profiles").upsert({
+    user_id: userId,
+    account_status: "pending_activation",
+    must_change_password: mustChangePassword,
+    must_complete_profile: true,
+  }, { onConflict: "user_id" });
+  return result.error;
+}
+
 async function dispatchFirstAccessEmail(input: { inviteId: string; email: string; reasonCode: string }) {
   const admin = createServiceRoleSupabaseClient();
   const isResend = input.reasonCode.startsWith("resend_invite_");
   const redirectTo = firstAccessInviteRedirect(input.inviteId);
 
+  const passwordRequirementError = await requireFirstAccessPassword(input.inviteId);
+  if (passwordRequirementError) {
+    return { error: passwordRequirementError, authUserId: null as string | null, resent: isResend };
+  }
+
   const { data: invitePerson } = await admin.from("participant_account_invites")
-    .select("registration_contacts(full_name),participants(registration_contacts(full_name))")
+    .select("auth_user_id,password_setup_completed_at,registration_contacts(full_name),participants(registration_contacts(full_name))")
     .eq("id", input.inviteId).maybeSingle();
   const directContactRelation = Array.isArray(invitePerson?.registration_contacts) ? invitePerson.registration_contacts[0] : invitePerson?.registration_contacts;
   const participantRelation = Array.isArray(invitePerson?.participants) ? invitePerson?.participants[0] : invitePerson?.participants;
@@ -125,6 +152,13 @@ async function dispatchFirstAccessEmail(input: { inviteId: string; email: string
       email: input.email,
       options: { shouldCreateUser: false, emailRedirectTo: redirectTo },
     });
+    if (!result.error && invitePerson?.auth_user_id) {
+      const pendingError = await markInvitedAccountPending(
+        String(invitePerson.auth_user_id),
+        !invitePerson.password_setup_completed_at,
+      );
+      if (pendingError) return { error: pendingError, authUserId: null as string | null, resent: true };
+    }
     return { error: result.error, authUserId: null as string | null, resent: true };
   }
 
@@ -162,6 +196,10 @@ export async function inviteCadastroFirstAccessAction(id: string, anchor: "parti
       auth_user_id: invited.authUserId,
       updated_at: new Date().toISOString(),
     }).eq("id", prepared.invite_id);
+    if (!association.error) {
+      const pendingError = await markInvitedAccountPending(invited.authUserId);
+      if (pendingError) return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: "Convite enviado, mas nao foi possivel registrar as etapas obrigatorias do primeiro acesso." };
+    }
     if (association.error) return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: "Convite enviado, mas a correlação da conta exige a migration 099 antes de um futuro reenvio." };
   }
   revalidatePath("/cadastros");
@@ -236,6 +274,10 @@ export async function sendBulkFirstAccessInvitesAction(participantIds: string[])
           auth_user_id: sent.authUserId,
           updated_at: new Date().toISOString(),
         }).eq("id", prepared.invite_id);
+        if (!association.error) {
+          const pendingError = await markInvitedAccountPending(sent.authUserId);
+          if (pendingError) { report.failed += 1; report.reasons.onboarding_state_failed = (report.reasons.onboarding_state_failed ?? 0) + 1; report.details.push({ participantId: item.participantId, status: "sent_onboarding_state_failed", reason: pendingError.message }); continue; }
+        }
         if (association.error) { report.failed += 1; report.reasons.association_failed = (report.reasons.association_failed ?? 0) + 1; report.details.push({ participantId: item.participantId, status: "sent_association_failed", reason: association.error.message }); continue; }
       }
       report.sent += 1; report.details.push({ participantId: item.participantId, status: sent.resent ? "resent" : "sent", reason: sent.resent ? "Convite de primeiro acesso reenviado." : "Convite preparado e envio aceito pelo provedor." });
