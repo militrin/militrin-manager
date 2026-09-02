@@ -6,6 +6,10 @@ const page = fs.readFileSync('src/app/cadastros/[id]/page.tsx', 'utf8');
 const button = fs.readFileSync('src/app/cadastros/invite-account-button.tsx', 'utf8');
 const actions = fs.readFileSync('src/app/cadastros/actions.ts', 'utf8');
 const firstAccess = fs.readFileSync('src/app/primeiro-acesso/actions.ts', 'utf8');
+// firstAccessInviteRedirect/dispatchFirstAccessEmail foram movidos de
+// cadastros/actions.ts pra este modulo compartilhado server-only (auditoria
+// PKCE/regularizacao de convite) -- reusado tambem pelo resend publico.
+const firstAccessDispatch = fs.readFileSync('src/lib/account/first-access-invite-dispatch.ts', 'utf8');
 const inviteContext = fs.readFileSync('src/lib/account/participant-invite.ts', 'utf8');
 const migration = fs.readFileSync('supabase/migrations/20260893000000_canonical_contact_account_invites.sql', 'utf8');
 
@@ -35,9 +39,10 @@ test('canonical contact eligibility covers missing data, conflicts and linked ac
 test('pending invite uses the same Auth callback and first-access claim flow', () => {
   assert.match(actions, /inviteCadastroFirstAccessAction\(id: string, anchor/);
   assert.match(actions, /prepare_registration_contact_account_invite/);
-  assert.match(actions, /firstAccessInviteRedirect/);
-  assert.match(actions, /\/auth\/callback/);
-  assert.match(actions, /\/primeiro-acesso/);
+  assert.match(actions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending \} from "@\/lib\/account\/first-access-invite-dispatch";/);
+  assert.match(firstAccessDispatch, /function firstAccessInviteRedirect/);
+  assert.match(firstAccessDispatch, /\/auth\/callback/);
+  assert.match(firstAccessDispatch, /\/primeiro-acesso/);
   assert.match(inviteContext, /anchorKind: 'participant' \| 'contact'/);
   assert.match(firstAccess, /claim_registration_contact_account_invite/);
 });

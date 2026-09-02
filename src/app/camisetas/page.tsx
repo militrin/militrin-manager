@@ -1,11 +1,13 @@
+import Link from "next/link";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
+import { AdminEmptyState } from "@/components/admin";
+import { EventContextSelector } from "@/components/admin/EventContextSelector";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ShirtStockTable } from "@/components/mvp/ShirtStockTable";
-import { ShirtEventSelector } from "@/components/mvp/ShirtEventSelector";
 import { buildShirtInventoryVariants, makeShirtInventoryKey } from "@/lib/constants/shirts";
-import { getCurrentPermissionMap } from "@/lib/admin/permissions";
+import { getCurrentPermissionMap, hasPermission } from "@/lib/admin/permissions";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 
@@ -43,35 +45,19 @@ type ShirtsPageData = {
   errorMessage: string | null;
 };
 
-async function getStock(selectedEventId: string | null) {
+async function getStock(requestedEventId: string | null) {
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: eventsData, error: eventsError }, { data: selectedEvent, error: selectedEventError }] = await Promise.all([
-    supabase
-      .from("events")
-      .select("id, name, year, is_active, shirt_order_deadline, limit_shirt_selection_to_stock")
-      .order("is_active", { ascending: false })
-      .order("year", { ascending: false }),
-    selectedEventId
-      ? supabase
-          .from("events")
-          .select("id, name, year, is_active, shirt_order_deadline, limit_shirt_selection_to_stock")
-          .eq("id", selectedEventId)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-  ]);
+  const { data: eventsData, error: eventsError } = await supabase
+    .from("events")
+    .select("id, name, year, is_active, shirt_order_deadline, limit_shirt_selection_to_stock")
+    .order("is_active", { ascending: false })
+    .order("year", { ascending: false });
 
   if (eventsError) {
     const detailed = isDevelopment
       ? `Falha ao listar eventos: ${eventsError.message} (${eventsError.code ?? "sem-codigo"})`
       : "Não foi possível carregar os eventos.";
-    return { events: [], selectedEventId: null, selectedEvent: null, rows: [], errorMessage: detailed } satisfies ShirtsPageData;
-  }
-
-  if (selectedEventError) {
-    const detailed = isDevelopment
-      ? `Falha ao buscar evento selecionado: ${selectedEventError.message} (${selectedEventError.code ?? "sem-codigo"})`
-      : "Não foi possível carregar o evento selecionado.";
     return { events: [], selectedEventId: null, selectedEvent: null, rows: [], errorMessage: detailed } satisfies ShirtsPageData;
   }
 
@@ -84,18 +70,14 @@ async function getStock(selectedEventId: string | null) {
     limit_shirt_selection_to_stock: Boolean(event.limit_shirt_selection_to_stock),
   }));
 
-  const selectedEventFromQuery = selectedEvent?.id
-    ? {
-        id: String(selectedEvent.id),
-        name: String(selectedEvent.name),
-        year: selectedEvent.year === null || selectedEvent.year === undefined ? null : Number(selectedEvent.year),
-        is_active: Boolean(selectedEvent.is_active),
-        shirt_order_deadline: selectedEvent.shirt_order_deadline ? String(selectedEvent.shirt_order_deadline) : null,
-        limit_shirt_selection_to_stock: Boolean(selectedEvent.limit_shirt_selection_to_stock),
-      }
-    : null;
-
-  const effectiveSelectedEvent = selectedEventFromQuery;
+  // Mesmo padrao ja usado em /pedidos e /financeiro: eventId da URL so
+  // seleciona um evento que ja esteja em `events` (RLS ja escopa a
+  // organizacao do usuario) -- id invalido/inacessivel nunca "gruda", cai
+  // no fallback seguro. Com exatamente 1 evento acessivel e nenhuma
+  // escolha explicita, seleciona automaticamente; com 0 ou 2+, exige
+  // selecao explicita via EventContextSelector.
+  const explicitEvent = requestedEventId ? events.find((event) => event.id === requestedEventId) ?? null : null;
+  const effectiveSelectedEvent = explicitEvent ?? (!requestedEventId && events.length === 1 ? events[0] : null);
   const effectiveSelectedEventId = effectiveSelectedEvent?.id ?? null;
 
   if (!effectiveSelectedEventId) {
@@ -104,7 +86,7 @@ async function getStock(selectedEventId: string | null) {
       selectedEventId: null,
       selectedEvent: null,
       rows: [],
-      errorMessage: "Selecione um evento para visualizar o estoque.",
+      errorMessage: null,
     } satisfies ShirtsPageData;
   }
 
@@ -174,10 +156,16 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
     "inventory.reset",
     "inventory.clear_history",
   ]);
+  const canCreateEvent = await hasPermission("events.create");
 
   const selectedEventLabel = selectedEvent
     ? `${selectedEvent.name}${selectedEvent.year ? ` ${selectedEvent.year}` : ""}`
     : "Selecione um evento";
+  const eventOptions = events.map((event) => ({
+    id: event.id,
+    name: `${event.name}${event.year ? ` ${event.year}` : ""}`,
+    is_active: event.is_active,
+  }));
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-strong),_transparent_30%),linear-gradient(135deg,_#030712,_#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -186,10 +174,27 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
         <div className="flex-1 space-y-6">
           <TopBar title="Camisetas" subtitle="Controle de estoque por modelo e tamanho" />
           <SectionCard title="Estoque real" description="Gerencie encomendas e ajustes sem duplicar combinações de modelo e tamanho.">
-            <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
-              <p className="font-semibold text-slate-100">Estoque do evento: {selectedEventLabel}</p>
-              <ShirtEventSelector events={events} selectedEventId={resolvedEventId} />
-            </div>
+            {eventOptions.length === 0 ? (
+              <AdminEmptyState
+                title="Nenhum evento disponível"
+                description="Crie um evento para começar a gerenciar o estoque de camisetas."
+                action={
+                  canCreateEvent ? (
+                    <Link
+                      href="/painel/eventos"
+                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/20 transition"
+                    >
+                      Criar evento
+                    </Link>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
+                <p className="font-semibold text-slate-100">Estoque do evento: {selectedEventLabel}</p>
+                <EventContextSelector events={eventOptions} selectedEventId={resolvedEventId} pathname="/camisetas" />
+              </div>
+            )}
             {errorMessage ? (
               <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{errorMessage}</div>
             ) : null}

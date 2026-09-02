@@ -9,7 +9,10 @@ const [middleware, permissions, platformAccess, authRedirects, verificationActio
   readFile(new URL('../src/lib/account/auth-redirects.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/app/verifique-seu-email/actions.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/app/inscricao/actions.ts', import.meta.url), 'utf8'),
-  readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8'),
+  // inviteUserByEmail/signInWithOtp foram movidos de cadastros/actions.ts pra
+  // este modulo compartilhado server-only (auditoria PKCE/regularizacao de
+  // convite) -- reusado tambem pelo resend publico em /primeiro-acesso/reenviar.
+  readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8'),
 ]);
 

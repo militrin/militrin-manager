@@ -135,8 +135,18 @@ test('Pedido: nao duplica a logica de regularizacao na propria listagem -- so li
   assert.doesNotMatch(pedidoPage, /cancelTicketAction/);
 });
 
-test('nenhuma migration nova foi criada para esta correcao -- mecanismo ja existia por completo no backend', async () => {
-  const { readdir } = await import('node:fs/promises');
-  const migrations = await readdir(new URL('../supabase/migrations', import.meta.url));
-  assert.ok(!migrations.some((name) => name > '20260927000000_reconcile_orphan_product_stock_reservations.sql'), 'nenhuma migration posterior a 20260927 deveria existir para esta tarefa');
+test('nenhuma migration nova foi criada para ESTA correcao (regularizacao de cancelamento) -- mecanismo ja existia por completo no backend (owner_cancel_ticket/admin_cancel_ticket nao redefinidas desde 20260924)', async () => {
+  // Nao trava mais num numero absoluto de migration (tarefas legitimamente
+  // posteriores, ex.: 20260928 reconciliacao de participant_data_issues,
+  // adicionam migrations proprias sem relacao com esta feature) -- verifica
+  // estruturalmente que nenhuma migration criada depois da que deu suporte a
+  // reclassificacao (20260924) redefine as duas RPCs que a UI reusa.
+  const { readdir, readFile } = await import('node:fs/promises');
+  const migrationsDir = new URL('../supabase/migrations/', import.meta.url);
+  const migrations = (await readdir(migrationsDir)).filter((name) => name > '20260924000000_ticket_cancellation_replacement_intent.sql');
+  for (const name of migrations) {
+    const content = await readFile(new URL(name, migrationsDir), 'utf8');
+    assert.doesNotMatch(content, /create (or replace )?function public\.owner_cancel_ticket\(/, `${name} nao deveria redefinir owner_cancel_ticket`);
+    assert.doesNotMatch(content, /create (or replace )?function public\.admin_cancel_ticket\(/, `${name} nao deveria redefinir admin_cancel_ticket`);
+  }
 });

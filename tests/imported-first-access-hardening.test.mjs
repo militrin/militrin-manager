@@ -5,7 +5,12 @@ import test from 'node:test';
 const action = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
 const page = await readFile(new URL('../src/app/primeiro-acesso/page.tsx', import.meta.url), 'utf8');
 const inviteContext = await readFile(new URL('../src/lib/account/participant-invite.ts', import.meta.url), 'utf8');
-const inviteActions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
+// dispatchFirstAccessEmail/requireFirstAccessPassword/markInvitedAccountPending
+// foram movidas de src/app/cadastros/actions.ts pra src/lib/account/
+// first-access-invite-dispatch.ts (auditoria PKCE/regularizacao de
+// convite) -- reusadas tambem pelo resend publico em /primeiro-acesso/
+// reenviar, nao so pelo admin.
+const inviteActions = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
 const accountLayout = await readFile(new URL('../src/app/minha-conta/layout.tsx', import.meta.url), 'utf8');
 const migration = await readFile(new URL('../supabase/migrations/20260920000000_harden_imported_account_onboarding.sql', import.meta.url), 'utf8');
 

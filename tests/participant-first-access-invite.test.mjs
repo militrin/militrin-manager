@@ -6,6 +6,9 @@ import { appBaseUrl, PRODUCTION_APP_ORIGIN } from '../src/lib/urls/app-base-url.
 const page = await readFile(new URL('../src/app/primeiro-acesso/page.tsx', import.meta.url), 'utf8');
 const actions = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
 const cadastroActions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
+// firstAccessInviteRedirect foi movido de cadastros/actions.ts pra este
+// modulo compartilhado server-only (auditoria PKCE/regularizacao de convite).
+const firstAccessDispatch = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
 const callback = await readFile(new URL('../src/app/auth/callback/AuthCallbackClient.tsx', import.meta.url), 'utf8');
 
 // P0 -- bug real encontrado em producao: firstAccessInviteRedirect usava
@@ -19,8 +22,8 @@ const callback = await readFile(new URL('../src/app/auth/callback/AuthCallbackCl
 // redirect_to e cai no Site URL configurado (a home, que mostra login pra
 // visitante). E exatamente o "o link do convite me leva pro login" relatado.
 test('convite de primeiro acesso usa o mesmo dominio canonico do fluxo de recuperacao de senha (nunca localhost em producao)', () => {
-  assert.match(cadastroActions, /import \{ appBaseUrl \} from ["']@\/lib\/urls\/app-base-url["']/);
-  const redirectFn = cadastroActions.slice(cadastroActions.indexOf('function firstAccessInviteRedirect'), cadastroActions.indexOf('type EligibilityRpcRow'));
+  assert.match(firstAccessDispatch, /import \{ appBaseUrl \} from ["']@\/lib\/urls\/app-base-url["']/);
+  const redirectFn = firstAccessDispatch.slice(firstAccessDispatch.indexOf('function firstAccessInviteRedirect'), firstAccessDispatch.indexOf('export async function requireFirstAccessPassword'));
   assert.match(redirectFn, /appBaseUrl\(\)/);
   assert.doesNotMatch(redirectFn, /process\.env\.NEXT_PUBLIC_APP_URL/, 'nao pode mais ler a env var diretamente -- so via appBaseUrl()');
 
@@ -40,10 +43,10 @@ test('convite sem sessao nunca encaminha o participante para uma tela que exige 
 });
 
 test('convite individual e em massa usam o mesmo primeiro acesso autenticado', () => {
-  assert.match(cadastroActions, /function firstAccessInviteRedirect/);
-  assert.match(cadastroActions, /\/auth\/callback\?next=/);
-  assert.match(cadastroActions, /\/primeiro-acesso\?invite=/);
-  assert.match(cadastroActions, /dispatchFirstAccessEmail/);
+  assert.match(firstAccessDispatch, /function firstAccessInviteRedirect/);
+  assert.match(firstAccessDispatch, /\/auth\/callback\?next=/);
+  assert.match(firstAccessDispatch, /\/primeiro-acesso\?invite=/);
+  assert.match(cadastroActions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending \} from "@\/lib\/account\/first-access-invite-dispatch";/);
   assert.match(cadastroActions, /inviteCadastroFirstAccessAction[\s\S]*dispatchFirstAccessEmail/);
   assert.match(cadastroActions, /sendBulkFirstAccessInvitesAction[\s\S]*dispatchFirstAccessEmail/);
   assert.match(callback, /exchangeCodeForSession/);

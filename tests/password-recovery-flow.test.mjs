@@ -6,6 +6,11 @@ import { appBaseUrl, PRODUCTION_APP_ORIGIN } from '../src/lib/urls/app-base-url.
 const actions = await readFile(new URL('../src/app/inscricao/actions.ts', import.meta.url), 'utf8');
 const callback = await readFile(new URL('../src/app/auth/callback/AuthCallbackClient.tsx', import.meta.url), 'utf8');
 const resetPage = await readFile(new URL('../src/app/redefinir-senha/page.tsx', import.meta.url), 'utf8');
+// A allowlist de destino pos-verificacao (antes definida localmente em
+// AuthCallbackClient.tsx como ALLOWED_CALLBACK_DESTINATION_PREFIXES) foi
+// extraida pra um modulo compartilhado (auditoria PKCE/regularizacao de
+// convite), reusado tambem por /auth/confirm -- uma unica fonte de verdade.
+const destinations = await readFile(new URL('../src/lib/auth/callback-destinations.ts', import.meta.url), 'utf8');
 
 test('solicitacao usa callback canonico e nunca a home', () => {
   const recovery = actions.slice(actions.indexOf('export async function requestPasswordResetAction'), actions.indexOf('export async function updatePublicPasswordAction'));
@@ -29,8 +34,9 @@ test('callback troca credenciais, aceita recovery e bloqueia open redirect', () 
   assert.match(callback, /exchangeCodeForSession\(code\)/);
   assert.match(callback, /verifyOtp\(\{ token_hash: tokenHash, type:/);
   assert.match(callback, /'recovery'/);
-  assert.match(callback, /ALLOWED_CALLBACK_DESTINATION_PREFIXES = \['\/primeiro-acesso', '\/redefinir-senha'\]/);
-  assert.match(callback, /return isAllowed \? safe : '\/primeiro-acesso'/);
+  assert.match(callback, /import \{ safeAuthDestination \} from '@\/lib\/auth\/callback-destinations';/);
+  assert.match(destinations, /export const ALLOWED_AUTH_DESTINATION_PREFIXES = \['\/primeiro-acesso', '\/redefinir-senha'\];/);
+  assert.match(destinations, /return isAllowed \? safe : fallback;/);
   assert.doesNotMatch(callback, /router\.(replace|push)\(['"]\/['"]\)/);
 });
 

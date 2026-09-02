@@ -25,10 +25,9 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
             <h1 className="text-2xl font-semibold">Não foi possível validar o convite</h1>
             <p className="mt-2 text-sm text-slate-300">
               Este link pode ter expirado, já ter sido usado ou ter sido aberto sem as credenciais de ativação.
-              Solicite ao organizador um novo convite de primeiro acesso.
             </p>
             <a
-              href="mailto:?subject=Solicitar%20novo%20convite%20de%20primeiro%20acesso"
+              href="/primeiro-acesso/reenviar"
               className="mt-5 inline-flex h-10 items-center whitespace-nowrap rounded-xl border border-slate-700 px-4 text-sm"
             >
               Solicitar novo convite
@@ -41,16 +40,27 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
   }
 
   const status = await getProfileCompletionStatus(user.id, user.email ?? null);
-  const inviteContext = params.invite ? await getParticipantInviteContext(params.invite, user) : null;
+  // Fonte primaria e' o parametro `invite` da URL (compatibilidade com o
+  // link hoje enviado, que passa por /auth/callback?next=/primeiro-acesso
+  // ?invite=...). Fallback: inviteUserByEmail ja grava participant_invite_id
+  // em user_metadata (data: {...}, ver dispatchFirstAccessEmail) -- uma vez
+  // autenticado (verifyOtp/exchangeCodeForSession), esse metadado ja
+  // identifica o convite sem depender de nenhum parametro de URL ter
+  // sobrevivido ao redirecionamento. getParticipantInviteContext revalida
+  // elegibilidade/sessao do mesmo jeito nos dois casos -- nunca um atalho de
+  // seguranca, so uma fonte alternativa do id.
+  const inviteIdFromSession = typeof user.user_metadata?.participant_invite_id === 'string' ? user.user_metadata.participant_invite_id : null;
+  const effectiveInviteId = params.invite || inviteIdFromSession || undefined;
+  const inviteContext = effectiveInviteId ? await getParticipantInviteContext(effectiveInviteId, user) : null;
 
-  const administrativeLandingPage = !params.invite
+  const administrativeLandingPage = !effectiveInviteId
     ? await resolveAdministrativeLandingPage()
     : null;
   if (administrativeLandingPage) {
     redirect(administrativeLandingPage);
   }
 
-  if (params.invite && !inviteContext?.valid) {
+  if (effectiveInviteId && !inviteContext?.valid) {
     const failureCopy = getParticipantInviteFailureCopy(inviteContext?.reason);
     return (
       <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
@@ -86,7 +96,7 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
     redirect('/acesso-negado');
   }
 
-  if (status.isComplete && !params.invite) {
+  if (status.isComplete && !effectiveInviteId) {
     redirect(safeNext);
   }
 
@@ -126,7 +136,7 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
           <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">Complete seu cadastro para continuar.</p>
         ) : null}
 
-        <FirstAccessForm initialValues={initialValues} editableFields={[...editableFields]} mustChangePassword={inviteContext ? inviteContext.requiresPasswordSetup : status.mustChangePassword} nextPath={safeNext} inviteId={params.invite} />
+        <FirstAccessForm initialValues={initialValues} editableFields={[...editableFields]} mustChangePassword={inviteContext ? inviteContext.requiresPasswordSetup : status.mustChangePassword} nextPath={safeNext} inviteId={effectiveInviteId} />
       </section>
     </main>
   );

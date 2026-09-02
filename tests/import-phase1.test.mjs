@@ -1009,15 +1009,21 @@ test('migration 099 permite reenvio somente com correlacao explicita ao mesmo au
   const migration = await readFile(new URL('../supabase/migrations/099_reinvite_existing_participant_auth_user.sql', import.meta.url), 'utf8');
   const preflight = await readFile(new URL('../supabase/plans/099_reinvite_existing_participant_auth_user_preflight.sql', import.meta.url), 'utf8');
   const actions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
+  // dispatchFirstAccessEmail (shouldCreateUser/signInWithOtp) foi movida pra
+  // src/lib/account/first-access-invite-dispatch.ts (auditoria da
+  // regularizacao de convite/PKCE) -- reusada tambem pelo resend publico em
+  // /primeiro-acesso/reenviar, nao so pelo admin.
+  const dispatchLib = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
   assert.match(migration, /add column if not exists auth_user_id uuid references auth\.users\(id\)/);
   assert.match(migration, /raw_user_meta_data->>'participant_invite_id'=pai\.id::text/);
   assert.match(migration, /pai\.auth_user_id=v_auth_user\.id/);
   assert.match(migration, /account_conflict/);
   assert.match(migration, /resend_invite_password_required/);
   assert.match(migration, /resend_invite_existing_account/);
-  assert.match(actions, /shouldCreateUser: false/);
-  assert.match(actions, /participant_account_invites/);
+  assert.match(dispatchLib, /shouldCreateUser: false/);
+  assert.match(dispatchLib, /participant_account_invites/);
   assert.doesNotMatch(actions, /from\("participants"\)\.update\(\{[^\n]*user_id/);
+  assert.doesNotMatch(dispatchLib, /from\('participants'\)\.update\(\{[^\n]*user_id/);
   assert.match(preflight, /safe_to_apply/);
   assert.match(preflight, /ambiguous_legacy_correlations/);
 });
@@ -1170,9 +1176,12 @@ test('primeiro acesso D — pendencia admin permanece em conferencia', async () 
 
 test('primeiro acesso E — finaliza de forma idempotente e segue para ingressos', async () => {
   const action = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
-  const cadastroActions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
+  // firstAccessInviteRedirect (com /minha-conta/ingressos) foi movida pra
+  // src/lib/account/first-access-invite-dispatch.ts junto com
+  // dispatchFirstAccessEmail -- ver teste "migration 099...".
+  const dispatchLib = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
   assert.match(action, /claim_participant_account_invite[\s\S]*finalize_imported_ticket_after_issue_resolution/);
-  assert.match(cadastroActions, /\/minha-conta\/ingressos/);
+  assert.match(dispatchLib, /\/minha-conta\/ingressos/);
   assert.doesNotMatch(action, /from\('(orders|payments|order_items|tickets)'\)\.(insert|update)/);
 });
 
@@ -1389,7 +1398,12 @@ test('callback de convite sempre termina com sessao, erro ou timeout visivel', a
     'credenciais devem sair da URL antes da primeira chamada de autenticação',
   );
   assert.match(callback, /router\.replace\(destination\)/);
-  assert.match(callback, /Solicitar novo convite/);
+  // Copy de erro (inclusive "Solicitar novo convite") foi centralizada em
+  // src/lib/auth/invite-error-copy.ts (auditoria PKCE/regularizacao de
+  // convite) -- reusada tambem por /auth/confirm (servidor), nunca mais
+  // hardcoded so no callback cliente.
+  const errorCopyLib = await readFile(new URL('../src/lib/auth/invite-error-copy.ts', import.meta.url), 'utf8');
+  assert.match(errorCopyLib, /Solicitar novo convite/);
   assert.doesNotMatch(callback, /console\.(info|error)\([^\n]*(code|tokenHash|accessToken|refreshToken)\b/);
   assert.doesNotMatch(callback, /router\.(push|replace)\(['"]\/entrar/);
 });
@@ -1478,7 +1492,9 @@ test('falha posterior ocorre depois da conclusao persistida e retry nao redefine
 test('retry posterior nao pede senha concluida e reenvio nao cria outra conta Auth', async () => {
   const context = await readFile(new URL('../src/lib/account/participant-invite.ts', import.meta.url), 'utf8');
   const migration = await readFile(new URL('../supabase/migrations/102_persist_imported_participant_invite_password_setup.sql', import.meta.url), 'utf8');
-  const dispatch = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
+  // dispatchFirstAccessEmail foi movida pra src/lib/account/first-access-
+  // invite-dispatch.ts -- ver teste "migration 099...".
+  const dispatch = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
   assert.match(context, /!invite\.password_setup_completed_at/);
   assert.match(migration, /on conflict\(participant_id\) where status='pending'/);
   assert.match(dispatch, /shouldCreateUser: false/);
@@ -1488,9 +1504,12 @@ test('retry posterior nao pede senha concluida e reenvio nao cria outra conta Au
 
 test('senha de primeiro acesso nao e enviada ou registrada em logs', async () => {
   const action = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
-  const dispatch = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
+  // dispatchFirstAccessEmail foi movida pra src/lib/account/first-access-
+  // invite-dispatch.ts -- ver teste "migration 099...".
+  const dispatch = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
   const inviteCallStart = dispatch.indexOf('admin.auth.admin.inviteUserByEmail');
   const inviteCallEnd = dispatch.indexOf('return { error: result.error', inviteCallStart);
+  assert.ok(inviteCallStart >= 0, 'inviteUserByEmail deve existir no modulo compartilhado');
   const inviteCall = dispatch.slice(inviteCallStart, inviteCallEnd);
   assert.doesNotMatch(inviteCall, /new_password|confirm_password|password\s*:/i);
   assert.doesNotMatch(action, /console\.(?:log|info|warn|error)\([^\n]*(?:newPassword|confirmPassword|formData)/);

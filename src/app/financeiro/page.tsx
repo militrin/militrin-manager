@@ -4,7 +4,9 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import { EventContextSelector } from "@/components/admin/EventContextSelector";
+import { AdminEmptyState } from "@/components/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { hasPermission } from "@/lib/admin/permissions";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { FinancialActionForm } from "./financial-action-form";
 import { FinancialOverviewFilters } from "./overview-filters";
@@ -39,10 +41,18 @@ type PaymentRow = { id: string; final_amount: number; payment_method: string; pa
 async function loadContext(eventId: string | null) {
   const supabase = await createServerSupabaseClient();
   const { data: events } = await supabase.from("events").select("id,name,is_active,organization_id").is("archived_at", null).order("starts_at", { ascending: false });
-  const selected = eventId ? (events ?? []).find((event) => event.id === eventId) ?? null : null;
-  const organizationIds = [...new Set((events ?? []).map((event) => String(event.organization_id)))];
+  const eventList = events ?? [];
+  // Mesmo padrao ja usado em /pedidos: eventId da URL so seleciona um evento
+  // que ja esteja em `events` (RLS ja escopa a organizacao do usuario) -- id
+  // invalido/inacessivel nunca "gruda", cai no fallback seguro. Com
+  // exatamente 1 evento acessivel e nenhuma escolha explicita, seleciona
+  // automaticamente (nunca obriga clique num unico botao); com 0 ou 2+,
+  // exige selecao explicita via EventContextSelector.
+  const explicit = eventId ? eventList.find((event) => event.id === eventId) ?? null : null;
+  const selected = explicit ?? (!eventId && eventList.length === 1 ? eventList[0] : null);
+  const organizationIds = [...new Set(eventList.map((event) => String(event.organization_id)))];
   const organizationId = selected ? String(selected.organization_id) : organizationIds.length === 1 ? organizationIds[0] : null;
-  return { supabase, events: events ?? [], selected, organizationId };
+  return { supabase, events: eventList, selected, organizationId };
 }
 
 async function loadSales(status: string, eventId: string | null) {
@@ -143,6 +153,7 @@ function parseComparisonPeriod(value: string) {
 
 export default async function FinanceiroPage({ searchParams }: { searchParams: Promise<{ tab?: string; status?: string; eventId?: string; dateFrom?: string; dateTo?: string; compareEvent?: string | string[]; comparePeriod?: string | string[]; viewEvent?: string | string[]; compareRow?: string | string[] }> }) {
   const params = await searchParams;
+  const canCreateEvent = await hasPermission("events.create");
   const active = tabs.some(([code]) => code === params.tab) ? params.tab as Tab : "overview";
   const status = params.status && (statusOptions as readonly string[]).includes(params.status) ? params.status : "pending";
   const dateFrom = validDate(params.dateFrom);
@@ -164,9 +175,21 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
     <TopBar title="Financeiro" subtitle="Vendas e livro financeiro administrativo"/><Tabs active={active} eventId={selectedEventId} status={status}/>
-    {active === "overview" ? <FinancialOverviewControls events={eventOptions} selectedIds={viewEventIds} dateFrom={dateFrom} dateTo={dateTo}/> : <EventContextSelector events={eventOptions} selectedEventId={selectedEventId || null} pathname="/financeiro"/>}
-    {active === "sales" && sales ? <SectionCard title="Vendas" description="Listagem existente de pagamentos; não cria lançamentos no livro."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">R$ {Number(row.final_amount).toFixed(2)}</td><td className="p-3">{row.payment_method}</td><td className="p-3">{row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : "Cancelado"}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td></tr>; })}</tbody></table></div></SectionCard> : null}
-    {active !== "sales" && active !== "overview" && !selectedEventId ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">Selecione um evento para usar esta operação.</div> : null}
+    {active === "overview" ? (
+      <FinancialOverviewControls events={eventOptions} selectedIds={viewEventIds} dateFrom={dateFrom} dateTo={dateTo}/>
+    ) : eventOptions.length === 0 ? (
+      // Nunca "Selecione um evento" sem oferecer forma de resolver -- mesmo
+      // padrao ja usado em /pedidos: estado vazio coerente, CTA so pra quem
+      // pode criar evento.
+      <AdminEmptyState
+        title="Nenhum evento disponível"
+        description="Crie um evento para começar a gerenciar o financeiro."
+        action={canCreateEvent ? <Link href="/painel/eventos" className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/20 transition">Criar evento</Link> : undefined}
+      />
+    ) : (
+      <EventContextSelector events={eventOptions} selectedEventId={selectedEventId || null} pathname="/financeiro"/>
+    )}
+    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Listagem existente de pagamentos; não cria lançamentos no livro."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">R$ {Number(row.final_amount).toFixed(2)}</td><td className="p-3">{row.payment_method}</td><td className="p-3">{row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : "Cancelado"}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td></tr>; })}</tbody></table></div></SectionCard> : null}
     {active !== "sales" && ledger && !ledger.available ? <LedgerUnavailable/> : null}
     {ledger?.available && organizationId && (selectedEventId || active === "overview") ? (() => {
       const inRange = (value: string | null, from: string, to: string) => Boolean(value) && (!from || value!.slice(0,10) >= from) && (!to || value!.slice(0, 10) <= to);

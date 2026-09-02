@@ -120,7 +120,13 @@ test('fluxo integrado contact-first preserva pessoa, ingressos e entidades canon
   const contact = await service.from('registration_contacts').select('email').eq('id', first.registration_contact_id).single();
   const projection = await service.from('participants').select('email,shirt_type,shirt_size').eq('id', first.participant_id).single();
   assert.equal(contact.data.email, 'corrected@example.test');
-  assert.equal(projection.data.email, 'original@example.test');
+  // Correcao da regularizacao de participant_data_issues (20260928000000):
+  // update_registration_contact_from_participant agora sincroniza a
+  // projecao legada (participants) com o registration_contacts recem-
+  // gravado -- antes desta correcao a projecao ficava presa no valor
+  // antigo pra sempre, exatamente o bug real de Integridade corrigido
+  // (genero informado nunca refletia em participants.gender).
+  assert.equal(projection.data.email, 'corrected@example.test');
   assert.equal(projection.data.shirt_type, null); assert.equal(projection.data.shirt_size, null);
 
   const finalized = await anon.rpc('finalize_imported_ticket_after_issue_resolution', { p_order_item_id: first.order_item_id, p_resolved_fields: ['email', 'shirt_selection'], p_force_confirm: true });

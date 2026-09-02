@@ -2,7 +2,9 @@ import Link from "next/link";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { AdminEmptyState, AdminFilterBar, AdminPageHeader, AdminSection, AdminStatusBadge } from "@/components/admin";
+import { EventContextSelector } from "@/components/admin/EventContextSelector";
 import { formatDateTimeBR } from "@/lib/utils/date";
+import { hasPermission } from "@/lib/admin/permissions";
 import { listOrdersAction } from "./actions";
 
 type SearchParams = {
@@ -37,8 +39,8 @@ export default async function PedidosPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const { events, selectedEvent, rows, page, totalPages, totalFiltered, canViewAmounts } =
-    await listOrdersAction(params);
+  const [{ events, selectedEvent, rows, page, totalPages, totalFiltered, canViewAmounts }, canCreateEvent] =
+    await Promise.all([listOrdersAction(params), hasPermission("events.create")]);
 
   const buildUrl = (overrides: Partial<SearchParams>) => {
     const next = { ...params, ...overrides };
@@ -57,26 +59,24 @@ export default async function PedidosPage({
         <main className="mx-auto w-full max-w-7xl space-y-6 px-6 py-6">
           <AdminPageHeader
             title="Pedidos"
-            subtitle={selectedEvent ? `Evento: ${selectedEvent.name}` : "Nenhum evento selecionado"}
+            subtitle={selectedEvent ? `Evento: ${selectedEvent.name}` : events.length ? "Selecione um evento" : "Nenhum evento disponível"}
           />
 
-          {/* Seletor de evento */}
-          {events.length > 1 && (
-            <div className="flex flex-wrap gap-2">
-              {events.map((e) => (
-                <Link
-                  key={e.id}
-                  href={buildUrl({ eventId: e.id, page: "1" })}
-                  className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition ${
-                    selectedEvent?.id === e.id
-                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                      : "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
-                  }`}
-                >
-                  {e.name}
-                </Link>
-              ))}
-            </div>
+          {/* Nenhum evento na organizacao: nunca mostra "Nenhum evento
+              selecionado" sem oferecer forma de resolver -- estado vazio
+              coerente, com CTA so pra quem pode criar evento. */}
+          {!events.length ? (
+            <AdminEmptyState
+              title="Nenhum evento disponível"
+              description="Crie um evento para começar a gerenciar pedidos."
+              action={canCreateEvent ? <Link href="/painel/eventos" className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/20 transition">Criar evento</Link> : undefined}
+            />
+          ) : (
+            // Mesmo componente ja usado por /categorias, /lotes e /financeiro
+            // (nunca um segundo seletor de evento so pra Pedidos). Com
+            // exatamente 1 evento, listOrdersAction ja auto-seleciona --
+            // aqui so reflete o estado, sem exigir clique extra.
+            <EventContextSelector events={events} selectedEventId={selectedEvent?.id ?? null} pathname="/pedidos" />
           )}
 
           {/* Filtros */}

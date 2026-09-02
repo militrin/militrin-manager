@@ -33,7 +33,16 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
     is_active: Boolean(e.is_active),
   }));
 
-  const selectedEvent = params.eventId ? events.find((e) => e.id === params.eventId) ?? null : null;
+  // eventId da URL so seleciona um evento que ja esteja na lista acima (RLS
+  // ja escopa `events` a organizacao do usuario) -- um id invalido/de outra
+  // organizacao nunca "gruda", cai no mesmo estado de nenhum evento
+  // explicitamente escolhido. Com exatamente 1 evento acessivel e nenhuma
+  // escolha explicita na URL, seleciona automaticamente esse evento (nunca
+  // obriga o usuario a clicar num unico botao) -- com 0 ou 2+, precisa de
+  // selecao explicita (mesmo padrao ja usado por /categorias e /lotes via
+  // EventContextSelector).
+  const explicitEvent = params.eventId ? events.find((e) => e.id === params.eventId) ?? null : null;
+  const selectedEvent = explicitEvent ?? (!params.eventId && events.length === 1 ? events[0] : null);
 
   if (!selectedEvent) {
     return { events, selectedEvent: null, rows: [], page: 1, totalPages: 1, totalFiltered: 0, canViewAmounts: false };
