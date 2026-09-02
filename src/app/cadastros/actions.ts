@@ -26,10 +26,21 @@ async function assertCurrentOrganizationOwner() {
 // moderadores, e /ingressos/[ticketId]/editar ja libera essa acao pra quem
 // tem essa permissao. A RPC e quem valida de fato; isto so evita a viagem
 // ao banco quando o pedido nem tem organizacao ativa.
+//
+// CORRIGIDO (auditoria da regularizacao de cancelamento legado): este gate
+// usava context.isOrgOwner, que resolve via a RPC is_organization_owner --
+// a flag LEGADA organization_members.is_owner, nao o "Owner" administrativo
+// (admin_roles.code='owner') que owner_cancel_ticket de fato verifica via
+// is_active_owner/resolve_user_permission. hasPermission("orders.cancel")
+// ja resolve por current_user_has_permission -> resolve_user_permission, que
+// concede true automaticamente pra qualquer Owner de papel ANTES de checar o
+// codigo da permissao especifica -- ou seja, uma unica chamada aqui ja cobre
+// exatamente "Owner administrativo OU orders.cancel", sem precisar (e sem
+// poder, por divergir da fonte legada) somar um segundo check de Owner.
 async function assertCanCancelTicket() {
   const context = await getCurrentOrganizationContext();
   if (!context.organization?.id) throw new Error("Organização não encontrada.");
-  if (!context.isOrgOwner && !(await hasPermission("orders.cancel"))) throw new Error("Sem permissão para cancelar ingressos.");
+  if (!(await hasPermission("orders.cancel"))) throw new Error("Sem permissão para cancelar ingressos.");
   return context.organization.id;
 }
 

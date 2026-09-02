@@ -41,7 +41,23 @@ test('cancelamento de ingresso (Server Action) usa autorizacao org+orders.cancel
   assert.match(ticketAction, /assertCanCancelTicket/);
   assert.doesNotMatch(ticketAction, /assertCurrentOrganizationOwner/);
   assert.match(itemAction, /assertCurrentOrganizationOwner/);
-  assert.match(cadastrosActions, /async function assertCanCancelTicket\(\)[\s\S]*?context\.isOrgOwner[\s\S]*?hasPermission\("orders\.cancel"\)/);
+  assert.match(cadastrosActions, /async function assertCanCancelTicket\(\)[\s\S]*?hasPermission\("orders\.cancel"\)/);
+});
+
+// Corrigido (auditoria da regularizacao de cancelamento legado):
+// assertCanCancelTicket usava context.isOrgOwner (RPC is_organization_owner,
+// a flag LEGADA organization_members.is_owner) como fallback OU junto de
+// hasPermission("orders.cancel") -- divergente da fonte canonica que a
+// propria RPC owner_cancel_ticket usa (is_active_owner/resolve_user_permission,
+// papel administrativo admin_roles.code='owner'). hasPermission("orders.cancel")
+// sozinho ja resolve por current_user_has_permission -> resolve_user_permission,
+// que concede true pra qualquer Owner de papel ANTES de checar a permissao
+// especifica -- entao uma unica chamada, sem isOrgOwner, ja cobre exatamente
+// "Owner administrativo OU orders.cancel", na mesma fonte que a RPC usa.
+test('assertCanCancelTicket nao usa mais a flag legada context.isOrgOwner -- hasPermission("orders.cancel") sozinho ja resolve Owner administrativo OU a permissao especifica', () => {
+  const helper = cadastrosActions.slice(cadastrosActions.indexOf('async function assertCanCancelTicket'), cadastrosActions.indexOf('function validateAdministrativeDeleteReason'));
+  assert.doesNotMatch(helper, /isOrgOwner/);
+  assert.match(helper, /if \(!\(await hasPermission\("orders\.cancel"\)\)\) throw new Error\("Sem permissão para cancelar ingressos\."\);/);
 });
 
 test('ficha do cadastro calcula canCancelTickets a partir de Owner OU orders.cancel (nao mais Owner-only)', () => {
