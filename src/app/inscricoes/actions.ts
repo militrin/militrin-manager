@@ -261,9 +261,6 @@ export async function confirmParticipantPaymentAction(participantId: string) {
     return { success: true, message: "Pagamento ja confirmado." };
   }
 
-  const methodRaw = String(payment.payment_method ?? "pix").toLowerCase();
-  const method = methodRaw === "credit_card" ? "credit_card" : "pix";
-
   const { count: importedHistoryCount, error: importedHistoryError } = await supabase
     .from("participation_history")
     .select("id", { count: "exact", head: true })
@@ -289,16 +286,18 @@ export async function confirmParticipantPaymentAction(participantId: string) {
       : { success: false, message: "Pagamento confirmado, mas o ingresso nao foi emitido." };
   }
 
-  const { error: rpcError } = await supabase.rpc("simulate_payment_paid", {
+  const { data: updateResult, error: rpcError } = await supabase.rpc("admin_update_payment_status", {
+    p_payment_id: payment.id,
     p_participant_id: participantId,
-    p_payment_method: method,
+    p_expected_current_status: String(payment.payment_status ?? "pending"),
+    p_new_status: "paid",
+    p_reason: "Confirmação administrativa manual pela tela de inscrições.",
   });
   if (rpcError) return { success: false, message: rpcError.message };
-
-  const { error: confirmError } = await supabase.rpc("confirm_order_and_issue_ticket", {
-    p_participant_id: participantId,
-  });
-  if (confirmError) return { success: false, message: confirmError.message };
+  const update = updateResult as { success?: boolean; message?: string; ticket_id?: string | null } | null;
+  if (!update?.success) {
+    return { success: false, message: update?.message ?? "Não foi possível confirmar o pagamento." };
+  }
 
   revalidatePath("/painel");
   revalidatePath("/inscricoes");

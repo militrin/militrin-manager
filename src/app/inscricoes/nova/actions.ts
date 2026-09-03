@@ -6,6 +6,7 @@ import type { RegistrationFormValues } from '@/lib/validation/registration';
 import { removeCpfMask } from '@/lib/validation/registration';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { registrationContactHasActiveTicket } from '@/lib/registrations/active-ticket-holder';
+import { assertPermission } from '@/lib/admin/permissions';
 
 type PricingPreview = {
   batch_id: string;
@@ -530,16 +531,36 @@ export async function generatePixPaymentAction(participantId: string) {
 }
 
 export async function simulatePaymentAction(participantId: string, method: 'pix' | 'credit_card') {
+  if (process.env.NODE_ENV !== 'development') {
+    return { success: false, message: 'A confirmação simulada está disponível apenas em desenvolvimento.', payment: null };
+  }
+
+  await assertPermission('finance.confirm_payment');
   await paymentProvider.confirmPayment({ participantId, method });
 
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc('simulate_payment_paid', {
+  const current = await getParticipantPaymentAction(participantId);
+  if (!current.success || !current.payment) {
+    return { success: false, message: current.message ?? 'Pagamento não encontrado.', payment: null };
+  }
+  if (current.payment.payment_status === 'paid') {
+    return { success: true, message: 'Pagamento já confirmado.', payment: current.payment };
+  }
+
+  const { data, error } = await supabase.rpc('admin_update_payment_status', {
+    p_payment_id: current.payment.payment_id,
     p_participant_id: participantId,
-    p_payment_method: method,
+    p_expected_current_status: current.payment.payment_status,
+    p_new_status: 'paid',
+    p_reason: `Simulação administrativa local (${method}).`,
   });
 
   if (error) {
     return { success: false, message: error.message };
+  }
+  const result = data as { success?: boolean; message?: string } | null;
+  if (!result?.success) {
+    return { success: false, message: result?.message ?? 'Não foi possível confirmar o pagamento.', payment: null };
   }
 
   const updated = await getParticipantPaymentAction(participantId);

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getPaymentProvider } from "@/lib/payments/get-provider";
 import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from "@/lib/account/email-confirmation";
+import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 
 const paymentProvider = getPaymentProvider();
 
@@ -55,12 +56,30 @@ export async function generateStoreOrderPixAction(storeOrderId: string, amount: 
 }
 
 export async function simulateStoreOrderPaymentAction(storeOrderId: string, method: "pix" | "credit_card") {
-  if (process.env.NODE_ENV !== "development") {
-    return { success: false as const, message: "A confirmacao simulada esta disponivel apenas em desenvolvimento." };
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const isLocalSupabase = /^https?:\/\/(127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(supabaseUrl);
+  if (process.env.NODE_ENV !== "development" || !isLocalSupabase) {
+    return { success: false as const, message: "A confirmacao simulada esta disponivel apenas no ambiente local." };
   }
   const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.id) return { success: false as const, message: "Entre na sua conta para continuar." };
+  const { data: ownedOrder, error: ownershipError } = await supabase
+    .from("store_orders")
+    .select("id")
+    .eq("id", storeOrderId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (ownershipError || !ownedOrder?.id) {
+    return { success: false as const, message: ownershipError?.message ?? "Pedido não encontrado." };
+  }
+
   await paymentProvider.confirmPayment({ participantId: storeOrderId, method });
-  const { error } = await supabase.rpc("simulate_store_order_payment", { p_store_order_id: storeOrderId, p_payment_method: method });
+  const admin = createServiceRoleSupabaseClient();
+  const { error } = await admin.rpc("simulate_store_order_payment", {
+    p_store_order_id: storeOrderId,
+    p_payment_method: method,
+  });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/minha-conta/loja");
   return { success: true as const, message: "Pagamento confirmado (simulado)." };

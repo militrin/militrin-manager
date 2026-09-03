@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getEmailProvider } from '@/lib/email/fake-provider';
-import { generatePublicPixAction, simulatePublicPaymentAction } from '@/app/inscricao/actions';
+import { generatePublicPixAction, simulateFakeOrderPaymentAction } from '@/app/inscricao/actions';
 import { formatDateBR, toISODateFromBR } from '@/lib/utils/date';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { assertPermission } from '@/lib/admin/permissions';
@@ -638,7 +638,7 @@ export async function payOrderNowAction(orderId: string) {
     }
   }
 
-  const paid = await simulatePublicPaymentAction(String(order.participant_id), paymentMethod);
+  const paid = await simulateFakeOrderPaymentAction(orderId);
   if (!paid.success) {
     return { success: false, message: paid.message || 'Falha ao processar pagamento.' };
   }

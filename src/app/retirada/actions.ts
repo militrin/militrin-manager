@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
 import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
+import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -104,7 +105,7 @@ export async function getPickupTicketAction(ticketId: string) {
   const supabase = await createServerSupabaseClient();
   const organization = (await getCurrentOrganizationContext()).organization;
   if (!organization?.id) return { success: false as const, message: "Organização não selecionada." };
-  const { data: ticket, error: ticketError } = await supabase.from("tickets").select("id,event_id,status,used_at,participant_id,order_item_id,events(name,kit_enabled,allow_checkin_during_kit_delivery),participants(id,full_name,registration_number,cpf,phone,payment_status,registration_status,shirt_type,shirt_size,ticket_categories(name)),order_items(holder_full_name,shirt_type,shirt_size,ticket_categories(name))").eq("id", ticketId).eq("organization_id", organization.id).maybeSingle();
+  const { data: ticket, error: ticketError } = await supabase.from("tickets").select("id,order_id,event_id,status,used_at,participant_id,order_item_id,events(name,kit_enabled,allow_checkin_during_kit_delivery),participants(id,full_name,registration_number,cpf,phone,payment_status,registration_status,shirt_type,shirt_size,ticket_categories(name)),order_items(holder_full_name,shirt_type,shirt_size,ticket_categories(name))").eq("id", ticketId).eq("organization_id", organization.id).maybeSingle();
   if (ticketError || !ticket) return { success: false as const, message: ticketError?.message ?? "Ingresso não encontrado." };
   const participant = relation(ticket.participants);
   const orderItem = relation(ticket.order_items);
@@ -116,15 +117,33 @@ export async function getPickupTicketAction(ticketId: string) {
 
   const [{ data: kitItemsData, error: kitItemsError }, paymentResult, { data: checkinLogData, error: checkinLogError }] = await Promise.all([
     supabase.rpc("get_ticket_kit_items", { p_ticket_id: ticketId }),
-    participantId ? supabase.rpc("get_participant_payment_details", { p_participant_id: participantId }) : Promise.resolve({ data: null, error: null }),
+    supabase.rpc("get_ticket_payment_operational_status", { p_ticket_id: ticketId }),
     supabase.from("audit_logs").select("id,actor,created_at").eq("entity_type", "tickets").eq("entity_id", ticketId).eq("action", "ticket_checkin_entry").order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (kitItemsError) return { success: false as const, message: kitItemsError.message };
-  if (paymentResult.error) return { success: false as const, message: paymentResult.error.message };
   if (checkinLogError) return { success: false as const, message: checkinLogError.message };
 
-  const paymentRow = (Array.isArray(paymentResult.data) ? paymentResult.data[0] : paymentResult.data) as Record<string, unknown> | null;
-  const paymentStatus = String(paymentRow?.payment_status ?? participant?.payment_status ?? "pending");
+  let paymentStatus = String(participant?.payment_status ?? "pending");
+  if (!paymentResult.error) {
+    const paymentRow = (Array.isArray(paymentResult.data) ? paymentResult.data[0] : paymentResult.data) as Record<string, unknown> | null;
+    paymentStatus = String(paymentRow?.payment_status ?? paymentStatus);
+  } else if (!isUndefinedDatabaseFunction(paymentResult.error, "get_ticket_payment_operational_status")) {
+    return { success: false as const, message: paymentResult.error.message };
+  } else {
+    const orderId = ticket.order_id ? String(ticket.order_id) : null;
+    if (orderId) {
+      const { data: paymentRow, error: paymentLookupError } = await supabase
+        .from("payments")
+        .select("payment_status")
+        .eq("order_id", orderId)
+        .eq("organization_id", organization.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (paymentLookupError) return { success: false as const, message: paymentLookupError.message };
+      paymentStatus = String(paymentRow?.payment_status ?? paymentStatus);
+    }
+  }
   const ticketStatus = String(ticket.status ?? "pending");
   const ticketUsedAt = ticket.used_at ? String(ticket.used_at) : null;
   const category = relation(orderItem?.ticket_categories);
@@ -143,7 +162,7 @@ export async function getPickupTicketAction(ticketId: string) {
   return { success: true as const, participant: {
     id: participantId ?? ticketId, event_id: String(ticket.event_id), full_name: String(orderItem?.holder_full_name ?? participant?.full_name ?? "Titular não definido"),
     registration_number: participant?.registration_number == null ? null : Number(participant.registration_number), cpf: String(participant?.cpf ?? ""), phone: String(participant?.phone ?? ""),
-    payment_status: paymentStatus, payment_method: String(paymentRow?.payment_method ?? "-"), registration_status: String(participant?.registration_status ?? "confirmed"),
+    payment_status: paymentStatus, payment_method: "-", registration_status: String(participant?.registration_status ?? "confirmed"),
     shirt_type: shirtType, shirt_size: shirtSize, category_name: String(category?.name ?? legacyCategory?.name ?? "Ingresso único"), event_name: String(event?.name ?? "Evento"),
     event_kit_enabled: Boolean(event?.kit_enabled), ticket_status: ticketStatus, ticket_id: ticketId, ticket_used_at: ticketUsedAt,
     last_checkin_at: checkinLogData?.created_at ? String(checkinLogData.created_at) : null, last_checkin_actor: checkinLogData?.actor ? String(checkinLogData.actor) : null,
