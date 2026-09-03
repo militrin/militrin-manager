@@ -254,10 +254,21 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     p_user_id: user.id,
   });
   if (contactError) {
-    console.warn('[first-access:registration-contact-error]', {
+    console.error('[first-access:registration-contact-error]', {
       userIdPresent: Boolean(user.id),
       message: contactError.message,
     });
+    if (
+      contactError.message === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER'
+      || contactError.message === 'REGISTRATION_CONTACT_REQUIRES_INVITE'
+    ) {
+      return {
+        success: false,
+        code: contactError.message,
+        message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+      };
+    }
+    return { success: false, message: translateFirstAccessPersistError(contactError.message) };
   }
 
   // Coleta os resultados de reconciliacao de emissao de ticket das

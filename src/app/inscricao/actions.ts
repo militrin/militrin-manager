@@ -175,11 +175,17 @@ function translateSignupCode(message: string) {
 }
 
 function isCpfAlreadyLinkedError(error: { message: string; details?: string | null }) {
-  if (error.message === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER') return true;
+  if (
+    error.message === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER'
+    || error.message === 'REGISTRATION_CONTACT_REQUIRES_INVITE'
+  ) {
+    return true;
+  }
   if (!error.details) return false;
   try {
     const parsed = JSON.parse(error.details) as { code?: string };
-    return parsed?.code === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER';
+    return parsed?.code === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER'
+      || parsed?.code === 'REGISTRATION_CONTACT_REQUIRES_INVITE';
   } catch {
     return false;
   }
