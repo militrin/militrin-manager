@@ -6,6 +6,7 @@ const actions = await readFile(new URL('../src/app/importacoes/actions.ts', impo
 const client = await readFile(new URL('../src/app/importacoes/ImportacoesClient.tsx', import.meta.url), 'utf8');
 const queue = await readFile(new URL('../src/app/importacoes/revisoes/page.tsx', import.meta.url), 'utf8');
 const migration = await readFile(new URL('../supabase/migrations/20260941000000_import_review_operational_queue.sql', import.meta.url), 'utf8');
+const materializationMigration = await readFile(new URL('../supabase/migrations/20260943000000_import_review_decision_materialization.sql', import.meta.url), 'utf8');
 
 test('match por CPF exato vincula deterministicamente', () => {
   assert.match(actions, /cpfMap\.get\(row\.cpf\)/);
@@ -70,4 +71,32 @@ test('fila mostra dados, candidatos, motivo, comparação, batch e impacto', () 
   for (const text of ['Linha importada', 'Candidatos encontrados', 'CPF:', 'E-mail:', 'batch', 'A decisão fica registrada em auditoria']) {
     assert.match(queue, new RegExp(text));
   }
+});
+
+// Caso real TIEVENT: candidato de nome era montado a partir da projecao
+// legada "participants" (nunca atualizada quando o cadastro e' editado em
+// Cadastros -> Editar), exibindo full_name/email ANTIGOS ao administrador
+// mesmo apos o cadastro real ja ter sido renomeado. O vinculo
+// (registration_contact_id) sempre foi correto -- so o texto era obsoleto.
+test('candidato de nome usa dados atuais de registration_contacts, nunca a projecao legada obsoleta', () => {
+  assert.match(actions, /nameMatchContactIds = Array\.from\(new Set/);
+  assert.match(actions, /from\('registration_contacts'\)\.select\('id,full_name,cpf,email,user_id'\)\.in\('id', nameMatchContactIds\)/);
+  assert.match(actions, /liveContact \? \{ \.\.\.participant, full_name: liveContact\.full_name, cpf: liveContact\.cpf, email: liveContact\.email \} : participant/);
+});
+
+// A decisao "outra pessoa / criar novo cadastro" so pode ser considerada
+// resolvida depois que a materializacao (registration_contact/participant/
+// order/order_item) tiver concluido com sucesso -- nunca antes. Migration
+// 20260943000000 move a materializacao para dentro da mesma transacao da
+// RPC de decisao, reusando import_current_event_contact_first (nunca
+// duplicando a logica de identidade/pedido/ingresso em TypeScript).
+test('revisao de inscrito atual materializa create_new/link_existing na mesma transacao da decisao', () => {
+  assert.match(materializationMigration, /public\.import_current_event_contact_first\(/);
+  assert.match(materializationMigration, /if \(v_materialize->>'order_item_id'\) is null then raise exception 'Falha ao materializar a linha revisada\.'; end if;/);
+  assert.match(materializationMigration, /status='imported',resolution=p_decision/);
+});
+
+test('RPC canonica de materializacao ganhou idempotencia por linha (nunca duplica pedido ao ser chamada de novo)', () => {
+  assert.match(materializationMigration, /if v_row\.order_item_id is not null then/);
+  assert.match(materializationMigration, /'created_contact',false,'created_participant_projection',false/);
 });

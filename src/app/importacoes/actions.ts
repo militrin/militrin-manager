@@ -238,6 +238,12 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
 
 function isRowReadyToImport(status: string, resolution: string) {
   if (status === 'error') return false;
+  // Ja materializada (por este loop ou pela resolucao de revisao em
+  // resolve_import_batch_row_review) -- reprocessar o lote (ex.: "Abrir e
+  // reprocessar batch") nunca deve tentar de novo, mesmo que
+  // import_current_event_contact_first ja seja idempotente por linha; sem
+  // este guard o relatorio final contava a linha como importada outra vez.
+  if (status === 'imported') return false;
   if (status === 'duplicate') return resolution === 'create_new';
   if (status === 'review_required') return resolution === 'link_existing' || resolution === 'create_new';
   return true;
@@ -442,10 +448,33 @@ export async function parseImportFileAction(formData: FormData) {
       if (key) emailMap.set(key, participant);
     }
 
+    // AUDITORIA (caso real TIEVENT): participantsByEvent (tabela legada
+    // "participants", projecao espelhada em event_id) NAO e' atualizada
+    // quando o cadastro e' editado depois via Cadastros -> Editar (so
+    // registration_contacts muda) -- por isso um candidato de nome
+    // aparecia na fila de revisao com o full_name/email ANTIGOS mesmo
+    // depois do cadastro real ter sido renomeado. O vinculo
+    // (registration_contact_id) sempre foi o correto -- so o texto exibido
+    // ao administrador ficava obsoleto. Resolvido buscando os dados atuais
+    // direto de registration_contacts para exibir/gravar no candidato,
+    // nunca a projecao legada.
+    const nameMatchContactIds = Array.from(new Set(
+      (participantsByEvent ?? []).map((participant) => String(participant.registration_contact_id ?? '')).filter(Boolean),
+    ));
+    const { data: liveContactsForNameMatch } = nameMatchContactIds.length
+      ? await supabase.from('registration_contacts').select('id,full_name,cpf,email,user_id').in('id', nameMatchContactIds)
+      : { data: [] as Array<Record<string, unknown>> };
+    const liveContactByIdMap = new Map<string, Record<string, unknown>>();
+    for (const contact of liveContactsForNameMatch ?? []) {
+      liveContactByIdMap.set(String(contact.id), contact);
+    }
+
     const normalizedNameMap = new Map<string, Record<string, unknown>>();
     for (const participant of participantsByEvent ?? []) {
       const key = normalizeForMatch(String(participant.full_name ?? ''));
-      if (key) normalizedNameMap.set(key, participant);
+      if (!key) continue;
+      const liveContact = participant.registration_contact_id ? liveContactByIdMap.get(String(participant.registration_contact_id)) : null;
+      normalizedNameMap.set(key, liveContact ? { ...participant, full_name: liveContact.full_name, cpf: liveContact.cpf, email: liveContact.email } : participant);
     }
 
     // Contatos ja resolvidos (contactsByCpf) que ja possuem order_item vivo

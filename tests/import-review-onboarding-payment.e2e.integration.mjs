@@ -50,10 +50,19 @@ test('CSV revisado percorre onboarding completo nos modos pending e confirm_all'
       payment_mode_original: mode }).select('id').single(), 'import batch');
 
     // Representa a linha normalizada da previa CSV: e-mail exato e' uma
-    // possivel correspondencia, nunca um vinculo automatico.
+    // possivel correspondencia, nunca um vinculo automatico. normalized_data
+    // e data_issues carregam TUDO que resolve_import_batch_row_review precisa
+    // pra materializar a decisao sozinha (mesmos campos que
+    // executeImportBatchAction persiste em toCanonicalRow) -- desde a
+    // migration 20260943000000 a revisao nao depende mais de uma segunda
+    // chamada manual a import_current_event_contact_first.
     const row = await must(service.from('import_batch_rows').insert({ import_batch_id: importBatch.id, row_number: 2,
       status: 'review_required', resolution: 'pending', raw_data: { linha: `Pessoa ${mode},${cpf},${email}` },
-      normalized_data: { full_name: `Pessoa ${mode}`, cpf, email }, registration_contact_id: candidate.id,
+      normalized_data: { full_name: `Pessoa ${mode}`, cpf, cpf_input: cpf, email, birth_date: '1990-05-10', gender: 'female',
+        phone: '11999998888', city: null, shirt_type: null, shirt_size: null, resolved_batch_id: batch.id,
+        resolved_category_id: category.id, payment_method: 'pix' },
+      data_issues: [{ field_code: 'city', issue_type: 'missing', message: 'Cidade obrigatoria', blocks_payment: false, blocks_ticket_issuance: true }],
+      registration_contact_id: candidate.id,
       identity_match_details: { reason: 'email_exact_requires_review', candidates: [{ registration_contact_id: candidate.id, full_name: `Pessoa ${mode}`, cpf, email, reason: 'email_exact' }] }
     }).select('id').single(), 'CSV review row');
     assert.equal((await service.from('tickets').select('id', { count: 'exact', head: true }).eq('event_id', event.id)).count, index === 1 ? 0 : 1);
@@ -61,18 +70,25 @@ test('CSV revisado percorre onboarding completo nos modos pending e confirm_all'
     const review = await anon.rpc('resolve_import_batch_row_review', { p_row_id: row.id, p_decision: 'link_existing', p_registration_contact_id: candidate.id });
     assert.equal(review.error, null, review.error?.message);
     assert.equal(review.data.changed, true);
+    assert.equal(review.data.status, 'imported', 'revisao de inscrito atual materializa de imediato, na mesma chamada');
+    assert.ok(review.data.order_item_id, 'RPC de revisao devolve o order_item_id ja materializado');
     const queueCount = await service.from('import_batch_rows').select('id', { count: 'exact', head: true })
       .eq('import_batch_id', importBatch.id).eq('status', 'review_required').eq('resolution', 'pending');
     assert.equal(queueCount.count, 0, 'revisao resolvida deve sair da fila');
 
-    const imported = await anon.rpc('import_current_event_contact_first', {
-      p_import_batch_id: importBatch.id, p_import_batch_row_id: row.id, p_expected_registration_contact_id: candidate.id,
-      p_full_name: `Pessoa ${mode}`, p_cpf: cpf, p_birth_date: '1990-05-10', p_gender: 'female', p_phone: '11999998888',
-      p_email: email, p_city: null, p_shirt_type: null, p_shirt_size: null, p_registration_batch_id: batch.id,
-      p_ticket_category_id: category.id, p_payment_method: 'pix', p_import_issues: [{ field_code: 'city', issue_type: 'missing',
-        message: 'Cidade obrigatoria', blocks_payment: false, blocks_ticket_issuance: true }], p_assign_holder: true,
-    });
-    assert.equal(imported.error, null, imported.error?.message);
+    const imported = { data: review.data };
+    const rowAfterReview = await must(service.from('import_batch_rows').select('status,order_item_id,matched_participant_id').eq('id', row.id).single(), 'row after review');
+    assert.equal(rowAfterReview.status, 'imported');
+    assert.equal(rowAfterReview.order_item_id, imported.data.order_item_id);
+
+    // Repetir a mesma decisao (idempotencia) nao deve duplicar nada: a RPC
+    // ve status/resolution ja fora de 'review_required'/'pending' e devolve
+    // changed=false sem tocar nada.
+    const repeatedReview = await anon.rpc('resolve_import_batch_row_review', { p_row_id: row.id, p_decision: 'link_existing', p_registration_contact_id: candidate.id });
+    assert.equal(repeatedReview.error, null, repeatedReview.error?.message);
+    assert.equal(repeatedReview.data.changed, false);
+    assert.equal((await service.from('orders').select('id', { count: 'exact', head: true }).eq('participant_id', imported.data.participant_id)).count, 1, 'nao duplica pedido ao repetir a decisao');
+
     await must(service.from('import_batches').update({ status: 'completed', imported_rows: 1, completed_at: new Date().toISOString() }).eq('id', importBatch.id), 'complete batch');
     await must(service.from('order_items').insert({ order_id: imported.data.order_id, event_id: event.id, item_kind: 'product', store_item_id: product.id,
       quantity: 1, unit_price: 20, discount_amount: 0, final_amount: 20, status: 'reserved' }), 'product in same order');
