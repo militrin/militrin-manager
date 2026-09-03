@@ -58,17 +58,11 @@ test('historico resolve cadastro da organizacao sem fundir por email telefone ou
   assert.doesNotMatch(resolver, /where[^;]*(email|phone|full_name)\s*=/i);
 });
 
-test('Central e Retirada permanecem ticket-first e preservam multiplos ingressos', async () => {
-  const [operations, pickup] = await Promise.all([
-    readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/app/retirada/actions.ts', import.meta.url), 'utf8'),
-  ]);
+test('Central permanece ticket-first e preserva multiplos ingressos', async () => {
+  const operations = await readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8');
   assert.match(operations, /\.from\("tickets"\)[\s\S]*\.eq\("event_id", eventId\)/);
   assert.match(operations, /const ticketId = String\(row\.id/);
-  assert.match(pickup, /order_items"\)\.select\("id,registration_contact_id"/);
-  assert.match(pickup, /\.in\("order_item_id", orderItemIds\)/);
-  assert.match(pickup, /ticketsById = new Map/);
-  assert.match(pickup, /Array\.from\(ticketsById\.values\(\)\)/);
+  assert.match(operations, /requires_selection: true/);
 });
 
 test('nenhuma action normal grava entidade canonica diretamente em participants', async () => {

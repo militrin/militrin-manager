@@ -14,7 +14,7 @@ import {
   getPickupEventsAction,
   getOperationTicketDetailsAction,
   getOperationParticipantDetailsAction,
-  getRetiradaCapabilitiesAction,
+  getOperationCapabilitiesAction,
   linkWristbandAction,
   listOperationTicketsAction,
   replaceWristbandAction,
@@ -508,7 +508,7 @@ function KitPickupPageContent() {
 
     void (async () => {
       const [capabilityResponse, eventsResponse] = await Promise.all([
-        getRetiradaCapabilitiesAction().catch(() => ({
+        getOperationCapabilitiesAction().catch(() => ({
           success: false as const,
           capabilities: {
             canDeliverKit: false,

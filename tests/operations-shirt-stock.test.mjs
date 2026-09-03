@@ -5,7 +5,6 @@ import { readReconciledFile as readFile } from './helpers/read-reconciled-file.m
 const migrationUrl = new URL('../supabase/migrations/136_atomic_shirt_stock_delivery.sql', import.meta.url);
 const actionsUrl = new URL('../src/app/operacoes/actions.ts', import.meta.url);
 const detailsUrl = new URL('../src/app/operacoes/components/ExpandedTicketDetails.tsx', import.meta.url);
-const pickupActionsUrl = new URL('../src/app/retirada/actions.ts', import.meta.url);
 
 function deliverPhysical(state, quantity = 1) {
   if (state.delivered + quantity > state.total) return { ...state, code: 'SHIRT_OUT_OF_STOCK' };
@@ -77,7 +76,7 @@ test('entrega completa nao acessa mais campo inexistente do record', async () =>
 });
 
 test('Central interpreta erro estruturado e bloqueia estoque zero', async () => {
-  const [actions, details, pickup] = await Promise.all([readFile(actionsUrl, 'utf8'), readFile(detailsUrl, 'utf8'), readFile(pickupActionsUrl, 'utf8')]);
+  const [actions, details] = await Promise.all([readFile(actionsUrl, 'utf8'), readFile(detailsUrl, 'utf8')]);
   assert.match(actions, /operationRpcError/);
   assert.match(actions, /get_ticket_shirt_stock/);
   assert.match(actions, /SHIRT_OUT_OF_STOCK/);
@@ -85,8 +84,6 @@ test('Central interpreta erro estruturado e bloqueia estoque zero', async () => 
   assert.match(details, /Última unidade disponível/);
   assert.match(details, /shirtOutOfStock \|\| !capabilities\.canCombined/);
   assert.match(details, /Trocar camiseta/);
-  assert.match(pickup, /pickupRpcError/);
-  assert.match(pickup, /SHIRT_OUT_OF_STOCK/);
 });
 
 test('corrida da ultima unidade e protegida e RPC legada fica revogada', async () => {

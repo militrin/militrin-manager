@@ -21,7 +21,7 @@ const storeActions = await readFile(
   'utf8',
 );
 const pickupActions = await readFile(
-  new URL('../src/app/retirada/actions.ts', import.meta.url),
+  new URL('../src/app/operacoes/actions.ts', import.meta.url),
   'utf8',
 );
 const rpcWrappers = await readFile(
@@ -85,10 +85,10 @@ test('aplicacao nao chama mais simulate_payment_paid diretamente', () => {
   assert.match(registrationActions, /\.rpc\(["']admin_update_payment_status["']/);
 });
 
-test('Retirada continua usando a RPC nova apos a migration 44, com fallback so para function does not exist', () => {
+test('Central usa a RPC nova apos a migration 44, com fallback so para function does not exist', () => {
   assert.match(pickupActions, /get_ticket_payment_operational_status/);
   assert.match(pickupActions, /isUndefinedDatabaseFunction/);
-  assert.match(pickupActions, /\.select\("payment_status"\)/);
+  assert.match(pickupActions, /\.select\("order_id, payment_status, payment_method, created_at"\)/);
   assert.doesNotMatch(pickupActions, /get_participant_payment_details/);
 });
 

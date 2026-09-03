@@ -43,27 +43,26 @@ test('seleção automática só ocorre com exatamente um ingresso', () => {
 });
 
 test('páginas e actions mantêm a arquitetura contact-first e ticket-first', async () => {
-  const [list, detail, edit, editAction, central, pickup] = await Promise.all([
+  const [list, detail, edit, editAction, central] = await Promise.all([
     readFile(new URL('../src/app/cadastros/page.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/app/cadastros/[id]/page.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/app/cadastros/[id]/editar/page.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/app/cadastros/[id]/editar/actions.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/app/retirada/actions.ts', import.meta.url), 'utf8'),
   ]);
   assert.match(list, /from\("registration_contacts"\)/);
   assert.doesNotMatch(list, /Todos os eventos|name="eventId"/);
   assert.match(detail, /groupContactTickets/);
   assert.doesNotMatch(detail, /limit\(1\).*issued_at/s);
   assert.doesNotMatch(edit, /from\("participants"\)/);
-  assert.match(editAction, /from\("registration_contacts"\)[\s\S]*\.update/);
+  assert.match(editAction, /rpc\("update_registration_contact_basic_info"/);
+  assert.doesNotMatch(editAction, /from\("registration_contacts"\)[\s\S]*\.update/);
   assert.doesNotMatch(editAction, /from\("participants"\)\.update/);
   assert.doesNotMatch(central, /order\("issued_at"[\s\S]{0,100}limit\(1\)/);
   assert.match(central, /possui mais de um ingresso\. Selecione o ingresso explicitamente/);
-  assert.match(pickup, /requires_selection/);
-  assert.match(pickup, /\.eq\("token", q\)/);
-  assert.match(pickup, /deliver_ticket_full_kit/);
-  assert.match(pickup, /checkin_ticket_entry/);
+  assert.match(central, /requires_selection/);
+  assert.match(central, /deliver_ticket_full_kit/);
+  assert.match(central, /checkin_ticket_entry/);
 });
 
 test('ficha global não representa a pessoa por um evento único', async () => {
@@ -75,7 +74,8 @@ test('ficha global não representa a pessoa por um evento único', async () => {
 
 test('edição global atualiza registration_contacts e nunca participants', async () => {
   const action = await readFile(new URL('../src/app/cadastros/[id]/editar/actions.ts', import.meta.url), 'utf8');
-  assert.match(action, /from\("registration_contacts"\)[\s\S]*\.update/);
+  assert.match(action, /rpc\("update_registration_contact_basic_info"/);
+  assert.doesNotMatch(action, /from\("registration_contacts"\)[\s\S]*\.update/);
   assert.doesNotMatch(action, /from\("participants"\)[\s\S]*\.update/);
 });
 
@@ -87,22 +87,14 @@ test('Central não seleciona ingresso recente e exige escolha com dois tickets',
 });
 
 test('QR e token resolvem diretamente o ticket correto', async () => {
-  const [central, pickup] = await Promise.all([
-    readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/app/retirada/actions.ts', import.meta.url), 'utf8'),
-  ]);
+  const central = await readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8');
   assert.match(central, /\.eq\("token", tokenCandidate\)[\s\S]*getOperationTicketDetailsAction/);
-  assert.match(pickup, /\.eq\("token", q\)[\s\S]*getPickupTicketAction/);
 });
 
-test('Retirada trata múltiplos ingressos como seleção visual normal', async () => {
-  const [actions, page] = await Promise.all([
-    readFile(new URL('../src/app/retirada/actions.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/app/retirada/page.tsx', import.meta.url), 'utf8'),
-  ]);
+test('Central trata múltiplos ingressos como seleção explícita', async () => {
+  const actions = await readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8');
   assert.match(actions, /requires_selection: true/);
-  assert.match(page, /Selecione explicitamente o ingresso correto/);
-  assert.match(page, /eventTickets\.map/);
+  assert.match(actions, /possui mais de um ingresso\. Selecione o ingresso explicitamente/);
   assert.doesNotMatch(actions, /ambiguous|multiple tickets found/i);
 });
 
@@ -114,7 +106,7 @@ test('evento categoria e lote permanecem ligados ao ticket e order_item', async 
 });
 
 test('entrega e check-in permanecem operações por ticket_id', async () => {
-  const actions = await readFile(new URL('../src/app/retirada/actions.ts', import.meta.url), 'utf8');
+  const actions = await readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8');
   assert.match(actions, /deliver_ticket_full_kit[\s\S]*p_ticket_id: payload\.ticket_id/);
   assert.match(actions, /checkin_ticket_entry[\s\S]*p_ticket_id: payload\.ticket_id/);
   assert.doesNotMatch(actions, /deliver_ticket_full_kit[\s\S]*p_participant_id/);

@@ -27,7 +27,7 @@ Auditoria estática concluída em 2026-08-23 sobre páginas, layouts, Server Act
 | Pedidos | `/pedidos` | `orders.view` | `orders.edit`, `orders.cancel`, `orders.resend_ticket` |
 | Financeiro | `/financeiro` | `finance.view`; valores `finance.view_amounts` | `finance.confirm_payment`, `finance.refund`, `finance.reconcile`, `finance.manage_*`, `finance.export` |
 | Estoque/camisetas | `/camisetas` | `inventory.view`; histórico `inventory.view_history` | `inventory.adjust`, `inventory.limit_selection`, `inventory.reset`, `inventory.clear_history`, `inventory.change_participant_shirt` |
-| Kit | `/operacoes`, `/retirada` | `kits.view` | `kits.deliver`, `kits.undo_delivery`, `kits.replace_item` |
+| Kit | `/operacoes` | `kits.view` | `kits.deliver`, `kits.undo_delivery`, `kits.replace_item` |
 | Pulseiras/check-in | `/operacoes`, `/operacoes/pulseira` | `wristbands.view`, `checkin.view` | `wristbands.link/unlink/replace/block`, `checkin.scan/undo` |
 | Loja | `/loja` | `store.view` | `store.manage`, `store.grant_items` |
 | Pedidos da loja | `/loja/pedidos/**` | `store.view` | `store.deliver`, `store.manage` |
@@ -39,7 +39,9 @@ Auditoria estática concluída em 2026-08-23 sobre páginas, layouts, Server Act
 | Feedbacks | `/painel/feedbacks` | `feedback.view` | `feedback.manage` |
 | Equipe/funções | `/painel/configuracoes/equipe/**` | `team.view` | fluxo atual usa `team.edit_permissions`; `team.invite/edit_role/disable_user` são parcialmente aplicados no RPC |
 | Configurações | `/configuracao` | `settings.manage` | `settings.manage` |
-| Operações/Turbo | `/operacoes/**` | ao menos uma permissão operacional | cada botão usa sua capability e cada action revalida o mesmo código |
+| Operações/Turbo | `/operacoes`, `/operacoes/turbo` | ao menos uma permissão operacional | cada botão usa sua capability e cada action revalida o mesmo código |
+
+`/retirada` não é fluxo operacional independente: é rota legada de compatibilidade que autentica e redireciona para `/operacoes`.
 
 ## Bugs corrigidos
 

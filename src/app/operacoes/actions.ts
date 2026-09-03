@@ -23,6 +23,7 @@ import { REASON_CODES } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
+import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
 
 type OperationFiltersInput = {
   eventId?: string | null;
@@ -508,7 +509,7 @@ async function hasPermission(code: string) {
   }
 }
 
-export async function getRetiradaCapabilitiesAction() {
+export async function getOperationCapabilitiesAction() {
   const [
     canDeliverKit,
     canCheckin,
@@ -967,7 +968,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
         ? supabase.from("participant_kit_items").select("ticket_id, kit_item_id, status").in("ticket_id", ticketIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
       orderIds.length
-        ? supabase.from("payments").select("order_id, payment_status, payment_method, paid_at, created_at").in("order_id", orderIds)
+        ? supabase.from("payments").select("order_id, payment_status, payment_method, created_at").in("order_id", orderIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
       ticketIds.length
         ? supabase.from("participant_wristbands").select("id, ticket_id, code, status, linked_at").in("ticket_id", ticketIds).eq("status", "active")
@@ -1275,7 +1276,7 @@ async function buildTicketDetails(
   const { error: ensureKitError } = await supabase.rpc("ensure_ticket_kit_items", { p_ticket_id: ticketId });
   if (ensureKitError) return { success: false as const, message: "Nao foi possivel identificar todos os itens deste ingresso. Revise a camiseta antes da entrega." };
 
-  const [{ data: kitRows, error: kitError }, { data: applicableKitItems, error: applicableKitItemsError }, { data: paymentRows, error: paymentError }, { data: wristbands, error: wristbandError }, { data: orderTicketsRows, error: orderTicketsError }, { data: latestCheckin, error: checkinError }, { data: buyerRows, error: buyerError }] =
+  const [{ data: kitRows, error: kitError }, { data: applicableKitItems, error: applicableKitItemsError }, paymentResult, { data: paymentRows, error: paymentError }, { data: wristbands, error: wristbandError }, { data: orderTicketsRows, error: orderTicketsError }, { data: latestCheckin, error: checkinError }, { data: buyerRows, error: buyerError }] =
     await Promise.all([
       supabase
         .from("participant_kit_items")
@@ -1286,10 +1287,11 @@ async function buildTicketDetails(
         .select("id, item_type")
         .eq("event_id", String(ticketRow.event_id ?? ""))
         .eq("is_active", true),
+      supabase.rpc("get_ticket_payment_operational_status", { p_ticket_id: ticketId }),
       orderId
         ? supabase
             .from("payments")
-            .select("order_id, payment_status, payment_method, paid_at, created_at")
+            .select("order_id, payment_status, payment_method, created_at")
             .eq("order_id", orderId)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
       orderId
@@ -1342,6 +1344,9 @@ async function buildTicketDetails(
 
   if (kitError) return { success: false as const, message: kitError.message };
   if (applicableKitItemsError) return { success: false as const, message: applicableKitItemsError.message };
+  if (paymentResult.error && !isUndefinedDatabaseFunction(paymentResult.error, "get_ticket_payment_operational_status")) {
+    return { success: false as const, message: paymentResult.error.message };
+  }
   if (paymentError) return { success: false as const, message: paymentError.message };
   if (wristbandError) return { success: false as const, message: wristbandError.message };
   if (orderTicketsError) return { success: false as const, message: orderTicketsError.message };
@@ -1394,7 +1399,13 @@ async function buildTicketDetails(
   const eventHasKit = Boolean(eventRelation?.kit_enabled) || (applicableKitItems ?? []).length > 0;
   const eventHasShirt = (applicableKitItems ?? []).some((item) => String(item.item_type) === "shirt");
 
-  const payment = choosePayment((paymentRows ?? []) as Array<Record<string, unknown>>);
+  const tablePayment = choosePayment((paymentRows ?? []) as Array<Record<string, unknown>>);
+  let paymentStatus = tablePayment.paymentStatus;
+  if (!paymentResult.error) {
+    const paymentRow = (Array.isArray(paymentResult.data) ? paymentResult.data[0] : paymentResult.data) as Record<string, unknown> | null;
+    paymentStatus = String(paymentRow?.payment_status ?? paymentStatus);
+  }
+  const payment = { paymentStatus, paymentMethod: tablePayment.paymentMethod };
 
   const kitMap = new Map<string, string[]>();
   if (participantId) {
@@ -1876,6 +1887,10 @@ export async function getEventCategoriesAndBatchesAction(eventId: string) {
   };
 }
 
+// Resolver legado ticket-ou-participante. A Central chama
+// getOperationTicketDetailsAction / getOperationParticipantDetailsAction
+// com id já discriminado. Renomear espalharia churn sem uso de UI;
+// o corpo permanece porque trava a regra ticket-first (requires_selection).
 export async function getPickupParticipantDetailsAction(ticketOrParticipantId: string) {
   await assertPermission("participants.view");
 
@@ -1899,7 +1914,11 @@ export async function getPickupParticipantDetailsAction(ticketOrParticipantId: s
 
   if (fallbackError) return { success: false as const, message: fallbackError.message };
   if ((fallbackTickets ?? []).length > 1) {
-    return { success: false as const, message: "Este participante possui mais de um ingresso. Selecione o ingresso explicitamente." };
+    return {
+      success: false as const,
+      requires_selection: true as const,
+      message: "Este participante possui mais de um ingresso. Selecione o ingresso explicitamente.",
+    };
   }
   const fallbackTicket = fallbackTickets?.[0];
   if (!fallbackTicket?.id) {
@@ -1907,75 +1926,6 @@ export async function getPickupParticipantDetailsAction(ticketOrParticipantId: s
   }
 
   return buildTicketDetails(supabase, String(fallbackTicket.id));
-}
-
-export async function searchPickupParticipantAction(query: string) {
-  await assertPermission("participants.view");
-
-  const supabase = await createServerSupabaseClient();
-  const q = query.trim();
-
-  if (!q) {
-    return {
-      success: false as const,
-      message: "Informe nome, CPF, telefone, token ou código da pulseira.",
-    };
-  }
-
-  const tokenCandidate = parseTokenCandidate(q);
-
-  const [{ data: participantTickets }, { data: tokenTicket }, { data: wristband }] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select("id,event_id,status,events(name),order_items(ticket_categories(name)),participants(full_name,cpf,phone)")
-      .or(`participants.full_name.ilike.%${q}%,participants.cpf.ilike.%${q}%,participants.phone.ilike.%${q}%`)
-      .limit(25),
-    supabase
-      .from("tickets")
-      .select("id")
-      .eq("token", tokenCandidate)
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("participant_wristbands")
-      .select("ticket_id")
-      .ilike("code", tokenCandidate)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle(),
-  ]);
-
-  const directTicketId =
-    tokenTicket?.id
-      ? String(tokenTicket.id)
-      : wristband?.ticket_id
-        ? String(wristband.ticket_id)
-        : null;
-
-  if (directTicketId) return getOperationTicketDetailsAction(directTicketId);
-  if ((participantTickets ?? []).length > 1) {
-    return {
-      success: false as const,
-      requires_selection: true as const,
-      message: "Mais de um ingresso elegível foi encontrado. Selecione o ingresso explicitamente.",
-      tickets: (participantTickets ?? []).map((row) => ({
-        ticket_id: String(row.id),
-        event_id: String(row.event_id),
-        status: String(row.status ?? "pending"),
-        event_name: String(getRelation(row.events as Record<string, unknown> | Array<Record<string, unknown>> | null)?.name ?? "Evento"),
-        category_name: String(getRelation(getRelation(row.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null)?.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null)?.name ?? "Ingresso único"),
-      })),
-    };
-  }
-  const matchedTicketId = participantTickets?.[0]?.id ? String(participantTickets[0].id) : null;
-  if (!matchedTicketId) {
-    return {
-      success: false as const,
-      message: "Nenhum ingresso encontrado.",
-    };
-  }
-
-  return getOperationTicketDetailsAction(matchedTicketId);
 }
 
 // Mesmo formato de resultado do Turbo (TurboScanResult): "kind" no nivel do

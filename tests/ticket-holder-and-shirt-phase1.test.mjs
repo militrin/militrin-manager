@@ -50,10 +50,10 @@ test('mudanca de titular nao altera comprador do pedido', async () => {
 });
 
 test('camiseta e materializada automaticamente com variante canonica e idempotencia', async () => {
-  const [sql,detail,operations,pickup] = await Promise.all([
+  const [sql,detail,operations] = await Promise.all([
     read('../supabase/migrations/137_ticket_holder_uniqueness_and_auto_shirt_link.sql'),
     read('../src/app/minha-conta/ingressos/[ticketId]/page.tsx'),
-    read('../src/app/operacoes/actions.ts'), read('../src/app/retirada/actions.ts'),
+    read('../src/app/operacoes/actions.ts'),
   ]);
   assert.match(sql, /create or replace function public\.ensure_ticket_kit_items/);
   assert.match(sql, /'variant_id',v_variant\.id/);
@@ -64,7 +64,7 @@ test('camiseta e materializada automaticamente com variante canonica e idempoten
   assert.match(sql, /create or replace function public\.materialize_ticket_kit_items_internal/);
   assert.match(sql, /v_result:=public\.ensure_ticket_kit_items\(p_ticket_id\)/);
   assert.match(sql, /on conflict\(ticket_id,kit_item_id\).*do nothing/s);
-  for (const source of [detail,operations,pickup]) assert.match(source, /ensure_ticket_kit_items/);
+  for (const source of [detail,operations]) assert.match(source, /ensure_ticket_kit_items/);
   assert.doesNotMatch(detail, /Confirmar vínculo|vínculo operacional/);
 });
 

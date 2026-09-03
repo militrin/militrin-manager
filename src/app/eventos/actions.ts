@@ -185,7 +185,7 @@ async function revalidateEventsPages() {
   revalidatePath('/eventos');
   revalidatePath('/painel/eventos');
   revalidatePath("/inscricoes/nova");
-  revalidatePath("/retirada");
+  revalidatePath("/operacoes");
   revalidatePath("/");
   revalidatePath('/minha-conta');
 }

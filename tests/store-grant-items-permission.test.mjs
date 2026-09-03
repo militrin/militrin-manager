@@ -15,7 +15,7 @@ test("permissao dedicada existe e so administrator a recebe por padrao", () => {
 });
 
 test("check-in e entrega nao habilitam concessao na UI", () => {
-  const capabilityBlock = actions.slice(actions.indexOf("export async function getRetiradaCapabilitiesAction"), actions.indexOf("export async function getPickupEventsAction"));
+  const capabilityBlock = actions.slice(actions.indexOf("export async function getOperationCapabilitiesAction"), actions.indexOf("export async function getPickupEventsAction"));
   assert.match(capabilityBlock, /canGrantStoreItems/);
   assert.match(capabilityBlock, /hasPermission\("store\.grant_items"\)/);
   assert.match(capabilityBlock, /hasPermission\("store\.manage"\)/);

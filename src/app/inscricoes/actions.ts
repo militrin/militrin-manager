@@ -9,7 +9,7 @@ import type { UpdatePaymentStatusInput } from "./payment-status.types";
 
 const emailProvider = getEmailProvider();
 
-// Mesmo padrao ja usado em retirada/actions.ts e operacoes/actions.ts:
+// Mesmo padrao ja usado em operacoes/actions.ts:
 // admin_change_ticket_shirt levanta message='SHIRT_OUT_OF_STOCK' (codigo
 // curto) com o texto amigavel dentro de detail (json). Sem isso, o dialogo
 // de pendencias mostrava o codigo cru pro operador.

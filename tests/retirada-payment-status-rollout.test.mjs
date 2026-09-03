@@ -3,14 +3,31 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { isUndefinedDatabaseFunction } from '../src/lib/supabase/missing-rpc.ts';
 
-const pickupActions = await readFile(new URL('../src/app/retirada/actions.ts', import.meta.url), 'utf8');
+const operationsActions = await readFile(new URL('../src/app/operacoes/actions.ts', import.meta.url), 'utf8');
+const retiradaPage = await readFile(new URL('../src/app/retirada/page.tsx', import.meta.url), 'utf8');
+const retiradaLayout = await readFile(new URL('../src/app/retirada/layout.tsx', import.meta.url), 'utf8');
+const adminMenu = await readFile(new URL('../src/lib/navigation/admin-menu.ts', import.meta.url), 'utf8');
+const middleware = await readFile(new URL('../middleware.ts', import.meta.url), 'utf8');
+const rbacAudit = await readFile(new URL('../docs/rbac-audit.md', import.meta.url), 'utf8');
 
-test('Retirada tenta a RPC nova e so cai no fallback quando a funcao nao existe', () => {
-  assert.match(pickupActions, /get_ticket_payment_operational_status/);
-  assert.match(pickupActions, /isUndefinedDatabaseFunction\(paymentResult\.error, "get_ticket_payment_operational_status"\)/);
-  assert.match(pickupActions, /\.from\("payments"\)[\s\S]*\.select\("payment_status"\)/);
-  assert.doesNotMatch(pickupActions, /get_participant_payment_details/);
-  assert.doesNotMatch(pickupActions, /pix_code|gateway_payment_id|final_amount|external_payment_id/);
+test('Central usa a RPC operacional de pagamento e so cai no fallback quando a funcao nao existe', () => {
+  assert.match(operationsActions, /get_ticket_payment_operational_status/);
+  assert.match(operationsActions, /isUndefinedDatabaseFunction\(paymentResult\.error, "get_ticket_payment_operational_status"\)/);
+  assert.match(operationsActions, /\.from\("payments"\)[\s\S]*\.select\("order_id, payment_status, payment_method, created_at"\)/);
+  assert.doesNotMatch(operationsActions, /get_participant_payment_details/);
+  assert.doesNotMatch(operationsActions, /pix_code|gateway_payment_id|external_payment_id/);
+});
+
+test('/retirada nao permanece como tela operacional concorrente', () => {
+  assert.match(retiradaPage, /redirect\("\/operacoes"\)/);
+  assert.doesNotMatch(retiradaPage, /searchPickupParticipantAction|getPickupTicketAction|Retirada de kits/);
+  assert.doesNotMatch(adminMenu, /href: "\/retirada"/);
+  assert.match(middleware, /'\/retirada'/);
+  assert.match(retiradaLayout, /requireAnyPermission/);
+  assert.doesNotMatch(rbacAudit, /\/operacoes`, `\/retirada`/);
+  assert.match(rbacAudit, /rota legada de compatibilidade que autentica e redireciona para `\/operacoes`/);
+  assert.match(operationsActions, /export async function getOperationCapabilitiesAction/);
+  assert.doesNotMatch(operationsActions, /getRetiradaCapabilitiesAction/);
 });
 
 test('detector de RPC ausente aceita so 42883/PGRST202 com o nome da funcao', () => {

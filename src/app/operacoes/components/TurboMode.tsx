@@ -8,7 +8,7 @@ import {
   deliverKitAndCheckinAction,
   deliverKitCheckinAndLinkWristbandAction,
   deliverOperationalProductItemAction,
-  getRetiradaCapabilitiesAction,
+  getOperationCapabilitiesAction,
   resolveTurboScanAction,
   undoOperationalProductDeliveryAction,
 } from '../actions';
@@ -158,7 +158,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
   useEffect(() => {
     let mounted = true;
-    void getRetiradaCapabilitiesAction()
+    void getOperationCapabilitiesAction()
       .then((response) => {
         if (mounted && response.success) setCanUndoDelivery(response.capabilities.canUndoDeliverStoreItems);
       })
@@ -545,7 +545,7 @@ function ProductReview({
 // "Desfazer entrega" (motivo obrigatorio via ReasonDialog, mesmo padrao da
 // Central normal) so aparece quando canUndoDelivery=true (permissao
 // store.undo_delivery), verificado no componente pai via
-// getRetiradaCapabilitiesAction.
+// getOperationCapabilitiesAction.
 function ProductAlreadyDelivered({
   item,
   canUndoDelivery,
