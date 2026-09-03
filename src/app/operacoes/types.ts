@@ -405,6 +405,7 @@ export type PickupCapabilities = {
   canReplaceWristband: boolean;
   canGrantStoreItems: boolean;
   canDeliverStoreItems: boolean;
+  canUndoDeliverStoreItems: boolean;
 };
 
 // Itens adicionais (loja) concedidos/comprados por um participante -- NUNCA

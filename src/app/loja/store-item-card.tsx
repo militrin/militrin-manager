@@ -43,6 +43,7 @@ type StoreItem = {
   eventLabel: string;
   linkedEventKitItemId: string | null;
   linkedEventKitItemName: string | null;
+  pickupQrMode: "per_unit" | "per_line" | "none";
   variants: StoreItemVariant[];
   totalQuantity: number;
   reservedQuantity: number;
@@ -58,6 +59,12 @@ const VISIBILITY_BADGE: Record<StoreItem["visibility"], { label: string; classNa
   public: { label: "Público", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" },
   code_required: { label: "Somente com código", className: "border-amber-500/40 bg-amber-500/10 text-amber-200" },
   admin_only: { label: "Somente administrativo", className: "border-rose-500/40 bg-rose-500/10 text-rose-200" },
+};
+
+const PICKUP_QR_MODE_BADGE: Record<StoreItem["pickupQrMode"], { label: string; className: string }> = {
+  per_unit: { label: "QR por unidade", className: "border-cyan-500/40 bg-cyan-500/10 text-cyan-200" },
+  per_line: { label: "QR por compra", className: "border-slate-600 bg-slate-800/60 text-slate-300" },
+  none: { label: "Sem QR de retirada", className: "border-amber-500/40 bg-amber-500/10 text-amber-200" },
 };
 
 export function StoreItemCard({
@@ -128,6 +135,9 @@ export function StoreItemCard({
               <span className={`ml-2 rounded-full border px-2 py-0.5 text-[10px] ${VISIBILITY_BADGE[item.visibility].className}`}>
                 {VISIBILITY_BADGE[item.visibility].label}
               </span>
+              <span className={`ml-2 rounded-full border px-2 py-0.5 text-[10px] ${PICKUP_QR_MODE_BADGE[item.pickupQrMode].className}`}>
+                {PICKUP_QR_MODE_BADGE[item.pickupQrMode].label}
+              </span>
               <span className={`ml-2 rounded-full border px-2 py-0.5 text-[10px] ${item.eventId === null ? "border-(--brand-400)/40 bg-(--brand-500)/10 text-(--brand-200)" : "border-slate-700 bg-slate-900 text-slate-400"}`}>
                 {item.eventLabel}
               </span>
@@ -162,6 +172,7 @@ export function StoreItemCard({
                 isActive: item.isActive,
                 eventId: item.eventId,
                 linkedEventKitItemId: item.linkedEventKitItemId,
+                pickupQrMode: item.pickupQrMode,
               }}
             />
             {item.isActive ? (

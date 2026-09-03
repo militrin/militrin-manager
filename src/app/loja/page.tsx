@@ -47,6 +47,7 @@ type StoreItem = {
   eventLabel: string;
   linkedEventKitItemId: string | null;
   linkedEventKitItemName: string | null;
+  pickupQrMode: "per_unit" | "per_line" | "none";
   variants: StoreItemVariant[];
   totalQuantity: number;
   reservedQuantity: number;
@@ -78,7 +79,7 @@ async function getStoreData(selectedEventId: string | null, statusFilter: Status
   let query = supabase
     .from("store_items")
     .select(
-      "id, event_id, name, slug, description, price, discount_type, discount_value, requires_variant, supply_mode, visibility, is_active, sort_order, linked_event_kit_item_id, event_kit_items(name, shirt_supply_mode), store_item_variants(id, name, value, price_adjustment, sort_order, is_active, linked_event_kit_item_variant_id), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity), store_item_images(id, image_url, is_primary, sort_order)"
+      "id, event_id, name, slug, description, price, discount_type, discount_value, requires_variant, supply_mode, visibility, is_active, sort_order, linked_event_kit_item_id, pickup_qr_mode, event_kit_items(name, shirt_supply_mode), store_item_variants(id, name, value, price_adjustment, sort_order, is_active, linked_event_kit_item_variant_id), store_item_inventory(variant_id, total_quantity, reserved_quantity, delivered_quantity), store_item_images(id, image_url, is_primary, sort_order)"
     )
     .order("sort_order", { ascending: true });
   // "Desativado" e um estado PROPRIO (nunca sinonimo de "Indisponivel"/sem
@@ -135,6 +136,7 @@ async function getStoreData(selectedEventId: string | null, statusFilter: Status
     const discountType = row.discount_type === "percentage" || row.discount_type === "fixed" ? row.discount_type : null;
     const discountValue = Number(row.discount_value ?? 0);
     const price = Number(row.price ?? 0);
+    const pickupQrMode = row.pickup_qr_mode === "per_unit" || row.pickup_qr_mode === "none" ? row.pickup_qr_mode : "per_line";
     return {
       id: String(row.id),
       name: String(row.name ?? ""),
@@ -155,6 +157,7 @@ async function getStoreData(selectedEventId: string | null, statusFilter: Status
       eventLabel: eventLabelFor(events, eventId),
       linkedEventKitItemId: linkedKitItemId,
       linkedEventKitItemName: linkedKitItem?.name ?? null,
+      pickupQrMode,
       variants,
       totalQuantity: base.total, reservedQuantity: base.reserved, deliveredQuantity: base.delivered, availableQuantity: base.available,
     } satisfies StoreItem;

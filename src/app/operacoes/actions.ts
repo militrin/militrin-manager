@@ -521,6 +521,7 @@ export async function getRetiradaCapabilitiesAction() {
     canReplaceWristband,
     canGrantStoreItems,
     canDeliverStoreItems,
+    canUndoDeliverStoreItems,
   ] = await Promise.all([
     hasPermission("kits.deliver"),
     hasPermission("checkin.scan"),
@@ -533,6 +534,7 @@ export async function getRetiradaCapabilitiesAction() {
     hasPermission("wristbands.replace"),
     Promise.all([hasPermission("store.grant_items"), hasPermission("store.manage")]).then((permissions) => permissions.some(Boolean)),
     hasPermission("store.deliver"),
+    hasPermission("store.undo_delivery"),
   ]);
 
   return {
@@ -550,6 +552,7 @@ export async function getRetiradaCapabilitiesAction() {
       canReplaceWristband,
       canGrantStoreItems,
       canDeliverStoreItems,
+      canUndoDeliverStoreItems,
     } satisfies PickupCapabilities,
   };
 }
@@ -2319,15 +2322,82 @@ export async function deliverOrderItemProductAction(orderItemId: string) {
   return { success: true, message: "Produto entregue com sucesso." };
 }
 
+// Entrega de UMA unidade individual (pickup_qr_mode='per_unit', quantity>1).
+// RPCs proprias (deliver_order_item_pickup_unit/deliver_store_order_item_
+// pickup_unit), mesmo padrao idempotente/auditado das duas acoes de linha
+// acima -- nunca reaproveita a RPC de linha pra unidade nem vice-versa.
+export async function deliverOrderItemPickupUnitAction(unitId: string) {
+  await assertPermission("store.deliver");
+  if (!isUuid(unitId)) return { success: false, message: "Identificador inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("deliver_order_item_pickup_unit", { p_unit_id: unitId });
+  if (error) return { success: false, message: error.message };
+  revalidatePath("/operacoes");
+  return { success: true, message: "Unidade entregue com sucesso." };
+}
+
+export async function deliverStoreOrderItemPickupUnitAction(unitId: string) {
+  await assertPermission("store.deliver");
+  if (!isUuid(unitId)) return { success: false, message: "Identificador inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("deliver_store_order_item_pickup_unit", { p_unit_id: unitId });
+  if (error) return { success: false, message: error.message };
+  revalidatePath("/operacoes");
+  return { success: true, message: "Unidade entregue com sucesso." };
+}
+
 // Unico ponto de entrega chamado pela UI operacional (Turbo/Central) --
 // nunca precisa saber qual RPC chamar, so o `source` ja devolvido pela
 // resolucao do QR (resolveOperationalProductByQr). Cada RPC por tras
-// continua domain-specific (deliver_store_order_item/deliver_order_item_product)
-// e ja e idempotente por si so -- este dispatcher nao adiciona logica nova,
-// so evita "if source==='store'" espalhado pelos componentes.
-export async function deliverOperationalProductItemAction(item: { source: "store" | "checkout"; item_id: string }) {
+// continua domain-specific e ja e idempotente por si so -- este dispatcher
+// nao adiciona logica nova, so evita "if source==='store'" espalhado pelos
+// componentes.
+export async function deliverOperationalProductItemAction(item: { source: OperationalProductItem["source"]; item_id: string }) {
   if (item.source === "store") return deliverAdditionalStoreItemAction(item.item_id);
-  return deliverOrderItemProductAction(item.item_id);
+  if (item.source === "checkout") return deliverOrderItemProductAction(item.item_id);
+  if (item.source === "store_unit") return deliverStoreOrderItemPickupUnitAction(item.item_id);
+  return deliverOrderItemPickupUnitAction(item.item_id);
+}
+
+// Undo de entrega, com motivo obrigatorio -- espelha undo_ticket_checkin
+// (validateReasonPayload/validate_operation_reason_code) e usa permissao
+// PROPRIA (store.undo_delivery), nunca store.deliver. Dispatcher unico
+// pelos 4 `source` possiveis, mesmo racional de deliverOperationalProductItemAction.
+export async function undoOperationalProductDeliveryAction(payload: {
+  source: OperationalProductItem["source"];
+  item_id: string;
+  reason_code: string;
+  reason_text?: string;
+}) {
+  await assertPermission("store.undo_delivery");
+  if (!isUuid(payload.item_id)) return { success: false, message: "Identificador inválido." };
+  const reasonError = validateReasonPayload(payload);
+  if (reasonError) return { success: false, message: reasonError };
+
+  const supabase = await createServerSupabaseClient();
+  const rpcName =
+    payload.source === "store"
+      ? "undo_store_order_item_delivery"
+      : payload.source === "checkout"
+        ? "undo_order_item_product_delivery"
+        : payload.source === "store_unit"
+          ? "undo_store_order_item_pickup_unit_delivery"
+          : "undo_order_item_pickup_unit_delivery";
+  const idParam =
+    payload.source === "store"
+      ? { p_store_order_item_id: payload.item_id }
+      : payload.source === "checkout"
+        ? { p_order_item_id: payload.item_id }
+        : { p_unit_id: payload.item_id };
+
+  const { error } = await supabase.rpc(rpcName, {
+    ...idParam,
+    p_reason_code: payload.reason_code,
+    p_reason_text: payload.reason_text?.trim() || null,
+  });
+  if (error) return { success: false, message: error.message };
+  revalidatePath("/operacoes");
+  return { success: true, message: "Entrega desfeita." };
 }
 
 export async function checkinEntryAction(payload: { ticket_id: string; wristband_code?: string }) {
@@ -2700,7 +2770,7 @@ export async function searchLinkedWristbandsAction(payload: { eventId: string; q
 // a partir do usuario atual.
 async function resolveDeliveredByName(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  action: "store_order_item_delivered" | "order_item_product_delivered",
+  action: "store_order_item_delivered" | "order_item_product_delivered" | "store_order_item_pickup_unit_delivered" | "order_item_pickup_unit_delivered",
   itemId: string,
 ): Promise<string | null> {
   const { data: log } = await supabase
@@ -2728,7 +2798,7 @@ async function resolveStoreOrderItemByQr(
   const { data: line } = await supabase
     .from("store_order_items")
     .select(
-      "id, store_order_id, quantity, status, delivered_at, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name))",
+      "id, store_order_id, quantity, status, delivered_at, pickup_qr_mode, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name))",
     )
     .eq("qr_token", tokenCandidate)
     .limit(1)
@@ -2759,6 +2829,9 @@ async function resolveStoreOrderItemByQr(
   return {
     source: "store",
     item_id: String(line.id),
+    parent_item_id: null,
+    unit_index: null,
+    pickup_qr_mode: (line.pickup_qr_mode as OperationalProductItem["pickup_qr_mode"] | null) ?? "per_line",
     order_id: String(line.store_order_id),
     order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
     product_name: storeItem?.name ?? "Item",
@@ -2784,7 +2857,7 @@ async function resolveOrderItemProductByQr(
   const { data: line } = await supabase
     .from("order_items")
     .select(
-      "id, order_id, event_id, quantity, status, delivered_at, store_item_id, store_items(name), store_item_variants(name, value), orders(order_number, display_number, user_id), events(name)",
+      "id, order_id, event_id, quantity, status, delivered_at, pickup_qr_mode, store_item_id, store_items(name), store_item_variants(name, value), orders(order_number, display_number, user_id), events(name)",
     )
     .eq("qr_token", tokenCandidate)
     .eq("item_kind", "product")
@@ -2817,6 +2890,9 @@ async function resolveOrderItemProductByQr(
   return {
     source: "checkout",
     item_id: String(line.id),
+    parent_item_id: null,
+    unit_index: null,
+    pickup_qr_mode: (line.pickup_qr_mode as OperationalProductItem["pickup_qr_mode"] | null) ?? "per_line",
     order_id: String(line.order_id),
     order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
     product_name: storeItem?.name ?? "Item",
@@ -2832,18 +2908,149 @@ async function resolveOrderItemProductByQr(
   };
 }
 
+// Unidade individual (pickup_qr_mode='per_unit', quantity>1) da loja
+// standalone. Reusa o mesmo resolver de nome de comprador/entregador da
+// linha-mae -- a unidade em si nunca tem essas colunas, so status/
+// delivered_at proprios. item_id aponta pra UNIDADE (id em
+// store_order_item_pickup_units); parent_item_id aponta pra linha-mae.
+async function resolveStoreOrderItemPickupUnitByQr(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<OperationalProductItem | null> {
+  const { data: unit } = await supabase
+    .from("store_order_item_pickup_units")
+    .select(
+      "id, unit_index, status, delivered_at, store_order_item_id, store_order_items(id, store_order_id, quantity, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name)))",
+    )
+    .eq("qr_token", tokenCandidate)
+    .limit(1)
+    .maybeSingle();
+
+  if (!unit?.id) return null;
+
+  const line = getRelation(
+    unit.store_order_items as
+      | { id: string; store_order_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; store_orders: { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null }> | null }
+      | Array<{ id: string; store_order_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; store_orders: { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null }> | null }>
+      | null,
+  );
+  if (!line) return null;
+
+  const storeItem = getRelation(line.store_items);
+  const variant = getRelation(line.store_item_variants);
+  const order = getRelation(line.store_orders);
+  const event = order ? getRelation(order.events) : null;
+
+  let buyerName = "Comprador não identificado";
+  const buyerUserId = order?.user_id ? String(order.user_id) : null;
+  if (buyerUserId && order?.event_id) {
+    const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(order.event_id) });
+    const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
+    if (buyer?.full_name) buyerName = String(buyer.full_name);
+  }
+
+  const status = String(unit.status ?? "reserved");
+  const deliveryStatus: OperationalProductItem["delivery_status"] = status === "delivered" ? "delivered" : status === "cancelled" ? "cancelled" : "to_deliver";
+
+  return {
+    source: "store_unit",
+    item_id: String(unit.id),
+    parent_item_id: String(line.id),
+    unit_index: Number(unit.unit_index ?? 1),
+    pickup_qr_mode: "per_unit",
+    order_id: String(line.store_order_id),
+    order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
+    product_name: storeItem?.name ?? "Item",
+    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    quantity: Number(line.quantity ?? 1),
+    event_id: order?.event_id ? String(order.event_id) : null,
+    event_name: event?.name ?? "Produto global",
+    buyer: buyerName,
+    payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
+    delivery_status: deliveryStatus,
+    delivered_at: unit.delivered_at ? String(unit.delivered_at) : null,
+    delivered_by: deliveryStatus === "delivered" ? await resolveDeliveredByName(supabase, "store_order_item_pickup_unit_delivered", String(unit.id)) : null,
+  };
+}
+
+// Unidade individual do dominio "compre junto" -- mesmo racional da
+// funcao acima, pra order_item_pickup_units.
+async function resolveOrderItemPickupUnitByQr(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<OperationalProductItem | null> {
+  const { data: unit } = await supabase
+    .from("order_item_pickup_units")
+    .select(
+      "id, unit_index, status, delivered_at, order_item_id, order_items(id, order_id, event_id, quantity, store_item_id, store_items(name), store_item_variants(name, value), orders(order_number, display_number, user_id), events(name))",
+    )
+    .eq("qr_token", tokenCandidate)
+    .limit(1)
+    .maybeSingle();
+
+  if (!unit?.id) return null;
+
+  const line = getRelation(
+    unit.order_items as
+      | { id: string; order_id: string; event_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; orders: { order_number: string; display_number: string | null; user_id: string | null } | Array<{ order_number: string; display_number: string | null; user_id: string | null }> | null; events: { name: string } | { name: string }[] | null }
+      | Array<{ id: string; order_id: string; event_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; orders: { order_number: string; display_number: string | null; user_id: string | null } | Array<{ order_number: string; display_number: string | null; user_id: string | null }> | null; events: { name: string } | { name: string }[] | null }>
+      | null,
+  );
+  if (!line) return null;
+
+  const storeItem = getRelation(line.store_items);
+  const variant = getRelation(line.store_item_variants);
+  const order = getRelation(line.orders);
+  const event = getRelation(line.events);
+
+  let buyerName = "Comprador não identificado";
+  const buyerUserId = order?.user_id ? String(order.user_id) : null;
+  if (buyerUserId) {
+    const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(line.event_id ?? "") });
+    const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
+    if (buyer?.full_name) buyerName = String(buyer.full_name);
+  }
+
+  const status = String(unit.status ?? "reserved");
+  const deliveryStatus: OperationalProductItem["delivery_status"] = status === "delivered" ? "delivered" : status === "cancelled" ? "cancelled" : "to_deliver";
+
+  return {
+    source: "checkout_unit",
+    item_id: String(unit.id),
+    parent_item_id: String(line.id),
+    unit_index: Number(unit.unit_index ?? 1),
+    pickup_qr_mode: "per_unit",
+    order_id: String(line.order_id),
+    order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
+    product_name: storeItem?.name ?? "Item",
+    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    quantity: Number(line.quantity ?? 1),
+    event_id: String(line.event_id),
+    event_name: event?.name ?? "Evento",
+    buyer: buyerName,
+    payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
+    delivery_status: deliveryStatus,
+    delivered_at: unit.delivered_at ? String(unit.delivered_at) : null,
+    delivered_by: deliveryStatus === "delivered" ? await resolveDeliveredByName(supabase, "order_item_pickup_unit_delivered", String(unit.id)) : null,
+  };
+}
+
 // Unico ponto de resolucao de produto por QR, reusado por Central
 // (searchPickupParticipantByQrAction) e Turbo (resolveTurboScanAction) --
-// tenta loja standalone primeiro, depois "compre junto"; nunca confunde os
-// dois (o formato devolvido ja carrega `source`), e nunca precisa que o
-// chamador saiba qual tabela tentar.
+// tenta loja standalone primeiro, depois "compre junto", depois unidade de
+// cada dominio; nunca confunde os quatro (o formato devolvido ja carrega
+// `source`), e nunca precisa que o chamador saiba qual tabela tentar.
 async function resolveOperationalProductByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
 ): Promise<OperationalProductItem | null> {
   const storeItem = await resolveStoreOrderItemByQr(supabase, tokenCandidate);
   if (storeItem) return storeItem;
-  return resolveOrderItemProductByQr(supabase, tokenCandidate);
+  const orderItem = await resolveOrderItemProductByQr(supabase, tokenCandidate);
+  if (orderItem) return orderItem;
+  const storeUnit = await resolveStoreOrderItemPickupUnitByQr(supabase, tokenCandidate);
+  if (storeUnit) return storeUnit;
+  return resolveOrderItemPickupUnitByQr(supabase, tokenCandidate);
 }
 
 export async function resolveTurboScanAction(rawValue: string): Promise<TurboScanResult> {

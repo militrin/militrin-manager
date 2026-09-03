@@ -9,9 +9,19 @@
 // `source`+`item_id`+`order_id` sao SEMPRE preservados crus, exatamente pra
 // que a acao de entrega (deliverOperationalProductItemAction) saiba em qual
 // dominio atuar -- nunca inferido.
+// "store_unit"/"checkout_unit": QR de UNIDADE individual (pickup_qr_mode=
+// 'per_unit', quantity>1, resolvido a partir de store_order_item_pickup_units/
+// order_item_pickup_units). item_id aponta pra unidade nesses dois casos --
+// parent_item_id aponta pra linha-mae (store_order_items/order_items), e
+// unit_index/quantity permitem mostrar "Unidade X de N" na UI. Continua
+// tudo devolvido explicitamente pelo resolver (nunca inferido do formato do
+// token) -- mesmo racional ja documentado acima pros 2 sources originais.
 export type OperationalProductItem = {
-  source: "store" | "checkout";
+  source: "store" | "checkout" | "store_unit" | "checkout_unit";
   item_id: string;
+  parent_item_id: string | null;
+  unit_index: number | null;
+  pickup_qr_mode: "per_unit" | "per_line" | "none";
   order_id: string;
   order_reference: string;
   product_name: string;
@@ -32,6 +42,8 @@ export type OperationalProductItem = {
 export const SOURCE_LABEL: Record<OperationalProductItem["source"], string> = {
   store: "Loja",
   checkout: "Compra junto ao ingresso",
+  store_unit: "Loja",
+  checkout_unit: "Compra junto ao ingresso",
 };
 
 export function deliveryStatusLabel(status: OperationalProductItem["delivery_status"]) {

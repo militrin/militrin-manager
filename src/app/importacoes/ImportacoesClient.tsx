@@ -87,6 +87,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
       }
 
       setRows(details.rows as BatchRow[]);
+      setSummary(details.summary);
     });
   }
 
@@ -99,6 +100,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         return;
       }
       setRows(details.rows as BatchRow[]);
+      setSummary(details.summary);
     });
   }, [initialBatchId]);
 
@@ -190,7 +192,9 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
       }
 
       setReport(result.report);
-      setMessage((result.report.awaitingData ?? 0) > 0 ? 'Importação concluída com pendências.' : 'Importação concluída com sucesso.');
+      setMessage(result.report.reviewRequired > 0
+        ? `Importação processada com ${result.report.reviewRequired} linha(s) aguardando revisão.`
+        : (result.report.awaitingData ?? 0) > 0 ? 'Importação concluída com pendências.' : 'Importação concluída com sucesso.');
       refreshBatch(batchId);
     });
   }
@@ -451,7 +455,10 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
             <p>Pagamentos confirmados: {report.paymentsConfirmed ?? 0}</p>
             <p>Pagamentos mantidos pendentes: {report.awaitingData ?? 0}</p>
           </div>
-          {(report.awaitingData ?? 0) > 0 && batchId ? <Link href={`/cadastros?pending=yes&import_batch_id=${encodeURIComponent(batchId)}`} className="mt-5 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Resolver pendências</Link> : null}
+          <div className="mt-5 flex flex-wrap gap-3">
+            {report.reviewRequired > 0 && batchId ? <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(batchId)}`} className="inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Revisar pendências</Link> : null}
+            {(report.awaitingData ?? 0) > 0 && batchId ? <Link href={`/cadastros?pending=yes&import_batch_id=${encodeURIComponent(batchId)}`} className="inline-flex rounded-xl border border-amber-500 px-5 py-3 font-semibold text-amber-200">Resolver dados</Link> : null}
+          </div>
         </article>
       ) : null}
 

@@ -10,11 +10,14 @@ async function clients() {
   return {
     service: createClient(apiUrl, serviceKey, options),
     anon: createClient(apiUrl, anonKey, options),
+    apiUrl,
+    anonKey,
+    options,
   };
 }
 
 test('fluxo integrado contact-first preserva pessoa, ingressos e entidades canonicas', async () => {
-  const { service, anon } = await clients();
+  const { service, anon, apiUrl, anonKey, options } = await clients();
   const email = `phase2-${Date.now()}@example.test`;
   const password = 'Phase2-local-only-123!';
   const created = await service.auth.admin.createUser({ email, password, email_confirm: true });
@@ -89,6 +92,54 @@ test('fluxo integrado contact-first preserva pessoa, ingressos e entidades canon
   assert.equal(secondSameEvent.holder_assigned, false);
   assert.notEqual(first.order_item_id, secondSameEvent.order_item_id);
 
+  // Reconciliacao final real do onboarding: a decisao confirm_all foi
+  // tomada pelo importador, mas quem conclui os dados e a propria conta do
+  // titular (sem permissao financeira). A RPC por usuario encontra o direito,
+  // emite pela finalizadora canonica, vincula owner_user_id e e idempotente.
+  const holderEmail = `phase2-holder-${suffix}@example.test`;
+  const holderPassword = 'Phase2-holder-local-123!';
+  const holderCreated = await service.auth.admin.createUser({ email: holderEmail, password: holderPassword, email_confirm: true });
+  assert.equal(holderCreated.error, null, holderCreated.error?.message);
+  const holderUserId = holderCreated.data.user.id;
+  assert.equal((await service.from('registration_contacts').update({ user_id: holderUserId }).eq('id', first.registration_contact_id)).error, null);
+  assert.equal((await service.from('participants').update({ user_id: holderUserId }).eq('id', first.participant_id)).error, null);
+  assert.equal((await service.from('import_batches').update({ payment_mode_original: 'confirm_all' }).eq('id', first.importBatchId)).error, null);
+  const holder = createClient(apiUrl, anonKey, options);
+  assert.equal((await holder.auth.signInWithPassword({ email: holderEmail, password: holderPassword })).error, null);
+  const reconciled = await holder.rpc('reconcile_imported_ticket_issuance_for_user', { p_user_id: holderUserId });
+  assert.equal(reconciled.error, null, reconciled.error?.message);
+  assert.equal(reconciled.data.attempted, 2);
+  assert.deepEqual(reconciled.data.results.map((row) => row.finalization).sort(), ['paid_and_ticket_issued', 'payment_pending']);
+  const reconciledTicket = await service.from('tickets').select('id,owner_user_id').eq('order_item_id', first.order_item_id).single();
+  assert.equal(reconciledTicket.error, null, reconciledTicket.error?.message);
+  assert.equal(reconciledTicket.data.owner_user_id, holderUserId);
+  const repeated = await holder.rpc('reconcile_imported_ticket_issuance_for_user', { p_user_id: holderUserId });
+  assert.equal(repeated.error, null, repeated.error?.message);
+  assert.equal(repeated.data.attempted, 1);
+  assert.equal(repeated.data.results[0].finalization, 'payment_pending');
+
+  // Um admin pode confirmar posteriormente o pagamento que foi importado
+  // como pending. A RPC percorre os direitos do pedido, emite pela mesma
+  // finalizadora e pode ser repetida sem duplicar o ingresso.
+  const confirmedImported = await anon.rpc('confirm_imported_pending_payment_and_reconcile', {
+    p_payment_id: otherEvent.payment_id, p_reason: 'Confirmado no teste integrado',
+  });
+  assert.equal(confirmedImported.error, null, confirmedImported.error?.message);
+  assert.equal(confirmedImported.data.success, true);
+  assert.equal(confirmedImported.data.attempted, 1);
+  const pendingTicket = await service.from('tickets').select('id,owner_user_id').eq('order_item_id', otherEvent.order_item_id).single();
+  assert.equal(pendingTicket.error, null, pendingTicket.error?.message);
+  assert.equal(pendingTicket.data.owner_user_id, holderUserId);
+  const confirmedAgain = await anon.rpc('confirm_imported_pending_payment_and_reconcile', {
+    p_payment_id: otherEvent.payment_id, p_reason: 'Reprocessamento idempotente',
+  });
+  assert.equal(confirmedAgain.error, null, confirmedAgain.error?.message);
+  assert.equal(confirmedAgain.data.success, true);
+  assert.equal((await service.from('tickets').select('id', { count: 'exact', head: true }).eq('order_item_id', otherEvent.order_item_id)).count, 1);
+  const confirmationAudit = await service.from('audit_logs').select('details').eq('action', 'imported_payment_confirmed').eq('entity_id', otherEvent.payment_id);
+  assert.equal(confirmationAudit.error, null, confirmationAudit.error?.message);
+  assert.ok(confirmationAudit.data.some((entry) => entry.details.actor_user_id === userId));
+
   const alternate = await importLine(eventA, 4, { fullName: 'Outra Pessoa', cpf: '11144477735', email: 'outra@example.test' });
   const assigned = await anon.rpc('assign_order_item_participant', {
     p_order_item_id: secondSameEvent.order_item_id, p_participant_id: alternate.participant_id,
@@ -113,7 +164,8 @@ test('fluxo integrado contact-first preserva pessoa, ingressos e entidades canon
 
   const issues = await service.from('participant_data_issues').select('id,registration_contact_id,order_item_id,ticket_id').eq('order_item_id', first.order_item_id).eq('status', 'open');
   assert.equal(issues.error, null, issues.error?.message); assert.ok(issues.data.length);
-  assert.equal(issues.data[0].registration_contact_id, first.registration_contact_id); assert.equal(issues.data[0].ticket_id, null);
+  assert.equal(issues.data[0].registration_contact_id, first.registration_contact_id);
+  assert.equal(issues.data[0].ticket_id, reconciledTicket.data.id);
   const correction = await anon.rpc('resolve_ticket_data_issues', { p_order_item_id: first.order_item_id,
     p_expected_issue_ids: issues.data.map((issue) => issue.id), p_values: { email: 'corrected@example.test', shirt_type: 'Babylook', shirt_size: 'M' } });
   assert.equal(correction.error, null, correction.error?.message);
@@ -170,5 +222,6 @@ test('fluxo integrado contact-first preserva pessoa, ingressos e entidades canon
   assert.equal(manualItem.data.shirt_type, 'Babylook'); assert.ok(manualItem.data.registration_contact_id);
   assert.equal(manualKit.data.variant_data.variant_id, kitVariant.data.id);
 
+  await service.auth.admin.deleteUser(holderUserId);
   await service.auth.admin.deleteUser(userId);
 });

@@ -50,6 +50,9 @@ type CartOrderItem = {
   store_item_image_url: string | null;
   variant_name: string | null;
   variant_value: string | null;
+  pickup_qr_mode: 'per_unit' | 'per_line' | 'none' | null;
+  delivered_at: string | null;
+  pickup_units: Array<{ unit_id: string; unit_index: number; status: string; delivered_at: string | null }> | null;
 };
 
 type CartOrderPayment = {
@@ -124,6 +127,12 @@ export default async function OrderDetailPage({
 
   const normalizedPaymentStatus = order.payment?.payment_status ?? 'pending';
   const canShowTicket = order.order_status === 'confirmed' && ticketItems.some((item) => item.ticket_token);
+  // Produto pode existir sem nenhum ingresso no mesmo pedido (loja standalone
+  // nunca chega aqui, mas "compre junto" com item_kind=product isolado sim)
+  // -- por isso o gate de QR de produto nunca depende de haver ticket_token,
+  // so do pedido estar confirmado (mesmo racional de canShowTicket: nunca
+  // mostrar QR de um item ainda nao pago).
+  const canShowProductQr = order.order_status === 'confirmed';
   const orderReference = orderDisplayReference(orderCreatedRow?.display_number, orderCreatedRow?.order_number ?? order.order_number);
 
   const receiptItemsSummary = [
@@ -234,10 +243,13 @@ export default async function OrderDetailPage({
       ) : null}
 
       {productItems.length > 0 ? (
-        <MilitrinSection eyebrow="Compre junto" title="Produtos do pedido" description="Itens da loja comprados junto com o ingresso.">
+        <MilitrinSection id="produtos-do-pedido" eyebrow="Compre junto" title="Produtos do pedido" description="Itens da loja comprados junto com o ingresso.">
           <ul className="space-y-2">
             {productItems.map((item) => {
               const lineSubtotal = item.unit_price * item.quantity;
+              const pickupQrMode = item.pickup_qr_mode ?? 'per_line';
+              const unitCount = item.pickup_units?.length ?? 0;
+              const qrLabel = pickupQrMode === 'per_unit' && unitCount > 1 ? `Ver QR Codes (${unitCount})` : 'Ver QR Code';
               return (
                 <li key={item.order_item_id} className="flex gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
                   {item.store_item_image_url ? (
@@ -256,6 +268,14 @@ export default async function OrderDetailPage({
                         <p>Total da linha: {money(item.final_amount)}</p>
                       </>
                     ) : null}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <MilitrinStatusBadge status={item.delivered_at ? 'delivered' : item.status} />
+                      {pickupQrMode !== 'none' && canShowProductQr ? (
+                        <Link href={`/minha-conta/compras/${orderId}/itens/${item.order_item_id}`} className="text-xs text-emerald-300 underline">
+                          {qrLabel}
+                        </Link>
+                      ) : null}
+                    </div>
                   </div>
                 </li>
               );

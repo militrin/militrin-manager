@@ -19,6 +19,42 @@ export type CompleteFirstAccessResult = {
   redirect_to?: string;
 };
 
+type TicketReconciliationResult = {
+  order_item_id?: string;
+  finalization?: string;
+  error_code?: string;
+  error_message?: string;
+};
+
+type TicketReconciliationSummary = {
+  attempted?: number;
+  results?: TicketReconciliationResult[];
+};
+
+// Traduz o resultado de negocio de reconcile_imported_ticket_issuance_for_
+// participant/finalize_imported_ticket_after_issue_resolution numa frase
+// clara -- nunca deixa "payment_pending"/erro real virar silencio (a causa
+// raiz do caso real auditado era exatamente isso: a RPC ja devolvia o
+// motivo, so nada no TypeScript olhava pra ele). 'paid_and_ticket_issued'
+// e 'not_imported' nunca geram aviso (sucesso ou nao aplicavel).
+function describePendingTicketIssues(summary: TicketReconciliationSummary | null | undefined): string | null {
+  const problems = (summary?.results ?? []).filter(
+    (r) => r.finalization && !['paid_and_ticket_issued', 'not_imported'].includes(r.finalization),
+  );
+  if (problems.length === 0) return null;
+  const hasHolderConflict = problems.some((r) =>
+    `${r.error_code ?? ''} ${r.error_message ?? ''}`.includes('HOLDER_ALREADY_HAS_TICKET_FOR_EVENT'));
+  if (hasHolderConflict) {
+    return 'Um ingresso importado não pôde ser emitido porque esta pessoa já é titular de outro ingresso ativo no mesmo evento. A organização precisa revisar a titularidade.';
+  }
+  const hasPaymentPending = problems.some((r) => r.finalization === 'payment_pending');
+  const hasError = problems.some((r) => r.finalization === 'error' || r.finalization === 'issues_remaining');
+  if (hasPaymentPending && !hasError) {
+    return 'Seu ingresso importado ainda depende da confirmação do pagamento pela organização — assim que for confirmado, ele será emitido automaticamente.';
+  }
+  return 'Não foi possível emitir automaticamente um dos seus ingressos importados agora. Entre em contato com a organização do evento para verificar.';
+}
+
 function validationFailure(
   fieldErrors: NonNullable<CompleteFirstAccessResult['field_errors']>,
   message = 'Revise os campos destacados para concluir seu cadastro.',
@@ -224,6 +260,17 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     });
   }
 
+  // Coleta os resultados de reconciliacao de emissao de ticket das
+  // chamadas abaixo. Nenhuma delas emite ticket sem pagamento confirmado
+  // (regra de negocio inalterada) -- isto so garante que a TENTATIVA
+  // sempre acontece e que o motivo real, quando ha um, vira mensagem
+  // clara em vez de "0 ingressos" mudo.
+  const ticketReconciliationResults: TicketReconciliationResult[] = [];
+  function collectReconciliation(summary: unknown) {
+    const results = (summary as TicketReconciliationSummary | null | undefined)?.results;
+    if (Array.isArray(results)) ticketReconciliationResults.push(...results);
+  }
+
   if (inviteId) {
     const participantId = String(inviteContext?.participant?.id ?? '');
     const allowed = new Set(inviteContext?.userResolvableFields ?? []);
@@ -235,30 +282,26 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     if (allowed.has('email')) issueValues.email = authEmail;
     if (allowed.has('city')) issueValues.city = city;
     if (participantId && inviteContext?.openIssueIds.length && Object.keys(issueValues).length) {
-      const { data: issueContext } = await supabase.from('participant_data_issues').select('order_item_id')
+      const { data: issueContext } = await supabase.from('participant_data_issues').select('id,order_item_id')
         .in('id', inviteContext.openIssueIds).eq('status', 'open');
-      const orderItemIds = [...new Set((issueContext ?? []).map((issue) => issue.order_item_id ? String(issue.order_item_id) : null).filter(Boolean))] as string[];
-      if (orderItemIds.length !== 1) return { success: false, message: 'Abra a pendencia no ingresso correto para continuar.' };
-      const resolution = await supabase.rpc('resolve_ticket_data_issues', {
-        p_order_item_id: orderItemIds[0],
-        p_expected_issue_ids: inviteContext.openIssueIds,
-        p_values: issueValues,
-      });
-      const resolutionData = resolution.data as { success?: boolean; message?: string } | null;
-      if (resolution.error || !resolutionData?.success) {
-        return { success: false, message: resolution.error?.message ?? resolutionData?.message ?? 'Não foi possível reavaliar as pendências do cadastro.' };
+      const issuesByOrderItem = new Map<string, string[]>();
+      for (const issue of issueContext ?? []) {
+        if (!issue.order_item_id) continue;
+        const orderItemId = String(issue.order_item_id);
+        issuesByOrderItem.set(orderItemId, [...(issuesByOrderItem.get(orderItemId) ?? []), String(issue.id)]);
       }
-    }
-    if (participantId && inviteContext?.openIssueIds.length) {
-      const { data: issueContext } = await supabase.from('participant_data_issues').select('order_item_id')
-        .in('id', inviteContext.openIssueIds);
-      const orderItemIds = [...new Set((issueContext ?? []).map((issue) => issue.order_item_id ? String(issue.order_item_id) : null).filter(Boolean))] as string[];
-      if (orderItemIds.length !== 1) return { success: false, message: 'Abra a pendencia no ingresso correto para continuar.' };
-      const finalization = await supabase.rpc('finalize_imported_ticket_after_issue_resolution', {
-        p_order_item_id: orderItemIds[0],
-        p_resolved_fields: Object.keys(issueValues),
-      });
-      if (finalization.error) return { success: false, message: finalization.error.message };
+      for (const [orderItemId, expectedIssueIds] of issuesByOrderItem) {
+        const resolution = await supabase.rpc('resolve_ticket_data_issues', {
+          p_order_item_id: orderItemId,
+          p_expected_issue_ids: expectedIssueIds,
+          p_values: issueValues,
+        });
+        const resolutionData = resolution.data as { success?: boolean; message?: string; ticket_reconciliation?: unknown } | null;
+        if (resolution.error || !resolutionData?.success) {
+          return { success: false, message: resolution.error?.message ?? resolutionData?.message ?? 'Não foi possível reavaliar as pendências do cadastro.' };
+        }
+        collectReconciliation(resolutionData.ticket_reconciliation);
+      }
     }
   }
 
@@ -274,6 +317,18 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     });
     if (contactUpdate.error) return { success: false, message: contactUpdate.error.message };
   }
+
+  // Etapa FINAL e defensiva do onboarding. A RPC procura todos os direitos
+  // importados da conta (inclusive fora do convite atual), filtra somente
+  // item_kind=ticket e delega cada emissao a funcao canonica. Nao depende
+  // de qual issue foi resolvida e pode ser repetida sem duplicar tickets.
+  const finalReconciliation = await supabase.rpc('reconcile_imported_ticket_issuance_for_user', {
+    p_user_id: user.id,
+  });
+  if (finalReconciliation.error) {
+    return { success: false, message: `Não foi possível reconciliar seus ingressos importados: ${finalReconciliation.error.message}` };
+  }
+  collectReconciliation(finalReconciliation.data);
 
   // Libera a conta apenas depois que perfil, pendencias do convite e contatos
   // vinculados foram persistidos. Falhas anteriores mantem o primeiro acesso
@@ -338,9 +393,14 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
       .eq('resolution_scope', 'user_resolvable').in('field_code', [...REQUIRED_PARTICIPANT_FIELD_CODES])
     : { count: 0 };
 
+  const pendingTicketNotice = describePendingTicketIssues({ results: ticketReconciliationResults });
+  const finalMessage = pendingTicketNotice
+    ? `Primeiro acesso concluído com sucesso. ${pendingTicketNotice}`
+    : 'Primeiro acesso concluído com sucesso.';
+
   return {
     success: true,
-    message: 'Primeiro acesso concluído com sucesso.',
+    message: finalMessage,
     redirect_to: (requiredIssueCount ?? 0) > 0 ? '/primeiro-acesso/pendencias' : nextPath,
   };
 }

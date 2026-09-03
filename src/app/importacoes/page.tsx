@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { hasPermission } from '@/lib/admin/permissions';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { ImportacoesClient } from './ImportacoesClient';
+import Link from 'next/link';
 
 async function getEvents(organizationId: string) {
   const supabase = await createServerSupabaseClient();
@@ -57,10 +58,12 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
     redirect('/painel');
   }
 
-  const [events, canConfirmPayment, importOptions] = await Promise.all([
+  const [events, canConfirmPayment, importOptions, pendingReviews] = await Promise.all([
     getEvents(currentOrganization.id),
     hasPermission('finance.confirm_payment'),
     getImportOptions(currentOrganization.id),
+    supabase.from('import_batch_rows').select('id,import_batches!inner(organization_id)', { count: 'exact', head: true })
+      .eq('status', 'review_required').eq('resolution', 'pending').eq('import_batches.organization_id', currentOrganization.id),
   ]);
 
   return (
@@ -69,6 +72,7 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
         <Sidebar />
         <div className="flex-1 space-y-6">
           <TopBar title="Importações" subtitle="Histórico e inscritos atuais com validação e idempotência" />
+          <div className="flex justify-end"><Link href="/importacoes/revisoes" className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950">Revisões pendentes ({pendingReviews.count ?? 0})</Link></div>
           <SectionCard title="Módulo de importação" description="CSV/XLSX com prévia, revisão de duplicidade e relatório final.">
             <ImportacoesClient events={events} importOptions={importOptions} canConfirmPayment={canConfirmPayment} initialBatchId={batchId} />
           </SectionCard>

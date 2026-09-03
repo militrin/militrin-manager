@@ -386,9 +386,12 @@ export async function parseImportFileAction(formData: FormData) {
       ? await getCurrentEventImportRules(supabase, eventId)
       : null;
 
-    const [{ data: contactsByCpf }, { data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }, { data: existingHistoricalRows }] = await Promise.all([
+    const [{ data: contactsByCpf }, { data: contactsByEmail }, { data: participantsByCpf }, { data: participantsByEmail }, { data: participantsByEvent }, { data: existingHistoricalRows }] = await Promise.all([
       importType === 'current_event_registrations' && cpfs.size && eventRules?.organizationId
-        ? supabase.from('registration_contacts').select('id,full_name,cpf,email').eq('organization_id', eventRules.organizationId).in('cpf', Array.from(cpfs))
+        ? supabase.from('registration_contacts').select('id,user_id,full_name,cpf,email').eq('organization_id', eventRules.organizationId).in('cpf', Array.from(cpfs))
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      importType === 'current_event_registrations' && emails.size && eventRules?.organizationId
+        ? supabase.from('registration_contacts').select('id,user_id,full_name,cpf,email').eq('organization_id', eventRules.organizationId).in('email', Array.from(emails))
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       importType === 'historical_participations' && cpfs.size
         ? supabase.from('participants').select('id, full_name, cpf, email, event_id, user_id, registration_contact_id').in('cpf', Array.from(cpfs))
@@ -406,7 +409,7 @@ export async function parseImportFileAction(formData: FormData) {
       eventId
         ? supabase
             .from('participants')
-            .select('id, full_name, cpf, email, event_id, user_id')
+            .select('id, full_name, cpf, email, event_id, user_id, registration_contact_id')
             .eq('event_id', eventId)
             .limit(5000)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
@@ -430,6 +433,10 @@ export async function parseImportFileAction(formData: FormData) {
     }
 
     const emailMap = new Map<string, Record<string, unknown>>();
+    for (const contact of contactsByEmail ?? []) {
+      const key = normalizeEmail(String(contact.email ?? ''));
+      if (key) emailMap.set(key, contact);
+    }
     for (const participant of participantsByEmail ?? []) {
       const key = normalizeEmail(String(participant.email ?? ''));
       if (key) emailMap.set(key, participant);
@@ -448,8 +455,10 @@ export async function parseImportFileAction(formData: FormData) {
     // decide QUEM fica titular, nunca impede a criacao do pedido em si).
     const contactIdsAlreadyInEvent = new Set<string>();
     const existingOrderItemByContact = new Map<string, { id: string; shirtType: string | null; shirtSize: string | null }>();
-    if (importType === 'current_event_registrations' && eventId && contactsByCpf?.length) {
-      const contactIds = contactsByCpf.map((contact) => String(contact.id));
+    const currentCandidateContacts = [...(contactsByCpf ?? []), ...(contactsByEmail ?? [])]
+      .filter((contact, index, all) => all.findIndex((candidate) => String(candidate.id) === String(contact.id)) === index);
+    if (importType === 'current_event_registrations' && eventId && currentCandidateContacts.length) {
+      const contactIds = currentCandidateContacts.map((contact) => String(contact.id));
       const { data: existingOrderItems } = await supabase
         .from('order_items')
         .select('id,registration_contact_id,shirt_type,shirt_size')
@@ -520,6 +529,7 @@ export async function parseImportFileAction(formData: FormData) {
       let matchedParticipantId: string | null = null;
       let matchedRegistrationContactId: string | null = null;
       let matchedUserId: string | null = null;
+      let identityMatchDetails: Record<string, unknown> = {};
       const dataIssues: ImportDataIssue[] = [];
 
       if (!row.full_name) {
@@ -676,7 +686,49 @@ export async function parseImportFileAction(formData: FormData) {
         }
       }
 
-      if (status !== 'error' && row.cpf && cpfMap.has(row.cpf)) {
+      if (importType === 'current_event_registrations' && status !== 'error') {
+        const cpfMatch = row.cpf ? cpfMap.get(row.cpf) : undefined;
+        const emailMatch = row.email ? emailMap.get(row.email) : undefined;
+        const nameMatch = row.normalized_name ? normalizedNameMap.get(row.normalized_name) : undefined;
+        const toCandidate = (matched: Record<string, unknown>, reason: string) => ({
+          registration_contact_id: String(matched.registration_contact_id ?? matched.id ?? ''),
+          participant_id: matched.registration_contact_id ? String(matched.id ?? '') : null,
+          user_id: matched.user_id ? String(matched.user_id) : null,
+          full_name: String(matched.full_name ?? ''), cpf: String(matched.cpf ?? ''),
+          email: String(matched.email ?? ''), reason,
+        });
+        const cpfCandidate = cpfMatch ? toCandidate(cpfMatch, 'cpf_exact') : null;
+        const emailCandidate = emailMatch ? toCandidate(emailMatch, 'email_exact') : null;
+        const nameCandidate = nameMatch ? toCandidate(nameMatch, 'name_exact_suggestion') : null;
+        const cpfContactId = cpfCandidate?.registration_contact_id || null;
+        const emailContactId = emailCandidate?.registration_contact_id || null;
+
+        if (cpfContactId && emailContactId && cpfContactId !== emailContactId) {
+          status = 'review_required'; resolution = 'pending';
+          errorMessage = 'Conflito de identidade: CPF e e-mail correspondem a cadastros diferentes.';
+          identityMatchDetails = { reason: 'strong_identifier_conflict', candidates: [cpfCandidate, emailCandidate] };
+        } else if (cpfCandidate) {
+          matchedRegistrationContactId = cpfCandidate.registration_contact_id;
+          matchedUserId = cpfCandidate.user_id;
+          identityMatchDetails = { reason: emailCandidate ? 'cpf_and_email_exact' : 'cpf_exact', candidates: [cpfCandidate] };
+          if (contactIdsAlreadyInEvent.has(matchedRegistrationContactId)) {
+            status = 'duplicate'; resolution = 'pending'; errorMessage = 'Esta pessoa ja possui inscricao para este evento.';
+          } else resolution = 'link_existing';
+        } else if (emailCandidate) {
+          matchedRegistrationContactId = emailCandidate.registration_contact_id;
+          matchedUserId = emailCandidate.user_id;
+          status = 'review_required'; resolution = 'pending';
+          errorMessage = 'E-mail já pertence a um cadastro. Confirme a identidade antes de vincular.';
+          identityMatchDetails = { reason: 'email_exact_requires_review', candidates: [emailCandidate] };
+        } else if (nameCandidate) {
+          matchedParticipantId = nameCandidate.participant_id;
+          matchedRegistrationContactId = nameCandidate.registration_contact_id;
+          matchedUserId = nameCandidate.user_id;
+          status = 'review_required'; resolution = 'pending';
+          errorMessage = 'Nome semelhante encontrado; nenhum identificador forte confirmou a identidade.';
+          identityMatchDetails = { reason: 'name_only_suggestion', candidates: [nameCandidate] };
+        }
+      } else if (status !== 'error' && row.cpf && cpfMap.has(row.cpf)) {
         const matched = cpfMap.get(row.cpf)!;
         if (importType === 'current_event_registrations') {
           matchedRegistrationContactId = String(matched.id ?? '');
@@ -722,7 +774,7 @@ export async function parseImportFileAction(formData: FormData) {
         matchedUserId = matched.user_id ? String(matched.user_id) : null;
         status = 'duplicate';
         resolution = 'pending';
-      } else if (status !== 'error' && row.normalized_name && normalizedNameMap.has(row.normalized_name)) {
+      } else if (importType === 'historical_participations' && status !== 'error' && row.normalized_name && normalizedNameMap.has(row.normalized_name)) {
         const matched = normalizedNameMap.get(row.normalized_name)!;
         matchedParticipantId = String(matched.id ?? '');
         matchedUserId = importType === 'historical_participations' && matched.user_id ? String(matched.user_id) : null;
@@ -751,6 +803,7 @@ export async function parseImportFileAction(formData: FormData) {
         matched_participant_id: matchedParticipantId,
         registration_contact_id: matchedRegistrationContactId,
         matched_user_id: matchedUserId,
+        identity_match_details: identityMatchDetails,
       };
     });
 
@@ -910,11 +963,19 @@ export async function setImportRowResolutionAction(input: {
     return { success: false as const, message: access.message };
   }
 
-  const { error } = await supabase
-    .from('import_batch_rows')
-    .update({ resolution: parsed.data.resolution })
-    .eq('id', parsed.data.rowId)
-    .eq('import_batch_id', parsed.data.batchId);
+  if (parsed.data.resolution === 'pending' || parsed.data.resolution === 'mark_duplicate') {
+    return { success: false as const, message: 'Escolha vincular, criar novo cadastro ou ignorar a linha.' };
+  }
+  const decision = parsed.data.resolution === 'ignore' ? 'ignore' : parsed.data.resolution;
+  const { data: row } = await supabase.from('import_batch_rows')
+    .select('registration_contact_id,identity_match_details').eq('id', parsed.data.rowId).eq('import_batch_id', parsed.data.batchId).maybeSingle();
+  const candidates = ((row?.identity_match_details as { candidates?: Array<{ registration_contact_id?: string }> } | null)?.candidates ?? []);
+  const candidateId = row?.registration_contact_id ? String(row.registration_contact_id) : candidates[0]?.registration_contact_id ?? null;
+  const { error } = await supabase.rpc('resolve_import_batch_row_review', {
+    p_row_id: parsed.data.rowId,
+    p_decision: decision,
+    p_registration_contact_id: decision === 'link_existing' ? candidateId : null,
+  });
 
   if (error) {
     return { success: false as const, message: error.message };
@@ -938,7 +999,7 @@ export async function getImportBatchDetailsAction(batchId: string) {
       .single(),
     supabase
       .from('import_batch_rows')
-      .select('id, row_number, status, resolution, error_message, data_issues, normalized_data, matched_participant_id, matched_user_id')
+      .select('id, row_number, status, resolution, error_message, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, identity_match_details, review_decision, reviewed_at')
       .eq('import_batch_id', batchId)
       .order('row_number', { ascending: true }),
   ]);
@@ -960,13 +1021,50 @@ export async function getImportBatchDetailsAction(batchId: string) {
         data_issues: Array.isArray(row.data_issues) ? row.data_issues : [],
         matched_participant_id: row.matched_participant_id ? String(row.matched_participant_id) : null,
         matched_user_id: row.matched_user_id ? String(row.matched_user_id) : null,
+        registration_contact_id: row.registration_contact_id ? String(row.registration_contact_id) : null,
+        identity_match_details: row.identity_match_details ?? {},
         full_name: String(normalized.full_name ?? ''),
         cpf_masked: maskCpf(String(normalized.cpf ?? '')),
         email: String(normalized.email ?? ''),
         row: normalized,
       };
     }),
+    summary: {
+      totalRows: rows?.length ?? 0,
+      readyRows: (rows ?? []).filter((row) => row.status === 'ready').length,
+      pendingRows: (rows ?? []).filter((row) => row.status === 'data_pending').length,
+      duplicateRows: (rows ?? []).filter((row) => row.status === 'duplicate').length,
+      reviewRows: (rows ?? []).filter((row) => row.status === 'review_required' && row.resolution === 'pending').length,
+      errorRows: (rows ?? []).filter((row) => row.status === 'error').length,
+    },
   };
+}
+
+export async function resolveImportReviewAction(formData: FormData) {
+  const parsed = z.object({
+    rowId: z.string().uuid(),
+    decision: z.enum(['link_existing', 'create_new', 'ignore']),
+    registrationContactId: z.string().uuid().nullable(),
+  }).safeParse({
+    rowId: String(formData.get('row_id') ?? ''),
+    decision: String(formData.get('decision') ?? ''),
+    registrationContactId: String(formData.get('registration_contact_id') ?? '').trim() || null,
+  });
+  if (!parsed.success) return { success: false as const, message: 'Decisao de revisao invalida.' };
+  const supabase = await createServerSupabaseClient();
+  const { data: row } = await supabase.from('import_batch_rows').select('import_batch_id').eq('id', parsed.data.rowId).maybeSingle();
+  if (!row?.import_batch_id) return { success: false as const, message: 'Linha de importacao nao encontrada.' };
+  const access = await resolveImportBatchAccess(supabase, String(row.import_batch_id));
+  if (!access.ok) return { success: false as const, message: access.message };
+  const { error } = await supabase.rpc('resolve_import_batch_row_review', {
+    p_row_id: parsed.data.rowId,
+    p_decision: parsed.data.decision,
+    p_registration_contact_id: parsed.data.registrationContactId,
+  });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath('/importacoes/revisoes');
+  revalidatePath('/importacoes');
+  return { success: true as const };
 }
 
 async function ensureParticipationHistoryForCurrentParticipant(params: {
@@ -1313,14 +1411,21 @@ export async function executeImportBatchAction(
   }
 }
 
+  const { data: finalRows } = await supabase.from('import_batch_rows').select('status,resolution')
+    .eq('import_batch_id', batchId);
+  const totalImportedRows = (finalRows ?? []).filter((row) => row.status === 'imported').length;
+  const totalErrorRows = (finalRows ?? []).filter((row) => row.status === 'error').length;
+  const totalSkippedRows = (finalRows ?? []).filter((row) => ['duplicate', 'skipped'].includes(String(row.status))).length;
+  const remainingReviewCount = (finalRows ?? []).filter((row) => row.status === 'review_required' && row.resolution === 'pending').length;
+
   await supabase
     .from('import_batches')
     .update({
-      imported_rows: importedRows,
-      skipped_rows: skippedRows + duplicateRows,
-      error_rows: errorRows,
-      status: 'completed',
-      completed_at: new Date().toISOString(),
+      imported_rows: totalImportedRows,
+      skipped_rows: totalSkippedRows,
+      error_rows: totalErrorRows,
+      status: remainingReviewCount > 0 ? 'ready_for_review' : 'completed',
+      completed_at: remainingReviewCount > 0 ? null : new Date().toISOString(),
     })
     .eq('id', batchId);
 
@@ -1345,13 +1450,13 @@ export async function executeImportBatchAction(
   return {
     success: true as const,
     report: {
-      processed: (rows ?? []).length,
-      imported: importedRows,
-      completedWithoutPending: Math.max(0, importedRows - pendingParticipants),
+      processed: finalRows?.length ?? (rows ?? []).length,
+      imported: totalImportedRows,
+      completedWithoutPending: Math.max(0, totalImportedRows - pendingParticipants),
       updated: updatedRows,
       duplicated: duplicateRows,
-      reviewRequired: reviewRows,
-      errors: errorRows,
+      reviewRequired: remainingReviewCount,
+      errors: totalErrorRows,
       accountsCreated: createdAccounts,
       activationsSent: activationSent,
       ticketsGenerated: generatedTickets,

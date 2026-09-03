@@ -26,6 +26,9 @@ export async function upsertStoreItemAction(input: {
   // Desconto intrinseco do produto (sempre aplicado, diferente de cupom).
   discountType: "percentage" | "fixed" | null;
   discountValue: number;
+  // Config de QR de retirada pra NOVAS compras -- nunca altera pedidos ja
+  // feitos (cada linha ja congela seu proprio pickup_qr_mode na criacao).
+  pickupQrMode: "per_unit" | "per_line" | "none";
 }) {
   await assertPermission("store.manage");
   const supabase = await createServerSupabaseClient();
@@ -45,6 +48,7 @@ export async function upsertStoreItemAction(input: {
     p_linked_event_kit_item_id: input.linkedEventKitItemId,
     p_discount_type: input.discountType,
     p_discount_value: input.discountValue,
+    p_pickup_qr_mode: input.pickupQrMode,
   });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/loja");
@@ -198,10 +202,14 @@ export async function deliverStoreOrderItemAction(storeOrderItemId: string) {
   return { success: true as const, message: "Item entregue." };
 }
 
-export async function undoStoreOrderItemDeliveryAction(storeOrderItemId: string) {
-  await assertPermission("store.deliver");
+export async function undoStoreOrderItemDeliveryAction(storeOrderItemId: string, reasonCode: string, reasonText?: string) {
+  await assertPermission("store.undo_delivery");
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc("undo_store_order_item_delivery", { p_store_order_item_id: storeOrderItemId });
+  const { error } = await supabase.rpc("undo_store_order_item_delivery", {
+    p_store_order_item_id: storeOrderItemId,
+    p_reason_code: reasonCode,
+    p_reason_text: reasonText?.trim() || null,
+  });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/loja");
   return { success: true as const, message: "Entrega desfeita." };

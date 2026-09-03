@@ -46,8 +46,8 @@ test('2b) primeiro acesso so chama resolve_ticket_data_issues quando ha pendenci
 // o mesmo bug do cenario 2 tambem bloqueava a finalizacao/emissao para
 // convites contact-anchored, e a mesma correcao destrava as duas etapas.
 test('3) issue resolvida libera a finalizacao/emissao no mesmo fluxo contact-anchored', () => {
-  assert.match(firstAccessAction, /if \(participantId && inviteContext\?\.openIssueIds\.length\) \{/);
-  assert.match(firstAccessAction, /finalize_imported_ticket_after_issue_resolution/);
+  assert.match(firstAccessAction, /reconcile_imported_ticket_issuance_for_user/);
+  assert.ok(firstAccessAction.indexOf('reconcile_imported_ticket_issuance_for_user') > firstAccessAction.indexOf('resolve_ticket_data_issues'));
 });
 
 // Cenario 4: pagamento confirmado + requisitos satisfeitos -> ingresso emitido.

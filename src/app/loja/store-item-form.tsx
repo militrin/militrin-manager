@@ -22,6 +22,7 @@ type StoreItemInput = {
   isActive: boolean;
   eventId: string | null;
   linkedEventKitItemId: string | null;
+  pickupQrMode: "per_unit" | "per_line" | "none";
 };
 
 function money(value: number) {
@@ -77,6 +78,7 @@ export function StoreItemForm({
   const [supplyMode, setSupplyMode] = useState<"stock" | "made_to_order">(item?.supplyMode ?? "stock");
   const [availableAllEvents, setAvailableAllEvents] = useState(item?.availableAllEvents ?? false);
   const [visibility, setVisibility] = useState<"public" | "code_required" | "admin_only">(item?.visibility ?? "public");
+  const [pickupQrMode, setPickupQrMode] = useState<"per_unit" | "per_line" | "none">(item?.pickupQrMode ?? "per_line");
   const [message, setMessage] = useState<string | null>(null);
 
   // Tipo de estoque: item independente da loja, ou vinculado ao mesmo
@@ -158,11 +160,12 @@ export function StoreItemForm({
             availableAllEvents: stockType === "event_kit" ? false : availableAllEvents,
             visibility,
             linkedEventKitItemId: stockType === "event_kit" ? linkKitItemId : null,
+            pickupQrMode,
           });
           setMessage(result.message);
           if (result.success && !item) {
             setName(""); setDescription(""); setPrice("0"); setDiscountType(null); setDiscountValue("0"); setRequiresVariant(false); setSupplyMode("stock");
-            setAvailableAllEvents(false); setVisibility("public"); setStockType("own"); setLinkKitItemId(""); setOpen(false);
+            setAvailableAllEvents(false); setVisibility("public"); setStockType("own"); setLinkKitItemId(""); setPickupQrMode("per_line"); setOpen(false);
           }
         });
       }}
@@ -354,6 +357,34 @@ export function StoreItemForm({
             </span>
           </label>
         </div>
+      </div>
+
+      <div className="sm:col-span-2">
+        <span className={fieldLabelClass}>QR de retirada</span>
+        <div className="flex flex-col gap-1.5 text-xs text-slate-300">
+          <label className="flex items-start gap-2">
+            <input type="radio" checked={pickupQrMode === "per_unit"} onChange={() => setPickupQrMode("per_unit")} className="mt-0.5" />
+            <span>
+              <span className="block font-medium text-slate-200">QR por unidade</span>
+              <span className="block text-slate-500">Comprando mais de 1, cada unidade ganha seu próprio QR — controle e retirada individual.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input type="radio" checked={pickupQrMode === "per_line"} onChange={() => setPickupQrMode("per_line")} className="mt-0.5" />
+            <span>
+              <span className="block font-medium text-slate-200">QR por compra/linha</span>
+              <span className="block text-slate-500">1 QR cobre toda a quantidade comprada de uma vez. Comportamento padrão.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input type="radio" checked={pickupQrMode === "none"} onChange={() => setPickupQrMode("none")} className="mt-0.5" />
+            <span>
+              <span className="block font-medium text-slate-200">Sem QR de retirada</span>
+              <span className="block text-slate-500">Não gera QR nenhum. Entrega confirmada manualmente em Loja → Pedidos.</span>
+            </span>
+          </label>
+        </div>
+        <p className="mt-1.5 text-[11px] text-slate-500">Mudar este modo não altera pedidos já feitos — vale só para novas compras a partir de agora.</p>
       </div>
 
       <div className="flex items-center gap-2 sm:col-span-2">

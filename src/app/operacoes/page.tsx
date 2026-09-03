@@ -314,6 +314,7 @@ function KitPickupPageContent() {
     canReplaceWristband: false,
     canGrantStoreItems: false,
     canDeliverStoreItems: false,
+    canUndoDeliverStoreItems: false,
   });
 
   const shirtTypes = useMemo(
@@ -970,8 +971,10 @@ function KitPickupPageContent() {
       {productItemModal ? (
         <OperationalProductItemModal
           item={productItemModal}
+          canUndoDelivery={capabilities.canUndoDeliverStoreItems}
           onClose={() => setProductItemModal(null)}
           onDelivered={() => setProductItemModal(null)}
+          onUndone={() => setProductItemModal(null)}
         />
       ) : null}
 

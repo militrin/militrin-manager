@@ -56,13 +56,17 @@ export async function GET(
   const { data: item, error } = await adminClient
     .from("order_items")
     .select(
-      "id, quantity, qr_token, item_kind, order_id, store_items(name), store_item_variants(name, value), orders!inner(id, user_id, order_number, display_number, events(name))",
+      "id, quantity, qr_token, pickup_qr_mode, item_kind, order_id, store_items(name), store_item_variants(name, value), orders!inner(id, user_id, order_number, display_number, events(name))",
     )
     .eq("id", itemId)
     .eq("order_id", orderId)
     .eq("item_kind", "product")
     .maybeSingle();
   if (error || !item?.qr_token) return new NextResponse("Item não encontrado", { status: 404 });
+  if (item.pickup_qr_mode === "none") return new NextResponse("Este item não usa QR de retirada", { status: 404 });
+  if (item.pickup_qr_mode === "per_unit" && Number(item.quantity ?? 1) > 1) {
+    return new NextResponse("Este item usa QR por unidade — use a rota de QR da unidade", { status: 404 });
+  }
 
   const storeItem = one(item.store_items as Record<string, unknown> | Record<string, unknown>[] | null);
   const variant = one(item.store_item_variants as Record<string, unknown> | Record<string, unknown>[] | null);

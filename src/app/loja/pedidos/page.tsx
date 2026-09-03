@@ -51,6 +51,7 @@ type RawOperationalProductItemRow = {
   delivered_at: string | null;
   delivered_by_user_id: string | null;
   created_at: string;
+  pickup_qr_mode: OperationalProductItem["pickup_qr_mode"];
 };
 
 export default async function StoreOrdersPage({ searchParams }: { searchParams: SearchParams }) {
@@ -96,6 +97,9 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
   const items: OperationalProductItem[] = rawItems.map((row) => ({
     source: row.source,
     item_id: row.item_id,
+    parent_item_id: null,
+    unit_index: null,
+    pickup_qr_mode: row.pickup_qr_mode ?? "per_line",
     order_id: row.order_id,
     order_reference: orderDisplayReference(row.display_number, row.order_number),
     product_name: row.product_name,

@@ -331,6 +331,27 @@ export type FinalizeCadastroInput = {
   organizationId: string;
 };
 
+export async function confirmImportedPendingPaymentAction(input: { paymentId: string; reason: string }) {
+  await assertPermission("finance.confirm_payment");
+  if (!UUID_PATTERN.test(input.paymentId)) return { success: false as const, message: "Pagamento inválido." };
+  if (input.reason.trim().length < 3) return { success: false as const, message: "Informe um motivo com pelo menos 3 caracteres." };
+  const supabase = await createServerSupabaseClient();
+  const confirmed = await supabase.rpc("confirm_imported_pending_payment_and_reconcile", {
+    p_payment_id: input.paymentId,
+    p_reason: input.reason.trim(),
+  });
+  if (confirmed.error) return { success: false as const, message: confirmed.error.message };
+  const result = confirmed.data as { success?: boolean; message?: string; reason_code?: string } | null;
+  if (!result?.success) return { success: false as const, message: result?.message ?? "Não foi possível confirmar o pagamento." };
+  revalidatePath("/cadastros");
+  revalidatePath("/ingressos");
+  revalidatePath("/inscricoes");
+  revalidatePath("/minha-conta");
+  revalidatePath("/minha-conta/ingressos");
+  revalidatePath("/operacoes");
+  return { success: true as const, message: result.message ?? "Pagamento confirmado e ingresso reconciliado." };
+}
+
 export async function finalizeCadastroPaymentAndTicketAction(input: FinalizeCadastroInput) {
   await assertPermission("finance.confirm_payment");
   const supabase = await createServerSupabaseClient();

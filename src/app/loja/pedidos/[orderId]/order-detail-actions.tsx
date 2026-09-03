@@ -8,6 +8,7 @@ import {
   deliverStoreOrderItemAction,
   undoStoreOrderItemDeliveryAction,
 } from '../../actions';
+import { ReasonDialog } from '@/app/operacoes/components/ReasonDialog';
 
 export function OrderPaymentActions({ storeOrderId, status }: { storeOrderId: string; status: string }) {
   const router = useRouter();
@@ -65,6 +66,7 @@ export function OrderItemActions({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const [showUndoReason, setShowUndoReason] = useState(false);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -98,19 +100,27 @@ export function OrderItemActions({
         <button
           type="button"
           disabled={pending}
-          onClick={() =>
-            startTransition(async () => {
-              const response = await undoStoreOrderItemDeliveryAction(itemId);
-              setMessage(response.message);
-              if (response.success) router.refresh();
-            })
-          }
+          onClick={() => setShowUndoReason(true)}
           className="inline-flex h-8 items-center rounded-lg border border-slate-700 px-2 text-[11px] text-slate-300 disabled:opacity-50"
         >
           Desfazer entrega
         </button>
       ) : null}
       {message ? <p className="text-xs text-slate-400" role="status">{message}</p> : null}
+      {showUndoReason ? (
+        <ReasonDialog
+          title="Desfazer entrega do item"
+          description="O item volta ao estoque e passa a poder ser entregue novamente."
+          submitLabel="Desfazer entrega"
+          onSubmit={async ({ reasonCode, reasonText }) => {
+            const response = await undoStoreOrderItemDeliveryAction(itemId, reasonCode, reasonText);
+            setMessage(response.message);
+            if (response.success) router.refresh();
+            return response;
+          }}
+          onClose={() => setShowUndoReason(false)}
+        />
+      ) : null}
     </div>
   );
 }

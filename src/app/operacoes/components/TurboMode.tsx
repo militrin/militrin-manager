@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { OperationEvent, OperationTicketDetails } from '../types';
 import type { OperationalProductItem } from '@/lib/operations/operational-product-item';
 import { SOURCE_LABEL } from '@/lib/operations/operational-product-item';
@@ -8,10 +8,13 @@ import {
   deliverKitAndCheckinAction,
   deliverKitCheckinAndLinkWristbandAction,
   deliverOperationalProductItemAction,
+  getRetiradaCapabilitiesAction,
   resolveTurboScanAction,
+  undoOperationalProductDeliveryAction,
 } from '../actions';
 import { getOperationalErrorTitle } from '../error-messages';
 import { QrScanner } from './QrScanner';
+import { ReasonDialog } from './ReasonDialog';
 
 const AUTO_RETURN_MS = 1600;
 
@@ -151,6 +154,19 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   const [screen, dispatch] = useReducer(reducer, { kind: 'scanning_initial' });
   const processingRef = useRef(false);
   const returnTimerRef = useRef<number | null>(null);
+  const [canUndoDelivery, setCanUndoDelivery] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void getRetiradaCapabilitiesAction()
+      .then((response) => {
+        if (mounted && response.success) setCanUndoDelivery(response.capabilities.canUndoDeliverStoreItems);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const scheduleReturn = useCallback(() => {
     if (returnTimerRef.current) window.clearTimeout(returnTimerRef.current);
@@ -375,7 +391,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       ) : null}
 
       {screen.kind === 'product_already_delivered' ? (
-        <ProductAlreadyDelivered item={screen.item} onBack={backToScanner} />
+        <ProductAlreadyDelivered item={screen.item} canUndoDelivery={canUndoDelivery} onBack={backToScanner} onUndone={backToScanner} />
       ) : null}
 
       {screen.kind === 'product_success' ? (
@@ -493,11 +509,13 @@ function ProductReview({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const isUnit = item.source === 'store_unit' || item.source === 'checkout_unit';
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex flex-col items-center gap-3 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center">
         <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-400">{SOURCE_LABEL[item.source]}</span>
-        <p className="text-2xl font-black">{item.quantity}x {item.product_name}</p>
+        <p className="text-2xl font-black">{isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}</p>
+        {isUnit && item.unit_index ? <p className="text-lg font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
         {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
 
         <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
@@ -524,13 +542,30 @@ function ProductReview({
 // (2a, 3a, 10a...) do MESMO QR, pros dois canais. Nunca reprocessa entrega
 // nem estoque (o backend ja e idempotente -- isto e so leitura); sempre
 // mostra data/hora e operador da PRIMEIRA entrega (nunca do usuario atual).
-function ProductAlreadyDelivered({ item, onBack }: { item: OperationalProductItem; onBack: () => void }) {
+// "Desfazer entrega" (motivo obrigatorio via ReasonDialog, mesmo padrao da
+// Central normal) so aparece quando canUndoDelivery=true (permissao
+// store.undo_delivery), verificado no componente pai via
+// getRetiradaCapabilitiesAction.
+function ProductAlreadyDelivered({
+  item,
+  canUndoDelivery,
+  onBack,
+  onUndone,
+}: {
+  item: OperationalProductItem;
+  canUndoDelivery: boolean;
+  onBack: () => void;
+  onUndone: () => void;
+}) {
+  const [showUndoReason, setShowUndoReason] = useState(false);
+  const isUnit = item.source === 'store_unit' || item.source === 'checkout_unit';
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex flex-col items-center gap-3 rounded-3xl border border-cyan-500/30 bg-slate-900 p-6 text-center">
         <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-400">{SOURCE_LABEL[item.source]}</span>
-        <p className="text-xl font-black uppercase tracking-wide text-cyan-300">Item já entregue</p>
-        <p className="text-2xl font-black">{item.quantity}x {item.product_name}</p>
+        <p className="text-xl font-black uppercase tracking-wide text-cyan-300">{isUnit ? 'Unidade já entregue' : 'Item já entregue'}</p>
+        <p className="text-2xl font-black">{isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}</p>
+        {isUnit && item.unit_index ? <p className="text-lg font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
         {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
 
         <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
@@ -548,9 +583,36 @@ function ProductAlreadyDelivered({ item, onBack }: { item: OperationalProductIte
         </div>
       </div>
 
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-col gap-2">
         <BigButton onClick={onBack}>Voltar ao leitor</BigButton>
+        {canUndoDelivery ? (
+          <BigButton tone="neutral" onClick={() => setShowUndoReason(true)}>
+            Desfazer entrega
+          </BigButton>
+        ) : null}
       </div>
+
+      {showUndoReason ? (
+        <ReasonDialog
+          title={isUnit ? 'Desfazer entrega da unidade' : 'Desfazer entrega do item'}
+          description="O item volta ao estoque e passa a poder ser entregue novamente."
+          submitLabel="Desfazer entrega"
+          onSubmit={async ({ reasonCode, reasonText }) => {
+            const response = await undoOperationalProductDeliveryAction({
+              source: item.source,
+              item_id: item.item_id,
+              reason_code: reasonCode,
+              reason_text: reasonText,
+            });
+            if (!response.success) {
+              return { success: false, message: response.message ?? 'Não foi possível desfazer a entrega.' };
+            }
+            onUndone();
+            return { success: true };
+          }}
+          onClose={() => setShowUndoReason(false)}
+        />
+      ) : null}
     </div>
   );
 }

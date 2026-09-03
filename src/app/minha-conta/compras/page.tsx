@@ -120,8 +120,19 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
             Ver detalhes
           </MilitrinLinkButton>
         ) : showQr ? (
-          <MilitrinLinkButton href={`/minha-conta/ingressos/${activeTicket?.id}#qr`} variant="secondary" size="md" iconLeft={<QrCode size={16} />} className="w-full">
-            Ver QR Code
+          <div className="flex w-full flex-col gap-2">
+            <MilitrinLinkButton href={`/minha-conta/ingressos/${activeTicket?.id}#qr`} variant="secondary" size="md" iconLeft={<QrCode size={16} />} className="w-full">
+              Ver QR Code
+            </MilitrinLinkButton>
+            {productItemCount > 0 ? (
+              <MilitrinLinkButton href={`/minha-conta/compras/${order.id}#produtos-do-pedido`} variant="secondary" size="md" iconLeft={<QrCode size={16} />} className="w-full">
+                {`Ver produtos (${productItemCount})`}
+              </MilitrinLinkButton>
+            ) : null}
+          </div>
+        ) : productItemCount > 0 ? (
+          <MilitrinLinkButton href={`/minha-conta/compras/${order.id}#produtos-do-pedido`} variant="secondary" size="md" iconLeft={<QrCode size={16} />} className="w-full">
+            {`Ver produtos (${productItemCount})`}
           </MilitrinLinkButton>
         ) : null
       }
