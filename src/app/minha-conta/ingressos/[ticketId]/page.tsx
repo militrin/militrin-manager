@@ -20,6 +20,7 @@ import {
   type MilitrinTimelineItem,
 } from '@/components/militrin';
 import { buildAccountHeaderEvent } from '@/lib/account/header-event';
+import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { TicketPdfButton } from '@/components/public/TicketPdfButton';
 import {
   reviewTicketItemChangeAction,
@@ -30,10 +31,6 @@ import { TicketHolderActions } from './ticket-holder-actions';
 import { CategoryContextAction, HolderContextAction, ParticipantShirtChangeAction, ShirtContextAction } from './ticket-context-actions';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { orderDisplayReference } from '@/lib/display-reference';
-
-function makeQrUrl(token: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`;
-}
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -135,6 +132,14 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     : { count: 0 };
   const ticketIssuanceBlocked = (ticketIssuanceBlockCount ?? 0) > 0;
   const canShowTicket = (isOwner || canAdminEdit) && !ticketIssuanceBlocked && (order ? orderStatus === 'confirmed' : true) && (ticketStatus === 'active' || ticketStatus === 'used');
+  let qrDataUrl: string | null = null;
+  if (canShowTicket && ticket.token) {
+    try {
+      qrDataUrl = await generateQrDataUrl(String(ticket.token), 320);
+    } catch {
+      qrDataUrl = null;
+    }
+  }
   const hasHolder = Boolean(participantId);
   const holderName = hasHolder ? String(participant?.full_name ?? orderItem?.holder_full_name ?? 'Titular nao identificado') : 'Titular nao definido';
   const buyerProfileResult = order?.user_id
@@ -431,7 +436,11 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
                 Apresente este QR Code para <strong className="text-white">retirar seu kit</strong>.
               </p>
               <div className="rounded-2xl border border-slate-700 bg-white p-3">
-                <Image src={makeQrUrl(String(ticket.token ?? ''))} alt="QR Code do ingresso" width={220} height={220} unoptimized className="h-55 w-55" />
+                {qrDataUrl ? (
+                  <Image src={qrDataUrl} alt="QR Code do ingresso" width={220} height={220} unoptimized className="h-55 w-55" />
+                ) : (
+                  <p className="p-6 text-sm text-slate-500">Não foi possível gerar o QR Code.</p>
+                )}
               </div>
               <TicketPdfButton
                 eventName={String(eventObj?.name ?? 'Evento')}

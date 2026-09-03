@@ -37,6 +37,7 @@ export const ADMINISTRATIVE_PANEL_PERMISSION_CODES = [
   'sponsors.view',
   'feedback.view',
   'integrity.view',
+  'finance.confirm_payment',
 ] as const;
 
 export async function canAccessAdministrativePanel(userId?: string) {

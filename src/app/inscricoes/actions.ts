@@ -246,19 +246,70 @@ export async function confirmParticipantPaymentAction(participantId: string) {
   if (activeItemError) return { success: false, message: activeItemError.message };
   if (activeItems?.length !== 1) return { success: false, message: "Abra o ingresso correto para confirmar o pagamento." };
   const activeItem = activeItems[0];
+  const orderId = String((activeItem as { order_id?: string }).order_id ?? "");
 
-  const { data: payment, error: paymentError } = await supabase
+  const orderPaymentResult = orderId
+    ? await supabase
+        .from("payments")
+        .select("id, payment_method, payment_status, participant_id, order_id")
+        .eq("order_id", orderId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (orderPaymentResult.error) return { success: false, message: orderPaymentResult.error.message };
+
+  const participantPaymentResult = await supabase
     .from("payments")
-    .select("id, payment_method, payment_status")
+    .select("id, payment_method, payment_status, participant_id, order_id")
     .eq("participant_id", participantId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (participantPaymentResult.error) return { success: false, message: participantPaymentResult.error.message };
 
-  if (paymentError) return { success: false, message: paymentError.message };
+  const payment = orderPaymentResult.data ?? participantPaymentResult.data;
   if (!payment?.id) return { success: false, message: "Pagamento nao encontrado." };
+
   if (String(payment.payment_status ?? "pending") === "paid") {
+    if (orderId) {
+      const { data: ticketItems, error: ticketItemsError } = await supabase
+        .from("order_items")
+        .select("id, tickets(id,status)")
+        .eq("order_id", orderId)
+        .eq("item_kind", "ticket")
+        .not("status", "in", "(cancelled,refunded)");
+      if (ticketItemsError) return { success: false, message: ticketItemsError.message };
+      const missing = (ticketItems ?? []).filter((item) => {
+        const tickets = Array.isArray(item.tickets) ? item.tickets : item.tickets ? [item.tickets] : [];
+        return !tickets.some((ticket) => ticket && String((ticket as { status?: string }).status ?? "") !== "cancelled");
+      });
+      if (missing.length > 0) {
+        return {
+          success: false,
+          message: "Este pagamento já está confirmado. Emita os ingressos em Administração → Integridade.",
+        };
+      }
+    }
     return { success: true, message: "Pagamento ja confirmado." };
+  }
+
+  const { count: ticketItemCount, error: ticketItemError } = orderId
+    ? await supabase
+        .from("order_items")
+        .select("id", { count: "exact", head: true })
+        .eq("order_id", orderId)
+        .eq("item_kind", "ticket")
+        .not("status", "in", "(cancelled,refunded)")
+    : { count: 1, error: null };
+  if (ticketItemError) return { success: false, message: ticketItemError.message };
+
+  const paymentParticipantId = payment.participant_id ? String(payment.participant_id) : participantId;
+  if ((ticketItemCount ?? 1) !== 1 || !payment.participant_id) {
+    return {
+      success: false,
+      message: "Este pedido não pode ser confirmado por este botão. Se o PIX já foi pago, use Administração → Integridade para emitir os ingressos.",
+    };
   }
 
   const { count: importedHistoryCount, error: importedHistoryError } = await supabase
@@ -288,7 +339,7 @@ export async function confirmParticipantPaymentAction(participantId: string) {
 
   const { data: updateResult, error: rpcError } = await supabase.rpc("admin_update_payment_status", {
     p_payment_id: payment.id,
-    p_participant_id: participantId,
+    p_participant_id: paymentParticipantId,
     p_expected_current_status: String(payment.payment_status ?? "pending"),
     p_new_status: "paid",
     p_reason: "Confirmação administrativa manual pela tela de inscrições.",

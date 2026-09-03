@@ -1,4 +1,4 @@
-import Image from 'next/image';
+import { LocalQrImage } from '@/components/qr/LocalQrImage';
 import { TicketPdfButton } from './TicketPdfButton';
 import { getStatusLabel } from '@/lib/status-labels';
 
@@ -14,10 +14,6 @@ type TicketViewerProps = {
   showPdfButton?: boolean;
 };
 
-function makeQrUrl(token: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`;
-}
-
 export function TicketViewer({
   eventName,
   participantName,
@@ -29,8 +25,6 @@ export function TicketViewer({
   orderNumber,
   showPdfButton = true,
 }: TicketViewerProps) {
-  const qr = makeQrUrl(token);
-
   return (
     <article className="overflow-hidden rounded-[1.75rem] border border-slate-700 bg-slate-950/70">
       <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
@@ -66,7 +60,7 @@ export function TicketViewer({
 
         <div className="flex items-center justify-center border-t border-slate-700 bg-slate-900/70 p-5 lg:border-l lg:border-t-0">
           <div className="rounded-2xl border border-slate-700 bg-white p-3">
-            <Image src={qr} alt="QR Code do ingresso" width={220} height={220} className="h-[220px] w-[220px]" unoptimized />
+            <LocalQrImage value={token} alt="QR Code do ingresso" size={220} className="h-[220px] w-[220px]" />
           </div>
         </div>
       </div>

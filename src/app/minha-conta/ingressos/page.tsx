@@ -4,6 +4,7 @@ import { formatDateBR } from '@/lib/utils/date';
 import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinTicketCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 
 function normalizeStatus(status: string | null | undefined) {
@@ -154,7 +155,14 @@ export default async function IngressosPage() {
       const orderStatus = normalizeStatus(String(order?.status ?? 'pending'));
       const paymentStatus = normalizeStatus(String(payment?.payment_status ?? 'pending'));
       const canShowTicket = !ticketIssuanceBlocked && Boolean(ticket?.id) && orderStatus === 'confirmed' && (ticket?.status === 'active' || ticket?.status === 'used');
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(String(ticket?.token ?? '-'))}`;
+      let qrUrl: string | null = null;
+      if (canShowTicket && ticket?.token) {
+        try {
+          qrUrl = await generateQrDataUrl(String(ticket.token), 220);
+        } catch {
+          qrUrl = null;
+        }
+      }
       const holderName = participant?.full_name || item.holder_full_name || 'Titular ainda nao definido';
       const ticketStatus = normalizeStatus(String(ticket?.status ?? item.status ?? 'pending'));
 

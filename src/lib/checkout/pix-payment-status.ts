@@ -24,8 +24,9 @@ export function normalizePaymentStatus(status: string | null | undefined): PixPa
  * disser 'pending', tratamos a chegada a zero como expiracao "leve": para de
  * mostrar o QR como pagavel, mas ainda e seguro oferecer gerar um PIX novo
  * (o pedido continua tecnicamente pendente). Uma vez que o banco confirme
- * 'expired' de verdade, quem renderiza este estado NAO deve mais oferecer
- * "gerar novo pagamento" -- ver `canRegeneratePix`.
+ * 'expired' de verdade, ainda e permitido gerar um PIX novo quando o
+ * pedido nao foi cancelado -- ver `canRegeneratePix`. A cobranca antiga no
+ * gateway pode continuar existindo; o sistema local usa `expires_at`.
  */
 export function resolvePixDisplayStatus(
   paymentStatus: string | null | undefined,
@@ -37,13 +38,29 @@ export function resolvePixDisplayStatus(
 }
 
 /**
- * Regenerar PIX so e seguro quando o pedido AINDA esta 'pending' no banco --
- * regenerar sobre um pedido ja marcado 'expired'/'cancelled' de verdade nao e
- * uma operacao coberta pela regra atual de start_order_payment_pix (ver nota
- * na migration 20260902000000_simulate_fake_gateway_payment_paid.sql).
+ * Regenerar PIX e seguro enquanto o pagamento ainda nao foi confirmado nem
+ * cancelado -- inclusive apos expiracao local. `start_order_payment_pix`
+ * reabre itens expirados para reserved e persiste uma cobranca nova (a
+ * antiga e cancelada best-effort no gateway da mesma conta).
  */
 export function canRegeneratePix(paymentStatus: string | null | undefined): boolean {
-  return normalizePaymentStatus(paymentStatus) === "pending";
+  const status = normalizePaymentStatus(paymentStatus);
+  return status === "pending" || status === "expired";
+}
+
+/** Reutiliza a cobranca atual so se ainda estiver pending, com PIX e prazo futuro. */
+export function isReusableLivePix(payment: {
+  payment_status?: string | null;
+  pix_code?: string | null;
+  expires_at?: string | null;
+  now?: Date;
+}): boolean {
+  if (normalizePaymentStatus(payment.payment_status) !== "pending") return false;
+  if (!String(payment.pix_code ?? "").trim()) return false;
+  if (!payment.expires_at) return false;
+  const expiresAt = new Date(payment.expires_at).getTime();
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt > (payment.now ?? new Date()).getTime();
 }
 
 export function formatPixCountdown(totalSeconds: number): string {

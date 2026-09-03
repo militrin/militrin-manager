@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getPaymentGatewayProviderByName } from "@/lib/payments/get-gateway-provider";
+import { canUseCurrentGatewayForCharge, getPaymentGatewayProviderByName } from "@/lib/payments/get-gateway-provider";
 
 /**
  * Chamada logo apos `apply_cart_coupon` (ou qualquer mutacao de carrinho que
@@ -30,6 +30,20 @@ export async function cancelPendingExternalCharge(supabase: SupabaseClient, orde
     | null;
 
   if (!pending?.provider || !pending.provider_payment_id) return;
+
+  const { data: paymentRow } = await supabase
+    .from("payments")
+    .select("gateway_account_key")
+    .eq("id", pending.payment_id)
+    .maybeSingle();
+
+  if (!canUseCurrentGatewayForCharge(paymentRow?.gateway_account_key ? String(paymentRow.gateway_account_key) : null)) {
+    console.warn("[payments] skip_cancel_foreign_or_legacy_account", {
+      orderId,
+      provider: pending.provider,
+    });
+    return;
+  }
 
   try {
     const gateway = getPaymentGatewayProviderByName(pending.provider, pending.organization_id);

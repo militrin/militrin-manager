@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { hasPermission } from "@/lib/admin/permissions";
+import { generateQrPngBase64 } from "@/lib/qr/generate-qr-data-url";
 import { orderDisplayReference } from "@/lib/display-reference";
 
 function isUuid(value: string) {
@@ -25,7 +26,7 @@ function escapeXml(value: string) {
 // dentro do MESMO pedido do ingresso -- dominio DIFERENTE de store_orders/
 // store_order_items, que ja tem sua propria rota em
 // /api/loja/pedidos/[storeOrderId]/itens/[itemId]/qrcode). Mesma composicao
-// visual (SVG + QR via api.qrserver.com) e a MESMA regra de autorizacao ja
+// visual (SVG + QR local) e a MESMA regra de autorizacao ja
 // confirmada para a rota da loja: dono do pedido OU store.deliver OU
 // store.manage. Conteudo do QR e order_items.qr_token (20260916000000),
 // nunca order_number.
@@ -80,10 +81,12 @@ export async function GET(
   const variantText = variant ? ` — ${String(variant.name)}: ${String(variant.value)}` : "";
   const orderNumber = orderDisplayReference(order?.display_number, order?.order_number);
 
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(String(item.qr_token))}`;
-  const upstream = await fetch(qrUrl);
-  if (!upstream.ok) return new NextResponse("Não foi possível gerar o QR Code", { status: 502 });
-  const qrBase64 = Buffer.from(await upstream.arrayBuffer()).toString("base64");
+  let qrBase64: string;
+  try {
+    qrBase64 = await generateQrPngBase64(String(item.qr_token), 512);
+  } catch {
+    return new NextResponse("Não foi possível gerar o QR Code", { status: 500 });
+  }
 
   const width = 560;
   const qrSize = 320;

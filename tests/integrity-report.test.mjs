@@ -46,11 +46,13 @@ test('mapReportRow converte a linha crua da RPC para o contrato tipado', () => {
     code: 'DUPLICATE_ACTIVE_HOLDER', severity: 'critical', domain: 'titularidade',
     title: 'Titular duplicado', description: 'desc', event_id: 'evt-1', affected_count: 2,
     action_label: 'Abrir ingresso', action_href: '/ingressos/123', sample_entity_type: 'ticket', sample_entity_id: '123',
+    sample_metadata: null,
   });
   assert.deepEqual(mapped, {
     code: 'DUPLICATE_ACTIVE_HOLDER', severity: 'critical', domain: 'titularidade',
     title: 'Titular duplicado', description: 'desc', eventId: 'evt-1', affectedCount: 2,
     actionLabel: 'Abrir ingresso', actionHref: '/ingressos/123', sampleEntityType: 'ticket', sampleEntityId: '123',
+    sampleMetadata: null,
   });
 });
 

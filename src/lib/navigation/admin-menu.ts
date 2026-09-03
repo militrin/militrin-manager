@@ -120,7 +120,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         label: "Integridade",
         icon: ShieldAlert,
         href: "/painel/integridade",
-        permissionAny: ["integrity.view"],
+        permissionAny: ["integrity.view", "finance.confirm_payment"],
       },
       {
         label: "Público e recorrência",

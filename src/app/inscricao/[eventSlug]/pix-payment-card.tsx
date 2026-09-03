@@ -9,6 +9,12 @@ function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
 
+function formatPixDeadline(iso: string) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  return date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 export type PixPaymentCardProps = {
   amount: number;
   /** Status cru de payments.payment_status (ou equivalente) -- so esta funcao traduz. */
@@ -17,12 +23,16 @@ export type PixPaymentCardProps = {
   pixQrCode: string | null;
   /** Segundos restantes ate expires_at, ja calculados pelo chamador (relogio unico da tela). null = sem prazo aplicavel. */
   countdownSeconds: number | null;
+  /** ISO do prazo persistido (fonte unica: payments.expires_at / expirationDate Asaas). */
+  expiresAt?: string | null;
   /** true somente quando o provider efetivo (persistido no pagamento) e 'fake'. Nunca aparece com Asaas. */
   isFakePaymentProvider: boolean;
   isSimulating: boolean;
   onSimulatePayment: () => void;
   onRegeneratePix?: () => void;
   isRegeneratingPix?: boolean;
+  confirmedHref?: string;
+  confirmedLabel?: string;
 };
 
 /**
@@ -40,11 +50,14 @@ export function PixPaymentCard({
   pixCode,
   pixQrCode,
   countdownSeconds,
+  expiresAt,
   isFakePaymentProvider,
   isSimulating,
   onSimulatePayment,
   onRegeneratePix,
   isRegeneratingPix,
+  confirmedHref,
+  confirmedLabel,
 }: PixPaymentCardProps) {
   const [copied, setCopied] = useState(false);
 
@@ -71,7 +84,17 @@ export function PixPaymentCard({
       <div className="rounded-3xl border border-emerald-500/40 bg-emerald-950/30 p-6 text-center sm:p-8">
         <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" aria-hidden />
         <h3 className="mt-3 text-xl font-semibold text-emerald-100">Pagamento confirmado</h3>
-        <p className="mt-1 text-sm text-emerald-200/90">Seu ingresso foi emitido com sucesso.</p>
+        <p className="mt-1 text-sm text-emerald-200/90">
+          Seu pagamento foi confirmado. Os ingressos aparecem em Minha Conta assim que a emissão for concluída.
+        </p>
+        {confirmedHref ? (
+          <a
+            href={confirmedHref}
+            className="mt-4 inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
+          >
+            {confirmedLabel ?? 'Ver meus ingressos'}
+          </a>
+        ) : null}
       </div>
     );
   }
@@ -92,7 +115,10 @@ export function PixPaymentCard({
       <div className="rounded-3xl border border-amber-500/40 bg-amber-950/20 p-6 text-center sm:p-8">
         <Clock className="mx-auto h-12 w-12 text-amber-400" aria-hidden />
         <h3 className="mt-3 text-xl font-semibold text-amber-100">Pagamento expirado</h3>
-        <p className="mt-1 text-sm text-amber-200/90">O prazo para pagar este PIX terminou e a reserva não está mais garantida.</p>
+        <p className="mt-1 text-sm text-amber-200/90">
+          O prazo local deste PIX terminou e a reserva não está mais garantida. Se você já pagou, aguarde a
+          confirmação. Caso contrário, gere um novo pagamento — a cobrança anterior no banco pode ainda existir.
+        </p>
         {canRegenerate ? (
           <button
             type="button"
@@ -128,6 +154,16 @@ export function PixPaymentCard({
         {countdownSeconds !== null ? (
           <p className="mt-1 text-sm text-slate-400">
             Expira em <strong className="tabular-nums text-slate-200">{formatPixCountdown(countdownSeconds)}</strong>
+            {expiresAt ? (
+              <>
+                {' '}
+                · pague até <strong className="text-slate-200">{formatPixDeadline(expiresAt)}</strong>
+              </>
+            ) : null}
+          </p>
+        ) : expiresAt ? (
+          <p className="mt-1 text-sm text-slate-400">
+            Pague até <strong className="text-slate-200">{formatPixDeadline(expiresAt)}</strong>
           </p>
         ) : null}
       </div>
@@ -142,6 +178,18 @@ export function PixPaymentCard({
             unoptimized
             className="h-auto w-full"
           />
+        </div>
+      ) : onRegeneratePix ? (
+        <div className="mx-auto mt-5 flex w-full max-w-[260px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-700 bg-slate-900 p-5 text-center">
+          <QrCodeIcon className="h-10 w-10 text-slate-500" aria-hidden />
+          <button
+            type="button"
+            onClick={onRegeneratePix}
+            disabled={isRegeneratingPix}
+            className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950 disabled:opacity-50"
+          >
+            {isRegeneratingPix ? 'Gerando PIX...' : 'Gerar pagamento PIX'}
+          </button>
         </div>
       ) : (
         <div className="mx-auto mt-5 flex h-52 w-full max-w-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-700 bg-slate-900 text-slate-500">

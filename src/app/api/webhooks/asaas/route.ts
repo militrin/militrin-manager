@@ -1,20 +1,16 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { getPaymentGatewayProvider } from "@/lib/payments/get-gateway-provider";
+import { sanitizePaymentGatewayEventPayload } from "@/lib/payments/sanitize-gateway-event-payload";
 
 /**
- * Webhook Asaas -- Fase 1 (fundacao). NAO emite ticket a partir de nenhum
- * campo arbitrario do payload: so aceita o evento depois de validar o
- * token (`verifyWebhook`), gravar/deduplicar em `payment_gateway_events`
- * (idempotencia -- o mesmo evento pode chegar 2x, 10x, ou em requests
- * concorrentes, comportamento "at-least-once" documentado pela Asaas) e so
- * entao localizar o pagamento interno correspondente via
- * `apply_gateway_payment_status`, que e quem decide (com o payment travado
- * por `FOR UPDATE`) se algo muda em order/order_items/tickets.
+ * Webhook Asaas. NAO emite ticket a partir de nenhum campo arbitrario do
+ * payload: valida o token (`verifyWebhook`), grava/deduplica em
+ * `payment_gateway_events` e so entao aplica via `apply_gateway_payment_status`.
  *
- * Esta rota nao esta ligada ao checkout publico: nenhum botao gera cobranca
- * Asaas ainda (Fase 2). Ela existe para que a infraestrutura de recebimento
- * possa ser testada em sandbox de forma isolada.
+ * URL publica: POST /api/webhooks/asaas
+ * Autenticacao: header `asaas-access-token` (token atual ou o anterior,
+ * `ASAAS_WEBHOOK_TOKEN_PREVIOUS`, durante troca de conta).
  */
 export async function POST(request: Request) {
   let provider;
@@ -51,7 +47,7 @@ export async function POST(request: Request) {
     p_external_event_id: event.externalEventId,
     p_event_type: event.eventType,
     p_provider_payment_id: event.providerPaymentId,
-    p_payload: event.rawPayload as object,
+    p_payload: sanitizePaymentGatewayEventPayload(event.rawPayload),
   });
 
   if (recordError) {
@@ -76,9 +72,19 @@ export async function POST(request: Request) {
   }
 
   if (!claimed) {
-    // Duplicata (mesmo evento reenviado) ou concorrencia (outra requisicao
-    // ja esta processando este mesmo evento agora): nunca reprocessar aqui.
-    return NextResponse.json({ ok: true, deduped: true });
+    const { data: existing } = await supabase
+      .from("payment_gateway_events")
+      .select("processing_status")
+      .eq("id", eventId)
+      .maybeSingle();
+    const status = String(existing?.processing_status ?? "");
+    if (status === "processed" || status === "ignored") {
+      return NextResponse.json({ ok: true, deduped: true });
+    }
+    // processing recente (outro worker vivo) ou abandonado ainda dentro do
+    // lease: 503 faz o Asaas retentar. 200 aqui faria o gateway desistir
+    // antes do reclaim de 3 minutos.
+    return NextResponse.json({ error: "Evento em processamento." }, { status: 503 });
   }
 
   if (!event.providerPaymentId || !event.status) {
@@ -100,11 +106,41 @@ export async function POST(request: Request) {
 
     if (applyError) {
       const isUnknownPayment = applyError.message === "PAYMENT_NOT_FOUND";
+
+      // Pagamento confirmado pelo gateway sem correlação local: cobrança órfã paga.
+      // NÃO tratamos como sucesso silencioso — classificamos como divergência
+      // financeira para que o administrador possa investigar.
+      // NÃO emitimos ingresso automaticamente.
+      const isFinancialDivergence =
+        isUnknownPayment &&
+        (event.status === "paid" || event.status === "processing");
+
       await supabase.rpc("mark_payment_gateway_event_processed", {
         p_event_id: eventId,
-        p_status: isUnknownPayment ? "ignored" : "failed",
-        p_error: applyError.message,
+        p_status: isFinancialDivergence
+          ? "financial_divergence"
+          : isUnknownPayment
+            ? "ignored"
+            : "failed",
+        p_error: isFinancialDivergence
+          ? `ORPHAN_CHARGE: pagamento ${event.providerPaymentId ?? "desconhecido"} confirmado pelo gateway mas sem payment local correspondente. Requer investigação.`
+          : applyError.message,
       });
+
+      if (isFinancialDivergence) {
+        console.error(
+          "[webhook:asaas] financial_divergence",
+          {
+            provider_payment_id: event.providerPaymentId,
+            event_type: event.eventType,
+            internal_status: event.status,
+            event_id: eventId,
+          },
+        );
+        // Retornamos 200 para que o Asaas não retente infinitamente uma
+        // divergência que já está registrada e visível ao administrador.
+        return NextResponse.json({ ok: true, financial_divergence: true });
+      }
 
       if (isUnknownPayment) {
         console.warn("[webhook:asaas] payment_not_found", event.providerPaymentId);

@@ -4,8 +4,9 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { isValidCpf, removeCpfMask } from '@/lib/validation/registration';
 import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { cancelPendingExternalCharge } from '@/lib/payments/cancel-stale-charges';
-import { getPaymentGatewayProvider, getPaymentGatewayProviderName } from '@/lib/payments/get-gateway-provider';
+import { canUseCurrentGatewayForCharge, getPaymentGatewayAccountKey, getPaymentGatewayProvider, getPaymentGatewayProviderByName, getPaymentGatewayProviderName } from '@/lib/payments/get-gateway-provider';
 import { todayAsPixDueDate } from '@/lib/payments/pix-due-date';
+import { isReusableLivePix } from '@/lib/checkout/pix-payment-status';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { calculateAgeAtEventDate, formatDateBR, isMinimumAgeSatisfied } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
@@ -802,6 +803,18 @@ export async function getPublicOrderSnapshotAction(orderId: string) {
   return getUnifiedOrderSnapshot(supabase, orderId);
 }
 
+/** Status minimo para polling do comprador: sem PIX, CPF ou IDs de gateway. */
+export async function getPublicOrderPaymentStatusAction(orderId: string) {
+  const snapshot = await getPublicOrderSnapshotAction(orderId);
+  if (!snapshot.success) return snapshot;
+  return {
+    success: true as const,
+    payment_status: String(snapshot.snapshot.payment?.payment_status ?? 'pending'),
+    order_status: String(snapshot.snapshot.order_status ?? 'pending'),
+    expires_at: snapshot.snapshot.payment?.expires_at ? String(snapshot.snapshot.payment.expires_at) : null,
+  };
+}
+
 function relationName(value: unknown): string | null {
   if (Array.isArray(value)) {
     const first = value[0] as Record<string, unknown> | undefined;
@@ -893,12 +906,6 @@ function summarizeInventoryAdjustments(items: RpcMultiOrderItemPayload[]) {
     const [shirt_type, shirt_size] = key.split('::');
     return { shirt_type, shirt_size, requested_quantity };
   });
-}
-
-function maskCpfForLog(cpf: string) {
-  const normalized = cpf.replace(/\D/g, '');
-  if (normalized.length <= 3) return normalized;
-  return `${'*'.repeat(Math.max(0, normalized.length - 3))}${normalized.slice(-3)}`;
 }
 
 function translateRegistrationErrorMessage(message: string) {
@@ -1835,35 +1842,15 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
   };
 
   console.info('[checkout:create-order] pre-create', {
-    participant: {
-      full_name: buyerFullName,
-      cpf_masked: maskCpfForLog(cpf),
-      birth_date: birthDateIso,
-      gender: buyerGender,
-      phone: buyerPhone,
-      email: normalizedEmail,
-      city: buyerCity,
-    },
-    order: {
-      event_id: createOrderRpcPayload.p_event_id,
-      ticket_category_id: createOrderRpcPayload.p_ticket_category_id,
-      quantity,
-      payment_method: createOrderRpcPayload.p_payment_method,
-      payment_method_requested: normalizedPaymentMethod,
-      coupon_code: createOrderRpcPayload.p_coupon_code,
-      client_request_id: createOrderRpcPayload.p_client_request_id,
-      notes: createOrderRpcPayload.p_notes,
-    },
-    order_items: rpcItems,
-    reservations: {
-      expected_item_reservations: quantity,
-      assign_first_to_buyer: createOrderRpcPayload.p_assign_first_to_buyer,
-    },
+    event_id: createOrderRpcPayload.p_event_id,
+    ticket_category_id: createOrderRpcPayload.p_ticket_category_id,
+    quantity,
+    payment_method: createOrderRpcPayload.p_payment_method,
+    has_coupon: Boolean(createOrderRpcPayload.p_coupon_code),
+    client_request_id: createOrderRpcPayload.p_client_request_id,
+    item_count: rpcItems.length,
+    assign_first_to_buyer: createOrderRpcPayload.p_assign_first_to_buyer,
     inventory_adjustments: summarizeInventoryAdjustments(rpcItems),
-    rpc_payload: {
-      rpc_name: 'create_multi_ticket_order_checkout',
-      payload: createOrderRpcPayload,
-    },
   });
 
   const { data, error } = await supabase.rpc('create_multi_ticket_order_checkout', createOrderRpcPayload);
@@ -1882,13 +1869,6 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
     order_id: String(row.order_id),
     payment_id: row.payment_id ? String(row.payment_id) : null,
     item_count: Number(row.item_count ?? 0),
-  });
-
-  console.info('[checkout:create-order] rpc-payload', {
-    rpc_name: 'get_order_checkout_snapshot',
-    payload: {
-      p_order_id: String(row.order_id),
-    },
   });
 
   const snapshot = await getOrderSnapshotByOrderId(supabase, String(row.order_id));
@@ -1915,27 +1895,82 @@ export async function generatePublicOrderPixAction(orderId: string) {
     return { success: false as const, message: 'Pagamento nao necessario para este pedido.' };
   }
 
-  if (payment.expires_at && payment.payment_method === 'pix') {
-    if (payment.pix_code) {
-      return {
-        success: true as const,
-        payment,
-      };
+  if (isReusableLivePix(payment)) {
+    return { success: true as const, payment };
+  }
+
+  const { data: claimData, error: claimError } = await supabase.rpc('claim_order_pix_generation', {
+    p_order_id: orderId,
+  });
+
+  if (claimError) {
+    if (String(claimError.message ?? '').includes('PIX_GENERATION_IN_PROGRESS')) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const retry = await getOrderSnapshotByOrderId(supabase, orderId);
+      if (retry.success && (retry.snapshot.payment.payment_status === 'paid' || isReusableLivePix(retry.snapshot.payment))) {
+        return { success: true as const, payment: retry.snapshot.payment };
+      }
+      return { success: false as const, message: 'Seu PIX já está sendo gerado. Aguarde um instante e atualize a página.' };
+    }
+    return { success: false as const, message: claimError.message };
+  }
+
+  const claim = (Array.isArray(claimData) ? claimData[0] : claimData) as Record<string, unknown> | null;
+  const claimAction = String(claim?.action ?? '');
+  if (claimAction === 'paid' || claimAction === 'reuse') {
+    const latest = await getOrderSnapshotByOrderId(supabase, orderId);
+    if (!latest.success) return latest;
+    return { success: true as const, payment: latest.snapshot.payment };
+  }
+
+  const previousGatewayPaymentId = claim?.previous_gateway_payment_id ? String(claim.previous_gateway_payment_id) : '';
+  const previousProvider = claim?.previous_provider ? String(claim.previous_provider) : '';
+  const previousAccountKey = claim?.previous_gateway_account_key ? String(claim.previous_gateway_account_key) : '';
+  const organizationId = String(claim?.organization_id ?? '');
+
+  if (previousGatewayPaymentId && previousProvider && previousProvider !== 'fake') {
+    if (canUseCurrentGatewayForCharge(previousAccountKey || null)) {
+      try {
+        const previousGateway = getPaymentGatewayProviderByName(previousProvider, organizationId);
+        await previousGateway.cancelPayment({
+          organizationId,
+          providerPaymentId: previousGatewayPaymentId,
+          reason: 'Nova cobranca PIX gerada para o mesmo pedido.',
+        });
+      } catch (cancelError) {
+        console.error('[checkout:pix] cancel_previous_charge_failed', {
+          order_id: orderId,
+          provider: previousProvider,
+          error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+        });
+      }
+    } else {
+      console.warn('[checkout:pix] skip_cancel_foreign_or_legacy_account', {
+        order_id: orderId,
+        provider: previousProvider,
+      });
     }
   }
 
   const gateway = getPaymentGatewayProvider();
 
   const { data: payerRows, error: payerError } = await supabase.rpc('get_order_payer_details', { p_order_id: orderId });
-  if (payerError) return { success: false as const, message: payerError.message };
+  if (payerError) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: payerError.message };
+  }
   const payerRow = (Array.isArray(payerRows) ? payerRows[0] : payerRows) as Record<string, unknown> | null;
-  if (!payerRow?.payment_id) return { success: false as const, message: 'Pagamento nao encontrado para o pedido.' };
+  if (!payerRow?.payment_id) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: 'Pagamento nao encontrado para o pedido.' };
+  }
 
   const payerFullName = payerRow.payer_full_name ? String(payerRow.payer_full_name) : '';
   const payerEmail = payerRow.payer_email ? String(payerRow.payer_email) : '';
   const payerCpf = payerRow.payer_cpf ? String(payerRow.payer_cpf) : '';
 
   if (gateway.name === 'asaas' && (!payerFullName || !payerEmail || !payerCpf)) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
     return {
       success: false as const,
       message: 'Complete seu nome, e-mail e CPF em Meus dados antes de gerar o PIX.',
@@ -1945,7 +1980,7 @@ export async function generatePublicOrderPixAction(orderId: string) {
   let payload;
   try {
     payload = await gateway.createPixPayment({
-      organizationId: String(payerRow.organization_id ?? ''),
+      organizationId: String(payerRow.organization_id ?? organizationId),
       orderId,
       paymentId: String(payerRow.payment_id),
       amount: payment.final_amount,
@@ -1959,6 +1994,7 @@ export async function generatePublicOrderPixAction(orderId: string) {
       description: snapshotResult.snapshot.order_number ? `Pedido ${snapshotResult.snapshot.order_number}` : undefined,
     });
   } catch (gatewayError) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
     console.error('[checkout:pix] gateway_create_pix_failed', {
       order_id: orderId,
       provider: gateway.name,
@@ -1972,14 +2008,53 @@ export async function generatePublicOrderPixAction(orderId: string) {
     p_pix_code: payload.pixCode,
     p_pix_qrcode: payload.pixQrCodeImage,
     p_gateway_payment_id: payload.providerPaymentId,
-    p_expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    p_expires_at: payload.expiresAt,
     p_provider: gateway.name,
+    p_gateway_account_key: getPaymentGatewayAccountKey(),
   });
 
-  if (error) return { success: false as const, message: error.message };
+  if (error) {
+    if (gateway.name !== 'fake' && payload.providerPaymentId) {
+      try {
+        await gateway.cancelPayment({
+          organizationId: String(payerRow.organization_id ?? organizationId),
+          providerPaymentId: payload.providerPaymentId,
+          reason: 'Falha ao persistir cobranca PIX localmente.',
+        });
+      } catch (orphanCancelError) {
+        console.error('[checkout:pix] orphan_charge_cancel_failed', {
+          order_id: orderId,
+          provider: gateway.name,
+          provider_payment_id: payload.providerPaymentId,
+          error: orphanCancelError instanceof Error ? orphanCancelError.message : String(orphanCancelError),
+        });
+      }
+    }
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: error.message };
+  }
 
   const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
-  if (!row) return { success: false as const, message: 'Falha ao gerar PIX.' };
+  if (!row) {
+    if (gateway.name !== 'fake' && payload.providerPaymentId) {
+      try {
+        await gateway.cancelPayment({
+          organizationId: String(payerRow.organization_id ?? organizationId),
+          providerPaymentId: payload.providerPaymentId,
+          reason: 'Falha ao persistir cobranca PIX localmente.',
+        });
+      } catch (orphanCancelError) {
+        console.error('[checkout:pix] orphan_charge_cancel_failed', {
+          order_id: orderId,
+          provider: gateway.name,
+          provider_payment_id: payload.providerPaymentId,
+          error: orphanCancelError instanceof Error ? orphanCancelError.message : String(orphanCancelError),
+        });
+      }
+    }
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: 'Falha ao gerar PIX.' };
+  }
 
   return {
     success: true as const,

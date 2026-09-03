@@ -51,9 +51,9 @@ test('status desconhecido cai em erro (nunca finge que esta tudo bem)', () => {
   assert.equal(resolvePixDisplayStatus('algo-novo-que-a-asaas-inventou', 100), 'error');
 });
 
-test('canRegeneratePix so permite gerar novo PIX quando o banco ainda diz pending -- nunca sobre expired/cancelled/paid confirmados', () => {
+test('canRegeneratePix permite gerar novo PIX enquanto pending ou expired, nunca sobre cancelled/paid', () => {
   assert.equal(canRegeneratePix('pending'), true);
-  assert.equal(canRegeneratePix('expired'), false);
+  assert.equal(canRegeneratePix('expired'), true);
   assert.equal(canRegeneratePix('cancelled'), false);
   assert.equal(canRegeneratePix('paid'), false);
 });

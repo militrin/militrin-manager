@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { resendTicketEmailAction } from '@/app/minha-conta/actions';
 import { generatePublicOrderPixAction } from '@/app/inscricao/actions';
+import { PendingPixPaymentWatcher } from './pending-pix-payment-watcher';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import { PixCodeBox } from '@/components/public/PixCodeBox';
 import { PaymentReceiptPdfButton } from '@/components/public/PaymentReceiptPdfButton';
@@ -166,6 +167,7 @@ export default async function OrderDetailPage({
 
   return (
     <section className="space-y-4">
+      <PendingPixPaymentWatcher orderId={orderId} paymentStatus={normalizedPaymentStatus} />
       <MilitrinSection eyebrow="Minha compra" title="Detalhe do pedido" description={`Pedido ${orderReference}`}>
         {cannotEdit ? (
           <div className="mb-4 rounded-2xl border border-amber-600/40 bg-amber-950/20 p-3 text-sm text-amber-100">

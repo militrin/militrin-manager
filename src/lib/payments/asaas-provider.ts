@@ -9,7 +9,7 @@ import type {
   RefundPaymentInput,
 } from "@/lib/payments/provider";
 import { mapAsaasPaymentStatus } from "@/lib/payments/asaas-status-map";
-import { getHeader } from "@/lib/payments/http-headers";
+import { verifyAsaasWebhookToken } from "@/lib/payments/asaas-webhook-token";
 
 export type AsaasEnvironment = "sandbox" | "production";
 
@@ -30,33 +30,38 @@ type AsaasPayment = {
 };
 
 /**
- * Cliente do gateway Asaas. Skeleton real desta fase: autentica, cria/consulta
- * cliente, cria cobranca PIX, consulta status, cancela e faz parsing/validacao
- * de webhook. NAO esta conectado ao checkout publico ainda -- so e chamado a
- * partir do proprio adapter/testes ate a Fase 2 decidir religar o botao de
- * checkout.
+ * Cliente do gateway Asaas usado pelo checkout canonico
+ * (`generatePublicOrderPixAction` → `createPixPayment`) e pelo webhook
+ * `POST /api/webhooks/asaas`.
  *
- * Referencias oficiais consultadas nesta implementacao (docs.asaas.com):
+ * Referencias oficiais (docs.asaas.com):
  * - Autenticacao: header `access_token` (nao Bearer); sandbox e producao usam
- *   bases e prefixos de chave diferentes.
+ *   bases diferentes (`ASAAS_ENVIRONMENT=sandbox|production`).
  * - Cobranca: POST /v3/payments com {customer, billingType: 'PIX', value, dueDate};
- *   QR Code em GET /v3/payments/{id}/pixQrCode.
- * - Webhook: header `asaas-access-token` configurado nas configuracoes do
- *   Webhook; entrega e "at-least-once" (o mesmo evento pode chegar mais de
- *   uma vez) -- deduplicar pelo campo `id` do payload.
+ *   QR Code em GET /v3/payments/{id}/pixQrCode (`expirationDate` e a fonte do prazo).
+ * - Webhook: header `asaas-access-token`; entrega at-least-once -- deduplicar
+ *   pelo campo `id` do payload. `ASAAS_WEBHOOK_TOKEN_PREVIOUS` aceita eventos
+ *   da conta anterior durante a troca de conta.
  */
 export class AsaasPaymentProvider implements PaymentGatewayProvider {
   readonly name = "asaas" as const;
 
   private readonly apiKey: string;
   private readonly webhookToken: string;
+  private readonly previousWebhookToken: string | null;
   private readonly baseUrl: string;
 
-  constructor(options: { apiKey: string; webhookToken: string; environment: AsaasEnvironment }) {
+  constructor(options: {
+    apiKey: string;
+    webhookToken: string;
+    environment: AsaasEnvironment;
+    previousWebhookToken?: string | null;
+  }) {
     if (!options.apiKey) throw new Error("AsaasPaymentProvider requer ASAAS_API_KEY configurada.");
     if (!options.webhookToken) throw new Error("AsaasPaymentProvider requer ASAAS_WEBHOOK_TOKEN configurada.");
     this.apiKey = options.apiKey;
     this.webhookToken = options.webhookToken;
+    this.previousWebhookToken = options.previousWebhookToken?.trim() || null;
     this.baseUrl = BASE_URLS[options.environment];
   }
 
@@ -163,9 +168,11 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
 
   verifyWebhook(input: { headers: Headers | Record<string, string | string[] | undefined>; rawBody: string }): boolean {
     void input.rawBody;
-    const token = getHeader(input.headers, "asaas-access-token");
-    if (!token) return false;
-    return timingSafeEqualString(token, this.webhookToken);
+    return verifyAsaasWebhookToken({
+      headers: input.headers,
+      webhookToken: this.webhookToken,
+      previousWebhookToken: this.previousWebhookToken,
+    });
   }
 
   parseWebhook(input: { rawBody: string }): ParsedWebhookEvent {
@@ -183,13 +190,4 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       rawPayload: payload,
     };
   }
-}
-
-function timingSafeEqualString(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return mismatch === 0;
 }

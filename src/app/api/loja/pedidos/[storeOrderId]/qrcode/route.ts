@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { generateQrPngBase64 } from "@/lib/qr/generate-qr-data-url";
 import { orderDisplayReference } from "@/lib/display-reference";
 
 function isUuid(value: string) {
@@ -52,10 +53,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ stor
   });
   const orderReference = orderDisplayReference(order.display_number, order.order_number);
 
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(order.order_number)}`;
-  const upstream = await fetch(qrUrl);
-  if (!upstream.ok) return new NextResponse("Não foi possível gerar o QR Code", { status: 502 });
-  const qrBase64 = Buffer.from(await upstream.arrayBuffer()).toString("base64");
+  let qrBase64: string;
+  try {
+    qrBase64 = await generateQrPngBase64(String(order.order_number), 512);
+  } catch {
+    return new NextResponse("Não foi possível gerar o QR Code", { status: 500 });
+  }
 
   const width = 640;
   const qrSize = 320;

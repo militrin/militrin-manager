@@ -2,17 +2,18 @@ import type { AsaasEnvironment } from "@/lib/payments/asaas-provider";
 import { AsaasPaymentProvider } from "@/lib/payments/asaas-provider";
 import { FakeGatewayProvider } from "@/lib/payments/fake-gateway-provider";
 import type { PaymentGatewayProvider, PaymentProviderName } from "@/lib/payments/provider";
+export { canUseCurrentGatewayForCharge, getPaymentGatewayAccountKey } from "@/lib/payments/gateway-account-key";
 
 /**
- * Selecao do provider canonico (Fase 1 Asaas). Independente da selecao
- * legada `MILITRIN_PAYMENT_PROVIDER` (src/lib/payments/get-provider.ts), que
- * continua servindo o checkout publico atual sem nenhuma alteracao.
+ * Selecao do provider canonico do checkout (`PAYMENT_PROVIDER=asaas|fake`).
+ * Independente da selecao legada `MILITRIN_PAYMENT_PROVIDER`.
  *
- * `organizationId` e recebido mas ainda nao usado para resolver credenciais
- * por organizacao -- nesta fase (MVP de organizacao unica) a credencial e
- * global via variavel de ambiente server-side. O parametro existe para que a
- * Fase 2 (credencial por organizacao) nao exija mudar a assinatura desta
- * funcao em nenhum call site.
+ * Credenciais sao globais via env server-side (nunca NEXT_PUBLIC_). Trocar a
+ * conta Asaas e trocar as env vars, sem alterar codigo. `ASAAS_ACCOUNT_KEY`
+ * e um rotulo opaco gravado em `payments.gateway_account_key` para saber
+ * qual configuracao criou a cobranca -- nunca e a API key.
+ *
+ * `organizationId` ainda nao resolve credencial por organizacao.
  */
 export function getPaymentGatewayProviderName(): PaymentProviderName {
   const raw = String(process.env.PAYMENT_PROVIDER ?? "fake").trim().toLowerCase();
@@ -28,6 +29,7 @@ export function getPaymentGatewayProvider(
   if (providerName === "asaas") {
     const apiKey = String(process.env.ASAAS_API_KEY ?? "").trim();
     const webhookToken = String(process.env.ASAAS_WEBHOOK_TOKEN ?? "").trim();
+    const previousWebhookToken = String(process.env.ASAAS_WEBHOOK_TOKEN_PREVIOUS ?? "").trim() || null;
     const environment = (String(process.env.ASAAS_ENVIRONMENT ?? "sandbox").trim().toLowerCase() === "production"
       ? "production"
       : "sandbox") satisfies AsaasEnvironment;
@@ -38,7 +40,7 @@ export function getPaymentGatewayProvider(
       );
     }
 
-    return new AsaasPaymentProvider({ apiKey, webhookToken, environment });
+    return new AsaasPaymentProvider({ apiKey, webhookToken, previousWebhookToken, environment });
   }
 
   return new FakeGatewayProvider({ webhookToken: process.env.ASAAS_WEBHOOK_TOKEN ?? null });

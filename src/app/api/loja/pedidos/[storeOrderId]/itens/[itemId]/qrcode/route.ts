@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasPermission } from "@/lib/admin/permissions";
+import { generateQrPngBase64 } from "@/lib/qr/generate-qr-data-url";
 import { orderDisplayReference } from "@/lib/display-reference";
 
 function isUuid(value: string) {
@@ -22,7 +23,7 @@ function escapeXml(value: string) {
 
 // QR por ITEM de pedido de loja (nao por pedido inteiro) -- usado pra
 // impressao antes do evento e leitura pelo Modo Turbo (Fluxo B). Reaproveita
-// a mesma composicao visual (SVG + QR embutido via api.qrserver.com) da rota
+// visual (SVG + QR local) e a MESMA regra de autorizacao ja
 // de QR por pedido em /api/loja/pedidos/[storeOrderId]/qrcode; aqui o
 // conteudo do QR e store_order_items.qr_token (migration 20260860000000),
 // nao mais order_number, porque o Turbo precisa resolver um item individual
@@ -71,10 +72,12 @@ export async function GET(
   const variantText = variant ? ` — ${String(variant.name)}: ${String(variant.value)}` : "";
   const orderNumber = orderDisplayReference(order?.display_number, order?.order_number);
 
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(String(item.qr_token))}`;
-  const upstream = await fetch(qrUrl);
-  if (!upstream.ok) return new NextResponse("Não foi possível gerar o QR Code", { status: 502 });
-  const qrBase64 = Buffer.from(await upstream.arrayBuffer()).toString("base64");
+  let qrBase64: string;
+  try {
+    qrBase64 = await generateQrPngBase64(String(item.qr_token), 512);
+  } catch {
+    return new NextResponse("Não foi possível gerar o QR Code", { status: 500 });
+  }
 
   const width = 560;
   const qrSize = 320;

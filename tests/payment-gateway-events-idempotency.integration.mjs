@@ -180,3 +180,64 @@ test('organization divergente: apply_gateway_payment_status resolve o pagamento 
   const row = Array.isArray(result) ? result[0] : result;
   assert.equal(row.organization_id, orgTwo.id, 'so a organizacao dona da cobranca e afetada');
 });
+
+test('processing recente nao e reclaimado; processing abandonado e reclaimado uma vez', async () => {
+  const externalEventId = `evt-${fx.suffix}-lease`;
+  const recorded = await fx.must(fx.service.rpc('record_payment_gateway_event', {
+    p_provider: 'asaas', p_external_event_id: externalEventId, p_event_type: 'PAYMENT_CONFIRMED',
+    p_provider_payment_id: fx.payment.gateway_payment_id, p_payload: { id: externalEventId },
+  }), 'record lease');
+  const eventId = (Array.isArray(recorded) ? recorded[0] : recorded).id;
+
+  const first = await fx.must(fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId }), 'claim recente');
+  assert.equal(first, true);
+  const second = await fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId });
+  assert.equal(second.data, false, 'processing recente nao pode ser roubado');
+
+  await fx.must(fx.service.from('payment_gateway_events').update({
+    processing_started_at: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+  }).eq('id', eventId), 'envelhece lease');
+
+  const [reclaimA, reclaimB] = await Promise.all([
+    fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId }),
+    fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId }),
+  ]);
+  assert.equal(reclaimA.error, null, reclaimA.error?.message);
+  assert.equal(reclaimB.error, null, reclaimB.error?.message);
+  assert.equal([reclaimA.data, reclaimB.data].filter((value) => value === true).length, 1, 'so um worker reclaima o evento abandonado');
+});
+
+test('failed continua retryable; processed nunca reprocessa', async () => {
+  const externalEventId = `evt-${fx.suffix}-failed-retry`;
+  const recorded = await fx.must(fx.service.rpc('record_payment_gateway_event', {
+    p_provider: 'asaas', p_external_event_id: externalEventId, p_event_type: 'PAYMENT_CONFIRMED',
+    p_provider_payment_id: fx.payment.gateway_payment_id, p_payload: { id: externalEventId },
+  }), 'record failed');
+  const eventId = (Array.isArray(recorded) ? recorded[0] : recorded).id;
+  await fx.must(fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId }), 'claim failed');
+  await fx.must(fx.service.rpc('mark_payment_gateway_event_processed', { p_event_id: eventId, p_status: 'failed', p_error: 'boom' }), 'mark failed');
+
+  const retry = await fx.must(fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId }), 'retry failed');
+  assert.equal(retry, true);
+  await fx.must(fx.service.rpc('mark_payment_gateway_event_processed', { p_event_id: eventId, p_status: 'processed' }), 'mark processed');
+  const afterProcessed = await fx.service.rpc('claim_payment_gateway_event_for_processing', { p_event_id: eventId });
+  assert.equal(afterProcessed.data, false);
+});
+
+test('evento pending depois de paid nao regride o pagamento', async () => {
+  const gatewayPaymentId = `order-pending-${fx.suffix}`;
+  const payment = await fx.must(fx.service.from('payments').insert({
+    organization_id: fx.org.id, event_id: fx.event.id, amount: 80, final_amount: 80, payment_status: 'pending',
+    payment_method: 'pix', provider: 'asaas', gateway_payment_id: gatewayPaymentId,
+  }).select('id').single(), 'payment pending-after-paid');
+
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'RECEIVED', p_internal_status: 'paid',
+  }), 'apply paid');
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'PENDING', p_internal_status: 'pending',
+  }), 'apply pending tardio');
+
+  const { data: after } = await fx.service.from('payments').select('payment_status').eq('id', payment.id).single();
+  assert.equal(after.payment_status, 'paid');
+});

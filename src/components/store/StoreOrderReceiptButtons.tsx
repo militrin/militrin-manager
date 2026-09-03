@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { applyReportPage, finalizeReportPages, REPORT_THEME } from '@/lib/reports/report-theme';
 
 type StoreOrderReceiptItem = {
@@ -16,10 +17,6 @@ type StoreOrderReceiptButtonsProps = {
   items: StoreOrderReceiptItem[];
   className?: string;
 };
-
-function makeQrUrl(value: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(value)}`;
-}
 
 async function fetchAsDataUrl(url: string, errorMessage: string) {
   const response = await fetch(url);
@@ -92,20 +89,23 @@ export function StoreOrderReceiptButtons({ storeOrderId, orderNumber, eventName,
     setErrorMessage(null);
     setLoadingPdf(true);
     try {
-      const [{ jsPDF }] = await Promise.all([import('jspdf')]);
-      const qrDataUrl = await fetchAsDataUrl(makeQrUrl(orderNumber), 'Falha ao gerar QR Code.');
+      const [{ jsPDF }, qrDataUrl] = await Promise.all([
+        import('jspdf'),
+        generateQrDataUrl(orderNumber, 320),
+      ]);
 
       const doc = new jsPDF({ unit: 'pt', format: 'a4' });
       const generatedAt = new Date().toISOString();
       const { colors } = REPORT_THEME;
+      const rgb = (value: readonly [number, number, number]) => [value[0], value[1], value[2]] as [number, number, number];
 
       applyReportPage(doc, 'Comprovante de retirada — Loja');
 
-      doc.setFillColor(...colors.card);
+      doc.setFillColor(...rgb(colors.card));
       doc.roundedRect(40, 56, 515, 58, 8, 8, 'F');
-      doc.setDrawColor(...colors.border);
+      doc.setDrawColor(...rgb(colors.border));
       doc.roundedRect(40, 56, 515, 58, 8, 8, 'S');
-      doc.setTextColor(...colors.text);
+      doc.setTextColor(...rgb(colors.text));
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(16);
       doc.text(eventName || 'Evento', 56, 89);
@@ -124,13 +124,13 @@ export function StoreOrderReceiptButtons({ storeOrderId, orderNumber, eventName,
         doc.text(line, 56, 222 + index * 20);
       });
 
-      doc.setFillColor(...colors.white);
-      doc.setDrawColor(...colors.border);
+      doc.setFillColor(...rgb(colors.white));
+      doc.setDrawColor(...rgb(colors.border));
       doc.roundedRect(56, 330, 300, 300, 12, 12, 'FD');
       doc.addImage(qrDataUrl, 'PNG', 74, 348, 264, 264);
 
       doc.setFontSize(10);
-      doc.setTextColor(...colors.muted);
+      doc.setTextColor(...rgb(colors.muted));
       doc.text('Apresente este comprovante na retirada dos itens no evento.', 56, 650);
       finalizeReportPages(doc, generatedAt, 'Militrin · Loja');
       doc.save(`pedido-${orderNumber}.pdf`);

@@ -101,9 +101,9 @@ async function buildFixture() {
     return { orderId: row.order_id };
   }
 
-  async function startAsaasPix(orderId, expiresAt) {
+  async function startAsaasPix(buyer, orderId, expiresAt) {
     const gatewayPaymentId = `pay_${orderId.slice(0, 8)}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-    const r = await service.rpc('start_order_payment_pix', {
+    const r = await buyer.rpc('start_order_payment_pix', {
       p_order_id: orderId, p_pix_code: 'FAKE-PIX-CODE', p_pix_qrcode: 'data:image/svg+xml;utf8,fake',
       p_gateway_payment_id: gatewayPaymentId, p_expires_at: expiresAt, p_provider: 'asaas',
     });
@@ -234,7 +234,7 @@ test('pagamento confirmado continua ocupando as 3 vagas; emissao dos tickets nao
   const beforePay = await fx.availableSlots(category.id);
   assert.equal(beforePay.available, 7);
 
-  const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
+  const gatewayPaymentId = await fx.startAsaasPix(buyer, orderId, FUTURE);
   const applyResult = await fx.must(fx.service.rpc('apply_gateway_payment_status', {
     p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
   }), 'confirma pagamento');
@@ -259,7 +259,7 @@ test('expiracao libera exatamente as 3 vagas; segunda execucao nao libera de nov
   const { orderId } = await fx.createOrder(buyer, category.id, [
     { ownership_mode: 'self' }, { ownership_mode: 'unassigned' }, { ownership_mode: 'unassigned' },
   ]);
-  await fx.startAsaasPix(orderId, PAST);
+  await fx.startAsaasPix(buyer, orderId, PAST);
   assert.equal((await fx.availableSlots(category.id)).available, before.available - 3);
 
   await fx.must(fx.service.rpc('expire_stale_order_payments', { p_organization_id: fx.org.id }), 'expire');

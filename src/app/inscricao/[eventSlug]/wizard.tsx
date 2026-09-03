@@ -11,6 +11,7 @@ import {
   generatePublicOrderPixAction,
   getPublicBuyerTicketHolderStatusAction,
   getPublicOrderSnapshotAction,
+  getPublicOrderPaymentStatusAction,
   getPublicPricingPreviewAction,
   previewEventPaymentFeesAction,
   saveCheckoutBuyerProfileAction,
@@ -1011,12 +1012,14 @@ export function RegistrationWizard({
 
       requestInFlight = true;
       try {
+        const statusResult = await getPublicOrderPaymentStatusAction(orderId);
+        if (cancelled || !statusResult.success) return;
+
+        const freshPaymentStatus = String(statusResult.payment_status ?? 'pending');
+        if (freshPaymentStatus === 'pending') return;
+
         const fresh = await getPublicOrderSnapshotAction(orderId);
         if (cancelled || !fresh.success) return;
-
-        const freshPaymentStatus = String(
-          fresh.snapshot.payment?.payment_status ?? 'pending',
-        );
 
         if (freshPaymentStatus === 'paid') {
           setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
@@ -1025,6 +1028,8 @@ export function RegistrationWizard({
           setLiveMessage('Pagamento confirmado.');
           setMaxUnlockedStep(4);
           setStep(4);
+        } else if (freshPaymentStatus === 'expired' || freshPaymentStatus === 'cancelled') {
+          setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
         }
       } finally {
         requestInFlight = false;
@@ -1714,38 +1719,19 @@ export function RegistrationWizard({
       return acc;
     }, {});
 
-    console.info('[checkout:create-order] server-action-payload', {
-      participant: {
-        full_name: payload.buyer.full_name,
-        cpf_masked: payload.buyer.cpf.replace(/\D/g, '').replace(/.(?=.{3})/g, '*'),
-        birth_date: payload.buyer.birth_date,
-        gender: payload.buyer.gender,
-        phone: payload.buyer.phone,
-        email: payload.buyer.email,
-        city: payload.buyer.city,
-      },
-      order: {
-        event_id: payload.event_id,
-        ticket_category_id: payload.ticket_category_id,
-        quantity: payload.quantity,
-        payment_method: payload.payment_method,
-        coupon_code: payload.coupon_code ?? null,
-        client_request_id: payload.client_request_id,
-        notes: payload.notes,
-      },
-      order_items: payload.items,
-      reservations: {
-        expected_item_reservations: payload.quantity,
-        assign_first_to_buyer: payload.assign_first_to_buyer,
-      },
+    console.info('[checkout:create-order] server-action', {
+      event_id: payload.event_id,
+      ticket_category_id: payload.ticket_category_id,
+      quantity: payload.quantity,
+      payment_method: payload.payment_method,
+      has_coupon: Boolean(payload.coupon_code),
+      client_request_id: payload.client_request_id,
+      item_count: payload.items.length,
+      assign_first_to_buyer: payload.assign_first_to_buyer,
       inventory_adjustments: Object.entries(inventoryAdjustments).map(([key, requested_quantity]) => {
         const [shirt_type, shirt_size] = key.split('::');
         return { shirt_type, shirt_size, requested_quantity };
       }),
-      server_action_payload: {
-        action_name: 'createPublicMultiOrderAction',
-        payload,
-      },
     });
 
     let result: Awaited<ReturnType<typeof createPublicMultiOrderAction>>;
@@ -2043,7 +2029,6 @@ export function RegistrationWizard({
       if (result.success) setFeePreview(result.preview as unknown as FeePreview);
     })();
     return () => { active = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldPreviewFee, event.id, previewBaseAmount]);
 
   // Preview so vale se corresponder ao valor-base ATUAL (evita mostrar, por
@@ -2881,7 +2866,7 @@ export function RegistrationWizard({
                 eventId={event.id}
                 paymentMethod={form.payment_method}
                 installments={form.payment_method === 'credit_card_installments' ? form.installments : 1}
-                onContinue={(order) => void handleCartFinalized(order as OrderSnapshotPayload)}
+                onContinue={(order) => handleCartFinalized(order as OrderSnapshotPayload)}
                 onEditTicket={editModeOrderId ? handleEditTicketItem : undefined}
                 onSnapshotChange={(cart) => setCartSnapshot(cart as unknown as OrderSnapshotPayload)}
               />
@@ -2924,11 +2909,14 @@ export function RegistrationWizard({
                     pixCode={registration.payment.pix_code}
                     pixQrCode={registration.payment.pix_qrcode}
                     countdownSeconds={countdownSeconds}
+                    expiresAt={registration.payment.expires_at}
                     isFakePaymentProvider={isFakePaymentProvider}
                     isSimulating={isPending}
                     onSimulatePayment={handleSimulatePaid}
                     onRegeneratePix={handleRegeneratePix}
                     isRegeneratingPix={isRegeneratingPix}
+                    confirmedHref="/minha-conta/ingressos"
+                    confirmedLabel="Ver meus ingressos"
                   />
                 ) : (
                   <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
@@ -3086,11 +3074,14 @@ export function RegistrationWizard({
                           pixCode={registration.payment.pix_code}
                           pixQrCode={registration.payment.pix_qrcode}
                           countdownSeconds={countdownSeconds}
+                          expiresAt={registration.payment.expires_at}
                           isFakePaymentProvider={isFakePaymentProvider}
                           isSimulating={isPending}
                           onSimulatePayment={handleSimulatePaid}
                           onRegeneratePix={handleRegeneratePix}
                           isRegeneratingPix={isRegeneratingPix}
+                          confirmedHref="/minha-conta/ingressos"
+                          confirmedLabel="Ver meus ingressos"
                         />
                       ) : null}
                     </div>

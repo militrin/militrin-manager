@@ -18,6 +18,7 @@ import {
   settleSimpleFinancialExpenseAction, upsertFinancialCategoryAction, upsertFinancialSupplierAction,
   removeFinancialCategoryAction, removeFinancialSupplierAction,
 } from "./actions";
+import { listPaidOrdersAwaitingTicketIssueAction } from "@/app/painel/integridade/actions";
 
 const tabs = [
   ["overview", "Visão geral"], ["sales", "Receitas"], ["expenses", "Despesas"],
@@ -154,6 +155,12 @@ function parseComparisonPeriod(value: string) {
 export default async function FinanceiroPage({ searchParams }: { searchParams: Promise<{ tab?: string; status?: string; eventId?: string; dateFrom?: string; dateTo?: string; compareEvent?: string | string[]; comparePeriod?: string | string[]; viewEvent?: string | string[]; compareRow?: string | string[] }> }) {
   const params = await searchParams;
   const canCreateEvent = await hasPermission("events.create");
+  const canOpenIntegrityIssueQueue = (await Promise.all([
+    hasPermission("integrity.view"),
+    hasPermission("finance.confirm_payment"),
+  ])).some(Boolean);
+  const awaitingIssue = canOpenIntegrityIssueQueue ? await listPaidOrdersAwaitingTicketIssueAction() : { success: true as const, orders: [] };
+  const awaitingIssueCount = awaitingIssue.success ? awaitingIssue.orders.length : 0;
   const active = tabs.some(([code]) => code === params.tab) ? params.tab as Tab : "overview";
   const status = params.status && (statusOptions as readonly string[]).includes(params.status) ? params.status : "pending";
   const dateFrom = validDate(params.dateFrom);
@@ -174,7 +181,17 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
   const selectedEventId=active==="overview"?(viewEventIds[0]??""):context.selected?String(context.selected.id):"";
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
-    <TopBar title="Financeiro" subtitle="Vendas e livro financeiro administrativo"/><Tabs active={active} eventId={selectedEventId} status={status}/>
+    <TopBar title="Financeiro" subtitle="Vendas e livro financeiro administrativo"/>
+    {awaitingIssueCount > 0 ? (
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+        <p className="font-semibold">Pagamentos confirmados aguardando emissão: {awaitingIssueCount}</p>
+        <p className="mt-1 text-amber-100/80">O dinheiro já está registrado, mas o ingresso ainda não foi emitido.</p>
+        <Link href="/painel/integridade" className="mt-2 inline-flex rounded-lg border border-amber-400/50 px-3 py-1.5 text-xs font-semibold text-amber-50">
+          Abrir Integridade e emitir ingressos
+        </Link>
+      </div>
+    ) : null}
+    <Tabs active={active} eventId={selectedEventId} status={status}/>
     {active === "overview" ? (
       <FinancialOverviewControls events={eventOptions} selectedIds={viewEventIds} dateFrom={dateFrom} dateTo={dateTo}/>
     ) : eventOptions.length === 0 ? (
