@@ -40,7 +40,7 @@ export default async function OperacoesSolicitacoesPage() {
   const { data: requestsRaw, error: requestsError } = await supabase
     .from("ticket_item_change_requests")
     .select(
-      "id, ticket_id, kit_item_id, requested_variant_id, current_variant, requested_variant, requested_at, reason, event_id, events(name), event_kit_items(name,item_type,shirt_supply_mode,track_variant_inventory), tickets(order_items(item_position, holder_full_name, registration_contact_id, registration_contacts(full_name)), orders(display_number, order_number))",
+      "id, ticket_id, kit_item_id, requested_variant_id, current_variant, requested_variant, requested_at, reason, event_id, events(name), event_kit_items(name,item_type,shirt_supply_mode,track_variant_inventory), tickets(order_items(item_position, holder_full_name, registration_contact_id, registration_contacts!order_items_registration_contact_id_fkey(full_name)), orders(display_number, order_number))",
     )
     .eq("organization_id", organization.id)
     .eq("status", "pending")
