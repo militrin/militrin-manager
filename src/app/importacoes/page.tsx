@@ -6,6 +6,11 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { hasPermission } from '@/lib/admin/permissions';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { ImportacoesClient } from './ImportacoesClient';
+import {
+  importBatchOperationalLabel,
+  recentImportBatchPrimaryAction,
+  resolveImportBatchOperationalState,
+} from '@/lib/imports/batch-operational-state';
 import Link from 'next/link';
 
 async function getEvents(organizationId: string) {
@@ -66,7 +71,7 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
     supabase.from('import_batch_rows').select('id,import_batches!inner(organization_id)', { count: 'exact', head: true })
       .eq('status', 'review_required').eq('resolution', 'pending').eq('import_batches.organization_id', currentOrganization.id),
     supabase.from('import_batches')
-      .select('id,file_name,import_type,status,imported_rows,created_at')
+      .select('id,file_name,import_type,status,imported_rows,completed_at,created_at,import_batch_rows(status,resolution)')
       .eq('organization_id', currentOrganization.id)
       .in('status', ['completed', 'ready_for_review'])
       .order('created_at', { ascending: false })
@@ -79,27 +84,49 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
         <Sidebar />
         <div className="flex-1 space-y-6">
           <TopBar title="Importações" subtitle="Histórico e inscritos atuais com validação e idempotência" />
-          <div className="flex justify-end"><Link href="/importacoes/revisoes" className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950">Revisões pendentes ({pendingReviews.count ?? 0})</Link></div>
+          <div className="flex justify-end"><Link href="/importacoes/revisoes" className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950">Revisões pendentes na organização ({pendingReviews.count ?? 0})</Link></div>
           {(recentBatches.data ?? []).length ? (
-            <SectionCard title="Lotes recentes" description="Reabra uma importação já processada para gerenciar convites ou continuar revisões. O painel não depende do relatório em memória.">
+            <SectionCard title="Lotes recentes" description="Reabra um lote validado para continuar a importação, revisar identidade ou gerenciar convites depois da execução comercial. O painel não depende do relatório em memória.">
               <div className="space-y-2">
-                {(recentBatches.data ?? []).map((batch) => (
-                  <div key={String(batch.id)} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-sm">
-                    <div>
-                      <p className="font-medium text-slate-100">{batch.file_name || 'Importação sem arquivo'}</p>
-                      <p className="text-xs text-slate-400">{String(batch.status)} · {Number(batch.imported_rows ?? 0)} importado(s) · {batch.created_at ? new Date(String(batch.created_at)).toLocaleString('pt-BR') : ''}</p>
+                {(recentBatches.data ?? []).map((batch) => {
+                  const nestedRows = Array.isArray((batch as { import_batch_rows?: unknown }).import_batch_rows)
+                    ? (batch as { import_batch_rows: Array<{ status?: unknown; resolution?: unknown }> }).import_batch_rows
+                    : [];
+                  const operationalState = resolveImportBatchOperationalState({
+                    status: String(batch.status ?? ''),
+                    importedRows: batch.imported_rows == null ? 0 : Number(batch.imported_rows),
+                    completedAt: batch.completed_at ? String(batch.completed_at) : null,
+                    rows: nestedRows.map((row) => ({
+                      status: String(row.status ?? ''),
+                      resolution: String(row.resolution ?? ''),
+                    })),
+                  });
+                  const actions = recentImportBatchPrimaryAction(operationalState, {
+                    canManageInvites,
+                    status: String(batch.status ?? ''),
+                  });
+                  return (
+                    <div key={String(batch.id)} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-sm">
+                      <div>
+                        <p className="font-medium text-slate-100">{batch.file_name || 'Importação sem arquivo'}</p>
+                        <p className="text-xs text-slate-400">{importBatchOperationalLabel(operationalState)} · {String(batch.status)} · {Number(batch.imported_rows ?? 0)} importado(s) · {batch.created_at ? new Date(String(batch.created_at)).toLocaleString('pt-BR') : ''}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {actions.continueImport ? (
+                          <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl bg-emerald-400 px-3 py-2 font-semibold text-slate-950">Continuar importação</Link>
+                        ) : (
+                          <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl border border-slate-600 px-3 py-2">Reabrir lote</Link>
+                        )}
+                        {actions.manageInvites ? (
+                          <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl bg-cyan-400 px-3 py-2 font-semibold text-cyan-950">Gerenciar convites</Link>
+                        ) : null}
+                        {actions.openReviews ? (
+                          <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl border border-amber-500 px-3 py-2 text-amber-100">Abrir revisões deste lote</Link>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl border border-slate-600 px-3 py-2">Reabrir lote</Link>
-                      {batch.status === 'completed' && canManageInvites ? (
-                        <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl bg-cyan-400 px-3 py-2 font-semibold text-cyan-950">Gerenciar convites</Link>
-                      ) : null}
-                      {batch.status === 'ready_for_review' ? (
-                        <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl border border-amber-500 px-3 py-2 text-amber-100">Abrir revisões</Link>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </SectionCard>
           ) : null}

@@ -24,6 +24,11 @@ import {
   type ImportDataIssue,
 } from '@/lib/imports/import-row-validation';
 import { calculateAgeAtEventDate } from '@/lib/utils/date';
+import {
+  isCommerciallyCompletedImportStatus,
+  isImportRowReadyToImport,
+  resolveImportBatchOperationalState,
+} from '@/lib/imports/batch-operational-state';
 
 const importTypeSchema = z.enum([
   'historical_participations',
@@ -234,19 +239,6 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
   };
 
   return row;
-}
-
-function isRowReadyToImport(status: string, resolution: string) {
-  if (status === 'error') return false;
-  // Ja materializada (por este loop ou pela resolucao de revisao em
-  // resolve_import_batch_row_review) -- reprocessar o lote (ex.: "Abrir e
-  // reprocessar batch") nunca deve tentar de novo, mesmo que
-  // import_current_event_contact_first ja seja idempotente por linha; sem
-  // este guard o relatorio final contava a linha como importada outra vez.
-  if (status === 'imported') return false;
-  if (status === 'duplicate') return resolution === 'create_new';
-  if (status === 'review_required') return resolution === 'link_existing' || resolution === 'create_new';
-  return true;
 }
 
 async function getCurrentEventImportRules(
@@ -869,6 +861,9 @@ export async function parseImportFileAction(formData: FormData) {
 
     const pendingRows = rowsToInsert.filter((row) => row.status === 'data_pending').length;
     const skippedRows = errorRows + duplicateRows;
+    // Staging persistido: ready_for_review aqui significa "arquivo validado e
+    // gravado", nao "importacao comercial concluida". A UI deriva o estado
+    // operacional pelas rows (revisao real vs pronto para executar).
     await supabase
       .from('import_batches')
       .update({
@@ -1066,6 +1061,15 @@ export async function getImportBatchDetailsAction(batchId: string) {
       reviewRows: (rows ?? []).filter((row) => row.status === 'review_required' && row.resolution === 'pending').length,
       errorRows: (rows ?? []).filter((row) => row.status === 'error').length,
     },
+    operationalState: resolveImportBatchOperationalState({
+      status: batch.status,
+      importedRows: batch.imported_rows,
+      completedAt: batch.completed_at,
+      rows: (rows ?? []).map((row) => ({
+        status: String(row.status),
+        resolution: String(row.resolution),
+      })),
+    }),
   };
 }
 
@@ -1168,7 +1172,7 @@ export async function executeImportBatchAction(
 
   const { data: batch, error: batchError } = await supabase
     .from('import_batches')
-    .select('id, import_type, event_id, organization_id, historical_event_label, historical_event_key, historical_event_year, total_rows, imported_by')
+    .select('id, import_type, event_id, organization_id, historical_event_label, historical_event_key, historical_event_year, total_rows, imported_by, status, imported_rows, completed_at')
     .eq('id', batchId)
     .single();
 
@@ -1178,6 +1182,10 @@ export async function executeImportBatchAction(
 
   if (String(batch.imported_by ?? '') !== user.id) {
     return { success: false as const, message: 'Somente o operador do lote pode iniciar esta importacao.' };
+  }
+
+  if (isCommerciallyCompletedImportStatus(String(batch.status ?? ''))) {
+    return { success: false as const, message: 'Este lote ja foi importado.' };
   }
 
   const persistedPaymentMode = paymentMode === 'confirm_all' ? 'confirm_all' : 'pending';
@@ -1220,7 +1228,7 @@ export async function executeImportBatchAction(
     const status = String(row.status);
     const resolution = String(row.resolution);
 
-    if (!isRowReadyToImport(status, resolution)) {
+    if (!isImportRowReadyToImport(status, resolution)) {
       if (status === 'duplicate') duplicateRows += 1;
       if (status === 'review_required') reviewRows += 1;
       skippedRows += 1;

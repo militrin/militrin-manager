@@ -204,8 +204,12 @@ test('9) filtro import_batch_id e da org atual e nao cria terceira fila', () => 
 test('ready_for_review nao inicia job; completed e exigido no SQL', () => {
   assert.match(inviteJobsMigration, /ib\.status='completed'/);
   assert.match(inviteJobsMigration, /status='completed' for update/);
-  assert.match(importer, /openedBatch\?\.status === 'ready_for_review'/);
+  assert.match(importer, /showIdentityReviewBanner/);
   assert.match(importer, /Ainda não pode enviar convites|ainda não pode enviar convites/);
+  assert.match(importer, /openedBatch\?\.status === 'completed'/);
+  assert.doesNotMatch(importer, /isExecutedBatchStatus/);
   assert.match(importPage, /canManageInvites/);
-  assert.match(importPage, /batch\.status === 'completed' && canManageInvites/);
+  assert.match(importPage, /Continuar importação/);
+  assert.match(importPage, /Gerenciar convites/);
+  assert.match(importPage, /Revisões pendentes na organização/);
 });

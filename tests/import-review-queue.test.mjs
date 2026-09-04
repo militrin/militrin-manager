@@ -5,6 +5,7 @@ import test from 'node:test';
 const actions = await readFile(new URL('../src/app/importacoes/actions.ts', import.meta.url), 'utf8');
 const client = await readFile(new URL('../src/app/importacoes/ImportacoesClient.tsx', import.meta.url), 'utf8');
 const queue = await readFile(new URL('../src/app/importacoes/revisoes/page.tsx', import.meta.url), 'utf8');
+const operationalState = await readFile(new URL('../src/lib/imports/batch-operational-state.ts', import.meta.url), 'utf8');
 const migration = await readFile(new URL('../supabase/migrations/20260941000000_import_review_operational_queue.sql', import.meta.url), 'utf8');
 const materializationMigration = await readFile(new URL('../supabase/migrations/20260943000000_import_review_decision_materialization.sql', import.meta.url), 'utf8');
 
@@ -57,8 +58,8 @@ test('relatório com revisão pendente mostra CTA e mensagem correta', () => {
 });
 
 test('ticket não é emitido antes da revisão', () => {
-  assert.match(actions, /if \(!isRowReadyToImport\(status, resolution\)\)/);
-  assert.match(actions, /status === 'review_required'\) return resolution === 'link_existing' \|\| resolution === 'create_new'/);
+  assert.match(actions, /if \(!isImportRowReadyToImport\(status, resolution\)\)/);
+  assert.match(operationalState, /status === 'review_required'\) return resolution === 'link_existing' \|\| resolution === 'create_new'/);
 });
 
 test('depois da revisão o fluxo continua pela importação e reconciliação canônicas', () => {

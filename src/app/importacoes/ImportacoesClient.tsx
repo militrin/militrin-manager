@@ -12,6 +12,11 @@ import {
 } from './actions';
 import { CANONICAL_FIELDS, CANONICAL_FIELD_LABELS, type CanonicalField } from '@/lib/imports/columns';
 import { importRowHasExistingCpfIdentity, type ImportIdentityMatchDetails } from '@/lib/imports/identity-review';
+import {
+  importBatchOperationalLabel,
+  isImportRowReadyToImport,
+  resolveImportBatchOperationalState,
+} from '@/lib/imports/batch-operational-state';
 
 type EventOption = {
   id: string;
@@ -44,6 +49,8 @@ type ImportSummary = {
 };
 type ImportOptions = { categories: Array<{ id: string; event_id: string; name: string }>; batches: Array<{ id: string; event_id: string; name: string }>; prices: Array<{ batch_id: string; ticket_category_id: string }> };
 
+const inFlightImportExecutions = new Set<string>();
+
 const STATUS_LABELS: Record<string, string> = {
   ready: 'Pronto',
   data_pending: 'Pendente de dados',
@@ -62,10 +69,6 @@ type OpenedBatch = {
   file_name: string | null;
   event_id?: string | null;
 };
-
-function isExecutedBatchStatus(status: string | null | undefined) {
-  return ['completed', 'ready_for_review', 'failed', 'cancelled'].includes(String(status ?? ''));
-}
 
 export function ImportacoesClient({ events, importOptions, canConfirmPayment = false, canManageInvites = false, initialBatchId }: { events: EventOption[]; importOptions: ImportOptions; canConfirmPayment?: boolean; canManageInvites?: boolean; initialBatchId?: string }) {
   const [isPending, startTransition] = useTransition();
@@ -86,15 +89,26 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
   const [defaultCategoryId, setDefaultCategoryId] = useState('');
   const [defaultBatchId, setDefaultBatchId] = useState('');
   const [openedBatch, setOpenedBatch] = useState<OpenedBatch | null>(null);
+  const [executeStarted, setExecuteStarted] = useState(false);
   const eventCategories = importOptions.categories.filter((item) => item.event_id === eventId);
   const eventBatches = importOptions.batches.filter((item) => item.event_id === eventId);
   const compatibleCategories = defaultBatchId ? eventCategories.filter((item) => importOptions.prices.some((price) => price.batch_id === defaultBatchId && price.ticket_category_id === item.id)) : eventCategories;
   const compatibleBatches = defaultCategoryId ? eventBatches.filter((item) => importOptions.prices.some((price) => price.ticket_category_id === defaultCategoryId && price.batch_id === item.id)) : eventBatches;
-  const executedBatch = isExecutedBatchStatus(openedBatch?.status);
+  const operationalState = useMemo(
+    () => resolveImportBatchOperationalState({
+      status: openedBatch?.status,
+      importedRows: openedBatch?.imported_rows,
+      rows: rows.map((row) => ({ status: row.status, resolution: row.resolution })),
+    }),
+    [openedBatch?.status, openedBatch?.imported_rows, rows],
+  );
   const showInvitePanel = Boolean(canManageInvites && batchId && openedBatch?.status === 'completed');
-
-  const importableCount = useMemo(() => rows.filter((row) => row.status === 'ready' || row.status === 'data_pending' || (row.status === 'review_required' && ['link_existing', 'create_new'].includes(row.resolution))).length, [rows]);
+  const importableCount = useMemo(
+    () => rows.filter((row) => isImportRowReadyToImport(row.status, row.resolution)).length,
+    [rows],
+  );
   const blockingPaymentCount = useMemo(() => rows.filter((row) => row.data_issues.some((issue) => issue.blocks_payment)).length, [rows]);
+  const showExecuteButton = (operationalState.canExecute || executeStarted) && !operationalState.showAlreadyImportedMessage;
 
   function applyBatchDetails(details: Extract<Awaited<ReturnType<typeof getImportBatchDetailsAction>>, { success: true }>) {
     setRows(details.rows as BatchRow[]);
@@ -113,6 +127,10 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
     }
     const eventIdFromBatch = (details.batch as { event_id?: string | null }).event_id;
     if (eventIdFromBatch) setEventId(String(eventIdFromBatch));
+    if (!details.operationalState.commerciallyCompleted) {
+      setExecuteStarted(false);
+      if (batch.id) inFlightImportExecutions.delete(String(batch.id));
+    }
   }
 
   function refreshBatch(targetBatchId: string) {
@@ -160,6 +178,8 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
     setMessage(null);
     setReport(null);
     setOpenedBatch(null);
+    setExecuteStarted(false);
+    if (batchId) inFlightImportExecutions.delete(batchId);
 
     startTransition(async () => {
       const result = await parseImportFileAction(formData);
@@ -213,8 +233,10 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
   }
 
   function executeImport() {
-    if (!batchId) return;
+    if (!batchId || !operationalState.canExecute || executeStarted || inFlightImportExecutions.has(batchId)) return;
 
+    inFlightImportExecutions.add(batchId);
+    setExecuteStarted(true);
     setMessage(null);
     startTransition(async () => {
       const result = await executeImportBatchAction(
@@ -223,6 +245,8 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         paymentReason || undefined,
       );
       if (!result.success) {
+        inFlightImportExecutions.delete(batchId);
+        setExecuteStarted(false);
         setMessage(result.message);
         return;
       }
@@ -267,7 +291,13 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
       {openedBatch && batchId ? (
         <article className="rounded-3xl border border-cyan-500/30 bg-cyan-500/10 p-5">
           <h2 className="text-xl font-semibold text-cyan-50">Lote reaberto</h2>
-          <p className="mt-1 text-sm text-cyan-100/80">{openedBatch.file_name || 'Importação'} · status {openedBatch.status} · {openedBatch.imported_rows ?? 0} importado(s). Recarregar esta página mantém o lote e o painel de convites.</p>
+          <p className="mt-1 text-sm font-medium text-cyan-50">{importBatchOperationalLabel(operationalState)}</p>
+          <p className="mt-1 text-sm text-cyan-100/80">{openedBatch.file_name || 'Importação'} · status {openedBatch.status} · {openedBatch.imported_rows ?? 0} importado(s).</p>
+          <p className="mt-1 text-sm text-cyan-100/80">
+            {operationalState.commerciallyCompleted
+              ? 'Recarregar esta página mantém o lote e o painel de convites.'
+              : 'O arquivo já foi validado e gravado. Recarregar a página não perde o caminho de importação.'}
+          </p>
         </article>
       ) : null}
       <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
@@ -374,11 +404,12 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
               ) : null}
             </div>
           ) : null}
-          <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-6">
             <p>Linhas: {summary.totalRows}</p>
             <p>Prontas: {summary.readyRows}</p>
             <p>Pendentes: {summary.pendingRows}</p>
             <p>Duplicadas: {summary.duplicateRows}</p>
+            <p>Revisões neste lote: {summary.reviewRows}</p>
             <p>Erros impeditivos: {summary.errorRows}</p>
           </div>
 
@@ -435,7 +466,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
-            {importType === 'current_event_registrations' && !executedBatch && (
+            {importType === 'current_event_registrations' && showExecuteButton && (
               <div className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
                 <p className="text-sm font-medium text-slate-200">6) Tratamento dos pagamentos importados</p>
                 <p className="text-xs text-slate-400">Escolha o efeito <strong>antes</strong> de confirmar. O padrão continua sendo importar como pendente, sem emitir ingresso.</p>
@@ -489,14 +520,18 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
                 )}
               </div>
             )}
-            {!executedBatch ? (
-              <button type="button" onClick={executeImport} disabled={isPending || !batchId} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
-                {isPending ? 'Importando...' : summary.pendingRows > 0
+            {operationalState.showAlreadyImportedMessage ? (
+              <p className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300">Este lote já foi importado ({openedBatch?.status}). Use as ações pós-importação abaixo; não é necessário importar de novo.</p>
+            ) : showExecuteButton ? (
+              <button type="button" onClick={executeImport} disabled={isPending || !batchId || executeStarted} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
+                {isPending || executeStarted ? 'Importando...' : summary.pendingRows > 0
                   ? `7) Importar ${importableCount} cadastros (${summary.pendingRows} com pendências)`
                   : `7) Confirmar importação de ${importableCount} participações`}
               </button>
+            ) : operationalState.showIdentityReviewBanner ? (
+              <p className="rounded-xl border border-amber-700 px-4 py-3 text-sm text-amber-100">Há {operationalState.unresolvedReviewCount} revisão(ões) de identidade neste lote. A importação das linhas pendentes fica disponível depois da revisão.</p>
             ) : (
-              <p className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300">Este lote já foi processado ({openedBatch?.status}). Reabra-o para gerenciar convites ou completar revisões; não é necessário importar de novo.</p>
+              <p className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300">Não há linhas prontas para importar neste lote.</p>
             )}
             <button type="button" onClick={downloadErrors} disabled={isPending || !batchId} className="h-11 rounded-xl border border-slate-700 px-5 text-sm text-slate-200 disabled:opacity-60">
               Baixar CSV de erros
@@ -539,10 +574,10 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         <p className="text-sm text-slate-400">Pendências de dados (categoria, lote, CPF incompleto etc.) se resolvem na ficha de cada pessoa. A fila de identidade fica em Revisões pendentes.</p>
       ) : null}
 
-      {openedBatch?.status === 'ready_for_review' && batchId ? (
+      {operationalState.showIdentityReviewBanner && batchId ? (
         <article className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-5">
-          <h2 className="text-xl font-semibold text-amber-50">Revisões de identidade pendentes</h2>
-          <p className="mt-1 text-sm text-amber-100/80">Este lote ainda não pode enviar convites. Conclua as revisões (vincular cadastro existente ou ignorar) e reprocesse o lote.</p>
+          <h2 className="text-xl font-semibold text-amber-50">Revisões de identidade pendentes deste lote</h2>
+          <p className="mt-1 text-sm text-amber-100/80">{operationalState.unresolvedReviewCount} revisão(ões) neste lote. Este lote ainda não pode enviar convites. Conclua as revisões (vincular cadastro existente ou ignorar) e continue a importação.</p>
           <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(batchId)}`} className="mt-4 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Abrir revisões deste lote</Link>
         </article>
       ) : null}
