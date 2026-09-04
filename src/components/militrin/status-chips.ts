@@ -16,6 +16,9 @@ export function paymentStatusChip(paymentStatus: string): StatusChip {
   if (normalized === 'pending' || normalized === 'processing' || normalized === 'reserved') {
     return { tone: 'warning', icon: Clock, label: 'Pagamento pendente' };
   }
+  if (normalized === 'unavailable' || normalized === 'unknown') {
+    return { tone: 'neutral', icon: Circle, label: 'Pagamento indisponível' };
+  }
   return { tone: 'danger', icon: XCircle, label: `Pagamento ${getStatusLabel(normalized).toLowerCase()}` };
 }
 

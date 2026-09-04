@@ -254,6 +254,7 @@ async function buildFixture() {
     orgA,
     event,
     must,
+    createUserClient,
     createOrder,
     createStoreOrder,
   };
@@ -607,5 +608,100 @@ test('webhook/gateway permanece service-only e confirma legitimamente', async ()
   assert.equal(
     (await fx.must(fx.service.from('tickets').select('id').eq('order_id', order.orderId), 'gateway tickets')).length,
     1,
+  );
+});
+
+async function payOrderAsBuyer(orderId, label) {
+  const gatewayPaymentId = `owner-status-${Date.now()}-${Math.random()}`;
+  await fx.must(
+    fx.buyer.client.rpc('start_order_payment_pix', {
+      p_order_id: orderId,
+      p_pix_code: `PIX-${label}`,
+      p_pix_qrcode: `QR-${label}`,
+      p_gateway_payment_id: gatewayPaymentId,
+      p_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      p_provider: 'fake',
+    }),
+    `start pix ${label}`,
+  );
+  await fx.must(
+    fx.buyer.client.rpc('simulate_fake_gateway_payment_paid', { p_order_id: orderId }),
+    `pay ${label}`,
+  );
+}
+
+test('status operacional de pagamento libera owner_user_id e bloqueia IDOR/anon', async () => {
+  const order = await fx.createOrder();
+  await payOrderAsBuyer(order.orderId, 'owner-status');
+  const tickets = await fx.must(
+    fx.service.from('tickets').select('id, owner_user_id').eq('order_id', order.orderId),
+    'owned tickets',
+  );
+  assert.equal(tickets.length, 1);
+  assert.equal(tickets[0].owner_user_id, fx.buyer.userId);
+  const ticketId = tickets[0].id;
+
+  assert.ok((await fx.anonymous.rpc('get_ticket_payment_operational_status', { p_ticket_id: ticketId })).error);
+  assert.ok((await fx.outsider.client.rpc('get_ticket_payment_operational_status', { p_ticket_id: ticketId })).error);
+  assert.ok((await fx.anonymous.rpc('get_my_tickets_payment_operational_status')).error);
+
+  const ownerStatus = await fx.must(
+    fx.buyer.client.rpc('get_ticket_payment_operational_status', { p_ticket_id: ticketId }),
+    'owner operational status',
+  );
+  assert.equal((Array.isArray(ownerStatus) ? ownerStatus[0] : ownerStatus).payment_status, 'paid');
+
+  const mine = await fx.must(
+    fx.buyer.client.rpc('get_my_tickets_payment_operational_status'),
+    'owner batch operational status',
+  );
+  const mineRows = Array.isArray(mine) ? mine : [mine];
+  assert.equal(mineRows.some((row) => row.ticket_id === ticketId && row.payment_status === 'paid'), true);
+
+  const outsiderMine = await fx.must(
+    fx.outsider.client.rpc('get_my_tickets_payment_operational_status'),
+    'outsider batch operational status',
+  );
+  const outsiderRows = Array.isArray(outsiderMine) ? outsiderMine : outsiderMine ? [outsiderMine] : [];
+  assert.equal(outsiderRows.some((row) => row.ticket_id === ticketId), false);
+});
+
+test('owner_user_id le status pago de 3 tickets com titulares distintos', async () => {
+  const maria = await fx.createUserClient('maria-fam');
+  const ticketIds = [];
+  for (const holder of ['Joao', 'Maria', 'Pedro']) {
+    const order = await fx.createOrder();
+    await payOrderAsBuyer(order.orderId, holder);
+    const tickets = await fx.must(
+      fx.service.from('tickets').select('id').eq('order_id', order.orderId),
+      `tickets ${holder}`,
+    );
+    await fx.must(
+      fx.service.from('tickets').update({ owner_user_id: maria.userId }).eq('id', tickets[0].id),
+      `assign owner ${holder}`,
+    );
+    ticketIds.push(tickets[0].id);
+  }
+
+  const mine = await fx.must(
+    maria.client.rpc('get_my_tickets_payment_operational_status'),
+    'maria family operational status',
+  );
+  const mineRows = Array.isArray(mine) ? mine : [mine];
+  for (const ticketId of ticketIds) {
+    assert.equal(
+      mineRows.some((row) => row.ticket_id === ticketId && row.payment_status === 'paid'),
+      true,
+      `Maria deve ver paid no ticket ${ticketId}`,
+    );
+  }
+
+  assert.ok(
+    (await fx.outsider.client.rpc('get_ticket_payment_operational_status', { p_ticket_id: ticketIds[0] })).error,
+    'conhecer o ticket_id nao basta',
+  );
+  assert.ok(
+    (await fx.anonymous.rpc('get_ticket_payment_operational_status', { p_ticket_id: ticketIds[0] })).error,
+    'anon nao acessa status operacional',
   );
 });

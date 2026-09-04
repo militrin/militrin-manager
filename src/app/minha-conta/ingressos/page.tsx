@@ -6,6 +6,11 @@ import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
 import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
+import {
+  chipStatusForOwnedTicketPayment,
+  loadOwnedTicketsPaymentOperationalStatus,
+  normalizeOwnedTicketPaymentChipStatus,
+} from '@/lib/account/ticket-payment-operational-status';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -54,7 +59,6 @@ export default async function IngressosPage() {
   }
 
   const orders = ticketScope.orders as Array<{ id: string; order_number: string | null; status: string | null; event_id: string | null; user_id: string | null; buyer_type: 'account' | 'imported_holder' | 'transferred_owner' }>;
-  const orderIds = orders.map((order) => String(order.id));
   const orderItems = ticketScope.orderItems as Array<{
     id: string;
     item_position: number | null;
@@ -74,7 +78,8 @@ export default async function IngressosPage() {
   const batchIds = Array.from(new Set(orderItems.map((item) => item.batch_id).filter(Boolean) as string[]));
   const eventIds = Array.from(new Set(orders.map((order) => order.event_id).filter(Boolean) as string[]));
 
-  const [participantsResult, categoriesResult, batchesResult, eventsResult, paymentsResult, issuesResult] = await Promise.all([
+  const ownedTicketIds = (ticketScope.tickets as Array<{ id: string }>).map((ticket) => String(ticket.id)).filter(Boolean);
+  const [participantsResult, categoriesResult, batchesResult, eventsResult, paymentStatusLoad, issuesResult] = await Promise.all([
     participantIds.length > 0
       ? supabase.from('participants').select('id, full_name').in('id', participantIds)
       : Promise.resolve({ data: [], error: null }),
@@ -87,25 +92,22 @@ export default async function IngressosPage() {
     eventIds.length > 0
       ? supabase.from('events').select('id, name, starts_at, location').in('id', eventIds)
       : Promise.resolve({ data: [], error: null }),
-    orderIds.length > 0
-      ? supabase
-        .from('payments')
-        .select('id, order_id, payment_method, payment_status, created_at')
-        .in('order_id', orderIds)
-        .order('created_at', { ascending: false })
-      : Promise.resolve({ data: [], error: null }),
+    loadOwnedTicketsPaymentOperationalStatus(supabase, ownedTicketIds),
     participantIds.length > 0
       ? supabase.from('participant_data_issues').select('participant_id,blocks_ticket_issuance').in('participant_id', participantIds).eq('status', 'open').eq('blocks_ticket_issuance', true)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  if (participantsResult.error || categoriesResult.error || batchesResult.error || eventsResult.error || paymentsResult.error || issuesResult.error) {
+  if (paymentStatusLoad.error) {
+    console.error('[meus-ingressos] erro ao carregar status operacional de pagamento', paymentStatusLoad.error);
+  }
+
+  if (participantsResult.error || categoriesResult.error || batchesResult.error || eventsResult.error || issuesResult.error) {
     console.error('[meus-ingressos] erro ao carregar relacionamentos', {
       participants: participantsResult.error,
       categories: categoriesResult.error,
       batches: batchesResult.error,
       events: eventsResult.error,
-      payments: paymentsResult.error,
       issues: issuesResult.error,
     });
     return (
@@ -122,22 +124,12 @@ export default async function IngressosPage() {
   const eventsById = new Map(((eventsResult.data ?? []) as Array<{ id: string; name: string | null; starts_at: string | null; location: string | null }>).map((row) => [String(row.id), row]));
   const ticketsByOrderItemId = new Map((ticketScope.tickets as Array<{ id: string; status: string | null; token: string | null; issued_at: string | null; used_at: string | null; order_item_id: string | null }>).map((row) => [String(row.order_item_id), row]));
   const ticketBlockedParticipantIds = new Set((issuesResult.data ?? []).map((issue) => String(issue.participant_id)));
-  const paymentsByOrderId = new Map<string, { payment_method: string | null; payment_status: string | null }>();
-  for (const payment of ((paymentsResult.data ?? []) as Array<{ order_id: string | null; payment_method: string | null; payment_status: string | null }>)) {
-    const orderId = String(payment.order_id ?? '');
-    if (!orderId || paymentsByOrderId.has(orderId)) continue;
-    paymentsByOrderId.set(orderId, {
-      payment_method: payment.payment_method,
-      payment_status: payment.payment_status,
-    });
-  }
 
   const enhancedItems = await Promise.all(
     (orderItems ?? []).map(async (item) => {
       const order = ordersById.get(String(item.order_id ?? ''));
       const participant = participantsById.get(String(item.participant_id ?? ''));
       const eventObj = eventsById.get(String(order?.event_id ?? ''));
-      const payment = paymentsByOrderId.get(String(order?.id ?? ''));
       const categoryObj = categoriesById.get(String(item.ticket_category_id ?? ''));
       const batchObj = batchesById.get(String(item.batch_id ?? ''));
       const ticket = ticketsByOrderItemId.get(String(item.id));
@@ -153,7 +145,9 @@ export default async function IngressosPage() {
       const shirtType = optionalDisplayValue(shirtVariant.shirt_type ?? item.shirt_type);
       const shirtSize = optionalDisplayValue(shirtVariant.shirt_size ?? item.shirt_size);
       const orderStatus = normalizeStatus(String(order?.status ?? 'pending'));
-      const paymentStatus = normalizeStatus(String(payment?.payment_status ?? 'pending'));
+      const paymentStatus = ticket?.id
+        ? normalizeOwnedTicketPaymentChipStatus(chipStatusForOwnedTicketPayment(ticket.id, paymentStatusLoad))
+        : 'unavailable';
       const canShowTicket = !ticketIssuanceBlocked && Boolean(ticket?.id) && orderStatus === 'confirmed' && (ticket?.status === 'active' || ticket?.status === 'used');
       let qrUrl: string | null = null;
       if (canShowTicket && ticket?.token) {
