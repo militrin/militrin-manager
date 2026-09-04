@@ -248,6 +248,7 @@ function WristbandResultCard({ result, onScanAnother }: { result: LookupResult; 
         <div>
           <p className="text-lg font-bold text-rose-300">QR não reconhecido</p>
           <p className="mt-1 text-sm text-slate-400">{result.message}</p>
+          <p className="mt-1 text-sm text-slate-400">Pulseira ainda não vinculada.</p>
         </div>
       ) : null}
 
@@ -256,8 +257,8 @@ function WristbandResultCard({ result, onScanAnother }: { result: LookupResult; 
           ingresso antigos como se ainda valessem. */}
       {result.success && result.state === "unlinked" ? (
         <div>
-          <p className="text-lg font-bold text-amber-300">Pulseira não vinculada</p>
-          <p className="mt-1 text-sm text-slate-400">Esta pulseira ainda não pertence a nenhum participante.</p>
+          <p className="text-lg font-bold text-amber-300">Pulseira desvinculada</p>
+          <p className="mt-1 text-sm text-slate-400">Pulseira desvinculada e disponível para novo vínculo.</p>
           <div className="mt-4">
             <Field label="Código" value={result.wristband.code} />
           </div>

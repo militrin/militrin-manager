@@ -1,5 +1,6 @@
 import "server-only";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
+import { isUuidLike } from "@/lib/admin/operator-display";
 
 /**
  * Resolve nomes de operador a partir de actor_user_id (auth.users.id).
@@ -47,4 +48,17 @@ export async function resolveOperatorNames(userIds: string[]): Promise<Map<strin
   }
 
   return names;
+}
+
+/**
+ * Rótulo da conta proprietária na ficha administrativa.
+ * Usa o mesmo resolvedor de nomes da timeline (service role), porque o
+ * client autenticado muitas vezes não lê customer_profiles do titular.
+ */
+export async function resolveLinkedAccountLabel(userId: string | null | undefined): Promise<string> {
+  if (!userId) return "Proprietário não definido";
+  const names = await resolveOperatorNames([userId]);
+  const name = String(names.get(userId) ?? "").trim();
+  if (name && !isUuidLike(name)) return name;
+  return "Conta vinculada";
 }

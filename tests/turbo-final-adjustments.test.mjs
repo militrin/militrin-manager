@@ -167,9 +167,10 @@ test("cross-organization continua bloqueado -- RLS de participant_wristbands fil
 
 test("UI de Ver pulseira vinculada mostra os 3 estados com textos distintos", () => {
   assert.match(wristbandClient, /QR não reconhecido/);
-  assert.match(wristbandClient, /Pulseira não vinculada/);
-  assert.match(wristbandClient, /Esta pulseira ainda não pertence a nenhum participante\./);
+  assert.match(wristbandClient, /Pulseira ainda não vinculada\./);
+  assert.match(wristbandClient, /Pulseira desvinculada e disponível para novo vínculo\./);
   assert.match(wristbandClient, /Pulseira vinculada/);
+  assert.doesNotMatch(wristbandClient, /Esta pulseira ainda não pertence a nenhum participante\./);
 });
 
 test("estado 'linked' continua mostrando comprador/titular/evento/categoria/status; estado 'unlinked' so mostra o codigo, nunca dados de ingresso antigos", () => {

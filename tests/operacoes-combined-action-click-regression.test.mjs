@@ -70,8 +70,9 @@ test('os tres botoes operacionais existem tanto na linha compacta (OperationRow)
   // extra); "Entregar + check-in" agora abre a confirmacao obrigatoria em vez
   // de chamar onDeliverKitAndCheckin diretamente no clique do botao.
   assert.match(rowSql, /onClick=\{\(\) => setShowCombinedConfirm\(true\)\}/);
-  assert.match(rowSql, /async function handleCombinedConfirmed\(\)\s*\{\s*if \(item\.kind === "ticket"\) await onDeliverKitAndCheckin\(item\.ticket_id, item\.participant_id\);/);
-  assert.match(rowSql, /onClick=\{\(\) => void onCheckin\(item\.ticket_id\)\}/);
+  assert.match(rowSql, /async function handleCombinedConfirmed\(\)/);
+  assert.match(rowSql, /await onDeliverKitAndCheckin\(item\.ticket_id, item\.participant_id\)/);
+  assert.match(rowSql, /onClick=\{\(\) => void handleCheckinClick\(\)\}/);
 });
 
 test('OperationsTable repassa onDeliverFullKit/onDeliverKitAndCheckin/onCheckin para OperationRow e para ExpandedTicketDetails', async () => {

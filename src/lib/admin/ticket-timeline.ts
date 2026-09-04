@@ -8,6 +8,8 @@ import { applyReportPage, finalizeReportPages, formatReportDateTime, reportIsoDa
 import { sensitiveActionReasonLabel } from "@/lib/admin/sensitive-action-reasons";
 import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
+import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
+import { auditReasonFromDetails } from "@/lib/admin/audit-reason-label";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 type Row = Record<string, unknown>;
@@ -74,19 +76,13 @@ function one(value: unknown): Row | null {
   return value && typeof value === "object" ? value as Row : null;
 }
 
-function maskEmail(value: unknown) {
-  const email = String(value ?? ""); const at = email.indexOf("@");
-  return at > 0 ? `${email.slice(0, 2)}***@${email.slice(at + 1)}` : null;
-}
-
-function operatorFrom(details: Row, actor: unknown, operatorNames?: Map<string,string>) {
-  const masked = maskEmail(details.actor_email);
-  if (masked) return masked;
-  if (details.actor_origin === "portal") return "Titular autenticado";
-  const resolvedName = operatorNames?.get(String(details.actor_user_id ?? ""));
-  if (resolvedName) return resolvedName;
-  if (details.actor_user_id) return "Operador administrativo";
-  return String(actor ?? "Sistema");
+function operatorFrom(details: Row, operatorNames?: Map<string,string>) {
+  return formatOperatorDisplayName({
+    resolvedName: operatorNames?.get(String(details.actor_user_id ?? "")),
+    actorEmail: details.actor_email ? String(details.actor_email) : null,
+    actorUserId: details.actor_user_id ? String(details.actor_user_id) : null,
+    actorOrigin: details.actor_origin ? String(details.actor_origin) : null,
+  });
 }
 
 function state(details: Row, keys: string[]) {
@@ -103,6 +99,10 @@ function safeDetail(action: string, details: Row, variants: Map<string,string>) 
     return [type, size].filter(Boolean).join(" / ") || variants.get(String(details.variant_id ?? "")) || null;
   }
   if (action.includes("exported")) return state(details, ["format"]);
+  if (action.startsWith("wristband_")) {
+    const code = state(details, ["code"]);
+    return code ? `Código ${code}` : null;
+  }
   if (action.includes("kit")) return state(details, ["item_name", "kit_item_id"]);
   return null;
 }
@@ -145,6 +145,30 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
   if ((auditRows?.length ?? 0) === 0) {
     console.error("[ticket-timeline:audit-logs]", JSON.stringify({ ticketId, source: "authenticated-postgrest", code: "EMPTY_AUDIT_SOURCE", message: "A consulta autenticada não retornou os eventos de auditoria do ingresso." }));
     if (!warnings.includes("audit-logs")) warnings.push("audit-logs");
+  }
+  // Vínculo/desvínculo de pulseira audita entity_type=participant_wristbands
+  // (entity_id = wristband id). A RPC get_admin_ticket_audit_timeline só
+  // junta ticket/kit/pedido -- por isso esses eventos nunca apareciam na
+  // ficha. Lê via service role o mesmo recorte já usado por
+  // getWristbandHistoryAction (details.ticket_id), sem nova RPC operacional.
+  try {
+    const admin = createServiceRoleSupabaseClient();
+    const { data: wristbandAudits, error: wristbandAuditError } = await admin
+      .from("audit_logs")
+      .select("id,action,entity_type,entity_id,event_id,details,created_at")
+      .eq("event_id", String(ticket.event_id))
+      .in("action", ["wristband_linked", "wristband_unlinked", "wristband_blocked"])
+      .filter("details->>ticket_id", "eq", ticketId)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    if (wristbandAuditError) throw wristbandAuditError;
+    const merged = new Map<string, Row>();
+    for (const row of [...(auditRows ?? []), ...(wristbandAudits ?? [])]) merged.set(String(row.id), row as Row);
+    auditRows = [...merged.values()];
+    console.info("[ticket-timeline:wristband-audit]", JSON.stringify({ ticketId, source: "server-scoped-wristband-read", rowCount: wristbandAudits?.length ?? 0 }));
+  } catch (error) {
+    console.error("[ticket-timeline:wristband-audit]", JSON.stringify({ ticketId, source: "server-scoped-wristband-read", code: "WRISTBAND_AUDIT_FAILED", message: error instanceof Error ? error.message : "Falha desconhecida" }));
+    warnings.push("wristband-audit");
   }
   if (scope === "account" && participant?.user_id) {
     try {
@@ -223,7 +247,7 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
     "create_imported_order_and_issue_ticket",
   ]);
   const issuanceAuditRow = (auditRows ?? []).find((row) => ISSUANCE_ACTIONS.has(String(row.action)));
-  const issuedOperator = issuanceAuditRow ? operatorFrom(one(issuanceAuditRow.details) ?? {}, null, operatorNames) : "Sistema";
+  const issuedOperator = issuanceAuditRow ? operatorFrom(one(issuanceAuditRow.details) ?? {}, operatorNames) : "Sistema";
 
   const events: TicketTimelineEvent[] = [];
   const technicalEvents: TicketTimelineEvent[] = [];
@@ -237,7 +261,7 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
     const action = String(row.action);
     const definition = timelineActionDefinition(action);
     const detail = safeDetail(action, details, variants);
-    const baseEvent: TicketTimelineEvent = { id: `audit-${row.id}`, occurredAt: String(row.created_at), type: action, label: definition?.label ?? action, description: definition?.description ?? "Registro técnico de auditoria.", category: definition?.category, previousState: definition?.previousKeys ? state(details, definition.previousKeys) : null, newState: definition?.nextKeys ? state(details, definition.nextKeys) : null, operator: operatorFrom(details, null, operatorNames), reason: state(details, ["reason", "review_notes"]), detail, eventId: row.event_id ? String(row.event_id) : null, relatedTicketId: String(details.ticket_id ?? (row.entity_type === "tickets" ? row.entity_id : "")) || null, relatedOrderId: String(details.order_id ?? "") || null, source: "audit" };
+    const baseEvent: TicketTimelineEvent = { id: `audit-${row.id}`, occurredAt: String(row.created_at), type: action, label: definition?.label ?? action, description: definition?.description ?? "Registro técnico de auditoria.", category: definition?.category, previousState: definition?.previousKeys ? state(details, definition.previousKeys) : null, newState: definition?.nextKeys ? state(details, definition.nextKeys) : null, operator: operatorFrom(details, operatorNames), reason: auditReasonFromDetails(details), detail, eventId: row.event_id ? String(row.event_id) : null, relatedTicketId: String(details.ticket_id ?? (row.entity_type === "tickets" ? row.entity_id : "")) || null, relatedOrderId: String(details.order_id ?? "") || null, source: "audit" };
     if (!definition) { technicalEvents.push(baseEvent); continue; }
     if (!definition.scopes.includes(scope)) continue;
     if (action === "ticket_shirt_admin_changed" && detail) {
@@ -250,12 +274,12 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
     const action = String(row.operation);
     const previousName=row.previous_participant_id ? holderNames.get(String(row.previous_participant_id)) ?? "Titular anterior" : "Titular não definido";
     const newName=row.new_participant_id ? holderNames.get(String(row.new_participant_id)) ?? "Novo titular" : "Titular não definido";
-    events.push({ id: `holder-${row.id}`, occurredAt: String(row.created_at), type: action, label: actionLabel(action, "Titularidade atualizada"), description: action === "holder_removed" ? "O ingresso ficou sem titular." : "A titularidade do ingresso foi atualizada.", previousState: previousName, newState: newName, hasTransition:true, operator: row.actor_origin === "portal" ? "Titular autenticado" : operatorNames.get(String(row.actor_user_id ?? "")) ?? "Operador administrativo", reason: sensitiveActionReasonLabel(row.reason_code) ?? (row.reason ? "Motivo legado" : null), observation: row.reason_text ? String(row.reason_text) : row.reason ? String(row.reason) : null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
+    events.push({ id: `holder-${row.id}`, occurredAt: String(row.created_at), type: action, label: actionLabel(action, "Titularidade atualizada"), description: action === "holder_removed" ? "O ingresso ficou sem titular." : "A titularidade do ingresso foi atualizada.", previousState: previousName, newState: newName, hasTransition:true, operator: formatOperatorDisplayName({ resolvedName: operatorNames.get(String(row.actor_user_id ?? "")), actorUserId: row.actor_user_id ? String(row.actor_user_id) : null, actorOrigin: row.actor_origin ? String(row.actor_origin) : null }), reason: sensitiveActionReasonLabel(row.reason_code) ?? (row.reason ? "Motivo legado" : null), observation: row.reason_text ? String(row.reason_text) : row.reason ? String(row.reason) : null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
   }
   for(const row of ownerRows??[]){
     const previous=row.previous_owner_user_id?operatorNames.get(String(row.previous_owner_user_id))??"Proprietário anterior":"Proprietário não definido";
     const next=operatorNames.get(String(row.new_owner_user_id))??"Novo proprietário";
-    events.push({id:`owner-${row.id}`,occurredAt:String(row.created_at),type:String(row.operation),label:actionLabel(String(row.operation),"Propriedade atualizada"),description:"A conta proprietária atual do ingresso foi alterada.",previousState:previous,newState:next,hasTransition:true,operator:operatorNames.get(String(row.actor_user_id))??"Operador administrativo",reason:sensitiveActionReasonLabel(row.reason_code),observation:row.reason_text?String(row.reason_text):null,detail:null,eventId:String(ticket.event_id),relatedTicketId:ticketId,relatedOrderId:String(canonicalOrderId??"")||null,source:"functional"});
+    events.push({id:`owner-${row.id}`,occurredAt:String(row.created_at),type:String(row.operation),label:actionLabel(String(row.operation),"Propriedade atualizada"),description:"A conta proprietária atual do ingresso foi alterada.",previousState:previous,newState:next,hasTransition:true,operator:formatOperatorDisplayName({ resolvedName: operatorNames.get(String(row.actor_user_id ?? "")), actorUserId: row.actor_user_id ? String(row.actor_user_id) : null }),reason:sensitiveActionReasonLabel(row.reason_code),observation:row.reason_text?String(row.reason_text):null,detail:null,eventId:String(ticket.event_id),relatedTicketId:ticketId,relatedOrderId:String(canonicalOrderId??"")||null,source:"functional"});
   }
   for (const row of requestRows ?? []) {
     const current = one(row.current_variant); const requested = one(row.requested_variant);

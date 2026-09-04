@@ -31,6 +31,7 @@ import { TicketHolderActions } from './ticket-holder-actions';
 import { CategoryContextAction, HolderContextAction, ParticipantShirtChangeAction, ShirtContextAction } from './ticket-context-actions';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { orderDisplayReference } from '@/lib/display-reference';
+import { resolveLinkedAccountLabel } from '@/lib/admin/operator-names';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -147,11 +148,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     : { data: null };
   const buyerProfile = buyerProfileResult.data as Record<string, unknown> | null;
   const buyerName = String(buyerProfile?.full_name ?? buyerProfile?.email ?? (order?.buyer_type === 'imported_holder' ? 'Pedido importado sem comprador' : 'Comprador nao identificado'));
-  const ownerProfileResult = ticket.owner_user_id
-    ? await supabase.from('customer_profiles').select('full_name').eq('user_id',String(ticket.owner_user_id)).maybeSingle()
-    : {data:null};
-  const ownerProfile=ownerProfileResult.data as Record<string,unknown>|null;
-  const ownerName=String(ownerProfile?.full_name??(ticket.owner_user_id?'Conta NEXORA':'Proprietário não definido'));
+  const ownerName = await resolveLinkedAccountLabel(ticket.owner_user_id ? String(ticket.owner_user_id) : null);
 
   const ensureKitResult = canAdminEdit ? await supabase.rpc('ensure_ticket_kit_items', { p_ticket_id: ticket.id }) : {data:{skipped_count:0},error:null};
   const ensureKit = (ensureKitResult.data ?? {}) as Record<string, unknown>;

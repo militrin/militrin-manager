@@ -6,6 +6,7 @@ import { getCurrentOrganizationContext } from "@/lib/organizations/current-organ
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { TicketOwnershipEditor } from "./ticket-ownership-editor";
 import { appendNavigationContext, isSafeContextUuid } from "@/lib/navigation/admin-navigation";
+import { resolveLinkedAccountLabel } from "@/lib/admin/operator-names";
 
 function one<T>(value: T | T[] | null): T | null {
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -35,7 +36,7 @@ export default async function EditTicketOwnershipPage({ params, searchParams }: 
     ? await supabase.from("customer_profiles").select("full_name").eq("user_id", order.user_id).maybeSingle()
     : null;
   const ownerResult = data.owner_user_id
-    ? await supabase.from("customer_profiles").select("full_name").eq("user_id", data.owner_user_id).maybeSingle()
+    ? { data: { full_name: await resolveLinkedAccountLabel(String(data.owner_user_id)) } }
     : null;
   const kits = (data.participant_kit_items ?? []) as Array<{ status: string }>;
   const item = one(data.order_items as {registration_contact_id:string|null;ticket_categories:{name:string}|{name:string}[]|null}|Array<{registration_contact_id:string|null;ticket_categories:{name:string}|{name:string}[]|null}>|null);
@@ -59,7 +60,7 @@ export default async function EditTicketOwnershipPage({ params, searchParams }: 
             ticketId={ticketId}
             currentHolder={holder?.full_name ?? "Titular não definido"}
             buyer={buyerResult?.data?.full_name ?? "Comprador não identificado"}
-            currentOwner={ownerResult?.data?.full_name ?? (data.owner_user_id ? "Conta NEXORA" : "Proprietário não definido")}
+            currentOwner={ownerResult?.data?.full_name ?? (data.owner_user_id ? "Conta vinculada" : "Proprietário não definido")}
             currentOwnerUserId={data.owner_user_id ? String(data.owner_user_id) : null}
             status={data.status}
             canTransfer={permissions["participants.edit_basic"]}

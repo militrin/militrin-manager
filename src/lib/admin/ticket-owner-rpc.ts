@@ -14,7 +14,7 @@ export function buildAdminTransferTicketOwnershipPayload(input: {
   reasonText?: string | null;
 }) {
   if (!uuidPattern.test(input.ticketId)) throw new Error("Ingresso inválido.");
-  if (!uuidPattern.test(input.newOwnerUserId)) throw new Error("Selecione uma conta NEXORA válida.");
+  if (!uuidPattern.test(input.newOwnerUserId)) throw new Error("Selecione uma conta válida.");
   if(input.expectedOwnerUserId!==null&&!uuidPattern.test(input.expectedOwnerUserId)) throw new Error("Proprietário atual inválido.");
   if (!TICKET_OWNER_HOLDER_ACTIONS.includes(input.holderAction)) throw new Error("Escolha o tratamento do titular.");
   const reason = validateSensitiveActionReason(input.reasonCode, input.reasonText);

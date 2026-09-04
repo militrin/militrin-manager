@@ -87,7 +87,7 @@ export default async function ClientesPage() {
             ← Painel
           </Link>
           <div className="flex flex-col gap-0.5">
-            <span className="text-lg font-bold tracking-tight text-white">NEXORA</span>
+            <span className="text-lg font-bold tracking-tight text-white">Militrin</span>
             <span className="text-xs text-slate-400">Administração da Plataforma</span>
           </div>
         </div>

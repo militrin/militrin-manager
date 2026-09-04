@@ -10,7 +10,7 @@ test('payload de transferencia exige owner, tratamento e motivo estruturado',()=
   const ticketId='11111111-1111-4111-8111-111111111111',douglas='22222222-2222-4222-8222-222222222222',bruna='33333333-3333-4333-8333-333333333333';
   const payload=buildAdminTransferTicketOwnershipPayload({ticketId,expectedOwnerUserId:douglas,newOwnerUserId:bruna,holderAction:'keep',reasonCode:'buyer_request'});
   assert.deepEqual(payload,{p_ticket_id:ticketId,p_expected_owner_user_id:douglas,p_new_owner_user_id:bruna,p_holder_action:'keep',p_reason_code:'buyer_request',p_reason_text:null});
-  assert.throws(()=>buildAdminTransferTicketOwnershipPayload({ticketId,expectedOwnerUserId:douglas,newOwnerUserId:'',holderAction:'keep',reasonCode:'buyer_request'}),/conta NEXORA/i);
+  assert.throws(()=>buildAdminTransferTicketOwnershipPayload({ticketId,expectedOwnerUserId:douglas,newOwnerUserId:'',holderAction:'keep',reasonCode:'buyer_request'}),/conta válida/i);
   assert.throws(()=>buildAdminTransferTicketOwnershipPayload({ticketId,expectedOwnerUserId:douglas,newOwnerUserId:bruna,holderAction:'keep',reasonCode:'other'}),/Descreva/i);
 });
 

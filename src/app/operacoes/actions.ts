@@ -23,6 +23,7 @@ import { REASON_CODES } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
+import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
 import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
 
 type OperationFiltersInput = {
@@ -1515,15 +1516,11 @@ async function buildTicketDetails(
     ? (latestCheckin.details as Record<string, unknown>)
     : null;
 
-  const lastCheckinActor = details
-    ? String(details.actor_email ?? details.actor_user_id ?? details.actor ?? "") || null
-    : null;
-
   const deliveredKitItemIds = ((kitRows ?? []) as Array<Record<string, unknown>>)
     .filter((row) => String(row.status ?? "") === "delivered")
     .map((row) => String(row.id ?? ""))
     .filter(Boolean);
-  const deliveredByKitItem = new Map<string, string>();
+  const deliveredByKitItemRaw = new Map<string, { actorUserId: string | null; actorEmail: string | null }>();
 
   if (deliveredKitItemIds.length > 0) {
     const { data: deliveryAudits } = await supabase
@@ -1536,12 +1533,40 @@ async function buildTicketDetails(
 
     for (const audit of (deliveryAudits ?? []) as Array<Record<string, unknown>>) {
       const itemId = String(audit.entity_id ?? "");
-      if (!itemId || deliveredByKitItem.has(itemId)) continue;
+      if (!itemId || deliveredByKitItemRaw.has(itemId)) continue;
       const auditDetails = audit.details && typeof audit.details === "object" && !Array.isArray(audit.details)
         ? audit.details as Record<string, unknown>
         : null;
-      deliveredByKitItem.set(itemId, String(auditDetails?.actor_email ?? auditDetails?.actor_user_id ?? "Não informado"));
+      deliveredByKitItemRaw.set(itemId, {
+        actorUserId: auditDetails?.actor_user_id ? String(auditDetails.actor_user_id) : null,
+        actorEmail: auditDetails?.actor_email ? String(auditDetails.actor_email) : null,
+      });
     }
+  }
+
+  const checkinActorUserId = details?.actor_user_id ? String(details.actor_user_id) : null;
+  const operatorIdsToResolve = [
+    ...[...deliveredByKitItemRaw.values()].map((row) => row.actorUserId),
+    checkinActorUserId,
+  ].filter((id): id is string => Boolean(id));
+  const operatorNames = await resolveOperatorNames(operatorIdsToResolve);
+
+  const lastCheckinActor = details && (checkinActorUserId || details.actor_email)
+    ? formatOperatorDisplayName({
+        resolvedName: checkinActorUserId ? operatorNames.get(checkinActorUserId) : null,
+        actorEmail: details.actor_email ? String(details.actor_email) : null,
+        actorUserId: checkinActorUserId,
+      })
+    : null;
+
+  const deliveredByKitItem = new Map<string, string>();
+  for (const [itemId, raw] of deliveredByKitItemRaw) {
+    const label = formatOperatorDisplayName({
+      resolvedName: raw.actorUserId ? operatorNames.get(raw.actorUserId) : null,
+      actorEmail: raw.actorEmail,
+      actorUserId: raw.actorUserId,
+    });
+    deliveredByKitItem.set(itemId, label === "Sistema" ? "Operador" : label);
   }
 
   const kitItems = ((kitRows ?? []) as Array<Record<string, unknown>>).map((row) => {
@@ -2520,18 +2545,33 @@ export async function getWristbandHistoryAction(ticketId: string) {
 
   if (error) return { success: false as const, message: error.message };
 
-  const entries: WristbandHistoryEntry[] = ((data ?? []) as Array<Record<string, unknown>>)
-    .map((row) => {
-      const details = row.details as Record<string, unknown>;
-      return {
-        id: String(row.id ?? ""),
-        action: String(row.action ?? ""),
-        code: details.code ? String(details.code) : null,
-        reason: details.reason ? String(details.reason) : null,
-        actor_email: details.actor_email ? String(details.actor_email) : (details.actor_user_id ? String(details.actor_user_id) : null),
-        created_at: String(row.created_at ?? ""),
-      };
-    });
+  const rawEntries = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const details = row.details && typeof row.details === "object" && !Array.isArray(row.details)
+      ? row.details as Record<string, unknown>
+      : {};
+    return {
+      id: String(row.id ?? ""),
+      action: String(row.action ?? ""),
+      code: details.code ? String(details.code) : null,
+      reason: details.reason ? String(details.reason) : null,
+      actorUserId: details.actor_user_id ? String(details.actor_user_id) : null,
+      actorEmail: details.actor_email ? String(details.actor_email) : null,
+      created_at: String(row.created_at ?? ""),
+    };
+  });
+  const historyNames = await resolveOperatorNames(rawEntries.map((entry) => entry.actorUserId).filter((id): id is string => Boolean(id)));
+  const entries: WristbandHistoryEntry[] = rawEntries.map((entry) => ({
+    id: entry.id,
+    action: entry.action,
+    code: entry.code,
+    reason: entry.reason,
+    actor_email: formatOperatorDisplayName({
+      resolvedName: entry.actorUserId ? historyNames.get(entry.actorUserId) : null,
+      actorEmail: entry.actorEmail,
+      actorUserId: entry.actorUserId,
+    }),
+    created_at: entry.created_at,
+  }));
 
   return { success: true as const, entries };
 }

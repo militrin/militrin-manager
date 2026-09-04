@@ -31,7 +31,7 @@ export default async function PlataformaPage() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="border-b border-slate-800 bg-slate-900 px-6 py-4">
         <div className="flex flex-col gap-0.5">
-          <span className="text-lg font-bold tracking-tight text-white">NEXORA</span>
+          <span className="text-lg font-bold tracking-tight text-white">Militrin</span>
           <span className="text-xs text-slate-400">Administração da Plataforma</span>
         </div>
       </div>

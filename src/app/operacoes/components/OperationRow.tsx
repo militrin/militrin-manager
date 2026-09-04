@@ -5,6 +5,7 @@ import { getOperationsGridConfig } from "./tableGrid";
 import type { ActionResult, PickupCapabilities, PickupEvent, PickupListItem } from "../types";
 import { MaterializeItemsDialog } from "./MaterializeItemsDialog";
 import { ConfirmDeliverAndCheckinDialog } from "./ConfirmDeliverAndCheckinDialog";
+import { WristbandCodeModal } from "./WristbandCodeModal";
 
 function maskCpf(cpf: string) {
   const digits = cpf.replace(/\D/g, "");
@@ -84,19 +85,47 @@ export function OperationRow({
   const shirtLabel = [item.shirt_type, item.shirt_size].filter(Boolean).join(" ").trim();
   const hasTicket = item.kind === "ticket";
   const [showCombinedConfirm, setShowCombinedConfirm] = useState(false);
+  const [wristbandModal, setWristbandModal] = useState<"mandatory-checkin" | "mandatory-combined" | null>(null);
   const hasActiveWristband = item.wristband?.status === "active";
   const wristbandWillBeRequested = Boolean(
     selectedEvent?.wristband_enabled &&
       (selectedEvent?.wristband_required_for_kit || selectedEvent?.wristband_required_for_checkin) &&
       !hasActiveWristband,
   );
+  const wristbandRequiredForCheckin = Boolean(
+    selectedEvent?.wristband_enabled && selectedEvent?.wristband_required_for_checkin && !hasActiveWristband,
+  );
+  const kitPending = Boolean(selectedEvent?.has_kit && item.kit_status !== "delivered" && item.kit_status !== "none");
 
   function toggle() {
     onToggleDetails(item);
   }
 
   async function handleCombinedConfirmed() {
-    if (item.kind === "ticket") await onDeliverKitAndCheckin(item.ticket_id, item.participant_id);
+    if (item.kind !== "ticket") return;
+    const result = await onDeliverKitAndCheckin(item.ticket_id, item.participant_id);
+    if (result && "code" in result && result.code === "WRISTBAND_REQUIRED") {
+      setWristbandModal("mandatory-combined");
+    }
+  }
+
+  async function handleCheckinClick() {
+    if (item.kind !== "ticket") return;
+    const result = await onCheckin(item.ticket_id);
+    if (result && "code" in result && result.code === "WRISTBAND_REQUIRED") {
+      setWristbandModal("mandatory-checkin");
+    }
+  }
+
+  async function handleMandatoryWristbandSubmit(code: string) {
+    if (item.kind !== "ticket") return { success: false, message: "Ingresso não encontrado." };
+    const result = wristbandModal === "mandatory-combined"
+      ? await onDeliverKitAndCheckin(item.ticket_id, item.participant_id, code)
+      : await onCheckin(item.ticket_id, code);
+    if (!result || !("success" in result) || !result.success) {
+      return { success: false, message: (result && "message" in result ? result.message : null) ?? "Não foi possível concluir com esta pulseira." };
+    }
+    return { success: true };
   }
 
   return (
@@ -197,7 +226,7 @@ export function OperationRow({
           <Badge tone="green">Concluído</Badge>
         ) : (
           <>
-            {selectedEvent?.has_kit && item.kit_status !== "delivered" && item.kit_status !== "none" ? (
+            {kitPending ? (
             <button
               title="Entregar somente os itens ainda pendentes"
               aria-label="Entregar itens pendentes"
@@ -214,7 +243,7 @@ export function OperationRow({
               Entregar itens
             </button>
             ) : null}
-            {selectedEvent?.has_kit && item.kit_status !== "delivered" && item.kit_status !== "none" && item.checkin_status !== "done" ? (
+            {kitPending && item.checkin_status !== "done" ? (
             <button
               title="Entregar itens pendentes e depois realizar o check-in"
               aria-label="Entregar itens pendentes e realizar check-in"
@@ -226,16 +255,25 @@ export function OperationRow({
               Entregar + check-in
             </button>
             ) : null}
-            {item.checkin_status !== "done" && (item.kit_status === "delivered" || item.kit_status === "none" || !selectedEvent?.has_kit) ? (
-          <button
-            title="Realizar check-in"
-            type="button"
-            disabled={busy || !capabilities.canCheckin || !hasTicket || !item.can_operate}
-            onClick={() => void onCheckin(item.ticket_id)}
-            className="rounded-lg bg-cyan-500 px-2 py-1 text-[11px] font-semibold text-cyan-950 disabled:opacity-40"
-          >
-            Fazer check-in
-          </button>
+            {item.checkin_status !== "done" ? (
+          <div className="flex flex-col items-start gap-0.5">
+            {wristbandRequiredForCheckin ? (
+              <span className="text-[11px] font-medium text-amber-300">Pulseira obrigatória para check-in</span>
+            ) : null}
+            <button
+              title="Realizar check-in"
+              type="button"
+              disabled={busy || !capabilities.canCheckin || !hasTicket || !item.can_operate}
+              onClick={() => void handleCheckinClick()}
+              className={
+                kitPending
+                  ? "rounded-lg border border-cyan-500/40 px-2 py-1 text-[11px] font-semibold text-cyan-200 disabled:opacity-40"
+                  : "rounded-lg bg-cyan-500 px-2 py-1 text-[11px] font-semibold text-cyan-950 disabled:opacity-40"
+              }
+            >
+              Fazer check-in
+            </button>
+          </div>
             ) : null}
           </>
         )}
@@ -252,6 +290,20 @@ export function OperationRow({
         wristbandWillBeRequested={wristbandWillBeRequested}
         onConfirm={handleCombinedConfirmed}
         onClose={() => setShowCombinedConfirm(false)}
+      />
+    ) : null}
+    {wristbandModal ? (
+      <WristbandCodeModal
+        title="Vincular pulseira"
+        description={
+          wristbandModal === "mandatory-checkin"
+            ? "Este evento exige pulseira vinculada para concluir o check-in."
+            : "Este evento exige pulseira vinculada para concluir a entrega e o check-in."
+        }
+        submitLabel="Vincular e continuar"
+        mandatory
+        onSubmit={handleMandatoryWristbandSubmit}
+        onClose={() => setWristbandModal(null)}
       />
     ) : null}
     </>

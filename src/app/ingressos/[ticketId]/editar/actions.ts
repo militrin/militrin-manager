@@ -19,7 +19,7 @@ export async function searchTicketOwnerAccountsAction(ticketId: string, term: st
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("search_admin_ticket_owner_accounts", { p_ticket_id: ticketId, p_term: term });
   if (error) return { success: false as const, message: error.message, candidates: [] };
-  return { success: true as const, message: data?.length ? `${data.length} conta(s) encontrada(s).` : "Nenhuma conta NEXORA encontrada.", candidates: data ?? [] };
+  return { success: true as const, message: data?.length ? `${data.length} conta(s) encontrada(s).` : "Nenhuma conta encontrada.", candidates: data ?? [] };
 }
 
 export async function transferTicketOwnershipAction(input: {
