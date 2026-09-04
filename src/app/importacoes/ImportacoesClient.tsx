@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { ImportAccountInvites } from './import-account-invites';
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
 import {
   executeImportBatchAction,
   exportImportErrorsCsvAction,
@@ -159,7 +159,9 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
 
   function handleParse(customMapping?: Partial<Record<CanonicalField, string>>) {
     if (!file) {
-      setMessage('Selecione um arquivo CSV ou XLSX.');
+      setMessage(openedBatch
+        ? 'Selecione um arquivo CSV ou XLSX para iniciar uma nova importação. Para continuar o lote já validado, use Confirmar importação.'
+        : 'Selecione um arquivo CSV ou XLSX.');
       return;
     }
 
@@ -214,8 +216,14 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
     handleParse(mapping);
   }
 
-  function handleProcessClick() {
+  function submitParse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     handleParse();
+  }
+
+  function submitExecute(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    executeImport();
   }
 
   function setResolution(rowId: string, resolution: 'pending' | 'link_existing' | 'create_new' | 'ignore' | 'mark_duplicate') {
@@ -292,19 +300,24 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         <article className="rounded-3xl border border-cyan-500/30 bg-cyan-500/10 p-5">
           <h2 className="text-xl font-semibold text-cyan-50">Lote reaberto</h2>
           <p className="mt-1 text-sm font-medium text-cyan-50">{importBatchOperationalLabel(operationalState)}</p>
+          <p className="mt-1 text-sm font-semibold text-cyan-50">Continuando lote já validado: {openedBatch.file_name || 'Importação sem arquivo'}</p>
           <p className="mt-1 text-sm text-cyan-100/80">{openedBatch.file_name || 'Importação'} · status {openedBatch.status} · {openedBatch.imported_rows ?? 0} importado(s).</p>
           <p className="mt-1 text-sm text-cyan-100/80">
             {operationalState.commerciallyCompleted
               ? 'Recarregar esta página mantém o lote e o painel de convites.'
-              : 'O arquivo já foi validado e gravado. Recarregar a página não perde o caminho de importação.'}
+              : 'O arquivo já foi validado e gravado. Confirmar importação executa este lote persistido — não é necessário anexar o XLSX de novo.'}
           </p>
         </article>
       ) : null}
       <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
         <h2 className="text-xl font-semibold text-white">1) Enviar arquivo</h2>
         <p className="mt-1 text-sm text-slate-300">Suporte para CSV e XLSX. O sistema reconhece colunas conhecidas e aceita dados incompletos.</p>
+        {openedBatch && operationalState.canExecute ? (
+          <p className="mt-2 text-sm text-cyan-100/80">Este bloco inicia outra importação. O lote aberto acima já está validado e não depende deste arquivo.</p>
+        ) : null}
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <form onSubmit={submitParse} className="mt-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="space-y-1 text-sm text-slate-300">
             <span>Tipo de importação</span>
             <select value={importType} onChange={(event) => setImportType(event.target.value as 'historical_participations' | 'current_event_registrations')} className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3">
@@ -358,9 +371,10 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
           </label>
         </div>
 
-        <button type="button" onClick={handleProcessClick} disabled={isPending} className="mt-4 h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
+        <button type="submit" disabled={isPending || !file} className="mt-4 h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
           {isPending ? 'Processando...' : '2) Processar e validar'}
         </button>
+        </form>
       </article>
 
       {headers.length ? (
@@ -386,7 +400,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
             ))}
           </div>
 
-          <button type="button" onClick={applyMapping} disabled={isPending} className="mt-4 h-11 rounded-xl border border-slate-700 px-5 text-sm text-slate-100 disabled:opacity-60">
+          <button type="button" onClick={applyMapping} disabled={isPending || !file} className="mt-4 h-11 rounded-xl border border-slate-700 px-5 text-sm text-slate-100 disabled:opacity-60">
             {isPending ? 'Aplicando...' : '4) Aplicar mapeamento e revalidar'}
           </button>
         </article>
@@ -465,7 +479,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
             </table>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-3">
+          <form onSubmit={submitExecute} className="mt-4 flex flex-wrap gap-3">
             {importType === 'current_event_registrations' && showExecuteButton && (
               <div className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
                 <p className="text-sm font-medium text-slate-200">6) Tratamento dos pagamentos importados</p>
@@ -523,7 +537,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
             {operationalState.showAlreadyImportedMessage ? (
               <p className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300">Este lote já foi importado ({openedBatch?.status}). Use as ações pós-importação abaixo; não é necessário importar de novo.</p>
             ) : showExecuteButton ? (
-              <button type="button" onClick={executeImport} disabled={isPending || !batchId || executeStarted} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
+              <button type="submit" disabled={isPending || !batchId || executeStarted} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
                 {isPending || executeStarted ? 'Importando...' : summary.pendingRows > 0
                   ? `7) Importar ${importableCount} cadastros (${summary.pendingRows} com pendências)`
                   : `7) Confirmar importação de ${importableCount} participações`}
@@ -533,6 +547,8 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
             ) : (
               <p className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300">Não há linhas prontas para importar neste lote.</p>
             )}
+          </form>
+          <div className="mt-3 flex flex-wrap gap-3">
             <button type="button" onClick={downloadErrors} disabled={isPending || !batchId} className="h-11 rounded-xl border border-slate-700 px-5 text-sm text-slate-200 disabled:opacity-60">
               Baixar CSV de erros
             </button>

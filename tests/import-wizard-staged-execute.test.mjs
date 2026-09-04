@@ -44,6 +44,7 @@ test('lote stageado reaberto reconstruido por batchId continua no passo 7', () =
   assert.match(importer, /getImportBatchDetailsAction\(initialBatchId\)/);
   assert.match(importer, /operationalState\.canExecute/);
   assert.match(importer, /O arquivo já foi validado e gravado/);
+  assert.match(importer, /Continuando lote já validado/);
   assert.match(importPage, /Continuar importação/);
   assert.match(importActions, /operationalState: resolveImportBatchOperationalState/);
 });
@@ -80,4 +81,26 @@ test('refresh e double submit nao disparam execute duplicado', () => {
   assert.match(importer, /inFlightImportExecutions\.has\(batchId\)/);
   assert.match(importActions, /isImportRowReadyToImport/);
   assert.match(helper, /status === 'imported'\) return false/);
+});
+
+test('execute de lote persistido nao exige File nem reparse', () => {
+  const executeFn = importer.slice(importer.indexOf('function executeImport()'), importer.indexOf('function downloadErrors()'));
+  assert.match(executeFn, /executeImportBatchAction\(/);
+  assert.match(executeFn, /batchId,/);
+  assert.doesNotMatch(executeFn, /parseImportFileAction/);
+  assert.doesNotMatch(executeFn, /if \(!file\)/);
+  assert.doesNotMatch(executeFn, /Selecione um arquivo/);
+  assert.match(importer, /function submitExecute/);
+  assert.match(importer, /onSubmit=\{submitExecute\}/);
+  assert.match(importer, /onSubmit=\{submitParse\}/);
+  assert.match(importer, /disabled=\{isPending \|\| !file\}/);
+  assert.match(importer, /não é necessário anexar o XLSX de novo|nao e necessario anexar o XLSX de novo/);
+  const parseFn = importer.slice(importer.indexOf('function handleParse'), importer.indexOf('function applyMapping'));
+  assert.match(parseFn, /if \(!file\)/);
+  assert.match(importActions, /Nao ha linhas prontas para importar neste lote/);
+  const execute = importActions.slice(importActions.indexOf('export async function executeImportBatchAction'));
+  const importableGuard = execute.indexOf('Nao ha linhas prontas para importar neste lote');
+  const persistIntent = execute.indexOf('payment_mode_original: persistedPaymentMode');
+  assert.ok(importableGuard >= 0 && importableGuard < persistIntent, 'lote sem rows importaveis precisa ser recusado antes de persistir intencao financeira');
+  assert.doesNotMatch(execute.slice(0, execute.indexOf('for (const row of rows')), /formData\.get\('file'\)/);
 });

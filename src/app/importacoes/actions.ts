@@ -1188,6 +1188,21 @@ export async function executeImportBatchAction(
     return { success: false as const, message: 'Este lote ja foi importado.' };
   }
 
+  const { data: rows, error: rowsError } = await supabase
+    .from('import_batch_rows')
+    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id')
+    .eq('import_batch_id', batchId)
+    .order('row_number', { ascending: true });
+
+  if (rowsError) {
+    return { success: false as const, message: rowsError.message };
+  }
+
+  const importableCount = (rows ?? []).filter((row) => isImportRowReadyToImport(String(row.status), String(row.resolution))).length;
+  if (importableCount === 0) {
+    return { success: false as const, message: 'Nao ha linhas prontas para importar neste lote.' };
+  }
+
   const persistedPaymentMode = paymentMode === 'confirm_all' ? 'confirm_all' : 'pending';
   const { error: intentError } = await supabase
     .from('import_batches')
@@ -1199,16 +1214,6 @@ export async function executeImportBatchAction(
     .eq('imported_by', user.id);
   if (intentError) {
     return { success: false as const, message: `Nao foi possivel preservar a intencao financeira: ${intentError.message}` };
-  }
-
-  const { data: rows, error: rowsError } = await supabase
-    .from('import_batch_rows')
-    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id')
-    .eq('import_batch_id', batchId)
-    .order('row_number', { ascending: true });
-
-  if (rowsError) {
-    return { success: false as const, message: rowsError.message };
   }
 
   let importedRows = 0;
