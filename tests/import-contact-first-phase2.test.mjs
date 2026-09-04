@@ -23,10 +23,11 @@ test('categoria lote camiseta e pagamento nascem nas entidades canonicas', async
 });
 
 test('multiplos ingressos reutilizam contato sem repetir titular implicitamente', async () => {
-  const migration = await readFile(migrationUrl, 'utf8');
+  const migration = await readFile(new URL('../supabase/migrations/20260949000000_import_real_purchase_ownership.sql', import.meta.url), 'utf8');
   assert.match(migration, /where oi\.event_id=v_event\.id and oi\.registration_contact_id=v_contact\.id/);
   assert.match(migration, /then v_assign_holder:=false/);
-  assert.match(migration, /case when v_assign_holder then v_contact\.id end/);
+  assert.match(migration, /values\(v_order\.id,v_event\.id,case when v_assign_holder then v_participant\.id end,v_contact\.id,v_intended/);
+  assert.doesNotMatch(migration, /case when v_assign_holder then v_contact\.id end/);
 });
 
 test('pendencias e historico carregam vinculos canonicos', async () => {

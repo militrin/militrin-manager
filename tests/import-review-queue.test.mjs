@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const actions = await readFile(new URL('../src/app/importacoes/actions.ts', import.meta.url), 'utf8');
+const classifier = await readFile(new URL('../src/lib/imports/classify-current-event-purchase.ts', import.meta.url), 'utf8');
 const client = await readFile(new URL('../src/app/importacoes/ImportacoesClient.tsx', import.meta.url), 'utf8');
 const queue = await readFile(new URL('../src/app/importacoes/revisoes/page.tsx', import.meta.url), 'utf8');
 const operationalState = await readFile(new URL('../src/lib/imports/batch-operational-state.ts', import.meta.url), 'utf8');
@@ -11,24 +12,25 @@ const materializationMigration = await readFile(new URL('../supabase/migrations/
 
 test('match por CPF exato vincula deterministicamente', () => {
   assert.match(actions, /cpfMap\.get\(row\.cpf\)/);
-  assert.match(actions, /reason: emailCandidate \? 'cpf_and_email_exact' : 'cpf_exact'/);
+  assert.match(classifier, /reason = input\.emailMatch \? 'cpf_and_email_exact' : 'cpf_exact'/);
   assert.match(actions, /resolution = 'link_existing'/);
 });
 
-test('match apenas por e-mail exige revisão explícita', () => {
+test('match apenas por e-mail nao funde Pessoas e gera revisao de conta, nao de compra', () => {
   assert.match(actions, /emailMap\.get\(row\.email\)/);
-  assert.match(actions, /reason: 'email_exact_requires_review'/);
+  assert.match(actions, /account_review: 'shared_email'/);
+  assert.match(actions, /classifyCurrentEventPurchase/);
 });
 
 test('CPF e e-mail apontando pessoas diferentes gera conflito com ambos candidatos', () => {
-  assert.match(actions, /cpfContactId !== emailContactId/);
-  assert.match(actions, /strong_identifier_conflict/);
-  assert.match(actions, /candidates: \[cpfCandidate, emailCandidate\]/);
+  assert.match(classifier, /cpfContactId !== emailContactId/);
+  assert.match(classifier, /strong_identifier_conflict/);
+  assert.match(classifier, /candidates: \[input\.cpfMatch, input\.emailMatch\]/);
 });
 
 test('nome sem identificador forte nunca vincula automaticamente', () => {
-  assert.match(actions, /name_only_suggestion/);
-  assert.match(actions, /Nome semelhante encontrado; nenhum identificador forte confirmou/);
+  assert.match(classifier, /name_only_suggestion/);
+  assert.match(classifier, /Nome semelhante encontrado; nenhum identificador forte confirmou/);
 });
 
 test('mesma pessoa exige candidato auditado e persiste o cadastro escolhido', () => {
@@ -46,7 +48,8 @@ test('reprocessamento usa totais persistidos e não duplica contadores', () => {
 });
 
 test('linha resolvida sai da fila e decisão fica auditada', () => {
-  assert.match(queue, /eq\('status', 'review_required'\)\.eq\('resolution', 'pending'\)/);
+  assert.match(queue, /isPendingReview/);
+  assert.match(queue, /account_review === 'shared_email'/);
   assert.match(migration, /import_row_review_resolved/);
   assert.match(migration, /reviewed_by=v_actor,reviewed_at=now\(\)/);
 });

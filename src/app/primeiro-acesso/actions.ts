@@ -172,6 +172,33 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     };
   }
 
+  const invitedContactId = inviteContext?.valid
+    ? (inviteContext.anchorKind === 'contact'
+      ? String(inviteContext.participant?.id ?? '')
+      : String(inviteContext.participant?.registration_contact_id ?? ''))
+    : '';
+  if (invitedContactId) {
+    const availability = await supabase.rpc('assert_registration_contact_cpf_available', {
+      p_registration_contact_id: invitedContactId,
+      p_cpf: cpf,
+    });
+    const availabilityPayload = availability.data && typeof availability.data === 'object'
+      ? availability.data as { ok?: boolean; code?: string; message?: string }
+      : null;
+    const collision = availability.error?.message?.includes('CPF_COLLISION_REQUIRES_ADMIN')
+      || availabilityPayload?.code === 'CPF_COLLISION_REQUIRES_ADMIN'
+      || availabilityPayload?.ok === false;
+    if (availability.error || collision) {
+      return {
+        success: false,
+        code: collision ? 'CPF_COLLISION_REQUIRES_ADMIN' : undefined,
+        message: collision
+          ? 'Este CPF já identifica outra Pessoa. A organização precisa revisar antes de ativar a conta.'
+          : availability.error?.message ?? 'Não foi possível validar seu CPF agora.',
+      };
+    }
+  }
+
   const mustChangePassword = inviteContext
     ? inviteContext.requiresPasswordSetup
     : Boolean(profile?.must_change_password);
@@ -261,11 +288,14 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     if (
       contactError.message === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER'
       || contactError.message === 'REGISTRATION_CONTACT_REQUIRES_INVITE'
+      || contactError.message === 'CPF_COLLISION_REQUIRES_ADMIN'
     ) {
       return {
         success: false,
         code: contactError.message,
-        message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+        message: contactError.message === 'CPF_COLLISION_REQUIRES_ADMIN'
+          ? 'Este CPF já identifica outra Pessoa. A organização precisa revisar antes de ativar a conta.'
+          : 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
       };
     }
     return { success: false, message: translateFirstAccessPersistError(contactError.message) };
@@ -326,7 +356,16 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
       p_participant_id: participant.id,
       p_values: { full_name: fullName, cpf, birth_date: birthDate, gender, phone, email: authEmail, city },
     });
-    if (contactUpdate.error) return { success: false, message: contactUpdate.error.message };
+    if (contactUpdate.error) {
+      const collision = contactUpdate.error.message.includes('CPF_COLLISION_REQUIRES_ADMIN');
+      return {
+        success: false,
+        code: collision ? 'CPF_COLLISION_REQUIRES_ADMIN' : undefined,
+        message: collision
+          ? 'Este CPF já identifica outra Pessoa. A organização precisa revisar antes de ativar a conta.'
+          : contactUpdate.error.message,
+      };
+    }
   }
 
   // Etapa FINAL e defensiva do onboarding. A RPC procura todos os direitos

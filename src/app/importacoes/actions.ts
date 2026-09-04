@@ -19,11 +19,21 @@ import {
 } from '@/lib/imports/normalization';
 import {
   isValidCpf,
-  normalizeCpfDigits,
   resolveImportOptionWithDefault,
   type ImportDataIssue,
 } from '@/lib/imports/import-row-validation';
 import { calculateAgeAtEventDate } from '@/lib/utils/date';
+import { normalizeImportedShirtType } from '@/lib/imports/shirt-type';
+import { classifyImportedCpf, type CpfCellKind } from '@/lib/imports/cpf-excel';
+import {
+  assignOccurrenceIndexes,
+  buildPurchaseFingerprint,
+  hashSourceFileBytes,
+} from '@/lib/imports/purchase-identity';
+import {
+  classifyCurrentEventPurchase,
+  classifyIntraFileSharedEmails,
+} from '@/lib/imports/classify-current-event-purchase';
 import {
   isCommerciallyCompletedImportStatus,
   isImportRowReadyToImport,
@@ -44,6 +54,7 @@ type NormalizedRow = {
   normalized_name: string;
   cpf: string | null;
   cpf_input: string | null;
+  cpf_raw: string | null;
   email: string | null;
   email_input: string | null;
   phone: string | null;
@@ -65,12 +76,11 @@ type NormalizedRow = {
   resolved_category_id: string | null;
   resolved_male_price: number | null;
   resolved_female_price: number | null;
-  gender_inference: {
-    inferred_field: 'gender';
-    inferred_value: 'female';
-    inference_source: 'shirt_type';
-    original_value: string;
-  } | null;
+  external_purchase_key: string | null;
+  cpf_cell_kind: CpfCellKind;
+  row_fingerprint: string | null;
+  occurrence_index: number;
+  excel_cpf_candidate: string | null;
 };
 
 function normalizeStatus(value: string | null | undefined) {
@@ -195,33 +205,33 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
   const rawYear = get('event_year');
   const parsedYear = rawYear ? Number(rawYear) : null;
   const originalShirtType = removeDuplicateSpaces(get('shirt_type'));
-  const normalizedShirtKey = removeAccents(originalShirtType).toLowerCase().replace(/\s+/g, ' ').trim();
-  const isBabylook = ['babylook', 'baby look', 'feminina', 'feminino'].includes(normalizedShirtKey);
-  const isStandardShirt = normalizedShirtKey === 'camiseta';
-  const importedGender = normalizeImportedGender(get('gender'));
-  const cpfInput = normalizeCpfDigits(get('cpf')) || null;
+  const cpfRaw = get('cpf') || null;
   const birthDateInput = get('birth_date') || null;
   const emailInput = get('email') || null;
   const phoneInput = get('phone') || null;
+  const externalPurchaseKey = removeDuplicateSpaces(get('external_purchase_key')) || null;
+  const shirtType = normalizeImportedShirtType(originalShirtType);
+  const importedGender = normalizeImportedGender(get('gender'));
 
   const row: NormalizedRow = {
     full_name: fullName,
     normalized_name: normalizeForMatch(fullName),
-    cpf: normalizeCpf(cpfInput),
-    cpf_input: cpfInput,
+    cpf: normalizeCpf(cpfRaw),
+    cpf_input: cpfRaw,
+    cpf_raw: cpfRaw,
     email: normalizeEmail(emailInput),
     email_input: emailInput,
     phone: normalizePhone(phoneInput),
     phone_input: phoneInput,
     birth_date: parseImportedBirthDate(birthDateInput),
     birth_date_input: birthDateInput,
-    gender: isBabylook ? 'female' : importedGender,
+    gender: importedGender,
     city: removeDuplicateSpaces(get('city')) || null,
     event_name: removeDuplicateSpaces(get('event_name')) || null,
     event_year: Number.isFinite(parsedYear ?? NaN) ? parsedYear : fallbackYear,
     category: removeDuplicateSpaces(get('category')) || null,
     batch: removeDuplicateSpaces(get('batch')) || null,
-    shirt_type: isBabylook ? 'Babylook' : isStandardShirt ? 'Camiseta' : originalShirtType || null,
+    shirt_type: shirtType,
     shirt_size: removeDuplicateSpaces(get('shirt_size')) || null,
     status: normalizeStatus(get('status')),
     amount: parseAmount(get('amount')),
@@ -230,12 +240,11 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
     resolved_category_id: null,
     resolved_male_price: null,
     resolved_female_price: null,
-    gender_inference: isBabylook ? {
-      inferred_field: 'gender',
-      inferred_value: 'female',
-      inference_source: 'shirt_type',
-      original_value: originalShirtType,
-    } : null,
+    external_purchase_key: externalPurchaseKey,
+    cpf_cell_kind: 'unknown',
+    row_fingerprint: null,
+    occurrence_index: 1,
+    excel_cpf_candidate: null,
   };
 
   return row;
@@ -340,7 +349,51 @@ export async function parseImportFileAction(formData: FormData) {
         return { success: false as const, message: 'Evento selecionado não pertence à organização atual.' };
       }
     }
-    const { headers, rows } = await parseSpreadsheetFile(file);
+    const fileBytes = await file.arrayBuffer();
+    const sourceFileHash = hashSourceFileBytes(fileBytes);
+    if (importType === 'current_event_registrations' && eventId) {
+      const { data: previousSameFile } = await supabase
+        .from('import_batches')
+        .select('id,file_name,status,imported_rows,total_rows,created_at,completed_at,imported_by')
+        .eq('organization_id', currentOrganization.id)
+        .eq('event_id', eventId)
+        .eq('source_file_hash', sourceFileHash)
+        .in('status', ['completed', 'ready_for_review', 'processing'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (previousSameFile?.id) {
+        return {
+          success: true as const,
+          alreadyImported: true as const,
+          batchId: String(previousSameFile.id),
+          previousBatch: {
+            id: String(previousSameFile.id),
+            fileName: previousSameFile.file_name ? String(previousSameFile.file_name) : file.name,
+            status: String(previousSameFile.status ?? ''),
+            importedRows: Number(previousSameFile.imported_rows ?? 0),
+            totalRows: Number(previousSameFile.total_rows ?? 0),
+            createdAt: previousSameFile.created_at ? String(previousSameFile.created_at) : null,
+            completedAt: previousSameFile.completed_at ? String(previousSameFile.completed_at) : null,
+            importedBy: previousSameFile.imported_by ? String(previousSameFile.imported_by) : null,
+          },
+          headers: [],
+          mapping: {},
+          summary: {
+            totalRows: Number(previousSameFile.total_rows ?? 0),
+            readyRows: 0,
+            duplicateRows: 0,
+            reviewRows: 0,
+            pendingRows: 0,
+            errorRows: 0,
+          },
+          preview: [],
+        };
+      }
+    }
+
+    const parsedSheet = await parseSpreadsheetFile(file);
+    const { headers, rows, cellKinds } = parsedSheet;
     if (!headers.length || !rows.length) {
       return { success: false as const, message: 'Arquivo vazio ou sem cabecalho valido.' };
     }
@@ -372,12 +425,35 @@ export async function parseImportFileAction(formData: FormData) {
     const emails = new Set<string>();
     const normalizedNames = new Set<string>();
 
-    const normalizedRows = rows.map((rawRow) => {
+    const normalizedRows = rows.map((rawRow, index) => {
       const normalized = toCanonicalRow(rawRow, mapping, historicalEventYear);
+      const cpfHeader = mapping.cpf;
+      if (cpfHeader && cellKinds[index]) {
+        normalized.cpf_cell_kind = cellKinds[index][cpfHeader] ?? 'unknown';
+      }
+      const classified = classifyImportedCpf(normalized.cpf_input, normalized.cpf_cell_kind);
+      normalized.excel_cpf_candidate = classified.excelCandidate;
+      normalized.row_fingerprint = buildPurchaseFingerprint({
+        fullName: normalized.full_name,
+        cpfInput: normalized.cpf_input,
+        emailInput: normalized.email_input,
+        phoneInput: normalized.phone_input,
+        category: normalized.category,
+        batch: normalized.batch,
+        shirtType: normalized.shirt_type,
+        shirtSize: normalized.shirt_size,
+        amount: normalized.amount,
+        paymentMethod: normalized.payment_method,
+        externalPurchaseKey: normalized.external_purchase_key,
+      });
       if (normalized.cpf) cpfs.add(normalized.cpf);
       if (normalized.email) emails.add(normalized.email);
       if (normalized.normalized_name) normalizedNames.add(normalized.normalized_name);
       return normalized;
+    });
+    const occurrenceIndexes = assignOccurrenceIndexes(normalizedRows.map((row) => row.row_fingerprint ?? ''));
+    normalizedRows.forEach((row, index) => {
+      row.occurrence_index = occurrenceIndexes[index] ?? 1;
     });
 
     const eventRules = importType === 'current_event_registrations'
@@ -430,14 +506,21 @@ export async function parseImportFileAction(formData: FormData) {
       if (key) cpfMap.set(key, participant);
     }
 
-    const emailMap = new Map<string, Record<string, unknown>>();
+    const emailMap = new Map<string, Record<string, unknown>[]>();
+    const pushUnique = (map: Map<string, Record<string, unknown>[]>, key: string, record: Record<string, unknown>) => {
+      const list = map.get(key) ?? [];
+      if (!list.some((item) => String(item.id ?? item.registration_contact_id ?? '') === String(record.id ?? record.registration_contact_id ?? ''))) {
+        list.push(record);
+      }
+      map.set(key, list);
+    };
     for (const contact of contactsByEmail ?? []) {
       const key = normalizeEmail(String(contact.email ?? ''));
-      if (key) emailMap.set(key, contact);
+      if (key) pushUnique(emailMap, key, contact);
     }
     for (const participant of participantsByEmail ?? []) {
       const key = normalizeEmail(String(participant.email ?? ''));
-      if (key) emailMap.set(key, participant);
+      if (key) pushUnique(emailMap, key, participant);
     }
 
     // AUDITORIA (caso real TIEVENT): participantsByEvent (tabela legada
@@ -469,38 +552,6 @@ export async function parseImportFileAction(formData: FormData) {
       normalizedNameMap.set(key, liveContact ? { ...participant, full_name: liveContact.full_name, cpf: liveContact.cpf, email: liveContact.email } : participant);
     }
 
-    // Contatos ja resolvidos (contactsByCpf) que ja possuem order_item vivo
-    // NESTE evento -- sem isso, reimportar um arquivo ja processado cria um
-    // pedido/pagamento/ingresso novo e "sem titular" a cada execucao, pra
-    // cada pessoa, silenciosamente (a checagem de titularidade da RPC so
-    // decide QUEM fica titular, nunca impede a criacao do pedido em si).
-    const contactIdsAlreadyInEvent = new Set<string>();
-    const existingOrderItemByContact = new Map<string, { id: string; shirtType: string | null; shirtSize: string | null }>();
-    const currentCandidateContacts = [...(contactsByCpf ?? []), ...(contactsByEmail ?? [])]
-      .filter((contact, index, all) => all.findIndex((candidate) => String(candidate.id) === String(contact.id)) === index);
-    if (importType === 'current_event_registrations' && eventId && currentCandidateContacts.length) {
-      const contactIds = currentCandidateContacts.map((contact) => String(contact.id));
-      const { data: existingOrderItems } = await supabase
-        .from('order_items')
-        .select('id,registration_contact_id,shirt_type,shirt_size')
-        .eq('event_id', eventId)
-        .in('registration_contact_id', contactIds)
-        .not('status', 'in', '(cancelled,expired,refunded)');
-      for (const item of existingOrderItems ?? []) {
-        if (!item.registration_contact_id) continue;
-        const contactId = String(item.registration_contact_id);
-        contactIdsAlreadyInEvent.add(contactId);
-        if (!existingOrderItemByContact.has(contactId)) {
-          existingOrderItemByContact.set(contactId, {
-            id: String(item.id),
-            shirtType: item.shirt_type ? String(item.shirt_type) : null,
-            shirtSize: item.shirt_size ? String(item.shirt_size) : null,
-          });
-        }
-      }
-    }
-    const shirtConflictsToFlag: Array<{ rowIndex: number; orderItemId: string; existingType: string; existingSize: string; importedType: string; importedSize: string }> = [];
-
     const historicalIdentitySet = new Set<string>();
     for (const historicalRow of existingHistoricalRows ?? []) {
       const rowCpf = normalizeCpf(String(historicalRow.cpf ?? ''));
@@ -510,6 +561,64 @@ export async function parseImportFileAction(formData: FormData) {
       if (rowEmail) historicalIdentitySet.add(`email:${rowEmail}`);
       if (rowName) historicalIdentitySet.add(`name:${rowName}`);
     }
+
+    const fingerprintSet = Array.from(new Set(normalizedRows.map((row) => row.row_fingerprint).filter(Boolean))) as string[];
+    const externalKeys = Array.from(new Set(normalizedRows.map((row) => row.external_purchase_key).filter(Boolean))) as string[];
+    const { data: previousPurchases } = importType === 'current_event_registrations' && eventId && fingerprintSet.length
+      ? await supabase
+        .from('import_batch_rows')
+        .select('id,row_fingerprint,occurrence_index,source_file_hash,external_purchase_key,status,import_batches!inner(event_id,organization_id,status)')
+        .in('row_fingerprint', fingerprintSet)
+        .eq('status', 'imported')
+        .eq('import_batches.event_id', eventId)
+        .eq('import_batches.organization_id', currentOrganization.id)
+      : { data: [] as Array<Record<string, unknown>> };
+    const previousByFingerprint = new Map<string, Array<{
+      importBatchRowId: string;
+      sourceFileHash: string;
+      occurrenceIndex: number;
+      externalPurchaseKey: string | null;
+    }>>();
+    for (const previous of previousPurchases ?? []) {
+      const fingerprint = String((previous as { row_fingerprint?: string }).row_fingerprint ?? '');
+      if (!fingerprint) continue;
+      const list = previousByFingerprint.get(fingerprint) ?? [];
+      list.push({
+        importBatchRowId: String((previous as { id: string }).id),
+        sourceFileHash: String((previous as { source_file_hash?: string }).source_file_hash ?? ''),
+        occurrenceIndex: Number((previous as { occurrence_index?: number }).occurrence_index ?? 1),
+        externalPurchaseKey: (previous as { external_purchase_key?: string | null }).external_purchase_key
+          ? String((previous as { external_purchase_key?: string }).external_purchase_key)
+          : null,
+      });
+      previousByFingerprint.set(fingerprint, list);
+    }
+    if (externalKeys.length && importType === 'current_event_registrations' && eventId) {
+      const { data: previousByExternal } = await supabase
+        .from('import_batch_rows')
+        .select('id,row_fingerprint,occurrence_index,source_file_hash,external_purchase_key,status,import_batches!inner(event_id,organization_id)')
+        .in('external_purchase_key', externalKeys)
+        .eq('status', 'imported')
+        .eq('import_batches.event_id', eventId)
+        .eq('import_batches.organization_id', currentOrganization.id);
+      for (const previous of previousByExternal ?? []) {
+        const fingerprint = String((previous as { row_fingerprint?: string }).row_fingerprint ?? `ext:${String((previous as { external_purchase_key?: string }).external_purchase_key ?? '')}`);
+        const list = previousByFingerprint.get(fingerprint) ?? [];
+        list.push({
+          importBatchRowId: String((previous as { id: string }).id),
+          sourceFileHash: String((previous as { source_file_hash?: string }).source_file_hash ?? ''),
+          occurrenceIndex: Number((previous as { occurrence_index?: number }).occurrence_index ?? 1),
+          externalPurchaseKey: (previous as { external_purchase_key?: string | null }).external_purchase_key
+            ? String((previous as { external_purchase_key?: string }).external_purchase_key)
+            : null,
+        });
+        previousByFingerprint.set(fingerprint, list);
+      }
+    }
+
+    const intraFileSharedEmails = classifyIntraFileSharedEmails(
+      normalizedRows.map((row, index) => ({ email: row.email, cpf: row.cpf, index })),
+    );
 
     const batchInsert = await supabase
       .from('import_batches')
@@ -526,6 +635,7 @@ export async function parseImportFileAction(formData: FormData) {
         organization_id: currentOrganization.id,
         total_rows: normalizedRows.length,
         status: 'processing',
+        source_file_hash: sourceFileHash,
       })
       .select('id')
       .single();
@@ -541,8 +651,8 @@ export async function parseImportFileAction(formData: FormData) {
     let reviewRows = 0;
     const seenHistoricalIdentityKeys = new Set<string>();
     const seenHistoricalCpfs = new Set<string>();
-    const seenCurrentEventCpfs = new Set<string>();
 
+    const seenIntraFileCpfs = new Set<string>();
     const rowsToInsert = normalizedRows.map((row, index) => {
       let status = 'ready';
       let resolution = 'pending';
@@ -597,9 +707,11 @@ export async function parseImportFileAction(formData: FormData) {
       if (importType === 'current_event_registrations' && status !== 'error' && eventRules) {
         const addIssue = (issue: ImportDataIssue) => dataIssues.push(issue);
         if (!row.cpf_input) {
-          addIssue({ field_code: 'cpf', issue_type: 'missing_required_identity', message: 'CPF obrigatorio ausente.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
+          addIssue({ field_code: 'cpf', issue_type: 'missing_required_identity', message: 'CPF obrigatorio ausente. Compra preservada com identidade pendente.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false, resolution_scope: 'user_resolvable' });
+        } else if (classifyImportedCpf(row.cpf_input, row.cpf_cell_kind).kind === 'excel_leading_zero') {
+          addIssue({ field_code: 'cpf', issue_type: 'excel_leading_zero', message: 'Possivel zero inicial removido pelo Excel.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false, resolution_scope: 'user_resolvable' });
         } else if (!isValidCpf(row.cpf_input)) {
-          addIssue({ field_code: 'cpf', issue_type: 'invalid_identity', message: 'CPF invalido.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
+          addIssue({ field_code: 'cpf', issue_type: 'invalid_identity', message: 'CPF invalido. Compra preservada com identidade pendente.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false, resolution_scope: 'user_resolvable' });
         }
 
         if (row.email_input && !row.email) {
@@ -693,23 +805,10 @@ export async function parseImportFileAction(formData: FormData) {
         }
       }
 
-      if (importType === 'current_event_registrations' && status !== 'error' && row.cpf) {
-        // CPF repetido dentro do MESMO arquivo (pessoa nova, ainda sem
-        // cadastro no banco) nao aparece em cpfMap (que so reflete o que ja
-        // existia antes do upload) -- sem isso, cada ocorrencia seguia como
-        // "pronta" e virava um pedido/ingresso separado e silencioso.
-        if (seenCurrentEventCpfs.has(row.cpf)) {
-          status = 'duplicate';
-          resolution = 'pending';
-          errorMessage = 'CPF ja aparece em outra linha deste arquivo.';
-        } else {
-          seenCurrentEventCpfs.add(row.cpf);
-        }
-      }
-
       if (importType === 'current_event_registrations' && status !== 'error') {
         const cpfMatch = row.cpf ? cpfMap.get(row.cpf) : undefined;
-        const emailMatch = row.email ? emailMap.get(row.email) : undefined;
+        const emailMatches = row.email ? (emailMap.get(row.email) ?? []) : [];
+        const emailMatch = emailMatches.find((candidate) => String(candidate.id ?? candidate.registration_contact_id ?? '') !== String(cpfMatch?.id ?? '')) ?? emailMatches[0];
         const nameMatch = row.normalized_name ? normalizedNameMap.get(row.normalized_name) : undefined;
         const toCandidate = (matched: Record<string, unknown>, reason: string) => ({
           registration_contact_id: String(matched.registration_contact_id ?? matched.id ?? ''),
@@ -718,79 +817,89 @@ export async function parseImportFileAction(formData: FormData) {
           full_name: String(matched.full_name ?? ''), cpf: String(matched.cpf ?? ''),
           email: String(matched.email ?? ''), reason,
         });
-        const cpfCandidate = cpfMatch ? toCandidate(cpfMatch, 'cpf_exact') : null;
-        const emailCandidate = emailMatch ? toCandidate(emailMatch, 'email_exact') : null;
-        const nameCandidate = nameMatch ? toCandidate(nameMatch, 'name_exact_suggestion') : null;
-        const cpfContactId = cpfCandidate?.registration_contact_id || null;
-        const emailContactId = emailCandidate?.registration_contact_id || null;
-
-        if (cpfContactId && emailContactId && cpfContactId !== emailContactId) {
-          status = 'review_required'; resolution = 'pending';
-          errorMessage = 'Conflito de identidade: CPF e e-mail correspondem a cadastros diferentes.';
-          identityMatchDetails = { reason: 'strong_identifier_conflict', candidates: [cpfCandidate, emailCandidate] };
-        } else if (cpfCandidate) {
-          matchedRegistrationContactId = cpfCandidate.registration_contact_id;
-          matchedUserId = cpfCandidate.user_id;
-          identityMatchDetails = { reason: emailCandidate ? 'cpf_and_email_exact' : 'cpf_exact', candidates: [cpfCandidate] };
-          if (contactIdsAlreadyInEvent.has(matchedRegistrationContactId)) {
-            status = 'duplicate'; resolution = 'pending'; errorMessage = 'Esta pessoa ja possui inscricao para este evento.';
-          } else resolution = 'link_existing';
-        } else if (emailCandidate) {
-          matchedRegistrationContactId = emailCandidate.registration_contact_id;
-          matchedUserId = emailCandidate.user_id;
-          status = 'review_required'; resolution = 'pending';
-          errorMessage = 'E-mail já pertence a um cadastro. Confirme a identidade antes de vincular.';
-          identityMatchDetails = { reason: 'email_exact_requires_review', candidates: [emailCandidate] };
-        } else if (nameCandidate) {
-          matchedParticipantId = nameCandidate.participant_id;
-          matchedRegistrationContactId = nameCandidate.registration_contact_id;
-          matchedUserId = nameCandidate.user_id;
-          status = 'review_required'; resolution = 'pending';
-          errorMessage = 'Nome semelhante encontrado; nenhum identificador forte confirmou a identidade.';
-          identityMatchDetails = { reason: 'name_only_suggestion', candidates: [nameCandidate] };
+        const intraFileAdditionalPurchase = Boolean(row.cpf && seenIntraFileCpfs.has(row.cpf) && !cpfMatch);
+        const purchase = classifyCurrentEventPurchase({
+          cpfInput: row.cpf_input,
+          cpfCellKind: row.cpf_cell_kind,
+          email: row.email,
+          cpfMatch: cpfMatch ? toCandidate(cpfMatch, 'cpf_exact') : null,
+          emailMatch: emailMatch ? toCandidate(emailMatch, 'email_exact') : null,
+          nameMatch: nameMatch ? toCandidate(nameMatch, 'name_exact_suggestion') : null,
+          sourceFileHash,
+          occurrenceIndex: row.occurrence_index,
+          existingSameEventPurchases: [
+            ...(previousByFingerprint.get(row.row_fingerprint ?? '') ?? []),
+            ...(row.external_purchase_key ? (previousByFingerprint.get(`ext:${row.external_purchase_key}`) ?? []) : []),
+          ],
+          externalPurchaseKey: row.external_purchase_key,
+        });
+        if (row.cpf) seenIntraFileCpfs.add(row.cpf);
+        if (purchase.status === 'review_required') {
+          status = 'review_required';
+          resolution = 'pending';
+          errorMessage = purchase.errorMessage;
+          identityMatchDetails = purchase.identityMatchDetails;
+          matchedRegistrationContactId = String(
+            (purchase.identityMatchDetails as { candidates?: Array<{ registration_contact_id?: string }> }).candidates?.[0]?.registration_contact_id
+            ?? '',
+          ) || matchedRegistrationContactId;
+        } else {
+          if (purchase.resolution === 'link_existing') {
+            resolution = 'link_existing';
+            matchedRegistrationContactId = String(
+              (purchase.identityMatchDetails as { candidates?: Array<{ registration_contact_id?: string }> }).candidates?.[0]?.registration_contact_id
+              ?? '',
+            ) || null;
+            matchedUserId = cpfMatch?.user_id ? String(cpfMatch.user_id) : null;
+          } else if (status === 'ready') {
+            resolution = purchase.resolution;
+          }
+          identityMatchDetails = purchase.identityMatchDetails;
+          if (purchase.additionalPurchase || intraFileAdditionalPurchase) {
+            identityMatchDetails = {
+              ...identityMatchDetails,
+              additional_purchase: true,
+              reason: String((identityMatchDetails as { reason?: string }).reason ?? 'additional_purchase'),
+            };
+          }
+          if (intraFileSharedEmails.has(index)) {
+            identityMatchDetails = {
+              ...identityMatchDetails,
+              account_review: 'shared_email',
+              reason: String((identityMatchDetails as { reason?: string }).reason ?? 'shared_email_account_review'),
+            };
+            errorMessage = errorMessage
+              ?? 'E-mail compartilhado. Pessoas permanecem separadas; revise a conta proprietaria dos ingressos.';
+          }
+          if (purchase.status === 'data_pending' && status !== 'error') {
+            status = 'data_pending';
+            errorMessage = purchase.errorMessage ?? errorMessage;
+          }
+        }
+        for (const issue of purchase.identityIssues) {
+          if (!dataIssues.some((existing) => existing.field_code === issue.field_code && existing.issue_type === issue.issue_type)) {
+            dataIssues.push(issue);
+          }
+        }
+        if (purchase.possibleReimportOfRowId) {
+          identityMatchDetails = { ...identityMatchDetails, previous_import_batch_row_id: purchase.possibleReimportOfRowId };
+        }
+        if (emailMatches.length) {
+          identityMatchDetails = {
+            ...identityMatchDetails,
+            owner_candidates: emailMatches.map((candidate) => toCandidate(candidate, 'shared_email')),
+          };
         }
       } else if (status !== 'error' && row.cpf && cpfMap.has(row.cpf)) {
         const matched = cpfMap.get(row.cpf)!;
-        if (importType === 'current_event_registrations') {
-          matchedRegistrationContactId = String(matched.id ?? '');
-        } else {
-          matchedParticipantId = String(matched.id ?? '');
-        }
+        matchedParticipantId = String(matched.id ?? '');
         matchedUserId = importType === 'historical_participations' && matched.user_id ? String(matched.user_id) : null;
-        if (importType === 'current_event_registrations') {
-          if (contactIdsAlreadyInEvent.has(String(matched.id ?? ''))) {
-            // Pessoa ja tem pedido/ingresso vivo NESTE evento (import anterior
-            // ja finalizado, ou qualquer outro fluxo) -- exige decisao
-            // explicita em vez de gerar mais um pedido silencioso.
-            status = 'duplicate';
-            resolution = 'pending';
-            errorMessage = 'Esta pessoa ja possui inscricao para este evento.';
-
-            const existing = existingOrderItemByContact.get(String(matched.id ?? ''));
-            const importedType = row.shirt_type?.trim();
-            const importedSize = row.shirt_size?.trim();
-            const existingType = existing?.shirtType?.trim();
-            const existingSize = existing?.shirtSize?.trim();
-            if (existing && importedType && importedSize && existingType && existingSize
-              && (importedType.toLowerCase() !== existingType.toLowerCase() || importedSize.toLowerCase() !== existingSize.toLowerCase())) {
-              // Nao decide sozinho: so registra o conflito (comparavel,
-              // resolvivel pelo mesmo dialogo admin que ja resolve qualquer
-              // pendencia de camiseta) -- nunca sobrescreve nem cria ingresso.
-              errorMessage = `Conflito de camiseta: ja consta "${existingType} ${existingSize}"; a importacao trouxe "${importedType} ${importedSize}".`;
-              shirtConflictsToFlag.push({
-                rowIndex: index, orderItemId: existing.id,
-                existingType, existingSize, importedType, importedSize,
-              });
-            }
-          } else {
-            resolution = 'link_existing';
-          }
-        } else {
+        if (importType !== 'current_event_registrations') {
           status = 'duplicate';
           resolution = 'pending';
         }
       } else if (importType === 'historical_participations' && status !== 'error' && row.email && emailMap.has(row.email)) {
-        const matched = emailMap.get(row.email)!;
+        const matched = emailMap.get(row.email)![0];
         matchedParticipantId = String(matched.id ?? '');
         matchedUserId = matched.user_id ? String(matched.user_id) : null;
         status = 'duplicate';
@@ -825,38 +934,19 @@ export async function parseImportFileAction(formData: FormData) {
         registration_contact_id: matchedRegistrationContactId,
         matched_user_id: matchedUserId,
         identity_match_details: identityMatchDetails,
+        row_fingerprint: row.row_fingerprint,
+        occurrence_index: row.occurrence_index,
+        source_file_hash: sourceFileHash,
+        external_purchase_key: row.external_purchase_key,
+        cpf_excel_candidate: row.excel_cpf_candidate,
+        cpf_cell_kind: row.cpf_cell_kind,
+        possible_reimport_of_row_id: (identityMatchDetails as { previous_import_batch_row_id?: string }).previous_import_batch_row_id ?? null,
       };
     });
 
     const insertRowsResult = await supabase.from('import_batch_rows').insert(rowsToInsert);
     if (insertRowsResult.error) {
       throw new Error(insertRowsResult.error.message);
-    }
-
-    if (shirtConflictsToFlag.length) {
-      const rowNumbers = shirtConflictsToFlag.map((conflict) => conflict.rowIndex + 1);
-      const { data: insertedConflictRows } = await supabase
-        .from('import_batch_rows')
-        .select('id,row_number')
-        .eq('import_batch_id', batchId)
-        .in('row_number', rowNumbers);
-      const rowIdByNumber = new Map((insertedConflictRows ?? []).map((row) => [Number(row.row_number), String(row.id)]));
-      for (const conflict of shirtConflictsToFlag) {
-        const rowId = rowIdByNumber.get(conflict.rowIndex + 1);
-        if (!rowId) continue;
-        const { error: flagError } = await supabase.rpc('flag_import_shirt_conflict', {
-          p_import_batch_id: batchId,
-          p_import_batch_row_id: rowId,
-          p_order_item_id: conflict.orderItemId,
-          p_existing_shirt_type: conflict.existingType,
-          p_existing_shirt_size: conflict.existingSize,
-          p_imported_shirt_type: conflict.importedType,
-          p_imported_shirt_size: conflict.importedSize,
-        });
-        if (flagError) {
-          console.error('[IMPORT SHIRT CONFLICT FLAG ERROR]', { batchId, rowId, error: flagError });
-        }
-      }
     }
 
     const pendingRows = rowsToInsert.filter((row) => row.status === 'data_pending').length;
@@ -1076,12 +1166,27 @@ export async function getImportBatchDetailsAction(batchId: string) {
 export async function resolveImportReviewAction(formData: FormData) {
   const parsed = z.object({
     rowId: z.string().uuid(),
-    decision: z.enum(['link_existing', 'create_new', 'ignore']),
+    decision: z.enum([
+      'link_existing',
+      'create_new',
+      'ignore',
+      'confirm_new_purchase',
+      'ignore_technical_duplicate',
+      'confirm_excel_cpf',
+      'keep_pending_cpf',
+      'provide_alternate_cpf',
+      'assign_owner_contact',
+      'keep_people_separate',
+    ]),
     registrationContactId: z.string().uuid().nullable(),
+    cpf: z.string().optional(),
+    ownerRegistrationContactId: z.string().uuid().nullable(),
   }).safeParse({
     rowId: String(formData.get('row_id') ?? ''),
     decision: String(formData.get('decision') ?? ''),
     registrationContactId: String(formData.get('registration_contact_id') ?? '').trim() || null,
+    cpf: String(formData.get('cpf') ?? '').trim() || undefined,
+    ownerRegistrationContactId: String(formData.get('owner_registration_contact_id') ?? '').trim() || null,
   });
   if (!parsed.success) return { success: false as const, message: 'Decisao de revisao invalida.' };
   const supabase = await createServerSupabaseClient();
@@ -1092,7 +1197,11 @@ export async function resolveImportReviewAction(formData: FormData) {
   const { error } = await supabase.rpc('resolve_import_batch_row_review', {
     p_row_id: parsed.data.rowId,
     p_decision: parsed.data.decision,
-    p_registration_contact_id: parsed.data.registrationContactId,
+    p_registration_contact_id: parsed.data.ownerRegistrationContactId ?? parsed.data.registrationContactId,
+    p_payload: {
+      cpf: parsed.data.cpf ?? null,
+      owner_registration_contact_id: parsed.data.ownerRegistrationContactId,
+    },
   });
   if (error) return { success: false as const, message: error.message };
   revalidatePath('/importacoes/revisoes');
@@ -1190,7 +1299,7 @@ export async function executeImportBatchAction(
 
   const { data: rows, error: rowsError } = await supabase
     .from('import_batch_rows')
-    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id')
+    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id, intended_owner_contact_id')
     .eq('import_batch_id', batchId)
     .order('row_number', { ascending: true });
 
@@ -1326,6 +1435,10 @@ export async function executeImportBatchAction(
       }
 
       if (batch.import_type === 'current_event_registrations') {
+        if (row.order_item_id) {
+          importedRows += 1;
+          continue;
+        }
         const eventId = batch.event_id ? String(batch.event_id) : null;
         if (!eventId) {
           throw new Error('Evento obrigatorio para importacao de inscritos atuais.');
@@ -1350,6 +1463,7 @@ export async function executeImportBatchAction(
           p_payment_method: paymentMethod,
           p_import_issues: issues,
           p_assign_holder: true,
+          p_intended_owner_contact_id: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,
         });
         if (upsertError) throw upsertError;
         const upsertResult = upserted as Record<string, unknown> | null;
@@ -1367,27 +1481,6 @@ export async function executeImportBatchAction(
 
         if (!participantId || !registrationContactId || !orderItemId) {
           throw new Error('Falha ao criar o ingresso importado.');
-        }
-
-        const genderInference = normalized.gender_inference;
-        if (genderInference && typeof genderInference === 'object' && !Array.isArray(genderInference)) {
-          const inference = genderInference as Record<string, unknown>;
-          const { data: auditRecorded, error: inferenceAuditError } = await supabase.rpc('record_import_field_inference_audit', {
-            p_import_batch_id: batchId,
-            p_participant_id: participantId,
-            p_inferred_field: String(inference.inferred_field ?? ''),
-            p_inferred_value: String(inference.inferred_value ?? ''),
-            p_inference_source: String(inference.inference_source ?? ''),
-            p_original_value: String(inference.original_value ?? ''),
-          });
-          if (inferenceAuditError || auditRecorded !== true) {
-            console.error('[IMPORT AUDIT ERROR]', {
-              batchId,
-              participantId,
-              code: inferenceAuditError?.code ?? null,
-              message: inferenceAuditError?.message ?? 'RPC de auditoria retornou false.',
-            });
-          }
         }
 
         // No MVP do importador administrativo, não criamos nem convidamos contas.

@@ -8,6 +8,7 @@ export type ImportDataIssue = {
   blocks_ticket_issuance: boolean;
   blocks_checkin: boolean;
   blocks_kit_delivery: boolean;
+  resolution_scope?: 'user_resolvable' | 'admin_only';
 };
 
 export type ImportOption = {

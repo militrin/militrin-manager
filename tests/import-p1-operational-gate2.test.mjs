@@ -99,7 +99,7 @@ test('P1-4 CPF existente nao promete criar nova Pessoa', () => {
   assert.match(importer, /importRowHasExistingCpfIdentity/);
   assert.match(reviewQueue, /importRowHasExistingCpfIdentity/);
   assert.match(reviewQueue, /Não é possível criar outra Pessoa com o mesmo CPF/);
-  assert.match(reviewQueue, /hasExistingCpf \? null : <form action=\{submitReview\}/);
+  assert.match(reviewQueue, /hasExistingCpf \? null : \(\s*<form action=\{submitReview\}/);
   assert.equal(importRowHasExistingCpfIdentity({ reason: 'cpf_exact', candidates: [{ reason: 'cpf_exact', cpf: '52998224725' }] }, '52998224725'), true);
   assert.equal(importRowHasExistingCpfIdentity({ reason: 'name_only_suggestion', candidates: [{ reason: 'name_only_suggestion', cpf: '11144477735' }] }, '52998224725'), false);
   assert.equal(importRowHasExistingCpfIdentity({ reason: 'email_exact_requires_review', candidates: [{ reason: 'email_exact', cpf: '52998224725' }] }, '529.982.247-25'), true);
@@ -186,11 +186,15 @@ test('5-7) confirm_all exige finance.confirm_payment no backend antes de persist
 test('8) CPF existente nao oferece create_new; backend continua autoridade de unicidade', () => {
   assert.equal(importRowHasExistingCpfIdentity({ reason: 'cpf_exact' }, '52998224725'), true);
   assert.equal(importRowHasExistingCpfIdentity({ reason: 'name_only_suggestion', candidates: [{ reason: 'name_only_suggestion' }] }, '52998224725'), false);
-  assert.match(reviewQueue, /hasExistingCpf \? null : <form action=\{submitReview\}/);
+  assert.match(reviewQueue, /hasExistingCpf \? null : \(\s*<form action=\{submitReview\}/);
   assert.match(importer, /hasExistingCpf \? null : <option value="create_new">/);
   assert.match(identityHelper, /nao duplica Pessoa|Não é possível criar outra Pessoa|reuses the existing row/i);
   assert.match(importActions, /import_current_event_contact_first/);
-  assert.match(importActions, /decision: z\.enum\(\['link_existing', 'create_new', 'ignore'\]\)/);
+  assert.match(importActions, /decision: z\.enum\(\[/);
+  assert.match(importActions, /'link_existing'/);
+  assert.match(importActions, /'create_new'/);
+  assert.match(importActions, /'ignore'/);
+  assert.match(importActions, /'assign_owner_contact'/);
 });
 
 test('9) filtro import_batch_id e da org atual e nao cria terceira fila', () => {

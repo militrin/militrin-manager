@@ -66,7 +66,7 @@ export async function getParticipantInviteContext(inviteId: string, user: Authen
   const { data: participant } = isContactInvite
     ? { data: null }
     : await admin.from('participants')
-      .select('id,event_id,user_id,registration_contacts(full_name,cpf,birth_date,gender,phone,email,city)')
+      .select('id,event_id,user_id,registration_contact_id,registration_contacts(full_name,cpf,birth_date,gender,phone,email,city)')
       .eq('id', invite.participant_id).maybeSingle();
   const { data: directContact } = isContactInvite
     ? await admin.from('registration_contacts').select('id,user_id,full_name,cpf,birth_date,gender,phone,email,city').eq('id', invite.registration_contact_id).maybeSingle()

@@ -15,6 +15,7 @@ export const CANONICAL_FIELDS = [
   'status',
   'amount',
   'payment_method',
+  'external_purchase_key',
 ] as const;
 
 export type CanonicalField = typeof CANONICAL_FIELDS[number];
@@ -36,6 +37,7 @@ export const CANONICAL_FIELD_LABELS: Record<CanonicalField, string> = {
   status: 'Status',
   amount: 'Valor',
   payment_method: 'Forma de pagamento',
+  external_purchase_key: 'Identificador original da compra',
 };
 
 const aliases: Record<CanonicalField, string[]> = {
@@ -55,6 +57,21 @@ const aliases: Record<CanonicalField, string[]> = {
   status: ['status', 'situacao', 'registration_status'],
   amount: ['valor', 'amount', 'preco'],
   payment_method: ['pagamento', 'payment', 'payment_method', 'forma de pagamento', 'forma_pagamento'],
+  external_purchase_key: [
+    'pedido',
+    'pedido original',
+    'numero do pedido',
+    'n pedido',
+    'inscricao',
+    'inscrição',
+    'transaction',
+    'transaction id',
+    'transaction_id',
+    'response id',
+    'response_id',
+    'google forms',
+    'google forms id',
+  ],
 };
 
 function normalizeHeader(value: string) {

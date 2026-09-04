@@ -1,20 +1,33 @@
 import * as XLSX from 'xlsx';
+import type { CpfCellKind } from '@/lib/imports/cpf-excel';
 
 export type ParsedSheet = {
   headers: string[];
   rows: Record<string, string>[];
+  cellKinds: Record<string, CpfCellKind>[];
 };
 
 const EMPTY_XLSX_HEADER = /^__EMPTY(?:_\d+)?$/i;
 
-export function parseSpreadsheetMatrix(matrix: unknown[][]): ParsedSheet {
+function describeCellKind(value: unknown): CpfCellKind {
+  if (value == null || value === '') return 'empty';
+  if (typeof value === 'number') return 'number';
+  if (value instanceof Date) return 'date';
+  return 'text';
+}
+
+export function parseSpreadsheetMatrix(
+  matrix: unknown[][],
+  rawMatrix?: unknown[][],
+): ParsedSheet {
   const headerRowIndex = matrix.findIndex((row) =>
     row.some((value) => String(value ?? '').trim().length > 0),
   );
-  if (headerRowIndex < 0) return { headers: [], rows: [] };
+  if (headerRowIndex < 0) return { headers: [], rows: [], cellKinds: [] };
 
   const rawHeaders = matrix[headerRowIndex].map((value) => String(value ?? '').trim());
   const dataRows = matrix.slice(headerRowIndex + 1);
+  const rawDataRows = (rawMatrix ?? matrix).slice(headerRowIndex + 1);
   const usefulColumns = rawHeaders
     .map((header, index) => ({ header, index }))
     .filter(({ header, index }) =>
@@ -36,13 +49,18 @@ export function parseSpreadsheetMatrix(matrix: unknown[][]): ParsedSheet {
       : header,
   }));
   const headers = columns.map(({ header }) => header);
-  const rows = dataRows
-    .filter((row) => columns.some(({ index }) => String(row[index] ?? '').trim().length > 0))
-    .map((row) => Object.fromEntries(
-      columns.map(({ header, index }) => [header, String(row[index] ?? '').trim()]),
-    ));
+  const kept = dataRows
+    .map((row, rowIndex) => ({ row, rawRow: rawDataRows[rowIndex] ?? row }))
+    .filter(({ row }) => columns.some(({ index }) => String(row[index] ?? '').trim().length > 0));
 
-  return { headers, rows };
+  const rows = kept.map(({ row }) => Object.fromEntries(
+    columns.map(({ header, index }) => [header, String(row[index] ?? '').trim()]),
+  ));
+  const cellKinds = kept.map(({ rawRow }) => Object.fromEntries(
+    columns.map(({ header, index }) => [header, describeCellKind(rawRow[index])]),
+  )) as Record<string, CpfCellKind>[];
+
+  return { headers, rows, cellKinds };
 }
 
 function parseCsv(content: string): ParsedSheet {
@@ -51,7 +69,7 @@ function parseCsv(content: string): ParsedSheet {
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
 
-  if (!lines.length) return { headers: [], rows: [] };
+  if (!lines.length) return { headers: [], rows: [], cellKinds: [] };
 
   const splitLine = (line: string) => {
     const result: string[] = [];
@@ -83,18 +101,24 @@ function parseCsv(content: string): ParsedSheet {
 }
 
 function parseXlsx(buffer: ArrayBuffer): ParsedSheet {
-  const workbook = XLSX.read(buffer, { type: 'array' });
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return { headers: [], rows: [] };
+  if (!sheetName) return { headers: [], rows: [], cellKinds: [] };
   const sheet = workbook.Sheets[sheetName];
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+  const formatted = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     defval: '',
     blankrows: false,
     raw: false,
   });
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: '',
+    blankrows: false,
+    raw: true,
+  });
 
-  return parseSpreadsheetMatrix(matrix);
+  return parseSpreadsheetMatrix(formatted, raw);
 }
 
 export async function parseSpreadsheetFile(file: File): Promise<ParsedSheet> {

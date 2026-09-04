@@ -61,6 +61,17 @@ const STATUS_LABELS: Record<string, string> = {
   skipped: 'Ignorado',
 };
 
+type PreviousImportedBatch = {
+  id: string;
+  fileName: string;
+  status: string;
+  importedRows: number;
+  totalRows: number;
+  createdAt: string | null;
+  completedAt: string | null;
+  importedBy: string | null;
+};
+
 type OpenedBatch = {
   id: string;
   status: string;
@@ -90,6 +101,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
   const [defaultBatchId, setDefaultBatchId] = useState('');
   const [openedBatch, setOpenedBatch] = useState<OpenedBatch | null>(null);
   const [executeStarted, setExecuteStarted] = useState(false);
+  const [alreadyImportedBatch, setAlreadyImportedBatch] = useState<PreviousImportedBatch | null>(null);
   const eventCategories = importOptions.categories.filter((item) => item.event_id === eventId);
   const eventBatches = importOptions.batches.filter((item) => item.event_id === eventId);
   const compatibleCategories = defaultBatchId ? eventCategories.filter((item) => importOptions.prices.some((price) => price.batch_id === defaultBatchId && price.ticket_category_id === item.id)) : eventCategories;
@@ -180,6 +192,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
     setMessage(null);
     setReport(null);
     setOpenedBatch(null);
+    setAlreadyImportedBatch(null);
     setExecuteStarted(false);
     if (batchId) inFlightImportExecutions.delete(batchId);
 
@@ -187,6 +200,17 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
       const result = await parseImportFileAction(formData);
       if (!result.success) {
         setMessage(result.message);
+        return;
+      }
+      if ('alreadyImported' in result && result.alreadyImported) {
+        setAlreadyImportedBatch(result.previousBatch);
+        setBatchId(result.batchId);
+        setHeaders([]);
+        setMapping({});
+        setSummary(result.summary);
+        setRows([]);
+        setMessage('Este arquivo já foi importado anteriormente. O lote anterior foi reaberto — não processamos o arquivo de novo.');
+        refreshBatch(result.batchId);
         return;
       }
 
@@ -296,6 +320,23 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
 
   return (
     <section className="space-y-5">
+      {alreadyImportedBatch ? (
+        <article className="rounded-3xl border border-amber-500/40 bg-amber-500/10 p-5">
+          <h2 className="text-xl font-semibold text-amber-50">Este arquivo já foi importado anteriormente.</h2>
+          <p className="mt-2 text-sm text-amber-100">Não processamos o arquivo novamente para evitar duplicação técnica.</p>
+          <dl className="mt-3 grid gap-1 text-sm text-amber-50 sm:grid-cols-2">
+            <div><dt className="text-amber-200/80">Lote anterior</dt><dd>{alreadyImportedBatch.fileName} · {alreadyImportedBatch.id.slice(0, 8)}</dd></div>
+            <div><dt className="text-amber-200/80">Status</dt><dd>{alreadyImportedBatch.status}</dd></div>
+            <div><dt className="text-amber-200/80">Linhas</dt><dd>{alreadyImportedBatch.importedRows}/{alreadyImportedBatch.totalRows}</dd></div>
+            <div><dt className="text-amber-200/80">Data</dt><dd>{alreadyImportedBatch.completedAt || alreadyImportedBatch.createdAt || '—'}</dd></div>
+            <div><dt className="text-amber-200/80">Importado por</dt><dd>{alreadyImportedBatch.importedBy ? alreadyImportedBatch.importedBy.slice(0, 8) : '—'}</dd></div>
+          </dl>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Link href={`/importacoes?batchId=${alreadyImportedBatch.id}`} className="rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-amber-950">Abrir lote anterior</Link>
+            <Link href={`/importacoes/revisoes?batchId=${alreadyImportedBatch.id}`} className="rounded-xl border border-amber-300 px-4 py-2 text-sm text-amber-50">Revisar o lote anterior</Link>
+          </div>
+        </article>
+      ) : null}
       {openedBatch && batchId ? (
         <article className="rounded-3xl border border-cyan-500/30 bg-cyan-500/10 p-5">
           <h2 className="text-xl font-semibold text-cyan-50">Lote reaberto</h2>

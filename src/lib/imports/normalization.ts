@@ -1,4 +1,4 @@
-import { isValidCpf, normalizeCpfDigits, parseIsoDate } from '@/lib/imports/import-row-validation';
+import { isValidCpf, normalizeCpfDigits, parseIsoDate } from './import-row-validation.ts';
 
 export function removeDuplicateSpaces(value: string) {
   return value.replace(/\s+/g, ' ').trim();
