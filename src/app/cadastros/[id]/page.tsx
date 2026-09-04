@@ -104,6 +104,17 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       reason: result.error?.message ?? String(row?.reason_message ?? "Nao foi possivel avaliar o convite."),
     };
   }
+  const { data: latestInvite } = !contact.user_id
+    ? await supabase.from("participant_account_invites")
+      .select("status,expires_at")
+      .eq("registration_contact_id", id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    : { data: null };
+  const inviteRecord = latestInvite
+    ? { status: String(latestInvite.status), expiresAt: latestInvite.expires_at ? String(latestInvite.expires_at) : null }
+    : null;
 
   const tickets = (ticketRows ?? []).flatMap((row) => {
     const orderItem = relation(row.order_items);
@@ -185,7 +196,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       {!contactUserId ? (
         <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
           <p className="text-sm text-slate-300">Esta pessoa ainda não possui uma conta vinculada.</p>
-          <div className="mt-3"><InviteAccountButton contactId={id} {...inviteEligibility}/></div>
+          <div className="mt-3"><InviteAccountButton contactId={id} inviteRecord={inviteRecord} {...inviteEligibility}/></div>
         </div>
       ) : null}
     </section>

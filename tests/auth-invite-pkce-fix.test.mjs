@@ -135,6 +135,8 @@ test('resend self-service preserva requires_password_setup (via requireFirstAcce
 test('resend self-service so considera convite ainda PENDENTE (status=pending, password_setup_completed_at nulo) -- nunca reusa convite ja concluido', () => {
   assert.match(resendAction, /\.eq\("status", "pending"\)/);
   assert.match(resendAction, /\.is\("password_setup_completed_at", null\)/);
+  assert.match(resendAction, /\.eq\("email", email\)/);
+  assert.doesNotMatch(resendAction, /\.ilike\("email"/);
 });
 
 test('resend self-service repassa rate limit nativo do Supabase (mesma heuristica ja usada por requestPasswordResetAction) -- nao inventa throttle proprio', () => {

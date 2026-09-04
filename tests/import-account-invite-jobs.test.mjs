@@ -45,8 +45,17 @@ test('backend exige permissao e isolamento organizacional', () => {
 
 test('resultado da importacao exibe UX de resumo, progresso e retry', () => {
   assert.match(importer, /ImportAccountInvites/);
+  assert.match(importer, /showInvitePanel/);
+  assert.match(importer, /Lote reaberto/);
+  assert.match(panel, /Gerenciar convites/);
   assert.match(panel, /Convites para criação de conta/);
   assert.match(panel, /Enviar convites/);
+  assert.match(panel, /Sem convite/);
   assert.match(panel, /processados/);
   assert.match(panel, /Tentar novamente falhas/);
+  assert.match(actions, /getImportAccountInviteOperationalStatusAction/);
+  assert.doesNotMatch(
+    actions.slice(actions.indexOf('export async function getImportAccountInviteOperationalStatusAction'), actions.indexOf('export async function processImportAccountInviteJobChunkAction')),
+    /createServiceRoleSupabaseClient/,
+  );
 });

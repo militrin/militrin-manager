@@ -67,7 +67,7 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
         <section className="mx-auto max-w-xl rounded-3xl border border-amber-500/30 bg-slate-900 p-6">
           <h1 className="text-2xl font-semibold">{failureCopy.title}</h1>
           <p className="mt-2 text-sm text-slate-300">{failureCopy.description}</p>
-          <Link href="/" className="mt-5 inline-flex h-10 items-center whitespace-nowrap rounded-xl border border-slate-700 px-4 text-sm">Voltar</Link>
+          <Link href={failureCopy.actionHref} className="mt-5 inline-flex h-10 items-center whitespace-nowrap rounded-xl border border-slate-700 px-4 text-sm">{failureCopy.actionLabel}</Link>
         </section>
       </main>
     );

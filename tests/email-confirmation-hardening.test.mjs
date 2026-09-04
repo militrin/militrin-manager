@@ -70,3 +70,8 @@ test('Invite, Magic Link e primeiro acesso permanecem no fluxo canonico', () => 
   assert.match(firstAccessActions, /claim_registration_contact_account_invite/);
   assert.match(firstAccessActions, /supabase\.auth\.updateUser\(\{ password: newPassword \}\)/);
 });
+
+test('reenvio publico de primeiro acesso nao exige login nem confirmacao de e-mail', () => {
+  assert.match(middleware, /const isPublicFirstAccessResend = pathname === '\/primeiro-acesso\/reenviar'/);
+  assert.match(middleware, /&& !isPublicFirstAccessResend/);
+});

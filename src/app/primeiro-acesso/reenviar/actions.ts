@@ -45,7 +45,7 @@ export async function requestFirstAccessInviteResendAction(rawEmail: string): Pr
   const { data: invite } = await admin
     .from("participant_account_invites")
     .select("id,email")
-    .ilike("email", email)
+    .eq("email", email)
     .eq("status", "pending")
     .is("password_setup_completed_at", null)
     .order("created_at", { ascending: false })

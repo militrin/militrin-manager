@@ -890,8 +890,9 @@ test('pos-importacao encaminha pendencias pelo lote sem alterar identidade', asy
   const client = await readFile(new URL('../src/app/importacoes/ImportacoesClient.tsx', import.meta.url), 'utf8');
   const cadastroActions = await readFile(new URL('../src/app/cadastros/[id]/editar/actions.ts', import.meta.url), 'utf8');
   assert.match(actions, /participant_data_issues[\s\S]*import_batch_id[\s\S]*status/);
-  assert.match(client, /Resolver pendências/);
-  assert.match(client, /import_batch_id=/);
+  assert.match(client, /Ver pessoas deste lote/);
+  assert.match(client, /\/cadastros\?import_batch_id=/);
+  assert.doesNotMatch(client, /pending=yes/);
   assert.match(cadastroActions, /from\("registration_contacts"\)/);
   assert.doesNotMatch(cadastroActions, /reevaluate_participant_data_issues|finalize_imported_participant_after_issue_resolution/);
   assert.doesNotMatch(cadastroActions, /from\("(orders|order_items|tickets|payments)"\)\.update/);

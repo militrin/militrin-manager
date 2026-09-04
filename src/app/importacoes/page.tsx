@@ -58,12 +58,19 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
     redirect('/painel');
   }
 
-  const [events, canConfirmPayment, importOptions, pendingReviews] = await Promise.all([
+  const [events, canConfirmPayment, canManageInvites, importOptions, pendingReviews, recentBatches] = await Promise.all([
     getEvents(currentOrganization.id),
     hasPermission('finance.confirm_payment'),
+    hasPermission('participants.edit_basic'),
     getImportOptions(currentOrganization.id),
     supabase.from('import_batch_rows').select('id,import_batches!inner(organization_id)', { count: 'exact', head: true })
       .eq('status', 'review_required').eq('resolution', 'pending').eq('import_batches.organization_id', currentOrganization.id),
+    supabase.from('import_batches')
+      .select('id,file_name,import_type,status,imported_rows,created_at')
+      .eq('organization_id', currentOrganization.id)
+      .in('status', ['completed', 'ready_for_review'])
+      .order('created_at', { ascending: false })
+      .limit(20),
   ]);
 
   return (
@@ -73,8 +80,31 @@ export default async function ImportacoesPage({ searchParams }: { searchParams: 
         <div className="flex-1 space-y-6">
           <TopBar title="Importações" subtitle="Histórico e inscritos atuais com validação e idempotência" />
           <div className="flex justify-end"><Link href="/importacoes/revisoes" className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950">Revisões pendentes ({pendingReviews.count ?? 0})</Link></div>
+          {(recentBatches.data ?? []).length ? (
+            <SectionCard title="Lotes recentes" description="Reabra uma importação já processada para gerenciar convites ou continuar revisões. O painel não depende do relatório em memória.">
+              <div className="space-y-2">
+                {(recentBatches.data ?? []).map((batch) => (
+                  <div key={String(batch.id)} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-sm">
+                    <div>
+                      <p className="font-medium text-slate-100">{batch.file_name || 'Importação sem arquivo'}</p>
+                      <p className="text-xs text-slate-400">{String(batch.status)} · {Number(batch.imported_rows ?? 0)} importado(s) · {batch.created_at ? new Date(String(batch.created_at)).toLocaleString('pt-BR') : ''}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl border border-slate-600 px-3 py-2">Reabrir lote</Link>
+                      {batch.status === 'completed' && canManageInvites ? (
+                        <Link href={`/importacoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl bg-cyan-400 px-3 py-2 font-semibold text-cyan-950">Gerenciar convites</Link>
+                      ) : null}
+                      {batch.status === 'ready_for_review' ? (
+                        <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(String(batch.id))}`} className="rounded-xl border border-amber-500 px-3 py-2 text-amber-100">Abrir revisões</Link>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          ) : null}
           <SectionCard title="Módulo de importação" description="CSV/XLSX com prévia, revisão de duplicidade e relatório final.">
-            <ImportacoesClient events={events} importOptions={importOptions} canConfirmPayment={canConfirmPayment} initialBatchId={batchId} />
+            <ImportacoesClient events={events} importOptions={importOptions} canConfirmPayment={canConfirmPayment} canManageInvites={canManageInvites} initialBatchId={batchId} />
           </SectionCard>
         </div>
       </div>

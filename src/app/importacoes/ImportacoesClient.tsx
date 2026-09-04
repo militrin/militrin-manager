@@ -11,6 +11,7 @@ import {
   setImportRowResolutionAction,
 } from './actions';
 import { CANONICAL_FIELDS, CANONICAL_FIELD_LABELS, type CanonicalField } from '@/lib/imports/columns';
+import { importRowHasExistingCpfIdentity, type ImportIdentityMatchDetails } from '@/lib/imports/identity-review';
 
 type EventOption = {
   id: string;
@@ -30,6 +31,7 @@ type BatchRow = {
   full_name: string;
   cpf_masked: string;
   email: string;
+  identity_match_details?: ImportIdentityMatchDetails;
 };
 
 type ImportSummary = {
@@ -52,7 +54,20 @@ const STATUS_LABELS: Record<string, string> = {
   skipped: 'Ignorado',
 };
 
-export function ImportacoesClient({ events, importOptions, canConfirmPayment = false, initialBatchId }: { events: EventOption[]; importOptions: ImportOptions; canConfirmPayment?: boolean; initialBatchId?: string }) {
+type OpenedBatch = {
+  id: string;
+  status: string;
+  import_type: string;
+  imported_rows: number | null;
+  file_name: string | null;
+  event_id?: string | null;
+};
+
+function isExecutedBatchStatus(status: string | null | undefined) {
+  return ['completed', 'ready_for_review', 'failed', 'cancelled'].includes(String(status ?? ''));
+}
+
+export function ImportacoesClient({ events, importOptions, canConfirmPayment = false, canManageInvites = false, initialBatchId }: { events: EventOption[]; importOptions: ImportOptions; canConfirmPayment?: boolean; canManageInvites?: boolean; initialBatchId?: string }) {
   const [isPending, startTransition] = useTransition();
   const [file, setFile] = useState<File | null>(null);
   const [importType, setImportType] = useState<'historical_participations' | 'current_event_registrations'>('historical_participations');
@@ -70,13 +85,35 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
   const [paymentReason, setPaymentReason] = useState('');
   const [defaultCategoryId, setDefaultCategoryId] = useState('');
   const [defaultBatchId, setDefaultBatchId] = useState('');
+  const [openedBatch, setOpenedBatch] = useState<OpenedBatch | null>(null);
   const eventCategories = importOptions.categories.filter((item) => item.event_id === eventId);
   const eventBatches = importOptions.batches.filter((item) => item.event_id === eventId);
   const compatibleCategories = defaultBatchId ? eventCategories.filter((item) => importOptions.prices.some((price) => price.batch_id === defaultBatchId && price.ticket_category_id === item.id)) : eventCategories;
   const compatibleBatches = defaultCategoryId ? eventBatches.filter((item) => importOptions.prices.some((price) => price.ticket_category_id === defaultCategoryId && price.batch_id === item.id)) : eventBatches;
+  const executedBatch = isExecutedBatchStatus(openedBatch?.status);
+  const showInvitePanel = Boolean(canManageInvites && batchId && openedBatch?.status === 'completed');
 
   const importableCount = useMemo(() => rows.filter((row) => row.status === 'ready' || row.status === 'data_pending' || (row.status === 'review_required' && ['link_existing', 'create_new'].includes(row.resolution))).length, [rows]);
   const blockingPaymentCount = useMemo(() => rows.filter((row) => row.data_issues.some((issue) => issue.blocks_payment)).length, [rows]);
+
+  function applyBatchDetails(details: Extract<Awaited<ReturnType<typeof getImportBatchDetailsAction>>, { success: true }>) {
+    setRows(details.rows as BatchRow[]);
+    setSummary(details.summary);
+    const batch = details.batch as OpenedBatch;
+    setOpenedBatch({
+      id: String(batch.id),
+      status: String(batch.status),
+      import_type: String(batch.import_type),
+      imported_rows: batch.imported_rows == null ? null : Number(batch.imported_rows),
+      file_name: batch.file_name ? String(batch.file_name) : null,
+      event_id: (details.batch as { event_id?: string | null }).event_id ?? null,
+    });
+    if (batch.import_type === 'historical_participations' || batch.import_type === 'current_event_registrations') {
+      setImportType(batch.import_type);
+    }
+    const eventIdFromBatch = (details.batch as { event_id?: string | null }).event_id;
+    if (eventIdFromBatch) setEventId(String(eventIdFromBatch));
+  }
 
   function refreshBatch(targetBatchId: string) {
     startTransition(async () => {
@@ -86,8 +123,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         return;
       }
 
-      setRows(details.rows as BatchRow[]);
-      setSummary(details.summary);
+      applyBatchDetails(details);
     });
   }
 
@@ -99,8 +135,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         setMessage(details.message);
         return;
       }
-      setRows(details.rows as BatchRow[]);
-      setSummary(details.summary);
+      applyBatchDetails(details);
     });
   }, [initialBatchId]);
 
@@ -124,6 +159,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
 
     setMessage(null);
     setReport(null);
+    setOpenedBatch(null);
 
     startTransition(async () => {
       const result = await parseImportFileAction(formData);
@@ -192,6 +228,13 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
       }
 
       setReport(result.report);
+      setOpenedBatch((current) => current && current.id === batchId
+        ? {
+          ...current,
+          status: result.report.reviewRequired > 0 ? 'ready_for_review' : 'completed',
+          imported_rows: Number(result.report.imported ?? current.imported_rows ?? 0),
+        }
+        : current);
       setMessage(result.report.reviewRequired > 0
         ? `Importação processada com ${result.report.reviewRequired} linha(s) aguardando revisão.`
         : (result.report.awaitingData ?? 0) > 0 ? 'Importação concluída com pendências.' : 'Importação concluída com sucesso.');
@@ -221,6 +264,12 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
 
   return (
     <section className="space-y-5">
+      {openedBatch && batchId ? (
+        <article className="rounded-3xl border border-cyan-500/30 bg-cyan-500/10 p-5">
+          <h2 className="text-xl font-semibold text-cyan-50">Lote reaberto</h2>
+          <p className="mt-1 text-sm text-cyan-100/80">{openedBatch.file_name || 'Importação'} · status {openedBatch.status} · {openedBatch.imported_rows ?? 0} importado(s). Recarregar esta página mantém o lote e o painel de convites.</p>
+        </article>
+      ) : null}
       <article className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-5">
         <h2 className="text-xl font-semibold text-white">1) Enviar arquivo</h2>
         <p className="mt-1 text-sm text-slate-300">Suporte para CSV e XLSX. O sistema reconhece colunas conhecidas e aceita dados incompletos.</p>
@@ -355,17 +404,25 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
                     <td className="px-3 py-2">{STATUS_LABELS[row.status] ?? row.status}</td>
                     <td className="px-3 py-2">
                       {batchId && (row.status === 'review_required' || row.status === 'duplicate') ? (
-                        <select
-                          value={row.resolution}
-                          onChange={(event) => setResolution(row.id, event.target.value as 'pending' | 'link_existing' | 'create_new' | 'ignore' | 'mark_duplicate')}
-                          className="h-8 rounded-lg border border-slate-700 bg-slate-950 px-2"
-                        >
-                          <option value="pending">Pendente</option>
-                          <option value="link_existing">Vincular existente</option>
-                          <option value="create_new">Criar novo</option>
-                          <option value="ignore">Ignorar</option>
-                          <option value="mark_duplicate">Marcar duplicado</option>
-                        </select>
+                        (() => {
+                          const hasExistingCpf = importRowHasExistingCpfIdentity(row.identity_match_details, row.cpf_masked);
+                          return (
+                            <div className="space-y-1">
+                              <select
+                                value={row.resolution}
+                                onChange={(event) => setResolution(row.id, event.target.value as 'pending' | 'link_existing' | 'create_new' | 'ignore' | 'mark_duplicate')}
+                                className="h-8 rounded-lg border border-slate-700 bg-slate-950 px-2"
+                              >
+                                <option value="pending">Pendente</option>
+                                <option value="link_existing">Vincular existente</option>
+                                {hasExistingCpf ? null : <option value="create_new">Criar novo</option>}
+                                <option value="ignore">Ignorar</option>
+                                <option value="mark_duplicate">Marcar duplicado</option>
+                              </select>
+                              {hasExistingCpf ? <p className="text-[11px] text-amber-300">Este CPF já identifica um cadastro. Não é possível criar outra Pessoa: vincule o existente, revise os dados ou ignore a linha.</p> : null}
+                            </div>
+                          );
+                        })()
                       ) : (
                         <span className="text-slate-500">-</span>
                       )}
@@ -378,31 +435,43 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
-            {importType === 'current_event_registrations' && (
+            {importType === 'current_event_registrations' && !executedBatch && (
               <div className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
                 <p className="text-sm font-medium text-slate-200">6) Tratamento dos pagamentos importados</p>
-                <div className="flex flex-wrap gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
+                <p className="text-xs text-slate-400">Escolha o efeito <strong>antes</strong> de confirmar. O padrão continua sendo importar como pendente, sem emitir ingresso.</p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${paymentMode === 'pending' ? 'border-slate-500 bg-slate-900' : 'border-slate-800'}`}>
                     <input
                       type="radio" name="paymentMode" value="pending"
                       checked={paymentMode === 'pending'}
                       onChange={() => setPaymentMode('pending')}
-                      className="accent-emerald-500"
+                      className="mt-1 accent-emerald-500"
                     />
-                    <span className="text-sm text-slate-300">Manter como pendente</span>
+                    <span>
+                      <span className="block text-sm font-medium text-slate-100">Manter como pendente</span>
+                      <span className="mt-1 block text-xs text-slate-400">Importar como pendente, sem emitir ingresso. Cria cadastro e pedido/pagamento pendente. Em Minha Conta a pessoa vê o cadastro, mas <strong>não recebe ingresso nem QR</strong> até um administrador com `finance.confirm_payment` confirmar o pagamento.</span>
+                    </span>
                   </label>
-                  {canConfirmPayment && (
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  {canConfirmPayment ? (
+                    <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${paymentMode === 'confirm_all' ? 'border-emerald-400 bg-emerald-500/10' : 'border-emerald-700/40 bg-emerald-950/20'}`}>
                       <input
                         type="radio" name="paymentMode" value="confirm_all"
                         checked={paymentMode === 'confirm_all'}
                         onChange={() => setPaymentMode('confirm_all')}
-                        className="accent-emerald-500"
+                        className="mt-1 accent-emerald-500"
                       />
-                      <span className="text-sm text-emerald-300 font-medium">Confirmar todos como pagos e emitir ingressos</span>
+                      <span>
+                        <span className="block text-sm font-semibold text-emerald-200">Confirmar todos como pagos e emitir ingressos</span>
+                        <span className="mt-1 block text-xs text-emerald-100/80">Equivale a <strong>confirm_all</strong>: confirma os pagamentos aptos agora e emite ingresso/QR imediatamente. Em Minha Conta o ingresso e o QR passam a aparecer. Exige permissão financeira `finance.confirm_payment`.</span>
+                      </span>
                     </label>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-700 p-4 text-xs text-slate-400">A opção de confirmar pagamentos e emitir ingressos agora (`confirm_all`) só aparece para quem tem `finance.confirm_payment`.</div>
                   )}
                 </div>
+                {paymentMode === 'pending' ? (
+                  <p className="text-xs text-amber-300">Esta importação <strong>não emitirá ingresso</strong>. Depois do primeiro acesso, Minha Conta pode ficar sem QR até o pagamento ser confirmado.</p>
+                ) : null}
                 {paymentMode === 'confirm_all' && (
                   <div className="space-y-1">
                     {blockingPaymentCount > 0 ? (
@@ -420,11 +489,15 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
                 )}
               </div>
             )}
-            <button type="button" onClick={executeImport} disabled={isPending || !batchId} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
-              {isPending ? 'Importando...' : summary.pendingRows > 0
-                ? `7) Importar ${importableCount} cadastros (${summary.pendingRows} com pendências)`
-                : `7) Confirmar importação de ${importableCount} participações`}
-            </button>
+            {!executedBatch ? (
+              <button type="button" onClick={executeImport} disabled={isPending || !batchId} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
+                {isPending ? 'Importando...' : summary.pendingRows > 0
+                  ? `7) Importar ${importableCount} cadastros (${summary.pendingRows} com pendências)`
+                  : `7) Confirmar importação de ${importableCount} participações`}
+              </button>
+            ) : (
+              <p className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300">Este lote já foi processado ({openedBatch?.status}). Reabra-o para gerenciar convites ou completar revisões; não é necessário importar de novo.</p>
+            )}
             <button type="button" onClick={downloadErrors} disabled={isPending || !batchId} className="h-11 rounded-xl border border-slate-700 px-5 text-sm text-slate-200 disabled:opacity-60">
               Baixar CSV de erros
             </button>
@@ -457,12 +530,24 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
             {report.reviewRequired > 0 && batchId ? <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(batchId)}`} className="inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Revisar pendências</Link> : null}
-            {(report.awaitingData ?? 0) > 0 && batchId ? <Link href={`/cadastros?pending=yes&import_batch_id=${encodeURIComponent(batchId)}`} className="inline-flex rounded-xl border border-amber-500 px-5 py-3 font-semibold text-amber-200">Resolver dados</Link> : null}
+            {(report.awaitingData ?? 0) > 0 && batchId ? <Link href={`/cadastros?import_batch_id=${encodeURIComponent(batchId)}`} className="inline-flex rounded-xl border border-amber-500 px-5 py-3 font-semibold text-amber-200">Ver pessoas deste lote</Link> : null}
           </div>
         </article>
       ) : null}
 
-      {report && batchId ? <ImportAccountInvites importBatchId={batchId} importedCount={report.imported} /> : null}
+      {report && (report.awaitingData ?? 0) > 0 && batchId ? (
+        <p className="text-sm text-slate-400">Pendências de dados (categoria, lote, CPF incompleto etc.) se resolvem na ficha de cada pessoa. A fila de identidade fica em Revisões pendentes.</p>
+      ) : null}
+
+      {openedBatch?.status === 'ready_for_review' && batchId ? (
+        <article className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-5">
+          <h2 className="text-xl font-semibold text-amber-50">Revisões de identidade pendentes</h2>
+          <p className="mt-1 text-sm text-amber-100/80">Este lote ainda não pode enviar convites. Conclua as revisões (vincular cadastro existente ou ignorar) e reprocesse o lote.</p>
+          <Link href={`/importacoes/revisoes?batchId=${encodeURIComponent(batchId)}`} className="mt-4 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-amber-950">Abrir revisões deste lote</Link>
+        </article>
+      ) : null}
+
+      {showInvitePanel && batchId ? <ImportAccountInvites importBatchId={batchId} importedCount={Number(openedBatch?.imported_rows ?? report?.imported ?? 0)} /> : null}
 
       {message ? (
         <p className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm text-slate-200">{message}</p>

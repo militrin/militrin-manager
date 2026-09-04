@@ -34,6 +34,8 @@ export function getParticipantInviteFailureCopy(reason: ParticipantInviteContext
       title: 'Este convite pertence a outra sessão',
       description: 'A conta autenticada não corresponde à conta explicitamente vinculada ao convite.',
       actionMessage: 'Este convite não pertence à sessão autenticada. Entre com a conta vinculada ao convite.',
+      actionHref: '/entrar',
+      actionLabel: 'Entrar com a conta correta',
     };
   }
   if (reason === 'participant_conflict') {
@@ -41,12 +43,16 @@ export function getParticipantInviteFailureCopy(reason: ParticipantInviteContext
       title: 'Cadastro vinculado a outra conta',
       description: 'O participante deste convite está vinculado a outra conta e exige revisão administrativa.',
       actionMessage: 'O cadastro deste convite está vinculado a outra conta.',
+      actionHref: '/',
+      actionLabel: 'Voltar',
     };
   }
   return {
     title: 'Este convite não está mais ativo',
-    description: 'O convite não foi encontrado, expirou ou foi desativado.',
-    actionMessage: 'Este convite não está mais ativo. Solicite ao organizador que verifique o cadastro.',
+    description: 'O convite não foi encontrado, expirou ou foi desativado. Solicite um novo envio pelo e-mail do cadastro; o token de acesso só existe no e-mail do provedor de autenticação, nunca nesta tela.',
+    actionMessage: 'Este convite não está mais ativo. Solicite um novo convite pelo e-mail cadastrado.',
+    actionHref: '/primeiro-acesso/reenviar',
+    actionLabel: 'Solicitar novo convite',
   };
 }
 

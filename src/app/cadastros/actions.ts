@@ -277,6 +277,106 @@ export async function getImportAccountInviteJobAction(jobId: string) {
   return { success: true as const, job: data };
 }
 
+export type ImportAccountInviteOperationalCounts = {
+  total: number;
+  withoutInvite: number;
+  pendingInvite: number;
+  claimed: number;
+  expiredInvite: number;
+  failed: number;
+};
+
+export async function getImportAccountInviteOperationalStatusAction(importBatchId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(importBatchId)) return { success: false as const, message: "Importação inválida." };
+  const supabase = await createServerSupabaseClient();
+  const [{ data: batch, error: batchError }, { data: jobs, error: jobsError }] = await Promise.all([
+    supabase.from("import_batches").select("id,status,imported_rows").eq("id", importBatchId).maybeSingle(),
+    supabase.from("account_invite_jobs")
+      .select("id,status,total_count,eligible_count,processed_count,sent_count,skipped_count,failed_count,created_at")
+      .eq("import_batch_id", importBatchId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+  ]);
+  if (batchError || !batch) return { success: false as const, message: batchError?.message ?? "Importação não encontrada." };
+  if (jobsError) return { success: false as const, message: jobsError.message };
+  const job = (jobs ?? [])[0] ?? null;
+
+  const { data: history, error: historyError } = await supabase
+    .from("participation_history")
+    .select("participant_id")
+    .eq("import_batch_id", importBatchId)
+    .eq("source", "import");
+  if (historyError) return { success: false as const, message: historyError.message };
+
+  const participantIds = Array.from(new Set((history ?? []).map((row) => row.participant_id).filter(Boolean).map(String)));
+  const emptyCounts: ImportAccountInviteOperationalCounts = {
+    total: participantIds.length,
+    withoutInvite: participantIds.length,
+    pendingInvite: 0,
+    claimed: 0,
+    expiredInvite: 0,
+    failed: Number(job?.failed_count ?? 0),
+  };
+  if (!participantIds.length) {
+    return { success: true as const, batchStatus: String(batch.status), job, counts: emptyCounts };
+  }
+
+  const { data: participants, error: participantsError } = await supabase
+    .from("participants")
+    .select("id,user_id,registration_contact_id")
+    .in("id", participantIds);
+  if (participantsError) return { success: false as const, message: participantsError.message };
+
+  const contactIds = Array.from(new Set((participants ?? []).map((row) => row.registration_contact_id).filter(Boolean).map(String)));
+  const [byParticipant, byContact] = await Promise.all([
+    supabase.from("participant_account_invites")
+      .select("id,status,expires_at,created_at,participant_id,registration_contact_id")
+      .in("participant_id", participantIds),
+    contactIds.length
+      ? supabase.from("participant_account_invites")
+        .select("id,status,expires_at,created_at,participant_id,registration_contact_id")
+        .in("registration_contact_id", contactIds)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+  ]);
+  if (byParticipant.error) return { success: false as const, message: byParticipant.error.message };
+  if (byContact.error) return { success: false as const, message: byContact.error.message };
+
+  const invites = [...(byParticipant.data ?? []), ...(byContact.data ?? [])];
+  const now = Date.now();
+  const counts: ImportAccountInviteOperationalCounts = {
+    total: participantIds.length,
+    withoutInvite: 0,
+    pendingInvite: 0,
+    claimed: 0,
+    expiredInvite: 0,
+    failed: Number(job?.failed_count ?? 0),
+  };
+
+  for (const person of participants ?? []) {
+    const personId = String(person.id);
+    const contactId = person.registration_contact_id ? String(person.registration_contact_id) : null;
+    const personInvites = invites
+      .filter((invite) => String(invite.participant_id ?? "") === personId || (contactId && String(invite.registration_contact_id ?? "") === contactId))
+      .sort((left, right) => String(right.created_at ?? "").localeCompare(String(left.created_at ?? "")));
+    const claimedInvite = personInvites.find((invite) => String(invite.status) === "claimed");
+    const pendingInvite = personInvites.find((invite) => String(invite.status) === "pending");
+    if (person.user_id || claimedInvite) {
+      counts.claimed += 1;
+      continue;
+    }
+    if (pendingInvite) {
+      const expiresAt = pendingInvite.expires_at ? new Date(String(pendingInvite.expires_at)).getTime() : 0;
+      if (Number.isFinite(expiresAt) && expiresAt <= now) counts.expiredInvite += 1;
+      else counts.pendingInvite += 1;
+      continue;
+    }
+    counts.withoutInvite += 1;
+  }
+
+  return { success: true as const, batchStatus: String(batch.status), job, counts };
+}
+
 export async function processImportAccountInviteJobChunkAction(jobId: string) {
   await assertPermission("participants.edit_basic");
   if (!UUID_PATTERN.test(jobId)) return { success: false as const, message: "Job inválido." };

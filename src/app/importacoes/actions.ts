@@ -1154,6 +1154,18 @@ export async function executeImportBatchAction(
     return { success: false as const, message: 'Sessao expirada. Entre novamente.' };
   }
 
+  const access = await resolveImportBatchAccess(supabase, batchId);
+  if (!access.ok) {
+    return { success: false as const, message: access.message };
+  }
+
+  if (paymentMode === 'confirm_all') {
+    const canConfirmPayment = await hasPermission('finance.confirm_payment');
+    if (!canConfirmPayment) {
+      return { success: false as const, message: 'Sem permissao para confirmar pagamentos e emitir ingressos.' };
+    }
+  }
+
   const { data: batch, error: batchError } = await supabase
     .from('import_batches')
     .select('id, import_type, event_id, organization_id, historical_event_label, historical_event_key, historical_event_year, total_rows, imported_by')
