@@ -28,10 +28,25 @@ export type AsaasLivePreflightDiag = {
   webhookUrlOk: boolean;
   requiredEventsOk: boolean;
   callbackCodeOk: boolean;
+  pixKeyMalformed: boolean;
+  cardKeyMalformed: boolean;
 };
 
-function readEnv(name: string): string {
-  return String(process.env[name] ?? "").trim();
+function inspectApiKey(raw: string): { usable: string | null; malformed: boolean } {
+  const original = String(raw ?? "");
+  const value = original.trim();
+  if (!value) return { usable: null, malformed: false };
+  const tokenCount = (value.match(/\$aact_/g) ?? []).length;
+  if (tokenCount > 1 || /\s/.test(value) || /[\r\n\t]/.test(original)) {
+    return { usable: null, malformed: true };
+  }
+  try {
+    const headers = new Headers();
+    headers.set("access_token", value);
+  } catch {
+    return { usable: null, malformed: true };
+  }
+  return { usable: value, malformed: false };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -68,23 +83,27 @@ function callbackCodeOk(): boolean {
 }
 
 async function asaasGet(apiKey: string, path: string): Promise<{ ok: boolean; body: unknown | null }> {
-  const response = await fetch(`${LIVE_BASE}${path}`, {
-    method: "GET",
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "militrin-manager",
-      access_token: apiKey,
-    },
-  });
-  const text = await response.text();
-  let body: unknown = null;
   try {
-    body = text ? JSON.parse(text) : null;
+    const headers = new Headers();
+    headers.set("Accept", "application/json");
+    headers.set("User-Agent", "militrin-manager");
+    headers.set("access_token", apiKey);
+    const response = await fetch(`${LIVE_BASE}${path}`, {
+      method: "GET",
+      cache: "no-store",
+      headers,
+    });
+    const text = await response.text();
+    let body: unknown = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    return { ok: response.ok, body };
   } catch {
-    body = null;
+    return { ok: false, body: null };
   }
-  return { ok: response.ok, body };
 }
 
 function emptyResult(env: "production" | "sandbox"): AsaasLivePreflightDiag {
@@ -100,6 +119,8 @@ function emptyResult(env: "production" | "sandbox"): AsaasLivePreflightDiag {
     webhookUrlOk: false,
     requiredEventsOk: false,
     callbackCodeOk: callbackCodeOk(),
+    pixKeyMalformed: false,
+    cardKeyMalformed: false,
   };
 }
 
@@ -126,12 +147,14 @@ export async function runAsaasLivePreflightDiag(): Promise<AsaasLivePreflightDia
   const result = emptyResult(env);
   if (env !== "production") return result;
 
-  const pixKey = readEnv("ASAAS_PIX_API_KEY");
-  const cardKey = readEnv("ASAAS_CARD_API_KEY");
+  const pix = inspectApiKey(String(process.env.ASAAS_PIX_API_KEY ?? ""));
+  const card = inspectApiKey(String(process.env.ASAAS_CARD_API_KEY ?? ""));
+  result.pixKeyMalformed = pix.malformed;
+  result.cardKeyMalformed = card.malformed;
 
   const [pixAccount, cardAccount] = await Promise.all([
-    pixKey ? asaasGet(pixKey, "/myAccount") : Promise.resolve({ ok: false, body: null }),
-    cardKey ? asaasGet(cardKey, "/myAccount") : Promise.resolve({ ok: false, body: null }),
+    pix.usable ? asaasGet(pix.usable, "/myAccount") : Promise.resolve({ ok: false, body: null }),
+    card.usable ? asaasGet(card.usable, "/myAccount") : Promise.resolve({ ok: false, body: null }),
   ]);
 
   result.pixAuth = pixAccount.ok;
@@ -141,7 +164,7 @@ export async function runAsaasLivePreflightDiag(): Promise<AsaasLivePreflightDia
   const cardId = result.cardAuth ? accountId(cardAccount.body) : null;
   result.sameAccount = Boolean(pixId && cardId && pixId === cardId);
 
-  const infoKey = pixKey || cardKey;
+  const infoKey = pix.usable || card.usable;
   if (infoKey) {
     let commercial = await asaasGet(infoKey, "/myAccount/commercialInfo");
     if (!commercial.ok) {

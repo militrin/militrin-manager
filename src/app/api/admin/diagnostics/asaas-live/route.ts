@@ -30,6 +30,10 @@ export async function GET() {
     return json({ error: "Acesso negado." }, 403);
   }
 
-  const result = await runAsaasLivePreflightDiag();
-  return json(result, 200);
+  try {
+    const result = await runAsaasLivePreflightDiag();
+    return json(result, 200);
+  } catch {
+    return json({ error: "Falha no diagnostico." }, 500);
+  }
 }

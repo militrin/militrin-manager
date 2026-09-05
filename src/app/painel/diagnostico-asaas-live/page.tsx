@@ -5,7 +5,12 @@ export const dynamic = "force-dynamic";
 
 export default async function AsaasLivePreflightDiagPage() {
   await requireAdministrativePanelAccess();
-  const result = await runAsaasLivePreflightDiag();
+  let result: unknown;
+  try {
+    result = await runAsaasLivePreflightDiag();
+  } catch {
+    result = { error: "Falha no diagnostico." };
+  }
 
   return (
     <pre style={{ padding: 24, whiteSpace: "pre-wrap" }}>
