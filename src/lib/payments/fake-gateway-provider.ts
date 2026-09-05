@@ -1,5 +1,7 @@
 import type {
   CancelPaymentInput,
+  CreateCardPaymentInput,
+  CreateCardPaymentResult,
   CreatePixPaymentInput,
   CreatePixPaymentResult,
   GatewayPaymentSnapshot,
@@ -37,6 +39,29 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
         `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><rect width='100%' height='100%' fill='#0f172a'/><text x='12' y='120' fill='#10b981' font-size='10' font-family='monospace'>${pixCode.slice(0, 28)}</text></svg>`
       )}`,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    };
+  }
+
+  async createCardPayment(input: CreateCardPaymentInput): Promise<CreateCardPaymentResult> {
+    const providerPaymentId = `fake_card_${input.orderId}_${Date.now()}`;
+    const installments = Math.max(1, Math.floor(input.installments ?? 1));
+    const charges = Array.from({ length: installments }, (_, index) => ({
+      providerPaymentId: index === 0 ? providerPaymentId : `${providerPaymentId}_p${index + 1}`,
+      gatewayInstallmentId: installments >= 2 ? `inst_${input.orderId}` : null,
+      installmentNumber: index + 1,
+      installmentCount: installments,
+      amount: installments >= 2
+        ? Math.round((input.amount / installments) * 100) / 100
+        : input.amount,
+    }));
+    return {
+      providerPaymentId,
+      status: "pending",
+      checkoutUrl: `https://checkout.invalid/asaas/${providerPaymentId}`,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      installments,
+      gatewayInstallmentId: installments >= 2 ? `inst_${input.orderId}` : null,
+      charges,
     };
   }
 

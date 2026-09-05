@@ -9,6 +9,7 @@ import { SHIRT_TYPES, makeShirtInventoryKey, normalizeShirtSize, normalizeShirtT
 import {
   createPublicMultiOrderAction,
   generatePublicOrderPixAction,
+  generatePublicOrderCardAction,
   getPublicBuyerTicketHolderStatusAction,
   getPublicOrderSnapshotAction,
   getPublicOrderPaymentStatusAction,
@@ -18,6 +19,8 @@ import {
   simulateFakeOrderPaymentAction,
 } from '@/app/inscricao/actions';
 import { PixPaymentCard } from './pix-payment-card';
+import { CardPaymentCard } from './card-payment-card';
+import { isReusableLiveGatewayCharge } from '@/lib/checkout/pix-payment-status';
 import { kitItemStatusLabel } from '@/lib/checkout/kit-item-status';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
@@ -185,6 +188,11 @@ type OrderSnapshotPayload = {
     gateway_payment_id: string | null;
     expires_at: string | null;
     paid_at: string | null;
+    checkout_url: string | null;
+    installments: number | null;
+    last_gateway_attempt_status: string | null;
+    gateway_charge_reusable: boolean;
+    gateway_installment_id: string | null;
     payment_fee_mode: string | null;
     payment_fee_calculated_amount: number;
     payment_fee_customer_amount: number;
@@ -262,6 +270,11 @@ type RegistrationSnapshot = {
     gateway_payment_id: string | null;
     expires_at: string | null;
     paid_at: string | null;
+    checkout_url: string | null;
+    installments: number | null;
+    last_gateway_attempt_status: string | null;
+    gateway_charge_reusable: boolean;
+    gateway_installment_id: string | null;
     payment_fee_mode: string | null;
     payment_fee_calculated_amount: number;
     payment_fee_customer_amount: number;
@@ -313,6 +326,15 @@ const EDIT_ORDER_PARAM = 'editOrder';
 // card de um ingresso no carrinho (CartStep) e quer editar aquele item
 // especifico sem precisar procura-lo entre os demais.
 const EDIT_TICKET_ITEM_PARAM = 'editTicketItem';
+
+function isCardCheckoutMethod(method: string | null | undefined): boolean {
+  const normalized = String(method ?? '').trim();
+  return normalized === 'credit_card' || normalized === 'credit_card_single' || normalized === 'credit_card_installments';
+}
+
+function hasGeneratedGatewayCharge(payment: { pix_code?: string | null; checkout_url?: string | null; gateway_payment_id?: string | null } | null | undefined): boolean {
+  return Boolean(payment?.pix_code || payment?.checkout_url || payment?.gateway_payment_id);
+}
 
 function paymentMethodLabel(method: CheckoutPaymentMethod) {
   if (method === 'credit_card_single') return 'Credito a vista';
@@ -454,6 +476,7 @@ export function RegistrationWizard({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isRegeneratingPix, setIsRegeneratingPix] = useState(false);
+  const [isGeneratingCard, setIsGeneratingCard] = useState(false);
   // Identidade explicita da jornada de checkout -- nunca o order_id (a
   // jornada existe ANTES do pedido ser criado, nas Etapas 1-2). Comeca vazia
   // nos dois lados (SSR nunca tem window/URL do browser; hidratacao do
@@ -708,8 +731,8 @@ export function RegistrationWizard({
 
       setEditModeOrderId(editOrderId);
 
-      const hasPixGenerated = Boolean(payment?.pix_code);
-      if (hasPixGenerated) {
+      const hasChargeGenerated = hasGeneratedGatewayCharge(payment);
+      if (hasChargeGenerated) {
         setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
         setCartOrder(null);
         setCartSnapshot(null);
@@ -936,8 +959,8 @@ export function RegistrationWizard({
           // porque finalize_cart_order_payment e idempotente pra pedido
           // ainda pending (reafirma os mesmos valores) se o comprador clicar
           // "Continuar para pagamento" de novo.
-          const hasPixGenerated = Boolean(payment?.pix_code);
-          if (hasPixGenerated) {
+          const hasChargeGenerated = hasGeneratedGatewayCharge(payment);
+          if (hasChargeGenerated) {
             setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
             setCartOrder(null);
             setCartSnapshot(null);
@@ -1016,7 +1039,8 @@ export function RegistrationWizard({
         if (cancelled || !statusResult.success) return;
 
         const freshPaymentStatus = String(statusResult.payment_status ?? 'pending');
-        if (freshPaymentStatus === 'pending') return;
+        const attemptRefused = String(statusResult.last_gateway_attempt_status ?? '') === 'refused';
+        if (freshPaymentStatus === 'pending' && !attemptRefused) return;
 
         const fresh = await getPublicOrderSnapshotAction(orderId);
         if (cancelled || !fresh.success) return;
@@ -1029,6 +1053,8 @@ export function RegistrationWizard({
           setMaxUnlockedStep(4);
           setStep(4);
         } else if (freshPaymentStatus === 'expired' || freshPaymentStatus === 'cancelled') {
+          setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
+        } else if (attemptRefused) {
           setRegistration(mapOrderToRegistration(fresh.snapshot as OrderSnapshotPayload));
         }
       } finally {
@@ -1306,6 +1332,11 @@ export function RegistrationWizard({
         gateway_payment_id: order?.payment?.gateway_payment_id || null,
         expires_at: order?.payment?.expires_at || null,
         paid_at: order?.payment?.paid_at || (paid ? new Date().toISOString() : null),
+        checkout_url: order?.payment?.checkout_url || null,
+        installments: order?.payment?.installments ?? null,
+        last_gateway_attempt_status: order?.payment?.last_gateway_attempt_status ?? null,
+        gateway_charge_reusable: order?.payment?.gateway_charge_reusable !== false,
+        gateway_installment_id: order?.payment?.gateway_installment_id ?? null,
         payment_fee_mode: order?.payment?.payment_fee_mode ?? null,
         payment_fee_calculated_amount: Number(order?.payment?.payment_fee_calculated_amount ?? 0),
         payment_fee_customer_amount: Number(order?.payment?.payment_fee_customer_amount ?? 0),
@@ -1801,6 +1832,30 @@ export function RegistrationWizard({
             }
           : prev,
       );
+      return;
+    }
+
+    if (isCardCheckoutMethod(form.payment_method) || isCardCheckoutMethod(createdRegistration.payment.payment_method)) {
+      const card = await generatePublicOrderCardAction(createdRegistration.order_id || '');
+      if (!card.success) {
+        setErrors([card.message || 'Falha ao iniciar pagamento com cartao.']);
+        return;
+      }
+      if (!card.payment) {
+        setErrors(['Falha ao iniciar pagamento com cartao.']);
+        return;
+      }
+      setRegistration((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment: {
+                ...prev.payment,
+                ...card.payment,
+              },
+            }
+          : prev,
+      );
     }
   }
 
@@ -1816,6 +1871,36 @@ export function RegistrationWizard({
       setLiveMessage('Pagamento confirmado.');
       unlockAndGoTo(4);
     });
+  }
+
+  async function handleRetryCard() {
+    if (!registration?.order_id) return;
+    setIsGeneratingCard(true);
+    try {
+      const card = await generatePublicOrderCardAction(registration.order_id);
+      if (!card.success || !card.payment) {
+        setErrors([('message' in card && card.message) || 'Falha ao gerar uma nova cobranca de cartao.']);
+        return;
+      }
+      setRegistration((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment: {
+                ...prev.payment,
+                ...card.payment,
+              },
+            }
+          : prev,
+      );
+      setLiveMessage('Nova cobranca de cartao gerada.');
+      const nextCheckout = card.payment.checkout_url ? String(card.payment.checkout_url) : '';
+      if (nextCheckout && !isFakePaymentProvider) {
+        window.location.assign(nextCheckout);
+      }
+    } finally {
+      setIsGeneratingCard(false);
+    }
   }
 
   async function handleRegeneratePix() {
@@ -2797,17 +2882,38 @@ export function RegistrationWizard({
                     <strong>Desconto:</strong> {summaryValues.discount}
                   </p>
                   {itemTotals.total > 0 && availablePaymentMethods.length >= 2 ? (
-                    <label className="space-y-1 sm:col-span-2">
+                    <div className="space-y-2 sm:col-span-2">
                       <span className="text-sm text-slate-200">Forma de pagamento</span>
-                      <select
-                        value={form.payment_method}
-                        onChange={(event_) => setField('payment_method', event_.target.value as FormState['payment_method'])}
-                        className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
-                      >
-                        {availablePaymentMethods.map((method) => (
-                          <option key={method} value={method}>{paymentMethodLabel(method)}{feeOptionSuffix(feePreview, method)}</option>
-                        ))}
-                      </select>
+                      <div className="grid grid-cols-2 gap-2">
+                        {event.payment_pix_enabled ? (
+                          <button
+                            type="button"
+                            onClick={() => setField('payment_method', 'pix')}
+                            className={`h-11 rounded-xl border text-sm font-semibold ${form.payment_method === 'pix' ? 'border-emerald-400 bg-emerald-500 text-emerald-950' : 'border-slate-700 bg-slate-900 text-slate-200'}`}
+                          >
+                            PIX
+                          </button>
+                        ) : null}
+                        {event.payment_credit_card_single_enabled || event.payment_credit_card_installments_enabled ? (
+                          <button
+                            type="button"
+                            onClick={() => setField('payment_method', event.payment_credit_card_single_enabled ? 'credit_card_single' : 'credit_card_installments')}
+                            className={`h-11 rounded-xl border text-sm font-semibold ${isCardCheckoutMethod(form.payment_method) ? 'border-emerald-400 bg-emerald-500 text-emerald-950' : 'border-slate-700 bg-slate-900 text-slate-200'}`}
+                          >
+                            Cartao
+                          </button>
+                        ) : null}
+                      </div>
+                      {isCardCheckoutMethod(form.payment_method) && event.payment_credit_card_single_enabled && event.payment_credit_card_installments_enabled ? (
+                        <select
+                          value={form.payment_method}
+                          onChange={(event_) => setField('payment_method', event_.target.value as FormState['payment_method'])}
+                          className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
+                        >
+                          <option value="credit_card_single">{paymentMethodLabel('credit_card_single')}{feeOptionSuffix(feePreview, 'credit_card_single')}</option>
+                          <option value="credit_card_installments">{paymentMethodLabel('credit_card_installments')}{feeOptionSuffix(feePreview, 'credit_card_installments')}</option>
+                        </select>
+                      ) : null}
                       {form.payment_method === 'credit_card_installments' && feePreview && feePreview.credit_card_installments.options.length > 0 ? (
                         <select
                           value={form.installments}
@@ -2816,12 +2922,13 @@ export function RegistrationWizard({
                         >
                           {feePreview.credit_card_installments.options.map((option) => (
                             <option key={option.installments} value={option.installments}>
-                              {option.installments}x{option.customer_fee > 0 ? ` — Taxa: ${money(option.customer_fee)}` : ' — Sem taxa'}
+                              {option.installments}x de {money((itemTotals.total + option.customer_fee) / option.installments)}
+                              {option.customer_fee > 0 ? ` — Taxa: ${money(option.customer_fee)}` : ' — Sem taxa'}
                             </option>
                           ))}
                         </select>
                       ) : null}
-                    </label>
+                    </div>
                   ) : itemTotals.total > 0 ? (
                     <p className="sm:col-span-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-200">
                       Forma de pagamento: <strong>{paymentMethodLabel(form.payment_method)}{feeOptionSuffix(feePreview, form.payment_method)}</strong>
@@ -2915,6 +3022,23 @@ export function RegistrationWizard({
                     onSimulatePayment={handleSimulatePaid}
                     onRegeneratePix={handleRegeneratePix}
                     isRegeneratingPix={isRegeneratingPix}
+                    confirmedHref="/minha-conta/ingressos"
+                    confirmedLabel="Ver meus ingressos"
+                  />
+                ) : isCardCheckoutMethod(registration.payment.payment_method ?? form.payment_method) ? (
+                  <CardPaymentCard
+                    amount={registration.payment.final_amount}
+                    paymentStatus={registration.payment.payment_status}
+                    checkoutUrl={registration.payment.checkout_url}
+                    installments={registration.payment.installments}
+                    countdownSeconds={countdownSeconds}
+                    lastGatewayAttemptStatus={registration.payment.last_gateway_attempt_status}
+                    canReuseInvoice={isReusableLiveGatewayCharge(registration.payment)}
+                    isFakePaymentProvider={isFakePaymentProvider}
+                    isSimulating={isPending}
+                    onSimulatePayment={handleSimulatePaid}
+                    onRetryCheckout={handleRetryCard}
+                    isRetrying={isGeneratingCard}
                     confirmedHref="/minha-conta/ingressos"
                     confirmedLabel="Ver meus ingressos"
                   />
@@ -3080,6 +3204,23 @@ export function RegistrationWizard({
                           onSimulatePayment={handleSimulatePaid}
                           onRegeneratePix={handleRegeneratePix}
                           isRegeneratingPix={isRegeneratingPix}
+                          confirmedHref="/minha-conta/ingressos"
+                          confirmedLabel="Ver meus ingressos"
+                        />
+                      ) : isCardCheckoutMethod(registration.payment.payment_method ?? form.payment_method) ? (
+                        <CardPaymentCard
+                          amount={registration.payment.final_amount}
+                          paymentStatus={registration.payment.payment_status}
+                          checkoutUrl={registration.payment.checkout_url}
+                          installments={registration.payment.installments}
+                          countdownSeconds={countdownSeconds}
+                          lastGatewayAttemptStatus={registration.payment.last_gateway_attempt_status}
+                          canReuseInvoice={isReusableLiveGatewayCharge(registration.payment)}
+                          isFakePaymentProvider={isFakePaymentProvider}
+                          isSimulating={isPending}
+                          onSimulatePayment={handleSimulatePaid}
+                          onRetryCheckout={handleRetryCard}
+                          isRetrying={isGeneratingCard}
                           confirmedHref="/minha-conta/ingressos"
                           confirmedLabel="Ver meus ingressos"
                         />

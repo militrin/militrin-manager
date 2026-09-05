@@ -4,9 +4,10 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { isValidCpf, removeCpfMask } from '@/lib/validation/registration';
 import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { cancelPendingExternalCharge } from '@/lib/payments/cancel-stale-charges';
-import { canUseCurrentGatewayForCharge, getPaymentGatewayAccountKey, getPaymentGatewayProvider, getPaymentGatewayProviderByName, getPaymentGatewayProviderName } from '@/lib/payments/get-gateway-provider';
+import { getPaymentGatewayAccountKeyForMethod, getPaymentGatewayProviderForMethod, getPaymentGatewayProviderName, tryGetPaymentGatewayProviderForAccountKey } from '@/lib/payments/get-gateway-provider';
 import { todayAsPixDueDate } from '@/lib/payments/pix-due-date';
-import { isReusableLivePix } from '@/lib/checkout/pix-payment-status';
+import { isReusableLiveGatewayCharge } from '@/lib/checkout/pix-payment-status';
+import type { PaymentGatewayProvider } from '@/lib/payments/provider';
 import { toISODateFromBR } from '@/lib/utils/date';
 import { calculateAgeAtEventDate, formatDateBR, isMinimumAgeSatisfied } from '@/lib/utils/date';
 import { getEmailProvider } from '@/lib/email/fake-provider';
@@ -19,6 +20,7 @@ import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBu
 import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from '@/lib/account/email-confirmation';
 import { firstAccessRouteWithNext, signupConfirmationRedirect } from '@/lib/account/auth-redirects';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
+import { cardPaymentReturnUrl } from '@/lib/payments/card-return-url';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
 
 type PricingPreview = {
@@ -493,7 +495,80 @@ function mapOrderPayment(row: Record<string, unknown>) {
     gateway_payment_id: row.gateway_payment_id ? String(row.gateway_payment_id) : null,
     expires_at: row.expires_at ? String(row.expires_at) : null,
     paid_at: row.paid_at ? String(row.paid_at) : null,
+    checkout_url: row.checkout_url ? String(row.checkout_url) : null,
+    installments: row.installments != null ? Number(row.installments) : null,
+    last_gateway_attempt_status: row.last_gateway_attempt_status ? String(row.last_gateway_attempt_status) : null,
+    gateway_charge_reusable: row.gateway_charge_reusable !== false,
+    gateway_installment_id: row.gateway_installment_id ? String(row.gateway_installment_id) : null,
   };
+}
+
+async function cancelPreviousGatewayCharge(input: {
+  orderId: string;
+  organizationId: string;
+  provider: string;
+  providerPaymentId: string;
+  providerPaymentIds?: string[];
+  accountKey: string;
+  paymentId?: string;
+  reason: string;
+  logLabel: string;
+  supabase?: Awaited<ReturnType<typeof createServerSupabaseClient>>;
+}) {
+  const ids = [...new Set(
+    [input.providerPaymentId, ...(input.providerPaymentIds ?? [])].map((id) => String(id ?? '').trim()).filter(Boolean),
+  )];
+  if (ids.length === 0 || input.provider === 'fake') return;
+  const previousGateway = tryGetPaymentGatewayProviderForAccountKey(input.accountKey);
+  if (!previousGateway) {
+    console.warn(`[checkout:${input.logLabel}] skip_cancel_unknown_account`, {
+      order_id: input.orderId,
+      provider: input.provider,
+    });
+    return;
+  }
+  for (const providerPaymentId of ids) {
+    try {
+      await previousGateway.cancelPayment({
+        organizationId: input.organizationId,
+        providerPaymentId,
+        reason: input.reason,
+      });
+    } catch (cancelError) {
+      console.error(`[checkout:${input.logLabel}] cancel_previous_charge_failed`, {
+        order_id: input.orderId,
+        provider: input.provider,
+        error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+      });
+    }
+  }
+  if (input.supabase && input.paymentId) {
+    await input.supabase.rpc('mark_gateway_charges_not_reusable', {
+      p_payment_id: input.paymentId,
+      p_gateway_payment_id: null,
+    });
+  }
+}
+
+async function cancelOrphanGatewayCharge(
+  gateway: PaymentGatewayProvider,
+  input: { organizationId: string; orderId: string; providerPaymentId: string; reason: string; logLabel: string },
+) {
+  if (gateway.name === 'fake' || !input.providerPaymentId) return;
+  try {
+    await gateway.cancelPayment({
+      organizationId: input.organizationId,
+      providerPaymentId: input.providerPaymentId,
+      reason: input.reason,
+    });
+  } catch (orphanCancelError) {
+    console.error(`[checkout:${input.logLabel}] orphan_charge_cancel_failed`, {
+      order_id: input.orderId,
+      provider: gateway.name,
+      provider_payment_id: input.providerPaymentId,
+      error: orphanCancelError instanceof Error ? orphanCancelError.message : String(orphanCancelError),
+    });
+  }
 }
 
 async function getOrderSnapshotByOrderId(
@@ -632,6 +707,11 @@ export type UnifiedOrderSnapshot = {
     gateway_payment_id: string | null;
     expires_at: string | null;
     paid_at: string | null;
+    checkout_url: string | null;
+    installments: number | null;
+    last_gateway_attempt_status: string | null;
+    gateway_charge_reusable: boolean;
+    gateway_installment_id: string | null;
     /** 'absorb'|'pass_through'|'split'|null (null = sem payment_method escolhido ainda, ou pedido gratuito). Fonte: payments.payment_fee_mode (get_cart_order_details). */
     payment_fee_mode: string | null;
     /** Taxa TEORICA total calculada pela regra do metodo escolhido, antes de dividir entre comprador/organizador. */
@@ -701,6 +781,8 @@ async function getUnifiedOrderSnapshot(
   const paymentDefaults = {
     payment_id: '', amount: 0, discount_amount: 0, final_amount: 0, payment_method: null,
     payment_status: 'pending', pix_code: null, pix_qrcode: null, gateway_payment_id: null, expires_at: null, paid_at: null,
+    checkout_url: null, installments: null,
+    last_gateway_attempt_status: null, gateway_charge_reusable: false, gateway_installment_id: null,
     payment_fee_mode: null, payment_fee_calculated_amount: 0, payment_fee_customer_amount: 0, payment_fee_organizer_amount: 0,
   };
 
@@ -732,6 +814,11 @@ async function getUnifiedOrderSnapshot(
             gateway_payment_id: rawPayment.gateway_payment_id ? String(rawPayment.gateway_payment_id) : null,
             expires_at: rawPayment.expires_at ? String(rawPayment.expires_at) : null,
             paid_at: rawPayment.paid_at ? String(rawPayment.paid_at) : null,
+            checkout_url: rawPayment.checkout_url ? String(rawPayment.checkout_url) : null,
+            installments: rawPayment.installments != null ? Number(rawPayment.installments) : null,
+            last_gateway_attempt_status: rawPayment.last_gateway_attempt_status ? String(rawPayment.last_gateway_attempt_status) : null,
+            gateway_charge_reusable: rawPayment.gateway_charge_reusable !== false,
+            gateway_installment_id: rawPayment.gateway_installment_id ? String(rawPayment.gateway_installment_id) : null,
             payment_fee_mode: rawPayment.payment_fee_mode ? String(rawPayment.payment_fee_mode) : null,
             payment_fee_calculated_amount: Number(rawPayment.payment_fee_calculated_amount ?? 0),
             payment_fee_customer_amount: Number(rawPayment.payment_fee_customer_amount ?? 0),
@@ -818,6 +905,11 @@ export async function getPublicOrderPaymentStatusAction(orderId: string) {
     payment_status: String(snapshot.snapshot.payment?.payment_status ?? 'pending'),
     order_status: String(snapshot.snapshot.order_status ?? 'pending'),
     expires_at: snapshot.snapshot.payment?.expires_at ? String(snapshot.snapshot.payment.expires_at) : null,
+    last_gateway_attempt_status: snapshot.snapshot.payment?.last_gateway_attempt_status
+      ? String(snapshot.snapshot.payment.last_gateway_attempt_status)
+      : null,
+    checkout_url: snapshot.snapshot.payment?.checkout_url ? String(snapshot.snapshot.payment.checkout_url) : null,
+    gateway_charge_reusable: snapshot.snapshot.payment?.gateway_charge_reusable !== false,
   };
 }
 
@@ -1889,7 +1981,7 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
 export async function generatePublicOrderPixAction(orderId: string) {
   const supabase = await createServerSupabaseClient();
 
-  const snapshotResult = await getOrderSnapshotByOrderId(supabase, orderId);
+  const snapshotResult = await getUnifiedOrderSnapshot(supabase, orderId);
   if (!snapshotResult.success) return snapshotResult;
 
   const payment = snapshotResult.snapshot.payment;
@@ -1901,7 +1993,7 @@ export async function generatePublicOrderPixAction(orderId: string) {
     return { success: false as const, message: 'Pagamento nao necessario para este pedido.' };
   }
 
-  if (isReusableLivePix(payment)) {
+  if (isReusableLiveGatewayCharge(payment)) {
     return { success: true as const, payment };
   }
 
@@ -1912,8 +2004,8 @@ export async function generatePublicOrderPixAction(orderId: string) {
   if (claimError) {
     if (String(claimError.message ?? '').includes('PIX_GENERATION_IN_PROGRESS')) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      const retry = await getOrderSnapshotByOrderId(supabase, orderId);
-      if (retry.success && (retry.snapshot.payment.payment_status === 'paid' || isReusableLivePix(retry.snapshot.payment))) {
+      const retry = await getUnifiedOrderSnapshot(supabase, orderId);
+      if (retry.success && (retry.snapshot.payment.payment_status === 'paid' || isReusableLiveGatewayCharge(retry.snapshot.payment))) {
         return { success: true as const, payment: retry.snapshot.payment };
       }
       return { success: false as const, message: 'Seu PIX já está sendo gerado. Aguarde um instante e atualize a página.' };
@@ -1933,32 +2025,26 @@ export async function generatePublicOrderPixAction(orderId: string) {
   const previousProvider = claim?.previous_provider ? String(claim.previous_provider) : '';
   const previousAccountKey = claim?.previous_gateway_account_key ? String(claim.previous_gateway_account_key) : '';
   const organizationId = String(claim?.organization_id ?? '');
+  const previousPaymentIds = Array.isArray(claim?.previous_gateway_payment_ids)
+    ? claim.previous_gateway_payment_ids.map((id) => String(id))
+    : [];
 
   if (previousGatewayPaymentId && previousProvider && previousProvider !== 'fake') {
-    if (canUseCurrentGatewayForCharge(previousAccountKey || null)) {
-      try {
-        const previousGateway = getPaymentGatewayProviderByName(previousProvider, organizationId);
-        await previousGateway.cancelPayment({
-          organizationId,
-          providerPaymentId: previousGatewayPaymentId,
-          reason: 'Nova cobranca PIX gerada para o mesmo pedido.',
-        });
-      } catch (cancelError) {
-        console.error('[checkout:pix] cancel_previous_charge_failed', {
-          order_id: orderId,
-          provider: previousProvider,
-          error: cancelError instanceof Error ? cancelError.message : String(cancelError),
-        });
-      }
-    } else {
-      console.warn('[checkout:pix] skip_cancel_foreign_or_legacy_account', {
-        order_id: orderId,
-        provider: previousProvider,
-      });
-    }
+    await cancelPreviousGatewayCharge({
+      orderId,
+      organizationId,
+      provider: previousProvider,
+      providerPaymentId: previousGatewayPaymentId,
+      providerPaymentIds: previousPaymentIds,
+      accountKey: previousAccountKey,
+      paymentId: claim?.payment_id ? String(claim.payment_id) : undefined,
+      reason: 'Nova cobranca PIX gerada para o mesmo pedido.',
+      logLabel: 'pix',
+      supabase,
+    });
   }
 
-  const gateway = getPaymentGatewayProvider();
+  const gateway = getPaymentGatewayProviderForMethod('pix');
 
   const { data: payerRows, error: payerError } = await supabase.rpc('get_order_payer_details', { p_order_id: orderId });
   if (payerError) {
@@ -2016,48 +2102,31 @@ export async function generatePublicOrderPixAction(orderId: string) {
     p_gateway_payment_id: payload.providerPaymentId,
     p_expires_at: payload.expiresAt,
     p_provider: gateway.name,
-    p_gateway_account_key: getPaymentGatewayAccountKey(),
+    p_gateway_account_key: getPaymentGatewayAccountKeyForMethod('pix'),
+    p_payment_method: 'pix',
   });
 
   if (error) {
-    if (gateway.name !== 'fake' && payload.providerPaymentId) {
-      try {
-        await gateway.cancelPayment({
-          organizationId: String(payerRow.organization_id ?? organizationId),
-          providerPaymentId: payload.providerPaymentId,
-          reason: 'Falha ao persistir cobranca PIX localmente.',
-        });
-      } catch (orphanCancelError) {
-        console.error('[checkout:pix] orphan_charge_cancel_failed', {
-          order_id: orderId,
-          provider: gateway.name,
-          provider_payment_id: payload.providerPaymentId,
-          error: orphanCancelError instanceof Error ? orphanCancelError.message : String(orphanCancelError),
-        });
-      }
-    }
+    await cancelOrphanGatewayCharge(gateway, {
+      organizationId: String(payerRow.organization_id ?? organizationId),
+      orderId,
+      providerPaymentId: payload.providerPaymentId,
+      reason: 'Falha ao persistir cobranca PIX localmente.',
+      logLabel: 'pix',
+    });
     await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
     return { success: false as const, message: error.message };
   }
 
   const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
   if (!row) {
-    if (gateway.name !== 'fake' && payload.providerPaymentId) {
-      try {
-        await gateway.cancelPayment({
-          organizationId: String(payerRow.organization_id ?? organizationId),
-          providerPaymentId: payload.providerPaymentId,
-          reason: 'Falha ao persistir cobranca PIX localmente.',
-        });
-      } catch (orphanCancelError) {
-        console.error('[checkout:pix] orphan_charge_cancel_failed', {
-          order_id: orderId,
-          provider: gateway.name,
-          provider_payment_id: payload.providerPaymentId,
-          error: orphanCancelError instanceof Error ? orphanCancelError.message : String(orphanCancelError),
-        });
-      }
-    }
+    await cancelOrphanGatewayCharge(gateway, {
+      organizationId: String(payerRow.organization_id ?? organizationId),
+      orderId,
+      providerPaymentId: payload.providerPaymentId,
+      reason: 'Falha ao persistir cobranca PIX localmente.',
+      logLabel: 'pix',
+    });
     await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
     return { success: false as const, message: 'Falha ao gerar PIX.' };
   }
@@ -2065,6 +2134,185 @@ export async function generatePublicOrderPixAction(orderId: string) {
   return {
     success: true as const,
     payment: mapOrderPayment(row),
+  };
+}
+
+export async function generatePublicOrderCardAction(orderId: string) {
+  const supabase = await createServerSupabaseClient();
+
+  const snapshotResult = await getUnifiedOrderSnapshot(supabase, orderId);
+  if (!snapshotResult.success) return snapshotResult;
+
+  const payment = snapshotResult.snapshot.payment;
+  if (payment.payment_status === 'paid') {
+    return { success: true as const, payment };
+  }
+
+  if (payment.final_amount <= 0) {
+    return { success: false as const, message: 'Pagamento nao necessario para este pedido.' };
+  }
+
+  if (isReusableLiveGatewayCharge(payment)) {
+    return { success: true as const, payment };
+  }
+
+  const { data: claimData, error: claimError } = await supabase.rpc('claim_order_pix_generation', {
+    p_order_id: orderId,
+  });
+
+  if (claimError) {
+    if (String(claimError.message ?? '').includes('PIX_GENERATION_IN_PROGRESS')) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const retry = await getUnifiedOrderSnapshot(supabase, orderId);
+      if (retry.success && (retry.snapshot.payment.payment_status === 'paid' || isReusableLiveGatewayCharge(retry.snapshot.payment))) {
+        return { success: true as const, payment: retry.snapshot.payment };
+      }
+      return { success: false as const, message: 'Seu pagamento com cartao ja esta sendo gerado. Aguarde um instante e atualize a pagina.' };
+    }
+    return { success: false as const, message: claimError.message };
+  }
+
+  const claim = (Array.isArray(claimData) ? claimData[0] : claimData) as Record<string, unknown> | null;
+  const claimAction = String(claim?.action ?? '');
+  if (claimAction === 'paid' || claimAction === 'reuse') {
+    const latest = await getUnifiedOrderSnapshot(supabase, orderId);
+    if (!latest.success) return latest;
+    return { success: true as const, payment: latest.snapshot.payment };
+  }
+
+  const previousGatewayPaymentId = claim?.previous_gateway_payment_id ? String(claim.previous_gateway_payment_id) : '';
+  const previousProvider = claim?.previous_provider ? String(claim.previous_provider) : '';
+  const previousAccountKey = claim?.previous_gateway_account_key ? String(claim.previous_gateway_account_key) : '';
+  const organizationId = String(claim?.organization_id ?? '');
+  const previousPaymentIds = Array.isArray(claim?.previous_gateway_payment_ids)
+    ? claim.previous_gateway_payment_ids.map((id) => String(id))
+    : [];
+
+  await cancelPreviousGatewayCharge({
+    orderId,
+    organizationId,
+    provider: previousProvider,
+    providerPaymentId: previousGatewayPaymentId,
+    providerPaymentIds: previousPaymentIds,
+    accountKey: previousAccountKey,
+    paymentId: claim?.payment_id ? String(claim.payment_id) : undefined,
+    reason: 'Nova cobranca de cartao gerada para o mesmo pedido.',
+    logLabel: 'card',
+    supabase,
+  });
+
+  let gateway: PaymentGatewayProvider;
+  try {
+    gateway = getPaymentGatewayProviderForMethod('credit_card');
+  } catch {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: 'Pagamento com cartao nao esta configurado neste ambiente.' };
+  }
+
+  const { data: payerRows, error: payerError } = await supabase.rpc('get_order_payer_details', { p_order_id: orderId });
+  if (payerError) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: payerError.message };
+  }
+  const payerRow = (Array.isArray(payerRows) ? payerRows[0] : payerRows) as Record<string, unknown> | null;
+  if (!payerRow?.payment_id) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: 'Pagamento nao encontrado para o pedido.' };
+  }
+
+  const payerFullName = payerRow.payer_full_name ? String(payerRow.payer_full_name) : '';
+  const payerEmail = payerRow.payer_email ? String(payerRow.payer_email) : '';
+  const payerCpf = payerRow.payer_cpf ? String(payerRow.payer_cpf) : '';
+
+  if (gateway.name === 'asaas' && (!payerFullName || !payerEmail || !payerCpf)) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return {
+      success: false as const,
+      message: 'Complete seu nome, e-mail e CPF em Meus dados antes de pagar com cartao.',
+    };
+  }
+
+  const installments = Math.max(1, Math.floor(Number(payment.installments ?? 1) || 1));
+
+  let payload;
+  try {
+    payload = await gateway.createCardPayment({
+      organizationId: String(payerRow.organization_id ?? organizationId),
+      orderId,
+      paymentId: String(payerRow.payment_id),
+      amount: payment.final_amount,
+      dueDate: todayAsPixDueDate(),
+      installments,
+      successUrl: cardPaymentReturnUrl(orderId),
+      payer: {
+        name: payerFullName,
+        email: payerEmail,
+        cpfCnpj: payerCpf,
+        phone: payerRow.payer_phone ? String(payerRow.payer_phone) : undefined,
+      },
+      description: snapshotResult.snapshot.order_number ? `Pedido ${snapshotResult.snapshot.order_number}` : undefined,
+    });
+  } catch (gatewayError) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    console.error('[checkout:card] gateway_create_card_failed', {
+      order_id: orderId,
+      provider: gateway.name,
+      error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
+    });
+    return { success: false as const, message: 'Nao foi possivel iniciar o pagamento com cartao. Tente novamente em instantes.' };
+  }
+
+  const { data, error } = await supabase.rpc('start_order_payment_pix', {
+    p_order_id: orderId,
+    p_pix_code: '',
+    p_pix_qrcode: '',
+    p_gateway_payment_id: payload.providerPaymentId,
+    p_expires_at: payload.expiresAt,
+    p_provider: gateway.name,
+    p_gateway_account_key: getPaymentGatewayAccountKeyForMethod('credit_card'),
+    p_payment_method: 'credit_card',
+    p_checkout_url: payload.checkoutUrl,
+    p_gateway_installment_id: payload.gatewayInstallmentId,
+    p_gateway_charges: payload.charges.map((charge) => ({
+      gateway_payment_id: charge.providerPaymentId,
+      gateway_installment_id: charge.gatewayInstallmentId,
+      installment_number: charge.installmentNumber,
+      installment_count: charge.installmentCount,
+      amount: charge.amount,
+    })),
+  });
+
+  if (error) {
+    await cancelOrphanGatewayCharge(gateway, {
+      organizationId: String(payerRow.organization_id ?? organizationId),
+      orderId,
+      providerPaymentId: payload.providerPaymentId,
+      reason: 'Falha ao persistir cobranca de cartao localmente.',
+      logLabel: 'card',
+    });
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: error.message };
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row) {
+    await cancelOrphanGatewayCharge(gateway, {
+      organizationId: String(payerRow.organization_id ?? organizationId),
+      orderId,
+      providerPaymentId: payload.providerPaymentId,
+      reason: 'Falha ao persistir cobranca de cartao localmente.',
+      logLabel: 'card',
+    });
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    return { success: false as const, message: 'Falha ao iniciar pagamento com cartao.' };
+  }
+
+  return {
+    success: true as const,
+    payment: {
+      ...mapOrderPayment(row),
+      installments: payload.installments,
+    },
   };
 }
 

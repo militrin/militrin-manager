@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mapAsaasPaymentStatus, isKnownAsaasPaymentStatus } from '../src/lib/payments/asaas-status-map.ts';
+import { mapAsaasPaymentStatus, isKnownAsaasPaymentStatus, isAsaasCardCaptureRefusedEvent, isAsaasPaymentDeletedEvent } from '../src/lib/payments/asaas-status-map.ts';
 
 test('status aprovados da Asaas sempre convergem para paid', () => {
   assert.equal(mapAsaasPaymentStatus('RECEIVED'), 'paid');
@@ -40,4 +40,12 @@ test('normaliza case e espacos', () => {
 test('isKnownAsaasPaymentStatus distingue status documentados de desconhecidos', () => {
   assert.equal(isKnownAsaasPaymentStatus('RECEIVED'), true);
   assert.equal(isKnownAsaasPaymentStatus('NAO_EXISTE'), false);
+});
+
+test('CAPTURE_REFUSED e PAYMENT_DELETED sao reconhecidos pelo tipo do evento', () => {
+  assert.equal(isAsaasCardCaptureRefusedEvent('PAYMENT_CREDIT_CARD_CAPTURE_REFUSED'), true);
+  assert.equal(isAsaasCardCaptureRefusedEvent('payment_confirmed'), false);
+  assert.equal(isAsaasPaymentDeletedEvent('PAYMENT_DELETED'), true);
+  assert.equal(mapAsaasPaymentStatus('PENDING'), 'pending');
+  assert.notEqual(mapAsaasPaymentStatus('PENDING'), 'failed');
 });

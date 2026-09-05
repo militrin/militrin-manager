@@ -1,22 +1,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { canUseCurrentGatewayForCharge, getPaymentGatewayProviderByName } from "@/lib/payments/get-gateway-provider";
+import { getPaymentGatewayProvider, tryGetPaymentGatewayProviderForAccountKey } from "@/lib/payments/get-gateway-provider";
 
 /**
  * Chamada logo apos `apply_cart_coupon` (ou qualquer mutacao de carrinho que
- * possa ter invalidado um PIX). Le-e-limpa (atomicamente, via
+ * possa ter invalidado um PIX/cartao). Le-e-limpa (atomicamente, via
  * `pop_pending_external_cancellation`) a marca deixada por `apply_cart_coupon`
  * quando o total do pedido muda com uma cobranca de gateway real ja
- * associada, e pede ao provider correspondente para cancelar essa cobranca --
- * assim ela para de ser pagavel no gateway com o preco antigo.
+ * associada, e pede ao provider da CONTA HISTORICA para cancelar essa
+ * cobranca -- nunca a "conta ativa de hoje" se o rotulo for outro.
  *
- * Best-effort deliberado: se o cancelamento remoto falhar (gateway fora do
- * ar, id ja cancelado la, etc.) a acao do carrinho NAO deve falhar por causa
- * disso -- o vinculo local (payments.gateway_payment_id) ja foi nulado pelo
- * `apply_cart_coupon`, entao nenhum webhook futuro para aquela cobranca sera
- * mais reconhecido (record/apply so acham o pagamento por
- * provider+gateway_payment_id). A expiracao/reconciliacao manual e a rede de
- * seguranca final para o caso raro de a cobranca continuar tecnicamente
- * pagavel no lado do gateway.
+ * Best-effort deliberado: se o cancelamento remoto falhar a acao do carrinho
+ * NAO deve falhar por causa disso.
  */
 export async function cancelPendingExternalCharge(supabase: SupabaseClient, orderId: string): Promise<void> {
   const { data, error } = await supabase.rpc("pop_pending_external_cancellation", { p_order_id: orderId });
@@ -37,27 +31,46 @@ export async function cancelPendingExternalCharge(supabase: SupabaseClient, orde
     .eq("id", pending.payment_id)
     .maybeSingle();
 
-  if (!canUseCurrentGatewayForCharge(paymentRow?.gateway_account_key ? String(paymentRow.gateway_account_key) : null)) {
-    console.warn("[payments] skip_cancel_foreign_or_legacy_account", {
+  const storedAccountKey = paymentRow?.gateway_account_key ? String(paymentRow.gateway_account_key) : null;
+  const gateway = pending.provider === "asaas"
+    ? tryGetPaymentGatewayProviderForAccountKey(storedAccountKey)
+    : getPaymentGatewayProvider("fake");
+
+  if (!gateway) {
+    console.warn("[payments] skip_cancel_unknown_or_legacy_account", {
       orderId,
       provider: pending.provider,
     });
     return;
   }
 
+  const { data: chargeIds } = await supabase.rpc("list_live_gateway_charge_ids", {
+    p_payment_id: pending.payment_id,
+  });
+  const ids = [...new Set(
+    [
+      pending.provider_payment_id,
+      ...(Array.isArray(chargeIds) ? chargeIds.map((id) => String(id)) : []),
+    ].map((id) => String(id ?? "").trim()).filter(Boolean),
+  )];
+
   try {
-    const gateway = getPaymentGatewayProviderByName(pending.provider, pending.organization_id);
-    await gateway.cancelPayment({
-      organizationId: pending.organization_id,
-      providerPaymentId: pending.provider_payment_id,
-      reason: "Carrinho alterado: valor do pedido mudou apos a cobranca ter sido gerada.",
+    for (const providerPaymentId of ids) {
+      await gateway.cancelPayment({
+        organizationId: pending.organization_id,
+        providerPaymentId,
+        reason: "Carrinho alterado: valor do pedido mudou apos a cobranca ter sido gerada.",
+      });
+    }
+    await supabase.rpc("mark_gateway_charges_not_reusable", {
+      p_payment_id: pending.payment_id,
     });
-  } catch (error) {
+  } catch (cancelError) {
     console.error("[payments] cancel_pending_external_charge_failed", {
       orderId,
       provider: pending.provider,
       providerPaymentId: pending.provider_payment_id,
-      error,
+      error: cancelError instanceof Error ? cancelError.message : String(cancelError),
     });
   }
 }

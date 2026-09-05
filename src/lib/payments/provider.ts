@@ -73,6 +73,39 @@ export type CreatePixPaymentResult = {
   expiresAt: string;
 };
 
+export type CreateCardPaymentInput = {
+  organizationId: string;
+  orderId: string;
+  paymentId: string;
+  amount: number;
+  dueDate: string; // YYYY-MM-DD
+  payer: PayerInfo;
+  description?: string;
+  /** Parcelas ja decididas pelo Militrin (event_payment_methods). 1 = a vista. */
+  installments?: number;
+  /** URL de retorno apos a Fatura Asaas. Nao confirma pagamento. */
+  successUrl?: string;
+};
+
+export type GatewayChargeDraft = {
+  providerPaymentId: string;
+  gatewayInstallmentId?: string | null;
+  installmentNumber: number;
+  installmentCount: number;
+  amount: number;
+};
+
+export type CreateCardPaymentResult = {
+  providerPaymentId: string;
+  status: InternalPaymentStatus;
+  /** URL hospedada do Asaas (invoiceUrl). Nunca contem PAN/CVV. */
+  checkoutUrl: string;
+  expiresAt: string;
+  installments: number;
+  gatewayInstallmentId: string | null;
+  charges: GatewayChargeDraft[];
+};
+
 export type GetPaymentInput = {
   organizationId: string;
   providerPaymentId: string;
@@ -108,6 +141,8 @@ export type ParsedWebhookEvent = {
   status: InternalPaymentStatus | null;
   occurredAt: string | null;
   rawPayload: unknown;
+  /** `account.id` do payload Asaas, se presente. Nao e autenticacao. */
+  gatewayAccountId?: string | null;
 };
 
 /**
@@ -119,6 +154,12 @@ export interface PaymentGatewayProvider {
   readonly name: PaymentProviderName;
 
   createPixPayment(input: CreatePixPaymentInput): Promise<CreatePixPaymentResult>;
+
+  /**
+   * Cria cobranca de cartao SEM dados de cartao. O pagador informa PAN/CVV
+   * apenas na pagina hospedada do gateway (`checkoutUrl`).
+   */
+  createCardPayment(input: CreateCardPaymentInput): Promise<CreateCardPaymentResult>;
 
   getPayment(input: GetPaymentInput): Promise<GatewayPaymentSnapshot>;
 

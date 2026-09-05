@@ -1,36 +1,38 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
-import { getPaymentGatewayProvider } from "@/lib/payments/get-gateway-provider";
+import { resolveAsaasWebhookAccountKey } from "@/lib/payments/asaas-account-registry";
+import { parseAsaasWebhookPayload } from "@/lib/payments/asaas-provider";
 import { sanitizePaymentGatewayEventPayload } from "@/lib/payments/sanitize-gateway-event-payload";
 
 /**
- * Webhook Asaas. NAO emite ticket a partir de nenhum campo arbitrario do
- * payload: valida o token (`verifyWebhook`), grava/deduplica em
- * `payment_gateway_events` e so entao aplica via `apply_gateway_payment_status`.
+ * Webhook Asaas multi-conta. Uma URL: POST /api/webhooks/asaas
  *
- * URL publica: POST /api/webhooks/asaas
- * Autenticacao: header `asaas-access-token` (token atual ou o anterior,
- * `ASAAS_WEBHOOK_TOKEN_PREVIOUS`, durante troca de conta).
+ * 1) O token (`asaas-access-token`) identifica a conta (PIX vs CARD).
+ * 2) Dedup em `payment_gateway_events` inclui gateway_account_key.
+ * 3) `apply_gateway_payment_status` so atualiza payment com o mesmo
+ *    provider + gateway_payment_id + gateway_account_key.
+ *
+ * Token da conta PIX nao atualiza cobranca da conta CARD.
  */
 export async function POST(request: Request) {
-  let provider;
+  let accountKey: string | null;
   try {
-    provider = getPaymentGatewayProvider("asaas");
+    accountKey = resolveAsaasWebhookAccountKey(request.headers);
   } catch (error) {
-    console.error("[webhook:asaas] provider_not_configured", error);
-    return NextResponse.json({ error: "Asaas provider nao configurado." }, { status: 503 });
+    console.error("[webhook:asaas] token_ambiguous", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "Token de webhook invalido." }, { status: 401 });
   }
 
-  const rawBody = await request.text();
-
-  if (!provider.verifyWebhook({ headers: request.headers, rawBody })) {
+  if (!accountKey) {
     console.warn("[webhook:asaas] invalid_token");
     return NextResponse.json({ error: "Token de webhook invalido." }, { status: 401 });
   }
 
+  const rawBody = await request.text();
+
   let event;
   try {
-    event = provider.parseWebhook({ rawBody });
+    event = parseAsaasWebhookPayload(rawBody);
   } catch (error) {
     console.error("[webhook:asaas] invalid_payload", error);
     return NextResponse.json({ error: "Payload invalido." }, { status: 400 });
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
     p_event_type: event.eventType,
     p_provider_payment_id: event.providerPaymentId,
     p_payload: sanitizePaymentGatewayEventPayload(event.rawPayload),
+    p_gateway_account_key: accountKey,
   });
 
   if (recordError) {
@@ -81,9 +84,6 @@ export async function POST(request: Request) {
     if (status === "processed" || status === "ignored") {
       return NextResponse.json({ ok: true, deduped: true });
     }
-    // processing recente (outro worker vivo) ou abandonado ainda dentro do
-    // lease: 503 faz o Asaas retentar. 200 aqui faria o gateway desistir
-    // antes do reclaim de 3 minutos.
     return NextResponse.json({ error: "Evento em processamento." }, { status: 503 });
   }
 
@@ -102,15 +102,14 @@ export async function POST(request: Request) {
       p_provider_payment_id: event.providerPaymentId,
       p_provider_status: event.providerStatus,
       p_internal_status: event.status,
+      p_expected_gateway_account_key: accountKey,
+      p_event_type: event.eventType,
     });
 
     if (applyError) {
       const isUnknownPayment = applyError.message === "PAYMENT_NOT_FOUND";
+      const isAccountMismatch = applyError.message === "GATEWAY_ACCOUNT_MISMATCH";
 
-      // Pagamento confirmado pelo gateway sem correlação local: cobrança órfã paga.
-      // NÃO tratamos como sucesso silencioso — classificamos como divergência
-      // financeira para que o administrador possa investigar.
-      // NÃO emitimos ingresso automaticamente.
       const isFinancialDivergence =
         isUnknownPayment &&
         (event.status === "paid" || event.status === "processing");
@@ -119,13 +118,24 @@ export async function POST(request: Request) {
         p_event_id: eventId,
         p_status: isFinancialDivergence
           ? "financial_divergence"
-          : isUnknownPayment
+          : isUnknownPayment || isAccountMismatch
             ? "ignored"
             : "failed",
-        p_error: isFinancialDivergence
-          ? `ORPHAN_CHARGE: pagamento ${event.providerPaymentId ?? "desconhecido"} confirmado pelo gateway mas sem payment local correspondente. Requer investigação.`
-          : applyError.message,
+        p_error: isAccountMismatch
+          ? `GATEWAY_ACCOUNT_MISMATCH: webhook da conta ${accountKey} nao pode atualizar cobranca de outra conta.`
+          : isFinancialDivergence
+            ? `ORPHAN_CHARGE: pagamento ${event.providerPaymentId ?? "desconhecido"} confirmado pelo gateway mas sem payment local correspondente. Requer investigação.`
+            : applyError.message,
       });
+
+      if (isAccountMismatch) {
+        console.error("[webhook:asaas] gateway_account_mismatch", {
+          provider_payment_id: event.providerPaymentId,
+          webhook_account_key: accountKey,
+          event_id: eventId,
+        });
+        return NextResponse.json({ ok: true, ignored: true, account_mismatch: true });
+      }
 
       if (isFinancialDivergence) {
         console.error(
@@ -137,8 +147,6 @@ export async function POST(request: Request) {
             event_id: eventId,
           },
         );
-        // Retornamos 200 para que o Asaas não retente infinitamente uma
-        // divergência que já está registrada e visível ao administrador.
         return NextResponse.json({ ok: true, financial_divergence: true });
       }
 

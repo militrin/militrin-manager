@@ -7,6 +7,7 @@ test('persistencia minima do webhook: id, evento, status e valor -- sem PII nem 
     id: 'evt_1',
     event: 'PAYMENT_RECEIVED',
     dateCreated: '2026-09-03',
+    account: { id: 'acc_123', name: 'Nao persistir nome' },
     payment: {
       id: 'pay_1',
       status: 'RECEIVED',
@@ -22,6 +23,7 @@ test('persistencia minima do webhook: id, evento, status e valor -- sem PII nem 
 
   assert.equal(sanitized.id, 'evt_1');
   assert.equal(sanitized.event, 'PAYMENT_RECEIVED');
+  assert.deepEqual(sanitized.account, { id: 'acc_123' });
   assert.deepEqual(sanitized.payment, {
     id: 'pay_1',
     status: 'RECEIVED',
@@ -36,4 +38,5 @@ test('persistencia minima do webhook: id, evento, status e valor -- sem PII nem 
   assert.equal(JSON.stringify(sanitized).includes('pessoa@example.com'), false);
   assert.equal(JSON.stringify(sanitized).includes('copia-e-cola-secreto'), false);
   assert.equal(JSON.stringify(sanitized).includes('cus_secret'), false);
+  assert.equal(JSON.stringify(sanitized).includes('Nao persistir nome'), false);
 });

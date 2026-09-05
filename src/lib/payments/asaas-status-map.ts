@@ -54,6 +54,19 @@ export type AsaasPaymentStatus =
  * - Nenhum status pendente ou de risco emite ticket.
  * - OVERDUE nunca emite ticket.
  * - Estorno/chargeback nunca reabrem nem apagam historico -- so cancelam para frente.
+ *
+ * Cartao parcelado (docs.asaas.com cobranças via cartão + webhook events):
+ * - `PAYMENT_CONFIRMED` / `PAYMENT_RECEIVED` em QUALQUER parcela = aprovacao da
+ *   venda. O ingresso e emitido nesse momento, nao quando todas as parcelas
+ *   futuras forem recebidas.
+ * - `PAYMENT_CREDIT_CARD_CAPTURE_REFUSED` e tentativa recusada; `payment.status`
+ *   costuma permanecer PENDING. Nao mapeia para failed comercial.
+ * - Parcelas seguintes do mesmo installment so atualizam `payment_gateway_charges`.
+ *
+ * Limitacao conhecida (sandbox homolog): recusa sincrona de cartao pode
+ * manter a cobranca PENDING sem emitir PAYMENT_CREDIT_CARD_CAPTURE_REFUSED.
+ * Nao marcar payment failed, nao inferir recusa por tempo. UI usa mensagem
+ * neutra ate o evento chegar; o ticket so sai em CONFIRMED/RECEIVED.
  */
 const ASAAS_STATUS_MAP: Record<AsaasPaymentStatus, InternalPaymentStatus> = {
   PENDING: "pending",
@@ -89,4 +102,19 @@ export function mapAsaasPaymentStatus(rawStatus: string | null | undefined): Int
 
 export function isKnownAsaasPaymentStatus(rawStatus: string | null | undefined): rawStatus is AsaasPaymentStatus {
   return String(rawStatus ?? "").trim().toUpperCase() in ASAAS_STATUS_MAP;
+}
+
+export const ASAAS_CARD_CAPTURE_REFUSED_EVENT = "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED";
+export const ASAAS_PAYMENT_DELETED_EVENT = "PAYMENT_DELETED";
+
+export function normalizeAsaasEventType(rawEventType: string | null | undefined): string {
+  return String(rawEventType ?? "").trim().toUpperCase();
+}
+
+export function isAsaasCardCaptureRefusedEvent(rawEventType: string | null | undefined): boolean {
+  return normalizeAsaasEventType(rawEventType) === ASAAS_CARD_CAPTURE_REFUSED_EVENT;
+}
+
+export function isAsaasPaymentDeletedEvent(rawEventType: string | null | undefined): boolean {
+  return normalizeAsaasEventType(rawEventType) === ASAAS_PAYMENT_DELETED_EVENT;
 }

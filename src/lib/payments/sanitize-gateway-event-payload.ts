@@ -14,11 +14,18 @@ export function sanitizePaymentGatewayEventPayload(payload: unknown): Record<str
     root.payment && typeof root.payment === "object"
       ? (root.payment as Record<string, unknown>)
       : {};
+  const account =
+    root.account && typeof root.account === "object"
+      ? (root.account as Record<string, unknown>)
+      : null;
 
   return {
     id: root.id ?? null,
     event: root.event ?? null,
     dateCreated: root.dateCreated ?? null,
+    account: {
+      id: account?.id ?? null,
+    },
     payment: {
       id: payment.id ?? null,
       status: payment.status ?? null,

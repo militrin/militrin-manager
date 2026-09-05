@@ -53,10 +53,51 @@ export function isReusableLivePix(payment: {
   payment_status?: string | null;
   pix_code?: string | null;
   expires_at?: string | null;
+  gateway_charge_reusable?: boolean | null;
   now?: Date;
 }): boolean {
   if (normalizePaymentStatus(payment.payment_status) !== "pending") return false;
   if (!String(payment.pix_code ?? "").trim()) return false;
+  if (payment.gateway_charge_reusable === false) return false;
+  if (!payment.expires_at) return false;
+  const expiresAt = new Date(payment.expires_at).getTime();
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt > (payment.now ?? new Date()).getTime();
+}
+
+/** Reutiliza cobranca PIX ou cartao: pending, id externo, prazo futuro, charge viva. */
+export function isReusableLiveGatewayCharge(payment: {
+  payment_status?: string | null;
+  pix_code?: string | null;
+  checkout_url?: string | null;
+  gateway_payment_id?: string | null;
+  expires_at?: string | null;
+  gateway_charge_reusable?: boolean | null;
+  now?: Date;
+}): boolean {
+  if (normalizePaymentStatus(payment.payment_status) !== "pending") return false;
+  if (!String(payment.gateway_payment_id ?? "").trim()) return false;
+  if (payment.gateway_charge_reusable === false) return false;
+  const hasPix = Boolean(String(payment.pix_code ?? "").trim());
+  const hasCheckout = Boolean(String(payment.checkout_url ?? "").trim());
+  if (!hasPix && !hasCheckout) return false;
+  if (!payment.expires_at) return false;
+  const expiresAt = new Date(payment.expires_at).getTime();
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt > (payment.now ?? new Date()).getTime();
+}
+
+/** UI: reabrir invoice hospedada so se a charge local ainda estiver viva. */
+export function canReuseCardCheckout(payment: {
+  payment_status?: string | null;
+  checkout_url?: string | null;
+  expires_at?: string | null;
+  gateway_charge_reusable?: boolean | null;
+  now?: Date;
+}): boolean {
+  if (normalizePaymentStatus(payment.payment_status) !== "pending") return false;
+  if (payment.gateway_charge_reusable === false) return false;
+  if (!String(payment.checkout_url ?? "").trim()) return false;
   if (!payment.expires_at) return false;
   const expiresAt = new Date(payment.expires_at).getTime();
   if (!Number.isFinite(expiresAt)) return false;

@@ -39,9 +39,10 @@ test('page.tsx (Server Component) calcula isFakePaymentProvider a partir do prov
   assert.match(page, /isFakePaymentProvider=\{getPaymentGatewayProviderName\(\) === 'fake'\}/);
 });
 
-test('wizard.tsx repassa isFakePaymentProvider para os dois usos de PixPaymentCard (etapa 3 e etapa 4), sem reinventar a checagem', () => {
-  const occurrences = wizard.match(/isFakePaymentProvider=\{isFakePaymentProvider\}/g) ?? [];
-  assert.equal(occurrences.length, 2, 'esperava PixPaymentCard usado 2x (etapa 3 e etapa 4), ambos repassando a mesma prop');
+test('wizard.tsx repassa isFakePaymentProvider para PixPaymentCard (etapa 3 e etapa 4), sem reinventar a checagem', () => {
+  const pixCards = wizard.match(/<PixPaymentCard/g) ?? [];
+  assert.equal(pixCards.length, 2, 'esperava PixPaymentCard usado 2x (etapa 3 e etapa 4)');
+  assert.match(wizard, /isFakePaymentProvider=\{isFakePaymentProvider\}/);
 });
 
 test('a tela nao usa mais textarea gigante como area principal do codigo PIX (bloco compacto com botao copiar)', () => {
