@@ -57,7 +57,6 @@ export async function middleware(request: NextRequest) {
   const isPublicFirstAccessResend = pathname === '/primeiro-acesso/reenviar';
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) && !isPublicFirstAccessResend;
   const protectedApiPrefixes = [
-    '/api/admin',
     '/api/ingressos',
     '/api/inscricao',
     '/api/instagram',
