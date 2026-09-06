@@ -55,7 +55,13 @@ export function getPaymentGatewayProviderForMethod(method: AsaasCheckoutMethod):
     throw new Error(`PAYMENT_PROVIDER=asaas requer ${required} para o metodo ${method}.`);
   }
 
-  return asaasProviderFromCredentials(credentials.accountKey);
+  return new AsaasPaymentProvider({
+    apiKey: credentials.apiKey,
+    webhookToken: credentials.webhookToken,
+    environment: credentials.environment,
+    accountKey: credentials.accountKey,
+    previousWebhookToken: null,
+  });
 }
 
 /**

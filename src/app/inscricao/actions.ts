@@ -2044,7 +2044,17 @@ export async function generatePublicOrderPixAction(orderId: string) {
     });
   }
 
-  const gateway = getPaymentGatewayProviderForMethod('pix');
+  let gateway;
+  try {
+    gateway = getPaymentGatewayProviderForMethod('pix');
+  } catch (providerError) {
+    await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
+    console.error('[checkout:pix] provider_unavailable', {
+      order_id: orderId,
+      error: providerError instanceof Error ? providerError.message : String(providerError),
+    });
+    return { success: false as const, message: 'Pagamento PIX nao esta configurado neste ambiente.' };
+  }
 
   const { data: payerRows, error: payerError } = await supabase.rpc('get_order_payer_details', { p_order_id: orderId });
   if (payerError) {

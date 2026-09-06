@@ -76,9 +76,12 @@ function cardSlot(): MethodSlot | null {
 
 /**
  * Registry account_key → credencial. PIX e cartao com o MESMO account_key
- * compartilham a mesma entrada. O trio legado ASAAS_* permanece no mapa
- * quando o rotulo historico e diferente dos rotulos por metodo, para
- * consultar/cancelar cobrancas Gate #1 sem reescrever historico.
+ * compartilham a mesma entrada. Duas API keys no mesmo rotulo sao aceitas
+ * quando PIX e cartao foram emitidos na mesma conta Asaas: o checkout por
+ * metodo usa o slot especifico (`ASAAS_PIX_*` / `ASAAS_CARD_*`). O trio
+ * legado ASAAS_* permanece no mapa quando o rotulo historico e diferente
+ * dos rotulos por metodo, para consultar/cancelar cobrancas Gate #1 sem
+ * reescrever historico.
  *
  * Ambiente e compartilhado (`ASAAS_ENVIRONMENT`). Contas distintas em
  * sandbox vs production exigiria desenho extra — nao implementado.
@@ -101,11 +104,10 @@ export function listConfiguredAsaasAccounts(): AsaasAccountCredentials[] {
       });
       return;
     }
-    if (existing.apiKey !== slot.apiKey) {
-      throw new Error(
-        `ASAAS: account_key=${slot.accountKey} nao pode ter API keys diferentes por metodo. account_key representa a conta Asaas, nao o meio de pagamento.`,
-      );
-    }
+    // Duas API keys no mesmo account_key sao validas quando PIX e cartao
+    // foram emitidos na mesma conta Asaas. Checkout por metodo usa o slot
+    // especifico; o mapa compartilhado guarda a primeira key so para lookup
+    // historico/webhook e registra os dois tokens.
     if (!existing.methods.includes(slot.method)) existing.methods.push(slot.method);
     if (!existing.webhookTokens.includes(slot.webhookToken)) {
       existing.webhookTokens.push(slot.webhookToken);
@@ -144,7 +146,16 @@ export function listConfiguredAsaasAccounts(): AsaasAccountCredentials[] {
 }
 
 export function getAsaasAccountCredentialsForMethod(method: AsaasCheckoutMethod): AsaasAccountCredentials | null {
-  return listConfiguredAsaasAccounts().find((account) => account.methods.includes(method)) ?? null;
+  const slot = method === "pix" ? pixSlot() : cardSlot();
+  if (!slot) return null;
+  return {
+    accountKey: slot.accountKey,
+    apiKey: slot.apiKey,
+    webhookToken: slot.webhookToken,
+    webhookTokens: [slot.webhookToken],
+    environment: getAsaasEnvironment(),
+    methods: [slot.method],
+  };
 }
 
 export function getAsaasAccountCredentialsForAccountKey(

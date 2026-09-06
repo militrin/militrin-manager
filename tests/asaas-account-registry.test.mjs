@@ -66,8 +66,9 @@ test('PIX e cartao em contas distintas nao compartilham credencial', () => {
   });
 });
 
-test('mesma account_key com API keys diferentes e erro de configuracao', () => {
+test('mesma account_key com API keys diferentes usa o slot do metodo', () => {
   withEnv({
+    ASAAS_ENVIRONMENT: 'production',
     ASAAS_PIX_API_KEY: 'pix-api',
     ASAAS_PIX_ACCOUNT_KEY: 'mesma-conta',
     ASAAS_PIX_WEBHOOK_TOKEN: 'pix-token',
@@ -75,7 +76,15 @@ test('mesma account_key com API keys diferentes e erro de configuracao', () => {
     ASAAS_CARD_ACCOUNT_KEY: 'mesma-conta',
     ASAAS_CARD_WEBHOOK_TOKEN: 'card-token',
   }, () => {
-    assert.throws(() => listConfiguredAsaasAccounts(), /API keys diferentes/);
+    const accounts = listConfiguredAsaasAccounts();
+    assert.equal(accounts.length, 1);
+    assert.equal(accounts[0].accountKey, 'mesma-conta');
+    assert.deepEqual(accounts[0].methods.sort(), ['credit_card', 'pix']);
+    assert.deepEqual(accounts[0].webhookTokens.sort(), ['card-token', 'pix-token']);
+    assert.equal(getAsaasAccountCredentialsForMethod('pix')?.apiKey, 'pix-api');
+    assert.equal(getAsaasAccountCredentialsForMethod('credit_card')?.apiKey, 'outra-api');
+    assert.equal(getAsaasAccountCredentialsForMethod('pix')?.accountKey, 'mesma-conta');
+    assert.equal(getAsaasAccountCredentialsForMethod('credit_card')?.accountKey, 'mesma-conta');
   });
 });
 
