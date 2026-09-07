@@ -22,6 +22,8 @@ export type CardPaymentCardProps = {
   isRetrying?: boolean;
   confirmedHref?: string;
   confirmedLabel?: string;
+  /** Primeira tentativa: redireciona ao Asaas. Depois do retorno/falha: pending + retry. */
+  pendingPhase?: 'redirecting' | 'pending_retry';
 };
 
 /**
@@ -47,6 +49,7 @@ export function CardPaymentCard({
   isRetrying,
   confirmedHref,
   confirmedLabel,
+  pendingPhase = 'pending_retry',
 }: CardPaymentCardProps) {
   const displayStatus = resolvePixDisplayStatus(paymentStatus, countdownSeconds);
   const parcelCount = Math.max(1, Math.floor(Number(installments ?? 1) || 1));
@@ -84,29 +87,6 @@ export function CardPaymentCard({
     );
   }
 
-  if (displayStatus === 'expired') {
-    const canRetry = canRegeneratePix(paymentStatus) && Boolean(onRetryCheckout);
-    return (
-      <div className="rounded-3xl border border-amber-500/40 bg-amber-950/20 p-6 text-center sm:p-8">
-        <Clock className="mx-auto h-12 w-12 text-amber-400" aria-hidden />
-        <h3 className="mt-3 text-xl font-semibold text-amber-100">Pagamento expirado</h3>
-        <p className="mt-1 text-sm text-amber-200/90">
-          O prazo desta cobranca terminou. Se o cartao ja foi aprovado, aguarde a confirmacao. Caso contrario, tente novamente.
-        </p>
-        {canRetry ? (
-          <button
-            type="button"
-            onClick={onRetryCheckout}
-            disabled={isRetrying}
-            className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50 sm:w-auto sm:min-w-[220px]"
-          >
-            {isRetrying ? 'Gerando nova cobranca...' : 'Tentar pagamento novamente'}
-          </button>
-        ) : null}
-      </div>
-    );
-  }
-
   if (attemptRefused) {
     return (
       <div className="rounded-3xl border border-red-500/40 bg-red-950/20 p-6 text-center sm:p-8">
@@ -130,6 +110,51 @@ export function CardPaymentCard({
             className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50 sm:w-auto sm:min-w-[220px]"
           >
             {isRetrying ? 'Gerando nova cobranca...' : 'Voltar ao pagamento'}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (pendingPhase === 'redirecting') {
+    return (
+      <div className="rounded-3xl border border-slate-700 bg-slate-950 p-5 sm:p-6">
+        <div className="text-center">
+          <Clock className="mx-auto h-10 w-10 text-emerald-400" aria-hidden />
+          <h3 className="mt-3 text-xl font-semibold text-emerald-100">Redirecionando para o pagamento seguro…</h3>
+          <p className="mt-2 text-sm text-slate-300">
+            Voce sera levado a pagina do Asaas para informar o cartao. O Militrin nao armazena numero nem CVV.
+          </p>
+          <p className="mt-3 text-3xl font-bold text-white">{money(amount)}</p>
+          {parcelCount > 1 ? (
+            <p className="mt-1 text-sm text-slate-300">
+              {parcelCount}x de <strong className="text-slate-100">{money(installmentAmount)}</strong>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-400">Cartao a vista</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (displayStatus === 'expired') {
+    const canRetry = canRegeneratePix(paymentStatus) && Boolean(onRetryCheckout);
+    return (
+      <div className="rounded-3xl border border-amber-500/40 bg-amber-950/20 p-6 text-center sm:p-8">
+        <Clock className="mx-auto h-12 w-12 text-amber-400" aria-hidden />
+        <h3 className="mt-3 text-xl font-semibold text-amber-100">Pagamento expirado</h3>
+        <p className="mt-1 text-sm text-amber-200/90">
+          O prazo desta cobranca terminou. Se o cartao ja foi aprovado, aguarde a confirmacao. Caso contrario, tente novamente.
+        </p>
+        {canRetry ? (
+          <button
+            type="button"
+            onClick={onRetryCheckout}
+            disabled={isRetrying}
+            className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950 disabled:opacity-50 sm:w-auto sm:min-w-[220px]"
+          >
+            {isRetrying ? 'Gerando nova cobranca...' : 'Tentar pagamento novamente'}
           </button>
         ) : null}
       </div>

@@ -24,7 +24,12 @@ function formatVariantLabel(variant: Record<string, unknown> | null | undefined)
   return String(type ?? size ?? "—");
 }
 
-export default async function OperacoesSolicitacoesPage() {
+export default async function OperacoesSolicitacoesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ requestId?: string }>;
+}) {
+  const { requestId } = await searchParams;
   const organization = (await getCurrentOrganizationContext()).organization;
   if (!organization?.id) {
     return (
@@ -117,7 +122,7 @@ export default async function OperacoesSolicitacoesPage() {
             title="Solicitações de alteração"
             subtitle="Fila de alterações de item de kit (ex.: tamanho de camiseta) pedidas pelo participante na Minha Conta, aguardando aprovação do organizador."
           />
-          <SolicitacoesClient initialRequests={pendingRequests} />
+          <SolicitacoesClient initialRequests={pendingRequests} focusRequestId={requestId ?? null} />
         </main>
       </div>
     </div>

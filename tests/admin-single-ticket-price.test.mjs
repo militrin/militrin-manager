@@ -33,7 +33,7 @@ test('pagina escolhe o gerenciador pela contagem de categorias ativas', async ()
   assert.match(source, /const activeCategoryCount = categories\.filter\(\(category: \{ is_active: boolean \}\) => category\.is_active\)\.length/);
   assert.match(source, /activeCategoryCount === 0 \? \(/);
   assert.match(source, /<SingleTicketBatchesManager eventId=\{event\.id\} batches=\{singleTicketBatches\} \/>/);
-  assert.match(source, /<BatchesManager eventId=\{event\.id\} batches=\{batches\} categories=\{categories\} \/>/);
+  assert.match(source, /<BatchesManager eventId=\{event\.id\} batches=\{batches\} categories=\{categories\}/);
 });
 
 test('server actions usam somente as RPCs do fluxo multi-lote', async () => {

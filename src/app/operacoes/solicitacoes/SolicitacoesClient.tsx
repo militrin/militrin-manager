@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AdminEmptyState } from "@/components/admin";
 import { reviewTicketItemChangeAction } from "@/app/minha-conta/actions";
@@ -154,10 +154,28 @@ function ReviewDialog({ request, close, onResolved }: { request: PendingChangeRe
   );
 }
 
-export function SolicitacoesClient({ initialRequests }: { initialRequests: PendingChangeRequestRow[] }) {
+export function SolicitacoesClient({
+  initialRequests,
+  focusRequestId,
+}: {
+  initialRequests: PendingChangeRequestRow[];
+  focusRequestId?: string | null;
+}) {
   const [requests, setRequests] = useState(initialRequests);
   const [eventFilter, setEventFilter] = useState<string>("all");
   const [reviewing, setReviewing] = useState<PendingChangeRequestRow | null>(null);
+  const [focusMissing, setFocusMissing] = useState(false);
+
+  useEffect(() => {
+    if (!focusRequestId) return;
+    const match = initialRequests.find((request) => request.id === focusRequestId);
+    if (match) {
+      setReviewing(match);
+      setFocusMissing(false);
+      return;
+    }
+    setFocusMissing(true);
+  }, [focusRequestId, initialRequests]);
 
   const events = useMemo(() => {
     const map = new Map<string, string>();
@@ -173,6 +191,11 @@ export function SolicitacoesClient({ initialRequests }: { initialRequests: Pendi
 
   return (
     <div className="space-y-4">
+      {focusMissing ? (
+        <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+          A solicitação aberta pelo link não está na fila pendente — pode já ter sido resolvida ou você não tem acesso a ela.
+        </p>
+      ) : null}
       {events.length > 1 ? (
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-400" htmlFor="event-filter">Evento</label>

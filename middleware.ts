@@ -53,6 +53,7 @@ export async function middleware(request: NextRequest) {
     '/pedidos',
     '/relatorios',
     '/sorteios',
+    '/notificacoes',
   ];
   const isPublicFirstAccessResend = pathname === '/primeiro-acesso/reenviar';
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) && !isPublicFirstAccessResend;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { ImageIcon } from 'lucide-react';
 import { SlideOverPanel } from '@/components/admin/SlideOverPanel';
 import { MilitrinStatusBadge } from '@/components/militrin';
@@ -62,7 +62,13 @@ function truncate(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-export function FeedbackManager({ initialFeedback }: { initialFeedback: AdminFeedbackRow[] }) {
+export function FeedbackManager({
+  initialFeedback,
+  initialFeedbackId,
+}: {
+  initialFeedback: AdminFeedbackRow[];
+  initialFeedbackId?: string | null;
+}) {
   const [feedback, setFeedback] = useState(initialFeedback);
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -112,6 +118,13 @@ export function FeedbackManager({ initialFeedback }: { initialFeedback: AdminFee
       setNotesDraft(row.admin_notes ?? '');
     });
   }
+
+  useEffect(() => {
+    if (!initialFeedbackId) return;
+    openDetail(initialFeedbackId);
+    // Abre o feedback do deep-link uma vez ao montar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFeedbackId]);
 
   function closeDetail() {
     setSelectedId(null);

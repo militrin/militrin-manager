@@ -21,6 +21,15 @@ import {
 import { PixPaymentCard } from './pix-payment-card';
 import { CardPaymentCard } from './card-payment-card';
 import { isReusableLiveGatewayCharge } from '@/lib/checkout/pix-payment-status';
+import {
+  beginCardCheckoutRedirect,
+  endCardCheckoutRedirect,
+  hasCardCheckoutBeenAttempted,
+  isCardCheckoutRedirectInFlight,
+  markCardCheckoutAttempted,
+  shouldAutoRedirectToHostedCardCheckout,
+  shouldShowCardRedirectingPhase,
+} from '@/lib/checkout/card-checkout-redirect';
 import { kitItemStatusLabel } from '@/lib/checkout/kit-item-status';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import {
@@ -146,6 +155,8 @@ type WizardProps = {
   storeItems: StoreItemForPurchase[];
   /** true somente quando o provider efetivo (server-side, PAYMENT_PROVIDER) e 'fake'. Nunca true com Asaas real. */
   isFakePaymentProvider: boolean;
+  /** Ingresso unico com capacidade/preco pooled — genero nao define tipo de ingresso. */
+  singleTicketUnisex?: boolean;
 };
 
 type PricingState = {
@@ -472,11 +483,14 @@ export function RegistrationWizard({
   initialBuyer,
   storeItems,
   isFakePaymentProvider,
+  singleTicketUnisex = false,
 }: WizardProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isRegeneratingPix, setIsRegeneratingPix] = useState(false);
   const [isGeneratingCard, setIsGeneratingCard] = useState(false);
+  const [cardAutoRedirectFailed, setCardAutoRedirectFailed] = useState(false);
+  const cardAutoRedirectFailedRef = useRef(false);
   // Identidade explicita da jornada de checkout -- nunca o order_id (a
   // jornada existe ANTES do pedido ser criado, nas Etapas 1-2). Comeca vazia
   // nos dois lados (SSR nunca tem window/URL do browser; hidratacao do
@@ -1133,10 +1147,13 @@ export function RegistrationWizard({
     buyerGender: form.gender,
   })));
   const genderIndependentPriceAvailable = Boolean(
-    selectedCategory
-    && selectedCategory.current_male_price != null
-    && selectedCategory.current_female_price != null
-    && Number(selectedCategory.current_male_price) === Number(selectedCategory.current_female_price),
+    singleTicketUnisex
+    || (
+      selectedCategory
+      && selectedCategory.current_male_price != null
+      && selectedCategory.current_female_price != null
+      && Number(selectedCategory.current_male_price) === Number(selectedCategory.current_female_price)
+    ),
   );
   const canAttemptPricing = categoryChoiceReady && (hasResolvableGender || genderIndependentPriceAvailable);
 
@@ -1415,6 +1432,7 @@ export function RegistrationWizard({
               buyerGender: form.gender,
             },
             { malePrice: selectedCategory?.current_male_price, femalePrice: selectedCategory?.current_female_price },
+            { unisex: singleTicketUnisex },
           );
 
           const result = await getPublicPricingPreviewAction({
@@ -1513,7 +1531,7 @@ export function RegistrationWizard({
       // Um preco que falhou ao calcular nunca pode ser tratado como R$ 0,00:
       // bloqueia o avanco ate que a precificacao seja recalculada com sucesso.
       if (item.pricingError) itemErrors.push(item.pricingError);
-      if (shouldShowItemConfiguration && !item.pricingGender) itemErrors.push('Selecione genero.');
+      if (shouldShowItemConfiguration && !singleTicketUnisex && !item.pricingGender) itemErrors.push('Selecione genero.');
       if (shouldShowItemConfiguration && item.ownershipMode === 'named' && !item.holder_full_name.trim()) itemErrors.push('Informe o titular.');
       if (shouldShowItemConfiguration && hasRequiredShirt) {
         if (!item.shirtType) itemErrors.push('Selecione modelo da camiseta.');
@@ -1640,10 +1658,15 @@ export function RegistrationWizard({
     }));
 
     startTransition(async () => {
+      const previewGender = resolvePricingPreviewGender(
+        { requestGender: form.gender, buyerGender: form.gender },
+        { malePrice: selectedCategory?.current_male_price, femalePrice: selectedCategory?.current_female_price },
+        { unisex: singleTicketUnisex },
+      );
       const preview = await getPublicPricingPreviewAction({
         event_id: event.id,
         ticket_category_id: effectiveCategoryId,
-        gender: form.gender,
+        gender: previewGender ?? '',
         coupon_code: form.coupon_code || undefined,
       });
 
@@ -1697,7 +1720,7 @@ export function RegistrationWizard({
       itemGender: localItems[0]?.pricingGender,
       requestGender: form.gender,
       buyerGender: form.gender,
-    });
+    }) ?? (singleTicketUnisex ? 'male' : null);
 
     if (!resolvedRequestGender) {
       setSubmitting(false);
@@ -1719,7 +1742,7 @@ export function RegistrationWizard({
       items: localItems.map((item) => {
         const ownershipStatus: 'assigned' | 'unassigned' = item.ownershipMode === 'self' ? 'assigned' : 'unassigned';
         return {
-          pricing_gender: item.pricingGender ?? undefined,
+          pricing_gender: item.pricingGender ?? (singleTicketUnisex ? resolvedRequestGender : undefined),
           shirt_type: item.shirtType || undefined,
           shirt_size: item.shirtSize || undefined,
           ownership_mode: item.ownershipMode,
@@ -1793,6 +1816,81 @@ export function RegistrationWizard({
     setCartOrder({ orderId: String(createdOrder.order_id ?? '') });
   }
 
+  async function redirectToHostedCardCheckout(
+    orderId: string,
+    paymentHint: { payment_status?: string | null; last_gateway_attempt_status?: string | null },
+    options?: { force?: boolean },
+  ) {
+    if (!orderId) return;
+    if (!options?.force) {
+      if (!shouldAutoRedirectToHostedCardCheckout({
+        paymentStatus: paymentHint.payment_status,
+        lastGatewayAttemptStatus: paymentHint.last_gateway_attempt_status,
+        isFakePaymentProvider,
+        hasOpenedHostedCheckout: hasCardCheckoutBeenAttempted(orderId),
+        redirectInFlight: isCardCheckoutRedirectInFlight(orderId),
+        autoRedirectFailed: cardAutoRedirectFailedRef.current,
+      })) {
+        return;
+      }
+    } else if (String(paymentHint.payment_status ?? '').trim().toLowerCase() === 'paid') {
+      return;
+    }
+
+    if (!beginCardCheckoutRedirect(orderId)) return;
+    setIsGeneratingCard(true);
+    let redirected = false;
+    try {
+      const card = await generatePublicOrderCardAction(orderId);
+      if (!card.success || !card.payment) {
+        setErrors([('message' in card && card.message) || 'Falha ao iniciar pagamento com cartao.']);
+        cardAutoRedirectFailedRef.current = true;
+        setCardAutoRedirectFailed(true);
+        return;
+      }
+      setRegistration((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment: {
+                ...prev.payment,
+                ...card.payment,
+              },
+            }
+          : prev,
+      );
+      if (String(card.payment.payment_status ?? '').trim().toLowerCase() === 'paid') {
+        return;
+      }
+      const nextCheckout = card.payment.checkout_url ? String(card.payment.checkout_url) : '';
+      if (nextCheckout && !isFakePaymentProvider) {
+        markCardCheckoutAttempted(orderId);
+        cardAutoRedirectFailedRef.current = false;
+        setCardAutoRedirectFailed(false);
+        redirected = true;
+        window.location.assign(nextCheckout);
+        window.setTimeout(() => {
+          endCardCheckoutRedirect(orderId);
+          setIsGeneratingCard(false);
+        }, 2500);
+        return;
+      }
+      if (!isFakePaymentProvider) {
+        cardAutoRedirectFailedRef.current = true;
+        setCardAutoRedirectFailed(true);
+      }
+    } catch {
+      cardAutoRedirectFailedRef.current = true;
+      setCardAutoRedirectFailed(true);
+      setErrors(['Falha ao iniciar pagamento com cartao.']);
+    } finally {
+      if (!redirected) {
+        endCardCheckoutRedirect(orderId);
+        setIsGeneratingCard(false);
+      }
+    }
+  }
+
   async function handleCartFinalized(order: OrderSnapshotPayload) {
     const createdRegistration = mapOrderToRegistration(order);
     setRegistration(createdRegistration);
@@ -1836,26 +1934,7 @@ export function RegistrationWizard({
     }
 
     if (isCardCheckoutMethod(form.payment_method) || isCardCheckoutMethod(createdRegistration.payment.payment_method)) {
-      const card = await generatePublicOrderCardAction(createdRegistration.order_id || '');
-      if (!card.success) {
-        setErrors([card.message || 'Falha ao iniciar pagamento com cartao.']);
-        return;
-      }
-      if (!card.payment) {
-        setErrors(['Falha ao iniciar pagamento com cartao.']);
-        return;
-      }
-      setRegistration((prev) =>
-        prev
-          ? {
-              ...prev,
-              payment: {
-                ...prev.payment,
-                ...card.payment,
-              },
-            }
-          : prev,
-      );
+      await redirectToHostedCardCheckout(createdRegistration.order_id || '', createdRegistration.payment, { force: true });
     }
   }
 
@@ -1875,33 +1954,37 @@ export function RegistrationWizard({
 
   async function handleRetryCard() {
     if (!registration?.order_id) return;
-    setIsGeneratingCard(true);
-    try {
-      const card = await generatePublicOrderCardAction(registration.order_id);
-      if (!card.success || !card.payment) {
-        setErrors([('message' in card && card.message) || 'Falha ao gerar uma nova cobranca de cartao.']);
-        return;
-      }
-      setRegistration((prev) =>
-        prev
-          ? {
-              ...prev,
-              payment: {
-                ...prev.payment,
-                ...card.payment,
-              },
-            }
-          : prev,
-      );
-      setLiveMessage('Nova cobranca de cartao gerada.');
-      const nextCheckout = card.payment.checkout_url ? String(card.payment.checkout_url) : '';
-      if (nextCheckout && !isFakePaymentProvider) {
-        window.location.assign(nextCheckout);
-      }
-    } finally {
-      setIsGeneratingCard(false);
-    }
+    await redirectToHostedCardCheckout(registration.order_id, registration.payment, { force: true });
   }
+
+  useEffect(() => {
+    const orderId = registration?.order_id;
+    if (!orderId) return;
+    if (step !== 3 && step !== 4) return;
+    if (!isCardCheckoutMethod(registration.payment.payment_method ?? form.payment_method)) return;
+    if (!shouldAutoRedirectToHostedCardCheckout({
+      paymentStatus: registration.payment.payment_status,
+      lastGatewayAttemptStatus: registration.payment.last_gateway_attempt_status,
+      isFakePaymentProvider,
+      hasOpenedHostedCheckout: hasCardCheckoutBeenAttempted(orderId),
+      redirectInFlight: isCardCheckoutRedirectInFlight(orderId),
+      autoRedirectFailed: cardAutoRedirectFailedRef.current,
+    })) {
+      return;
+    }
+    void redirectToHostedCardCheckout(orderId, registration.payment);
+    // redirectToHostedCardCheckout e recriada a cada render; o lock em memoria
+    // impede generate/redirect duplicado (Strict Mode, refresh, double click).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    registration?.order_id,
+    registration?.payment.payment_status,
+    registration?.payment.last_gateway_attempt_status,
+    form.payment_method,
+    step,
+    isFakePaymentProvider,
+  ]);
+
 
   async function handleRegeneratePix() {
     if (!registration?.order_id) return;
@@ -2499,7 +2582,11 @@ export function RegistrationWizard({
                     />
                     <span>{buyerProfileComplete
                       ? 'Autorizo o uso dos meus dados já cadastrados para realizar minha inscrição neste evento.'
-                      : 'Autorizo o uso dos meus dados para realizar minha inscrição neste evento.'}</span>
+                      : 'Autorizo o uso dos meus dados para realizar minha inscrição neste evento.'}{' '}
+                      <Link href="/politica-de-privacidade" className="font-medium text-emerald-300 underline decoration-emerald-500/40 underline-offset-2 hover:text-emerald-200">
+                        Política de Privacidade
+                      </Link>
+                    </span>
                   </label>
                 ) : (
                   <p className="text-xs text-emerald-200">Consentimento de privacidade já registrado na sua conta.</p>
@@ -2677,6 +2764,7 @@ export function RegistrationWizard({
                           </div>
 
                           <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            {singleTicketUnisex ? null : (
                             <label className="space-y-1">
                               <span className="text-xs text-slate-300">Genero</span>
                               <select
@@ -2696,6 +2784,7 @@ export function RegistrationWizard({
                                 <option value="female">Feminino</option>
                               </select>
                             </label>
+                            )}
 
                             <label className="space-y-1">
                               <span className="text-xs text-slate-300">Camiseta</span>
@@ -2745,10 +2834,12 @@ export function RegistrationWizard({
                             </div>
 
                             <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs">
-                              <p>{item.pricingGender === 'female' ? 'Feminino' : item.pricingGender === 'male' ? 'Masculino' : 'Nao definido'}</p>
+                              {singleTicketUnisex ? null : (
+                                <p>{item.pricingGender === 'female' ? 'Feminino' : item.pricingGender === 'male' ? 'Masculino' : 'Nao definido'}</p>
+                              )}
                               {item.visualStatus === 'pricing_error' ? (
                                 <p className="text-rose-300">Preço indisponível — corrija para continuar.</p>
-                              ) : !item.pricingGender && !isRepricingItems ? (
+                              ) : !singleTicketUnisex && !item.pricingGender && !isRepricingItems ? (
                                 <p className="text-slate-400">Selecione o gênero para calcular o preço.</p>
                               ) : isRepricingItems || (item.visualStatus !== 'price_updated' && item.visualStatus !== 'complete') ? (
                                 <p className="text-slate-400">Calculando preço...</p>
@@ -3039,6 +3130,14 @@ export function RegistrationWizard({
                     onSimulatePayment={handleSimulatePaid}
                     onRetryCheckout={handleRetryCard}
                     isRetrying={isGeneratingCard}
+                    pendingPhase={shouldShowCardRedirectingPhase({
+                      isFakePaymentProvider,
+                      isRedirecting: isGeneratingCard,
+                      hasOpenedHostedCheckout: hasCardCheckoutBeenAttempted(registration.order_id || ''),
+                      autoRedirectFailed: cardAutoRedirectFailed,
+                      paymentStatus: registration.payment.payment_status,
+                      lastGatewayAttemptStatus: registration.payment.last_gateway_attempt_status,
+                    })}
                     confirmedHref="/minha-conta/ingressos"
                     confirmedLabel="Ver meus ingressos"
                   />
@@ -3221,6 +3320,14 @@ export function RegistrationWizard({
                           onSimulatePayment={handleSimulatePaid}
                           onRetryCheckout={handleRetryCard}
                           isRetrying={isGeneratingCard}
+                          pendingPhase={shouldShowCardRedirectingPhase({
+                            isFakePaymentProvider,
+                            isRedirecting: isGeneratingCard,
+                            hasOpenedHostedCheckout: hasCardCheckoutBeenAttempted(registration.order_id || ''),
+                            autoRedirectFailed: cardAutoRedirectFailed,
+                            paymentStatus: registration.payment.payment_status,
+                            lastGatewayAttemptStatus: registration.payment.last_gateway_attempt_status,
+                          })}
                           confirmedHref="/minha-conta/ingressos"
                           confirmedLabel="Ver meus ingressos"
                         />

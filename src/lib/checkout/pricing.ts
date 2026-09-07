@@ -50,9 +50,11 @@ export function resolvePricingGender(input: GenderResolutionInput): CheckoutPric
 export function resolvePricingPreviewGender(
   input: GenderResolutionInput,
   categoryPrices?: { malePrice?: number | null; femalePrice?: number | null } | null,
+  options?: { unisex?: boolean },
 ): CheckoutPricingGender | null {
   const resolved = resolvePricingGender(input);
   if (resolved) return resolved;
+  if (options?.unisex) return 'male';
 
   const malePrice = categoryPrices?.malePrice;
   const femalePrice = categoryPrices?.femalePrice;

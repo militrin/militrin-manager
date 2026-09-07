@@ -1763,6 +1763,12 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
   }
 
   const quantity = Math.max(1, Math.min(10, Number(input.quantity || 1)));
+  const { data: singleTicketOfferData } = input.ticket_category_id
+    ? { data: null }
+    : await supabase.rpc('get_public_single_ticket_offer', { p_event_id: String(input.event_id) });
+  const singleTicketOffer = Array.isArray(singleTicketOfferData) ? singleTicketOfferData[0] : singleTicketOfferData;
+  const singleTicketUnisex = Boolean((singleTicketOffer as { is_unisex?: boolean } | null)?.is_unisex);
+
   const rpcItemsBase = normalizeMultiOrderItemsForRpc(input.items);
   let rpcItems = rpcItemsBase.map((item) => ({
     ...item,
@@ -1770,7 +1776,7 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
       itemGender: item.pricing_gender,
       requestGender: input.gender,
       buyerGender: input.buyer.gender,
-    }),
+    }) ?? (singleTicketUnisex ? 'male' : null),
   }));
 
   const invalidPricingItemIndex = rpcItems.findIndex((item) => item.pricing_gender !== 'male' && item.pricing_gender !== 'female');
@@ -1786,7 +1792,7 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
     itemGender: firstItem?.pricing_gender,
     requestGender: input.gender,
     buyerGender: input.buyer.gender,
-  });
+  }) ?? (singleTicketUnisex ? 'male' : null);
   if (!fallbackGender) {
     return {
       success: false as const,

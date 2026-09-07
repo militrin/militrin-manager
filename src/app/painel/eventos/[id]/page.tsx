@@ -20,6 +20,7 @@ import { ItemChangeRules } from "./item-change-rules";
 import { TicketRules } from "./ticket-rules";
 import { DeliveryScheduleManager, type EventScheduleRow } from "./delivery-schedule-manager";
 import { EventDataForm } from "./event-data-form";
+import { TicketSaleModelPicker } from "./ticket-sale-model-picker";
 import { AttractionsManager } from "./attractions-manager";
 import { EventWristbandSettings } from "./wristband-settings";
 import { ShirtKitConfigurator } from "./shirt-kit-configurator";
@@ -224,7 +225,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   const activeCategoriesForPreview = categories.filter((category: { is_active: boolean }) => category.is_active);
   const ticketMode = resolveTicketPresentationMode(activeCategoryCount);
   const ticketModeLabel = ticketMode === "single"
-    ? "Ingresso único (sem categoria)"
+    ? "Ingresso único"
     : ticketMode === "category_hidden"
       ? "1 categoria ativa — o comprador só vê o lote"
       : `${activeCategoryCount} categorias ativas — o comprador escolhe a categoria`;
@@ -476,15 +477,19 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
             <SectionCard title="Etapa 1: Dados básicos" description="Nome, data, descrição, local, banners e regras do ingresso deste evento.">
               <div className="space-y-4">
                 <EventDataForm mode="edit" event={event} />
+                <TicketSaleModelPicker eventId={event.id} activeCategoryCount={activeCategoryCount} />
                 <TicketRules eventId={event.id} initialHolderChange={event.allow_holder_change} initialTicketTransfer={event.allow_ticket_transfer} />
               </div>
             </SectionCard>
           ) : null}
 
           {currentStep === 2 ? (
-            <SectionCard title="Etapa 2: Categorias do evento" description="Defina categorias que poderão ser usadas nos lotes deste evento.">
+            <SectionCard title="Etapa 2: Categorias do evento" description="Defina o modelo de ingresso e, se for o caso, as categorias usadas nos lotes.">
+              <div className="mb-4">
+                <TicketSaleModelPicker eventId={event.id} activeCategoryCount={activeCategoryCount} />
+              </div>
               <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
-                Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
+                Modelo atual: <strong className="text-slate-100">{ticketModeLabel}</strong>
               </div>
               {ticketMode !== "single" ? (
                 <div className="mb-4 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
@@ -524,11 +529,11 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
             <SectionCard
               title="Etapa 3: Lotes do evento"
               description={activeCategoryCount === 0
-                ? "Este evento não tem categoria ativa: defina o preço do ingresso único."
+                ? "Este evento vende ingresso único: um preço e um limite por lote, sem separar masculino e feminino."
                 : "Crie e edite lotes com preço unissex ou por gênero e categorias ativas por lote."}
             >
               <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
-                Modelo detectado: <strong className="text-slate-100">{ticketModeLabel}</strong>
+                Modelo atual: <strong className="text-slate-100">{ticketModeLabel}</strong>
               </div>
               {configurationIncomplete ? (
                 <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-100">

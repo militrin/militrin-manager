@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { getSidebarContextAction, signOutAdministrativePanelAction, type SidebarContext } from "./sidebar-actions";
+import { NotificationBell } from "./NotificationBell";
 import {
   adminNavGroups as groups,
   findAdminNavItem,
@@ -264,6 +265,7 @@ function SidebarContent() {
           <Menu size={20} />
         </button>
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-slate-100">{currentPageLabel}</h1>
+        <NotificationBell compact />
         {/* Troca de area em 1 toque, sempre visivel (nunca atras do drawer/
             bottom nav) -- NAO e logout, so leva pra /minha-conta. */}
         <Link

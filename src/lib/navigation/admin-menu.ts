@@ -1,4 +1,5 @@
 import {
+  Bell,
   CalendarDays,
   ClipboardCheck,
   ClipboardList,
@@ -115,6 +116,13 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/painel",
         permissionAny: ["dashboard.integrity.view", "dashboard.people.view", "dashboard.operations.view", "dashboard.inventory.view", "dashboard.finance.view"],
         landingPriority: 10,
+      },
+      {
+        label: "Notificações",
+        icon: Bell,
+        href: "/notificacoes",
+        permissionAny: ["kits.deliver", "feedback.view"],
+        landingPriority: 11,
       },
       {
         label: "Integridade",

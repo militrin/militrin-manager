@@ -559,6 +559,37 @@ const singleTicketBatchGenderClosedSchema = z.object({
   closed: z.boolean(),
 });
 
+const singleTicketUnisexCreateSchema = z.object({
+  event_id: z.string().uuid(),
+  name: z.string().trim().min(1, 'Informe o nome do lote.'),
+  sequence_number: z.number().int().positive('Ordem do lote invalida.'),
+  price: z.number().min(0, 'Preço inválido.'),
+  max: z.number().int().positive('Informe o limite de vagas.'),
+  starts_at: z.string().optional().nullable(),
+  ends_at: z.string().optional().nullable(),
+  closed: z.boolean().default(false),
+});
+
+const singleTicketUnisexUpdateSchema = z.object({
+  batch_id: z.string().uuid(),
+  name: z.string().trim().min(1, 'Informe o nome do lote.'),
+  price: z.number().min(0, 'Preço inválido.'),
+  max: z.number().int().positive('Informe o limite de vagas.'),
+  starts_at: z.string().optional().nullable(),
+  ends_at: z.string().optional().nullable(),
+});
+
+const singleTicketBatchClosedSchema = z.object({
+  batch_id: z.string().uuid(),
+  event_id: z.string().uuid(),
+  closed: z.boolean(),
+});
+
+const ticketSaleModelSchema = z.object({
+  event_id: z.string().uuid(),
+  model: z.enum(['single', 'categories']),
+});
+
 export async function createSingleTicketBatchAction(payload: z.infer<typeof singleTicketBatchCreateSchema>) {
   await assertPermission("batches.create");
   const parsed = singleTicketBatchCreateSchema.safeParse(payload);
@@ -644,6 +675,113 @@ export async function setSingleTicketBatchGenderClosedAction(payload: z.infer<ty
     };
   } catch (error) {
     return { success: false, message: resolveActionErrorMessage(error, 'Falha ao alterar o status do lote.') };
+  }
+}
+
+export async function createSingleTicketUnisexBatchAction(payload: z.infer<typeof singleTicketUnisexCreateSchema>) {
+  await assertPermission("batches.create");
+  const parsed = singleTicketUnisexCreateSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos do lote.' };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('create_single_ticket_unisex_batch', {
+      p_event_id: parsed.data.event_id,
+      p_name: parsed.data.name,
+      p_sequence_number: parsed.data.sequence_number,
+      p_price: parsed.data.price,
+      p_max: parsed.data.max,
+      p_starts_at: parsed.data.starts_at || null,
+      p_ends_at: parsed.data.ends_at || null,
+      p_closed: parsed.data.closed,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath('/inscricao');
+    revalidatePath('/importacoes');
+    return { success: true, message: 'Lote criado.' };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao criar o lote.') };
+  }
+}
+
+export async function updateSingleTicketUnisexBatchAction(eventId: string, payload: z.infer<typeof singleTicketUnisexUpdateSchema>) {
+  await assertPermission("batches.edit");
+  const parsed = singleTicketUnisexUpdateSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos do lote.' };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('update_single_ticket_unisex_batch', {
+      p_batch_id: parsed.data.batch_id,
+      p_name: parsed.data.name,
+      p_price: parsed.data.price,
+      p_max: parsed.data.max,
+      p_starts_at: parsed.data.starts_at || null,
+      p_ends_at: parsed.data.ends_at || null,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${eventId}`);
+    revalidatePath('/inscricao');
+    return { success: true, message: 'Lote atualizado.' };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao atualizar o lote.') };
+  }
+}
+
+export async function setSingleTicketBatchClosedAction(payload: z.infer<typeof singleTicketBatchClosedSchema>) {
+  await assertPermission("batches.activate");
+  const parsed = singleTicketBatchClosedSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('set_single_ticket_batch_closed', {
+      p_batch_id: parsed.data.batch_id,
+      p_closed: parsed.data.closed,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath('/inscricao');
+    return {
+      success: true,
+      message: parsed.data.closed ? 'Lote encerrado.' : 'Lote reaberto.',
+    };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao alterar o status do lote.') };
+  }
+}
+
+export async function setEventTicketSaleModelAction(payload: z.infer<typeof ticketSaleModelSchema>) {
+  await assertPermission("events.edit");
+  const parsed = ticketSaleModelSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { success: false, message: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('set_event_ticket_sale_model', {
+      p_event_id: parsed.data.event_id,
+      p_model: parsed.data.model,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
+    revalidatePath('/inscricao');
+    return {
+      success: true,
+      message: parsed.data.model === 'single'
+        ? 'Evento configurado para ingresso único.'
+        : 'Evento configurado para categorias. Crie ou ative as categorias desejadas.',
+    };
+  } catch (error) {
+    return { success: false, message: resolveActionErrorMessage(error, 'Falha ao alterar o modelo de ingresso.') };
   }
 }
 

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 import { generatePublicOrderCardAction, getPublicOrderPaymentStatusAction } from '@/app/inscricao/actions';
 import { canReuseCardCheckout } from '@/lib/checkout/pix-payment-status';
+import { markCardCheckoutAttempted } from '@/lib/checkout/card-checkout-redirect';
 
 type PaymentReturnClientProps = {
   orderId: string;
@@ -43,6 +44,10 @@ export function PaymentReturnClient({
     expires_at: expiresAt,
     gateway_charge_reusable: chargeReusable,
   });
+
+  useEffect(() => {
+    markCardCheckoutAttempted(orderId);
+  }, [orderId]);
 
   useEffect(() => {
     if (!pending) return;

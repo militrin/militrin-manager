@@ -330,6 +330,13 @@ export default async function EventRegistrationPage({ params }: { params: Promis
   });
 
   const storeItems = await getStoreItemsForEvent(supabase, String(event.id));
+  const activeCategoryCount = categories.filter((category: { is_active: boolean }) => category.is_active).length;
+  let singleTicketUnisex = false;
+  if (activeCategoryCount === 0) {
+    const { data: offerData } = await supabase.rpc('get_public_single_ticket_offer', { p_event_id: event.id });
+    const offer = Array.isArray(offerData) ? offerData[0] : offerData;
+    singleTicketUnisex = Boolean((offer as { is_unisex?: boolean } | null)?.is_unisex);
+  }
 
   return (
     <RegistrationWizard
@@ -361,6 +368,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       initialBuyer={initialBuyer}
       storeItems={storeItems}
       isFakePaymentProvider={getPaymentGatewayProviderName() === 'fake'}
+      singleTicketUnisex={singleTicketUnisex}
     />
   );
 }

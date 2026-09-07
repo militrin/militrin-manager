@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Bell } from "lucide-react";
 import { PanelUserBadge } from "./PanelUserBadge";
+import { NotificationBell } from "./NotificationBell";
 import { AppBreadcrumb } from "@/components/navigation/AppBreadcrumb";
 import type { BreadcrumbItem } from "@/lib/navigation/admin-navigation";
 
@@ -36,9 +36,9 @@ export function TopBar({
         {actions}
 
         <div className="flex items-center gap-3">
-          <button className="rounded-2xl border border-slate-800 p-2.5 text-slate-300 transition hover:bg-slate-800">
-            <Bell size={18} />
-          </button>
+          <span className="hidden lg:inline-flex">
+            <NotificationBell />
+          </span>
           <PanelUserBadge />
         </div>
       </div>

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { PanelUserBadge } from '@/components/dashboard/PanelUserBadge';
+import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { AppBreadcrumb } from '@/components/navigation/AppBreadcrumb';
 import type { BreadcrumbItem } from '@/lib/navigation/admin-navigation';
 
@@ -24,6 +25,9 @@ export function AdminPageHeader({ title, subtitle, actions, breadcrumbs, backHre
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {actions}
+          <span className="hidden lg:inline-flex">
+            <NotificationBell />
+          </span>
           <PanelUserBadge />
         </div>
       </div>
