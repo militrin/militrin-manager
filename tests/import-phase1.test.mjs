@@ -735,10 +735,13 @@ test('Cadastros resolve o nome do lote comercial por registration_batches', asyn
 
 test('ingressos administrativos filtram userId pela titularidade canonica', async () => {
   const page = await readFile(new URL('../src/app/ingressos/page.tsx', import.meta.url), 'utf8');
-  assert.match(page, /from\("participants"\)[\s\S]*\.eq\("user_id", params\.userId\)/);
-  assert.match(page, /\.in\("participant_id", holderParticipantIds\)/);
-  assert.doesNotMatch(page, /orders[^\n]*user_id/);
-  assert.match(page, /\.eq\("organization_id", organization\.id\)/);
+  const listHelper = await readFile(new URL('../src/lib/admin/list-admin-tickets.ts', import.meta.url), 'utf8');
+  const migration = await readFile(new URL('../supabase/migrations/20260953000000_list_admin_tickets.sql', import.meta.url), 'utf8');
+  assert.match(page, /parseAdminTicketListFilters/);
+  assert.match(page, /filters\.userId/);
+  assert.match(listHelper, /p_user_id: filters\.userId \|\| null/);
+  assert.match(migration, /p\.user_id = p_user_id/);
+  assert.doesNotMatch(migration, /o\.user_id = p_user_id/);
   assert.match(page, /requireAnyPermission/);
 });
 
@@ -1276,7 +1279,7 @@ test('portal — ingressos em conferencia nao exibem QR Code', async () => {
   const detail = await readFile(new URL('../src/app/minha-conta/ingressos/[ticketId]/page.tsx', import.meta.url), 'utf8');
   const card = await readFile(new URL('../src/components/militrin/MilitrinTicketCard.tsx', import.meta.url), 'utf8');
   assert.match(list, /blocks_ticket_issuance/);
-  assert.match(list, /Ingresso aguardando conferência/);
+  assert.match(card, /Ingresso aguardando conferência/);
   assert.match(list, /qrUrl=\{item\.canShowTicket \? item\.qrUrl : null\}/);
   assert.match(detail, /ticketIssuanceBlocked[\s\S]*Ingresso aguardando conferência/);
   assert.match(card, /qrUrl \?/);

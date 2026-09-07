@@ -52,8 +52,22 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-export default async function TicketDetailPage({ params, showTimeline = true, adminEditHref }: { params: Promise<{ ticketId: string }>; showTimeline?: boolean; adminEditHref?: string }) {
+export default async function TicketDetailPage({
+  params,
+  searchParams,
+  showTimeline = true,
+  adminEditHref,
+}: {
+  params: Promise<{ ticketId: string }>;
+  searchParams?: Promise<{ lista?: string }>;
+  showTimeline?: boolean;
+  adminEditHref?: string;
+}) {
   const { ticketId } = await params;
+  const listParams = searchParams ? await searchParams : {};
+  const accountTicketsHref = String(listParams.lista ?? '') === 'anteriores'
+    ? '/minha-conta/ingressos?ver=anteriores'
+    : '/minha-conta/ingressos';
   if (!isUuid(ticketId)) notFound();
 
   const supabase = await createServerSupabaseClient();
@@ -360,7 +374,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
     <section className="space-y-4">
       <MilitrinHeader event={headerEvent} showBuyButton={false} />
 
-      <Link href="/minha-conta/ingressos" className={cx('inline-flex items-center gap-1.5', militrinType.micro)}>
+      <Link href={accountTicketsHref} className={cx('inline-flex items-center gap-1.5', militrinType.micro)}>
         ← Voltar para meus ingressos
       </Link>
 
@@ -528,7 +542,7 @@ export default async function TicketDetailPage({ params, showTimeline = true, ad
       ) : null}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <MilitrinLinkButton href="/minha-conta/ingressos" variant="secondary" size="md" className="w-full sm:w-auto">Voltar para ingressos</MilitrinLinkButton>
+        <MilitrinLinkButton href={accountTicketsHref} variant="secondary" size="md" className="w-full sm:w-auto">Voltar para ingressos</MilitrinLinkButton>
         {orderId && isBuyer ? <MilitrinLinkButton href={`/minha-conta/compras/${orderId}`} variant="secondary" size="md" className="w-full sm:w-auto">Ver compra</MilitrinLinkButton> : null}
       </div>
 

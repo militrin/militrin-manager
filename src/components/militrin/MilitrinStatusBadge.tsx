@@ -12,9 +12,9 @@ type MilitrinStatusBadgeProps = {
 export function resolveStatusTone(status: string): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
   const normalized = status.toLowerCase();
   if (['paid', 'confirmed', 'active', 'success'].includes(normalized)) return 'success';
-  if (['pending', 'warning', 'reserved'].includes(normalized)) return 'warning';
+  if (['pending', 'warning', 'reserved', 'inactive'].includes(normalized)) return 'warning';
   if (['expired', 'cancelled', 'canceled', 'refunded', 'danger'].includes(normalized)) return 'danger';
-  if (['used', 'info', 'processing'].includes(normalized)) return 'info';
+  if (['used', 'info', 'processing', 'event_ended'].includes(normalized)) return 'info';
   return 'neutral';
 }
 

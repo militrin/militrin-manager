@@ -67,12 +67,14 @@ export async function getAccessibleTicketScope(
   supabase: ServerSupabaseClient,
   userId: string,
   purchasedOrders: Array<Record<string, unknown>>,
+  options?: { includeCancelled?: boolean },
 ) {
-  const { data: ownerTickets, error: ownerTicketsError } = await supabase
+  let ownerTicketsQuery = supabase
     .from('tickets')
     .select('id,status,token,issued_at,used_at,order_id,order_item_id,event_id,owner_user_id')
-    .eq('owner_user_id', userId)
-    .neq('status', 'cancelled');
+    .eq('owner_user_id', userId);
+  if (!options?.includeCancelled) ownerTicketsQuery = ownerTicketsQuery.neq('status', 'cancelled');
+  const { data: ownerTickets, error: ownerTicketsError } = await ownerTicketsQuery;
 
   if (ownerTicketsError) {
     return { orders: [], orderItems: [], tickets: [], ownedEventIds: [], error: ownerTicketsError, stage: 'owner_tickets' as const };

@@ -22,6 +22,7 @@ import { HomeTicketCarousel } from './home-ticket-carousel';
 import { HomeSponsorsCarousel, type HomeSponsor } from './home-sponsors-carousel';
 import { HomeIndicators } from './home-indicators';
 import { HomeFeaturedEvents, type HomeFeaturedEvent } from './home-featured-events';
+import { classifyTicketOperationalSituation } from '@/lib/tickets/ticket-situation';
 
 function isEventOpen(event: { registration_enabled: boolean; registration_open_at: string | null; registration_close_at: string | null }) {
   if (!event.registration_enabled) return false;
@@ -126,8 +127,28 @@ export default async function MinhaContaPage() {
     sort_order: Number(event.sort_order ?? 0),
   }));
   const dashboardEvents = featuredEvents.length > 0 ? featuredEvents : openEvents;
-  const allTickets = ticketScope.tickets;
-  const activeTickets = allTickets.filter((ticket) => String(ticket.status ?? '') === 'active');
+  const allTickets = ticketScope.tickets as Array<{
+    id: string;
+    status: string | null;
+    order_id: string | null;
+    order_item_id: string | null;
+    event_id: string | null;
+  }>;
+  const homeEventIds = Array.from(new Set(allTickets.map((ticket) => String(ticket.event_id ?? '')).filter(Boolean)));
+  const { data: homeEvents } = homeEventIds.length > 0
+    ? await supabase.from('events').select('id, starts_at, ends_at, is_active').in('id', homeEventIds)
+    : { data: [] as Array<{ id: string; starts_at: string | null; ends_at: string | null; is_active: boolean | null }> };
+  const homeEventsById = new Map(((homeEvents ?? []) as Array<{ id: string; starts_at: string | null; ends_at: string | null; is_active: boolean | null }>).map((row) => [String(row.id), row]));
+  const activeTickets = allTickets.filter((ticket) => {
+    const eventObj = homeEventsById.get(String(ticket.event_id ?? ''));
+    return classifyTicketOperationalSituation({
+      ticketStatus: ticket.status,
+      eventEndsAt: eventObj?.ends_at,
+      eventStartsAt: eventObj?.starts_at,
+      eventIsActive: eventObj?.is_active,
+    }) === 'ativos';
+  });
+  const archivedTicketCount = allTickets.length - activeTickets.length;
 
   const displayName = resolveParticipantFullName({ profile, userMetadata, email: user?.email });
   const greetingName = resolveParticipantFirstName(displayName);
@@ -160,7 +181,7 @@ export default async function MinhaContaPage() {
   const latestOrderStatus = latestOrder ? resolveAccountOrderStatus(latestOrder) : null;
   const latestOrderActivityTitle = latestOrderStatus === 'confirmed' ? 'Compra realizada' : 'Pedido criado';
 
-  const ticketCards = await buildAccountHomeTicketCards(supabase, allTickets as Array<{ id: string; status: string | null; order_id: string | null; order_item_id: string | null; event_id: string | null }>);
+  const ticketCards = await buildAccountHomeTicketCards(supabase, activeTickets);
   const ticketCta = resolveAccountHomeTicketCta(ticketCards);
 
   // Card de destaque "Loja Militrin" na home: imagem de um item real (mesma
@@ -309,14 +330,20 @@ export default async function MinhaContaPage() {
             <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
               <TicketIcon size={18} className="text-(--brand-300)" />Seus ingressos
             </h2>
-            {ticketCards.length > 0 ? (
+            {ticketCards.length > 0 || archivedTicketCount > 0 ? (
               <Link href="/minha-conta/ingressos" className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
                 Ver todos<ChevronRight size={13} />
               </Link>
             ) : null}
           </div>
           <div className="mt-4">
-            <HomeTicketCarousel tickets={ticketCards} />
+            <HomeTicketCarousel
+              tickets={ticketCards}
+              emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
+              emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
+              emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
+              emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
+            />
           </div>
         </section>
 

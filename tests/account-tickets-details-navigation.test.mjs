@@ -7,16 +7,17 @@ const detail = await readFile(new URL('../src/app/minha-conta/ingressos/[ticketI
 const cadastro = await readFile(new URL('../src/app/cadastros/[id]/page.tsx', import.meta.url), 'utf8');
 const actions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
 
-test('Meus ingressos usa Ver detalhes e navega para o ticket correto', () => {
+test('Meus ingressos usa Ver ingresso e navega para o ticket correto', () => {
   assert.doesNotMatch(list, /Ver QR Code/);
-  assert.match(list, /href={`\/minha-conta\/ingressos\/\$\{item\.ticketId\}`}[\s\S]*?Ver detalhes/);
+  assert.match(list, /href={`\/minha-conta\/ingressos\/\$\{item\.ticketId\}\$\{showArchived \? '\?lista=anteriores' : ''\}`}[\s\S]*?Ver ingresso/);
 });
 
 test('detalhe preserva QR e troca de tamanho no fluxo canonico', () => {
-  assert.match(detail, /participantShirtChangeEnabled \? <ParticipantShirtChangeAction/);
+  assert.match(detail, /participantShirtChangeEnabled \? \([\s\S]*?<ParticipantShirtChangeAction/);
   assert.match(detail, /currentLabel={`\$\{shirtType\} — \$\{shirtSize\}`}/);
   assert.match(detail, /requestTicketItemChangeAction|ParticipantShirtChangeAction/);
-  assert.match(detail, /<TicketViewer/);
+  assert.match(detail, /qrDataUrl/);
+  assert.match(detail, /alt="QR Code do ingresso"/);
 });
 
 test('Ficha Global: exclusao de item adicional continua exclusiva do Owner; cancelamento de ingresso segue orders.cancel', () => {

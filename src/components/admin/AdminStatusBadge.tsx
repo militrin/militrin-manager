@@ -13,6 +13,8 @@ const map: Record<string, { label: string; className: string }> = {
   active: { label: 'Ativo', className: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
   used: { label: 'Utilizado', className: 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200' },
   delivered: { label: 'Entregue', className: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
+  event_ended: { label: 'Evento encerrado', className: 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200' },
+  inactive: { label: 'Inativo', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' },
   reserved: { label: 'Reservado', className: 'border-slate-600 bg-slate-800/70 text-slate-200' },
 };
 

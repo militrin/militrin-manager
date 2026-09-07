@@ -6,6 +6,8 @@ const migration = await readFile(new URL('../supabase/migrations/20260940000000_
 const firstAccess = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
 const cadastrosPage = await readFile(new URL('../src/app/cadastros/page.tsx', import.meta.url), 'utf8');
 const ingressosPage = await readFile(new URL('../src/app/ingressos/page.tsx', import.meta.url), 'utf8');
+const listHelper = await readFile(new URL('../src/lib/admin/list-admin-tickets.ts', import.meta.url), 'utf8');
+const ticketsRpc = await readFile(new URL('../supabase/migrations/20260953000000_list_admin_tickets.sql', import.meta.url), 'utf8');
 
 const participantReconciliation = migration.match(/create or replace function public\.reconcile_imported_ticket_issuance_for_participant[\s\S]*?revoke all on function public\.reconcile_imported_ticket_issuance_for_participant/)?.[0] ?? '';
 const userReconciliation = migration.match(/create or replace function public\.reconcile_imported_ticket_issuance_for_user[\s\S]*?revoke all on function public\.reconcile_imported_ticket_issuance_for_user/)?.[0] ?? '';
@@ -70,5 +72,7 @@ test('reconciliacao por usuario inclui vinculo direto e vinculo pelo registratio
 
 test('telas de Cadastros e Ingressos leem tickets como fonte atual e refletem a emissao reconciliada', () => {
   assert.match(cadastrosPage, /from\("tickets"\)/);
-  assert.match(ingressosPage, /from\("tickets"\)/);
+  assert.match(ingressosPage, /listAdminTickets/);
+  assert.match(listHelper, /list_admin_tickets/);
+  assert.match(ticketsRpc, /from public\.tickets t/);
 });

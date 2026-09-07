@@ -11,6 +11,13 @@ import {
   loadOwnedTicketsPaymentOperationalStatus,
   normalizeOwnedTicketPaymentChipStatus,
 } from '@/lib/account/ticket-payment-operational-status';
+import {
+  classifyTicketOperationalSituation,
+  partitionTicketsBySituation,
+  ticketSituationBadgeStatus,
+  ticketSituationLabel,
+} from '@/lib/tickets/ticket-situation';
+import { AccountTicketsSituationNav } from './tickets-situation-nav';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -18,7 +25,11 @@ function normalizeStatus(status: string | null | undefined) {
   return normalized;
 }
 
-export default async function IngressosPage() {
+export default async function IngressosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ver?: string }>;
+}) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -31,6 +42,9 @@ export default async function IngressosPage() {
       </section>
     );
   }
+
+  const params = await searchParams;
+  const showArchived = String(params.ver ?? '').trim().toLowerCase() === 'anteriores';
 
   const [purchasedOrdersResult, headerEvent] = await Promise.all([
     getAccountOrders(supabase, user.id),
@@ -49,6 +63,7 @@ export default async function IngressosPage() {
     supabase,
     user.id,
     (purchasedOrdersResult.data ?? []) as Array<Record<string, unknown>>,
+    { includeCancelled: true },
   );
   if (ticketScope.error) {
     console.error('[meus-ingressos] erro ao carregar escopo canônico de ingressos', {
@@ -90,7 +105,7 @@ export default async function IngressosPage() {
       ? supabase.from('registration_batches').select('id, name').in('id', batchIds)
       : Promise.resolve({ data: [], error: null }),
     eventIds.length > 0
-      ? supabase.from('events').select('id, name, starts_at, location').in('id', eventIds)
+      ? supabase.from('events').select('id, name, starts_at, ends_at, location, is_active').in('id', eventIds)
       : Promise.resolve({ data: [], error: null }),
     loadOwnedTicketsPaymentOperationalStatus(supabase, ownedTicketIds),
     participantIds.length > 0
@@ -121,19 +136,25 @@ export default async function IngressosPage() {
   const participantsById = new Map(((participantsResult.data ?? []) as Array<{ id: string; full_name: string | null }>).map((row) => [String(row.id), row]));
   const categoriesById = new Map(((categoriesResult.data ?? []) as Array<{ id: string; name: string | null }>).map((row) => [String(row.id), row]));
   const batchesById = new Map(((batchesResult.data ?? []) as Array<{ id: string; name: string | null }>).map((row) => [String(row.id), row]));
-  const eventsById = new Map(((eventsResult.data ?? []) as Array<{ id: string; name: string | null; starts_at: string | null; location: string | null }>).map((row) => [String(row.id), row]));
-  const ticketsByOrderItemId = new Map((ticketScope.tickets as Array<{ id: string; status: string | null; token: string | null; issued_at: string | null; used_at: string | null; order_item_id: string | null }>).map((row) => [String(row.order_item_id), row]));
+  const eventsById = new Map(((eventsResult.data ?? []) as Array<{ id: string; name: string | null; starts_at: string | null; ends_at: string | null; location: string | null; is_active: boolean | null }>).map((row) => [String(row.id), row]));
+  const ticketsByOrderItemId = new Map((ticketScope.tickets as Array<{ id: string; status: string | null; token: string | null; issued_at: string | null; used_at: string | null; order_item_id: string | null; event_id: string | null }>).map((row) => [String(row.order_item_id), row]));
   const ticketBlockedParticipantIds = new Set((issuesResult.data ?? []).map((issue) => String(issue.participant_id)));
 
   const enhancedItems = await Promise.all(
     (orderItems ?? []).map(async (item) => {
       const order = ordersById.get(String(item.order_id ?? ''));
       const participant = participantsById.get(String(item.participant_id ?? ''));
-      const eventObj = eventsById.get(String(order?.event_id ?? ''));
+      const ticket = ticketsByOrderItemId.get(String(item.id));
+      const eventObj = eventsById.get(String(ticket?.event_id ?? order?.event_id ?? ''));
       const categoryObj = categoriesById.get(String(item.ticket_category_id ?? ''));
       const batchObj = batchesById.get(String(item.batch_id ?? ''));
-      const ticket = ticketsByOrderItemId.get(String(item.id));
       const ticketIssuanceBlocked = ticketBlockedParticipantIds.has(String(item.participant_id ?? ''));
+      const situation = classifyTicketOperationalSituation({
+        ticketStatus: ticket?.status,
+        eventEndsAt: eventObj?.ends_at,
+        eventStartsAt: eventObj?.starts_at,
+        eventIsActive: eventObj?.is_active,
+      });
       const kitResult = ticket?.id
         ? await supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id })
         : { data: [] as Array<Record<string, unknown>> };
@@ -148,7 +169,7 @@ export default async function IngressosPage() {
       const paymentStatus = ticket?.id
         ? normalizeOwnedTicketPaymentChipStatus(chipStatusForOwnedTicketPayment(ticket.id, paymentStatusLoad))
         : 'unavailable';
-      const canShowTicket = !ticketIssuanceBlocked && Boolean(ticket?.id) && orderStatus === 'confirmed' && (ticket?.status === 'active' || ticket?.status === 'used');
+      const canShowTicket = situation === 'ativos' && !ticketIssuanceBlocked && Boolean(ticket?.id) && orderStatus === 'confirmed' && (ticket?.status === 'active' || ticket?.status === 'used');
       let qrUrl: string | null = null;
       if (canShowTicket && ticket?.token) {
         try {
@@ -159,6 +180,8 @@ export default async function IngressosPage() {
       }
       const holderName = participant?.full_name || item.holder_full_name || 'Titular ainda nao definido';
       const ticketStatus = normalizeStatus(String(ticket?.status ?? item.status ?? 'pending'));
+      const badgeStatus = situation === 'ativos' ? ticketStatus : ticketSituationBadgeStatus(situation);
+      const badgeLabel = situation === 'ativos' ? undefined : ticketSituationLabel(situation);
 
       return {
         id: String(item.id),
@@ -175,6 +198,9 @@ export default async function IngressosPage() {
         kitStatus: kitItems.length > 0 ? (kitDelivered ? ('delivered' as const) : ('pending' as const)) : null,
         checkinDone: Boolean(ticket?.used_at),
         status: ticketStatus,
+        situation,
+        badgeStatus,
+        badgeLabel,
         qrUrl,
         canShowTicket,
         ticketIssuanceBlocked,
@@ -185,12 +211,11 @@ export default async function IngressosPage() {
     }),
   );
 
-  const activeTicketsCount = enhancedItems.filter((item) => item.status === 'active').length;
-  const ticketsSummary = enhancedItems.length === 0
-    ? null
-    : enhancedItems.length === 1
-      ? (activeTicketsCount === 1 ? '1 ingresso ativo' : '1 ingresso')
-      : `${enhancedItems.length} ingressos${activeTicketsCount > 0 ? ` • ${activeTicketsCount} ativo${activeTicketsCount === 1 ? '' : 's'}` : ''}`;
+  const { active, archived } = partitionTicketsBySituation(enhancedItems, (item) => item.situation);
+  const visibleItems = showArchived ? archived : active;
+  const ticketsSummary = showArchived
+    ? (archived.length === 1 ? '1 ingresso anterior ou inativo' : `${archived.length} ingressos anteriores e inativos`)
+    : (active.length === 1 ? '1 ingresso ativo' : `${active.length} ingressos ativos`);
 
   return (
     <section className="space-y-4">
@@ -199,11 +224,25 @@ export default async function IngressosPage() {
       <section className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-4 sm:p-5')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className={militrinType.sectionTitle}>Ingressos e QR Codes</h2>
-            <p className={cx('mt-0.5', militrinType.bodyMuted)}>Acesse seus ingressos confirmados e QR Codes.</p>
+            <h2 className={militrinType.sectionTitle}>{showArchived ? 'Anteriores e inativos' : 'Ingressos e QR Codes'}</h2>
+            <p className={cx('mt-0.5', militrinType.bodyMuted)}>
+              {showArchived
+                ? 'Histórico preservado: eventos encerrados, cancelados e inativos.'
+                : 'Acesse seus ingressos ativos e QR Codes.'}
+            </p>
           </div>
-          {ticketsSummary ? <p className={cx('shrink-0', militrinType.bodyMuted)}>{ticketsSummary}</p> : null}
+          {enhancedItems.length > 0 ? <p className={cx('shrink-0', militrinType.bodyMuted)}>{ticketsSummary}</p> : null}
         </div>
+
+        {enhancedItems.length > 0 ? (
+          <div className="mt-4">
+            <AccountTicketsSituationNav
+              view={showArchived ? 'anteriores' : 'ativos'}
+              activeCount={active.length}
+              archivedCount={archived.length}
+            />
+          </div>
+        ) : null}
 
         <div className="mt-4">
       {(orderItems ?? []).length === 0 ? (
@@ -213,9 +252,22 @@ export default async function IngressosPage() {
           actionHref="/minha-conta/comprar"
           actionLabel="Ver eventos"
         />
+      ) : visibleItems.length === 0 ? (
+        <MilitrinEmptyState
+          title={showArchived ? 'Você não possui ingressos anteriores ou inativos.' : 'Você não possui ingressos ativos.'}
+          description={
+            showArchived
+              ? 'Seus ingressos ativos ficam na aba Ingressos ativos.'
+              : archived.length > 0
+                ? 'Ingressos de eventos encerrados, cancelados ou inativos ficam em Anteriores e inativos.'
+                : 'Assim que seu pagamento for confirmado, o ingresso aparece aqui automaticamente.'
+          }
+          actionHref={showArchived ? '/minha-conta/ingressos' : archived.length > 0 ? '/minha-conta/ingressos?ver=anteriores' : '/minha-conta/comprar'}
+          actionLabel={showArchived ? 'Ver ingressos ativos' : archived.length > 0 ? `Anteriores e inativos (${archived.length})` : 'Ver eventos'}
+        />
       ) : (
         <div className="space-y-3">
-          {enhancedItems.map((item) => (
+          {visibleItems.map((item) => (
             <MilitrinTicketCard
               key={item.id}
               eventName={item.eventName}
@@ -229,17 +281,18 @@ export default async function IngressosPage() {
               paymentStatus={item.paymentStatus}
               kitStatus={item.kitStatus}
               checkinDone={item.checkinDone}
-              status={item.status}
+              status={item.badgeStatus}
+              statusLabel={item.badgeLabel}
               qrUrl={item.canShowTicket ? item.qrUrl : null}
               actions={(
                 <>
                   {item.canShowTicket ? (
-                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}#qr`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
+                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}#qr`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
                       Abrir QR Code
                     </MilitrinLinkButton>
                   ) : null}
                   {item.ticketId ? (
-                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
+                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
                       Ver ingresso
                     </MilitrinLinkButton>
                   ) : null}
@@ -248,7 +301,7 @@ export default async function IngressosPage() {
                       Ver compra
                     </MilitrinLinkButton>
                   ) : null}
-                  {!item.canShowTicket && item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (
+                  {!item.canShowTicket && item.situation === 'ativos' && item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (
                     <MilitrinLinkButton href={`/minha-conta/compras/${item.orderId}`} variant="warning" size="sm" className="flex-1 sm:flex-none">
                       Continuar pagamento
                     </MilitrinLinkButton>

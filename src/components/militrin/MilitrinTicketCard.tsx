@@ -11,6 +11,7 @@ import { getStatusLabel } from '@/lib/status-labels';
 type MilitrinTicketCardProps = {
   eventName: string;
   status: string;
+  statusLabel?: string;
   date?: string | null;
   location?: string | null;
   holderName: string;
@@ -28,6 +29,7 @@ type MilitrinTicketCardProps = {
 export function MilitrinTicketCard({
   eventName,
   status,
+  statusLabel,
   date,
   location,
   holderName,
@@ -45,7 +47,7 @@ export function MilitrinTicketCard({
   // -- diferente de "aguardando", que e transitorio. Sem isso, um pedido
   // expirado/reembolsado/cancelado herdava o mesmo aviso amarelo de "aguardando
   // conferencia", como se fosse so uma questao de tempo.
-  const TERMINAL_STATUSES = ['cancelled', 'canceled', 'expired', 'refunded'];
+  const TERMINAL_STATUSES = ['cancelled', 'canceled', 'expired', 'refunded', 'event_ended', 'inactive'];
   const isTerminal = TERMINAL_STATUSES.includes(status.toLowerCase());
   const chips = [paymentStatusChip(paymentStatus), kitStatusChip(kitStatus), checkinStatusChip(checkinDone)].filter(
     (chip): chip is StatusChip => chip !== null,
@@ -58,7 +60,7 @@ export function MilitrinTicketCard({
         <div className="min-w-0 space-y-2.5">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <p className={cx('min-w-0 truncate', militrinType.cardTitle)} title={eventName}>{eventName}</p>
-            <MilitrinStatusBadge status={status} />
+            <MilitrinStatusBadge status={status} label={statusLabel} />
           </div>
           {category || batch ? (
             <div className="flex flex-wrap gap-1.5">

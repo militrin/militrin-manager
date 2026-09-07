@@ -11,7 +11,19 @@ import { buildCarouselDotTargets, findActiveDotIndex } from '@/lib/account/carou
 // da quantidade total -- os indicadores tambem nunca crescem 1:1 com a
 // quantidade: no maximo ~5, representando a posicao, nunca virando poluicao
 // visual com muitos ingressos (ver buildCarouselDotTargets).
-export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard[] }) {
+export function HomeTicketCarousel({
+  tickets,
+  emptyTitle,
+  emptyDescription,
+  emptyHref,
+  emptyLabel,
+}: {
+  tickets: AccountHomeTicketCard[];
+  emptyTitle?: string;
+  emptyDescription?: string;
+  emptyHref?: string;
+  emptyLabel?: string;
+}) {
   const [index, setIndex] = useState(0);
   const dotTargets = useMemo(() => buildCarouselDotTargets(tickets.length), [tickets.length]);
   const activeDotIndex = findActiveDotIndex(dotTargets, index);
@@ -19,7 +31,13 @@ export function HomeTicketCarousel({ tickets }: { tickets: AccountHomeTicketCard
   if (tickets.length === 0) {
     return (
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-center text-sm text-slate-300">
-        Você ainda não possui ingressos. Assim que uma compra for confirmada, ele aparece aqui.
+        <p>{emptyTitle ?? 'Você ainda não possui ingressos. Assim que uma compra for confirmada, ele aparece aqui.'}</p>
+        {emptyDescription ? <p className="mt-2 text-xs text-slate-400">{emptyDescription}</p> : null}
+        {emptyHref && emptyLabel ? (
+          <MilitrinLinkButton href={emptyHref} variant="secondary" size="sm" className="mt-3">
+            {emptyLabel}
+          </MilitrinLinkButton>
+        ) : null}
       </div>
     );
   }
