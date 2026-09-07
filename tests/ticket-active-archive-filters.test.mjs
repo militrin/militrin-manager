@@ -10,6 +10,7 @@ const adminPage = await readFile(new URL('../src/app/ingressos/page.tsx', import
 const adminForm = await readFile(new URL('../src/app/ingressos/tickets-filter-form.tsx', import.meta.url), 'utf8');
 const adminHelper = await readFile(new URL('../src/lib/admin/list-admin-tickets.ts', import.meta.url), 'utf8');
 const migration = await readFile(new URL('../supabase/migrations/20260953000000_list_admin_tickets.sql', import.meta.url), 'utf8');
+const migration54 = await readFile(new URL('../supabase/migrations/20260954000000_imported_ticket_payment_filter.sql', import.meta.url), 'utf8');
 const detail = await readFile(new URL('../src/app/ingressos/[ticketId]/page.tsx', import.meta.url), 'utf8');
 
 test('usuario com so ativo: lista padrao nao mistura arquivo e mostra o controle', () => {
@@ -57,6 +58,8 @@ test('filtros combinaveis e busca existem na RPC', () => {
   assert.match(migration, /p_checkin text default null/);
   assert.match(migration, /p_kit text default null/);
   assert.match(migration, /p_pagamento text default null/);
+  assert.match(migration54, /ticket_admin_payment_class/);
+  assert.match(migration54, /f\.payment_class = v_pagamento/);
   assert.match(migration, /p_search text default null/);
   assert.match(migration, /holder_cpf/);
   assert.match(migration, /wristband_code/);
