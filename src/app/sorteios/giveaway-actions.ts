@@ -16,6 +16,7 @@ import {
   type GiveawayHubSection,
 } from "@/lib/giveaways/status";
 import { persistedGiveawayStatus, sessionFromGiveawayRows, type GiveawayRow } from "@/lib/giveaways/session";
+import { assertGiveawaySourceIntegrity } from "@/lib/giveaways/source-integrity";
 import { assertFrozenSnapshotInvariant, assertUniqueCommentIds } from "@/lib/instagram/normalize";
 import { isMissingGiveawaySchemaError, resolveOptionalGiveawaySchema } from "@/lib/instagram/database-readiness";
 import { assertNumericInstagramMediaId } from "@/lib/giveaways/media";
@@ -227,17 +228,24 @@ export async function createGiveaway(input: z.infer<typeof createSchema>) {
 }
 
 export async function persistGiveawaySession(input: SorteioSession) {
-  const parsed = sessionSchema.parse(input) as SorteioSession;
+  const parsedResult = sessionSchema.safeParse(input);
+  if (!parsedResult.success) throw new Error("Nao foi possivel validar o sorteio para salvar.");
+  const parsed = parsedResult.data as SorteioSession;
   if (!parsed.databaseId) throw new Error("Sorteio persistido e obrigatorio. Crie o sorteio pela central antes de salvar.");
   assertUniqueCommentIds(parsed.entries.map((entry) => entry.commentId));
   if (parsed.currentWinnerCommentId && !parsed.entries.some((entry) => entry.commentId === parsed.currentWinnerCommentId)) throw new Error("O vencedor selecionado nao pertence ao snapshot do sorteio.");
   if (parsed.confirmedWinner && parsed.confirmedWinner.commentId !== parsed.currentWinnerCommentId) throw new Error("O vencedor confirmado nao corresponde ao vencedor selecionado.");
-  if (parsed.source === "instagram" && (!parsed.instagramIntegrationId || !parsed.instagramMediaId || !parsed.instagramMediaPermalink)) throw new Error("A origem Instagram esta incompleta.");
-  if (parsed.source === "csv" && (parsed.instagramIntegrationId || parsed.instagramMediaId)) throw new Error("Um sorteio CSV nao pode referenciar uma publicacao do Instagram.");
+  assertGiveawaySourceIntegrity({
+    source: parsed.source,
+    instagramIntegrationId: parsed.instagramIntegrationId,
+    instagramMediaId: parsed.instagramMediaId,
+    instagramMediaPermalink: parsed.instagramMediaPermalink,
+  });
   const { user, organization, admin } = await requireGiveawayAdminContext();
   const existing = await admin.from("giveaways").select("snapshot_frozen_at,source,source_file_name,instagram_integration_id,instagram_media_id,instagram_media_permalink,status").eq("id", parsed.databaseId).eq("organization_id", organization.id).maybeSingle();
   if (!existing.data) throw new Error("Sorteio nao encontrado nesta organizacao.");
-  if (existing.data.snapshot_frozen_at) {
+  const wasFrozen = Boolean(existing.data.snapshot_frozen_at);
+  if (wasFrozen) {
     const { data: frozenRows, error: frozenError } = await admin.from("giveaway_entries").select("comment_id").eq("giveaway_id", parsed.databaseId);
     if (frozenError) throw new Error("Nao foi possivel validar o snapshot congelado.");
     assertFrozenSnapshotInvariant({
@@ -255,10 +263,35 @@ export async function persistGiveawaySession(input: SorteioSession) {
       instagramMediaPermalink: parsed.instagramMediaPermalink,
       commentIds: parsed.entries.map((entry) => entry.commentId),
     });
+    const nextStatus = persistedGiveawayStatus(normalizeGiveawayStatus(parsed.status));
+    const result = await admin.from("giveaways").update({
+      status: nextStatus,
+      current_winner_comment_id: parsed.currentWinnerCommentId,
+      current_draw_at: parsed.currentDrawAt,
+      confirmed_winner_comment_id: parsed.confirmedWinner?.commentId ?? null,
+      confirmed_at: parsed.confirmedWinner?.confirmedAt ?? null,
+      state: { currentChecklist: parsed.currentChecklist, disqualifications: parsed.disqualifications, rules: parsed.rules ?? DEFAULT_GIVEAWAY_RULES },
+      updated_by: user.id,
+      updated_at: new Date().toISOString(),
+    }).eq("id", parsed.databaseId).eq("organization_id", organization.id).select("id").single();
+    if (result.error) throw new Error("Nao foi possivel salvar o sorteio.");
+    const historyRows = parsed.history.map((event) => ({
+      external_event_id: event.id,
+      giveaway_id: parsed.databaseId,
+      event_type: event.type,
+      message: event.message,
+      detail: event.detail ?? null,
+      actor_user_id: user.id,
+      created_at: event.timestamp,
+    }));
+    if (historyRows.length) {
+      const { error } = await admin.from("giveaway_audit_events").upsert(historyRows, { onConflict: "giveaway_id,external_event_id", ignoreDuplicates: true });
+      if (error) throw new Error("Nao foi possivel salvar o historico do sorteio.");
+    }
+    return { databaseId: parsed.databaseId, snapshotFrozenAt: existing.data.snapshot_frozen_at as string };
   }
-  const wasFrozen = Boolean(existing.data.snapshot_frozen_at);
   const nextStatus = persistedGiveawayStatus(normalizeGiveawayStatus(parsed.status));
-  const frozenAt = (existing.data.snapshot_frozen_at as string | null) ?? parsed.snapshotFrozenAt ?? (!isSnapshotMutableStatus(nextStatus) ? new Date().toISOString() : null);
+  const frozenAt = parsed.snapshotFrozenAt ?? (!isSnapshotMutableStatus(nextStatus) ? new Date().toISOString() : null);
   const row = {
     name: parsed.name || parsed.id,
     description: parsed.description ?? null,

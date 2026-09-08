@@ -51,6 +51,7 @@ export const EMPTY_CHECKLIST: ValidationChecklistState = {
 
 export type HistoryEventType =
   | "import"
+  | "post_changed"
   | "draw_started"
   | "winner_selected"
   | "disqualified"

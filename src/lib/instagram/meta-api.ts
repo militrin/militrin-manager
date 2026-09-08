@@ -53,7 +53,7 @@ async function metaJson<T>(url: string, accessToken: string, init?: RequestInit)
 export type InstagramMedia = { id: string; caption?: string; media_type?: string; media_url?: string; permalink?: string; timestamp?: string; thumbnail_url?: string };
 export type InstagramComment = { id: string; text?: string; timestamp?: string; username?: string; from?: { id?: string; username?: string } };
 
-async function allPages<T>(firstUrl: string, accessToken: string): Promise<T[]> {
+async function allPagesWithMeta<T>(firstUrl: string, accessToken: string): Promise<{ items: T[]; pagesFetched: number }> {
   const values: T[] = [];
   let next: string | undefined = firstUrl;
   let pages = 0;
@@ -63,7 +63,11 @@ async function allPages<T>(firstUrl: string, accessToken: string): Promise<T[]> 
     values.push(...(page.data ?? []));
     next = page.paging?.next;
   }
-  return values;
+  return { items: values, pagesFetched: pages };
+}
+
+async function allPages<T>(firstUrl: string, accessToken: string): Promise<T[]> {
+  return (await allPagesWithMeta<T>(firstUrl, accessToken)).items;
 }
 
 export function instagramAuthorizeUrl(state: string) {
@@ -171,5 +175,5 @@ export async function getInstagramMedia(mediaId: string, accessToken: string) {
 }
 
 export async function listInstagramComments(mediaId: string, accessToken: string) {
-  return allPages<InstagramComment>(versioned(`${mediaId}/comments?fields=from,text,timestamp&limit=100`), accessToken);
+  return allPagesWithMeta<InstagramComment>(versioned(`${mediaId}/comments?fields=id,from,text,timestamp&limit=100`), accessToken);
 }

@@ -6,13 +6,17 @@ import path from "node:path";
 import {
   canChangeGiveawayPost,
   canImportGiveawayCsv,
+  canStartGiveaway,
   canSyncGiveawayComments,
   giveawayHubSection,
+  giveawayRequiresPostChangeConfirmation,
   giveawayStatusLabel,
+  statusAfterCommentSync,
 } from "../src/lib/giveaways/status.ts";
 import { extractInstagramPagingCursor, toInstagramMediaCard } from "../src/lib/giveaways/media.ts";
 import { parseSorteioCsv } from "../src/components/sorteios/csv.ts";
 import { assertFrozenSnapshotInvariant } from "../src/lib/instagram/normalize.ts";
+import { assertGiveawaySourceIntegrity, isLegacyCsvWithoutMediaId } from "../src/lib/giveaways/source-integrity.ts";
 
 const root = path.dirname(fileURLToPath(new URL(".", import.meta.url)));
 
@@ -154,4 +158,74 @@ test("migration de reusable giveaways nao mexe em winner/snapshot/entries", () =
   assert.doesNotMatch(sql, /giveaway_entries/);
   assert.doesNotMatch(sql, /current_winner_comment_id/);
   assert.doesNotMatch(sql, /snapshot_frozen_at =/);
+});
+
+test("sync vazio nao vira ready e permite trocar post", () => {
+  assert.equal(statusAfterCommentSync(0), "preparing");
+  assert.equal(statusAfterCommentSync(1), "ready");
+  assert.equal(canChangeGiveawayPost("preparing", null), true);
+  assert.equal(canChangeGiveawayPost("ready", null), true);
+  const sync = read("src/app/sorteios/giveaway-sync-actions.ts");
+  assert.match(sync, /statusAfterCommentSync\(entries\.length\)/);
+  assert.doesNotMatch(sync, /status: "ready"/);
+});
+
+test("trocar post antes do freeze e permitido e apos freeze e bloqueado", () => {
+  assert.equal(canChangeGiveawayPost("ready", null), true);
+  assert.equal(canChangeGiveawayPost("draft", null), true);
+  assert.equal(canChangeGiveawayPost("running", null), false);
+  assert.equal(canChangeGiveawayPost("awaiting_validation", null), false);
+  assert.equal(canChangeGiveawayPost("completed", null), false);
+  assert.equal(canChangeGiveawayPost("ready", "2026-08-31T00:00:00.000Z"), false);
+});
+
+test("trocar post limpa comentarios so do draft atual com confirmacao", () => {
+  assert.equal(giveawayRequiresPostChangeConfirmation(0), false);
+  assert.equal(giveawayRequiresPostChangeConfirmation(12), true);
+  const sync = read("src/app/sorteios/giveaway-sync-actions.ts");
+  const ui = read("src/components/sorteios/InstagramImport.tsx");
+  assert.match(sync, /confirmReplaceComments/);
+  assert.match(sync, /delete\(\)\.eq\("giveaway_id", parsed\.giveawayId\)/);
+  assert.match(sync, /post_changed/);
+  assert.match(ui, /Trocar a publicação removerá os comentários sincronizados deste rascunho/);
+});
+
+test("iniciar com 0 comentarios e bloqueado", () => {
+  assert.equal(canStartGiveaway("ready", null, 0), false);
+  assert.equal(canStartGiveaway("preparing", null, 12), false);
+  assert.equal(canStartGiveaway("ready", null, 12), true);
+  assert.equal(canStartGiveaway("ready", "2026-08-31T00:00:00.000Z", 12), false);
+  const app = read("src/components/sorteios/SorteioApp.tsx");
+  assert.match(app, /Sincronize pelo menos um comentário antes de iniciar/);
+});
+
+test("sorteio legado CSV com media_id null nao gera erro", () => {
+  assert.equal(isLegacyCsvWithoutMediaId({ source: "csv", instagramMediaId: null, instagramIntegrationId: null }), true);
+  assert.doesNotThrow(() => assertGiveawaySourceIntegrity({
+    source: "csv",
+    instagramIntegrationId: null,
+    instagramMediaId: null,
+    instagramMediaPermalink: "https://www.instagram.com/p/Dcb8sKsJ91b/",
+  }));
+  assert.throws(() => assertGiveawaySourceIntegrity({
+    source: "csv",
+    instagramIntegrationId: null,
+    instagramMediaId: "1790",
+    instagramMediaPermalink: null,
+  }), /CSV nao pode referenciar/);
+  const persist = read("src/app/sorteios/giveaway-actions.ts");
+  const mapper = read("src/lib/giveaways/session.ts");
+  assert.match(persist, /assertGiveawaySourceIntegrity/);
+  assert.match(persist, /if \(wasFrozen\)/);
+  assert.match(mapper, /instagramMediaId: giveaway.instagram_media_id/);
+  const app = read("src/components/sorteios/SorteioApp.tsx");
+  assert.match(app, /snapshotFrozenAt \|\| session\.entries\.length === 0/);
+});
+
+test("sync >0 persiste comment_id e segunda sync nao duplica", () => {
+  const sync = read("src/app/sorteios/giveaway-sync-actions.ts");
+  assert.match(sync, /comment_id: entry\.commentId/);
+  assert.match(sync, /delete\(\)\.eq\("giveaway_id", giveawayId\)/);
+  const migration = read("supabase/migrations/20260919000000_instagram_giveaways.sql");
+  assert.match(migration, /unique \(giveaway_id, comment_id\)/);
 });

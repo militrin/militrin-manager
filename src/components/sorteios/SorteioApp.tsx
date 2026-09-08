@@ -44,7 +44,7 @@ import {
   type SorteioSession,
   type ValidationChecklistState,
 } from "./types";
-import { canChangeGiveawayPost, canImportGiveawayCsv, canSyncGiveawayComments, isAwaitingValidationStatus, isCompletedStatus, isDrawingStatus, isReadyStatus } from "@/lib/giveaways/status";
+import { canChangeGiveawayPost, canImportGiveawayCsv, canStartGiveaway, isAwaitingValidationStatus, isCompletedStatus, isDrawingStatus, isReadyStatus, statusAfterCommentSync } from "@/lib/giveaways/status";
 
 type Tab = "sorteio" | "participacoes" | "transparencia";
 
@@ -113,7 +113,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   }, []);
 
   useEffect(() => {
-    if (!persistenceAvailable || !session || !session.databaseId || session.entries.length === 0) return;
+    if (!persistenceAvailable || !session || !session.databaseId || session.snapshotFrozenAt || session.entries.length === 0) return;
     autosaveTimerRef.current = window.setTimeout(async () => {
       try {
         const persisted = await persistQueued(session);
@@ -148,7 +148,6 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   const instagramHandle = formatInstagramHandle(initialInstagramStatus.username) ?? "a conta oficial";
   const frozen = session.snapshotFrozenAt !== null;
   const canImportCsv = canImportGiveawayCsv(session.status, session.snapshotFrozenAt) && session.source === "csv";
-  const canSync = canSyncGiveawayComments(session.status, session.snapshotFrozenAt) && session.source === "instagram";
   const canChangePost = canChangeGiveawayPost(session.status, session.snapshotFrozenAt) && session.source === "instagram";
   const uniqueParticipants = new Set(session.entries.map((e) => e.username.toLowerCase())).size;
   const activePool = session.entries.filter((e) => e.status === "active");
@@ -206,9 +205,10 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
     reader.readAsText(file, "utf-8");
   }
 
-  function handleInstagramImported(value: { entries: ParticipationEntry[]; mediaId: string; permalink: string; integrationId: string; syncedAt: string }) {
+  function handleInstagramImported(value: { entries: ParticipationEntry[]; mediaId: string; permalink: string; integrationId: string; syncedAt: string; status: "preparing" | "ready"; pagesFetched: number }) {
     setImportError(null);
     setImportSummary(null);
+    const nextStatus = value.status || statusAfterCommentSync(value.entries.length);
     updateSession((prev) => ({
       ...prev,
       entries: value.entries,
@@ -223,13 +223,39 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
       importedFileName: null,
       importedAt: value.syncedAt,
       snapshotFrozenAt: null,
-      status: "ready",
+      status: nextStatus,
       currentWinnerCommentId: null,
       currentDrawAt: null,
       currentChecklist: { ...EMPTY_CHECKLIST },
       disqualifications: [],
       confirmedWinner: null,
-      history: [...prev.history, historyEvent("import", "Comentários sincronizados pela API oficial da Meta", `${value.entries.length} comentários · mídia ${value.mediaId}`)],
+      history: [...prev.history, historyEvent("import", value.entries.length ? "Comentários sincronizados pela API oficial da Meta" : "Nenhum comentário encontrado nesta publicação", `${value.entries.length} comentários · mídia ${value.mediaId} · ${value.pagesFetched} página(s)`)],
+    }));
+  }
+
+  function handleInstagramPostChanged(value: { mediaId: string; permalink: string; mediaType: string; caption: string; thumbnailUrl: string; timestamp: string; commentsCleared: number }) {
+    setImportError(null);
+    setImportSummary(null);
+    updateSession((prev) => ({
+      ...prev,
+      entries: [],
+      source: "instagram",
+      instagramMediaId: value.mediaId,
+      instagramMediaPermalink: value.permalink,
+      instagramMediaType: value.mediaType || null,
+      instagramCaptionSnapshot: value.caption || null,
+      instagramThumbnailUrl: value.thumbnailUrl || null,
+      instagramPublishedAt: value.timestamp || null,
+      importedFileName: null,
+      importedAt: null,
+      snapshotFrozenAt: null,
+      status: "preparing",
+      currentWinnerCommentId: null,
+      currentDrawAt: null,
+      currentChecklist: { ...EMPTY_CHECKLIST },
+      disqualifications: [],
+      confirmedWinner: null,
+      history: [...prev.history, historyEvent("post_changed", "Publicação alterada", `${prev.instagramMediaPermalink ?? "sem publicação"} → ${value.permalink}${value.commentsCleared ? ` · ${value.commentsCleared} comentários removidos deste rascunho` : ""}`)],
     }));
   }
 
@@ -290,7 +316,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   }
 
   async function handleDrawClick() {
-    if (!isReadyStatus(currentSession.status) || activePool.length === 0 || criticalPending) return;
+    if (!canStartGiveaway(currentSession.status, currentSession.snapshotFrozenAt, currentSession.entries.length) || activePool.length === 0 || criticalPending) return;
     setShowStartConfirm(true);
   }
 
@@ -455,13 +481,19 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
           <AdminSection compact title="Fonte e sincronização" description={session.source === "csv" ? "CSV legado ou arquivo importado. Snapshot congelado permanece imutável." : "Comentários oficiais da publicação vinculada a este sorteio."}>
             <InstagramImport
               giveawayId={session.databaseId ?? ""}
-              locked={frozen || (!canSync && !canChangePost)}
+              locked={frozen}
               canChangePost={canChangePost}
               source={session.source}
               permalink={session.instagramMediaPermalink}
               mediaId={session.instagramMediaId}
+              commentsCount={session.entries.length}
+              uniqueParticipants={uniqueParticipants}
+              status={session.status}
+              snapshotFrozenAt={session.snapshotFrozenAt}
               initialStatus={initialInstagramStatus}
               onImported={handleInstagramImported}
+              onPostChanged={handleInstagramPostChanged}
+              onStartDraw={handleDrawClick}
             />
             {session.source === "csv" && canImportCsv ? (
               <>
@@ -516,25 +548,27 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
             ) : null}
           </AdminSection>
 
-          {session.entries.length === 0 ? null : (
+          {frozen && session.entries.length === 0 ? null : (
             <AdminSection compact title="Sorteio">
-              {isReadyStatus(session.status) ? (
+              {!frozen && (isReadyStatus(session.status) || session.source === "instagram") ? (
                 noEligibleParticipants ? (
                   <AdminEmptyState title="Não há mais participantes elegíveis" description="Todos os comentários foram desclassificados neste sorteio." />
                 ) : (
                   <div className="rounded-2xl border border-emerald-500/20 bg-slate-950/50 p-6 text-center">
                     <Trophy className="mx-auto text-emerald-300" size={32} />
-                    <h3 className="mt-2 text-lg font-semibold text-white">PRONTO PARA SORTEAR</h3>
+                    <h3 className="mt-2 text-lg font-semibold text-white">{canStartGiveaway(session.status, session.snapshotFrozenAt, session.entries.length) ? "PRONTO PARA SORTEAR" : "AGUARDANDO COMENTÁRIOS"}</h3>
                     <p className="mt-1 text-sm text-slate-300">{activePool.length} chances carregadas.</p>
                     <p className="mt-1 text-xs text-slate-400">{session.entries.length} comentários · {uniqueParticipants} participantes · {session.entries.length} chances</p>
                     <button
                       type="button"
-                      disabled={criticalPending}
+                      disabled={criticalPending || !canStartGiveaway(session.status, session.snapshotFrozenAt, session.entries.length)}
+                      title={session.entries.length === 0 ? "Sincronize pelo menos um comentário antes de iniciar." : undefined}
                       onClick={handleDrawClick}
-                      className="mx-auto mt-4 inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-300"
+                      className="mx-auto mt-4 inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-300 disabled:opacity-40"
                     >
                       <Sparkles size={20} /> INICIAR SORTEIO
                     </button>
+                    {session.entries.length === 0 ? <p className="mt-2 text-xs text-amber-200">Sincronize pelo menos um comentário antes de iniciar.</p> : null}
                   </div>
                 )
               ) : null}

@@ -1,11 +1,12 @@
 "use server";
 
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ParticipationEntry } from "@/components/sorteios/types";
 import { requireGiveawayAdminContext } from "@/lib/giveaways/admin-context";
 import { assertNumericInstagramMediaId, toInstagramMediaCard, type InstagramMediaCard } from "@/lib/giveaways/media";
-import { canChangeGiveawayPost, canSyncGiveawayComments } from "@/lib/giveaways/status";
+import { canChangeGiveawayPost, canSyncGiveawayComments, giveawayRequiresPostChangeConfirmation, statusAfterCommentSync } from "@/lib/giveaways/status";
 import { getInstagramMedia, listInstagramComments, listInstagramMediaPage } from "@/lib/instagram/meta-api";
 import { normalizeUniqueInstagramComments, resolveOwnedInstagramMedia } from "@/lib/instagram/normalize";
 import { requireConnectedInstagramIntegration } from "@/lib/instagram/runtime-integration";
@@ -13,6 +14,7 @@ import { requireConnectedInstagramIntegration } from "@/lib/instagram/runtime-in
 const mediaSelectionSchema = z.object({
   giveawayId: z.string().uuid(),
   mediaId: z.string().regex(/^\d+$/),
+  confirmReplaceComments: z.boolean().optional(),
 });
 
 function toTimestamptz(value: string | null | undefined) {
@@ -34,7 +36,7 @@ export async function selectGiveawayInstagramMedia(input: z.infer<typeof mediaSe
   const parsed = mediaSelectionSchema.parse(input);
   const integration = await requireConnectedInstagramIntegration();
   const { organization, admin, user } = await requireGiveawayAdminContext();
-  const { data: giveaway, error } = await admin.from("giveaways").select("id,source,status,snapshot_frozen_at,instagram_integration_id").eq("id", parsed.giveawayId).eq("organization_id", organization.id).maybeSingle();
+  const { data: giveaway, error } = await admin.from("giveaways").select("id,source,status,snapshot_frozen_at,instagram_integration_id,instagram_media_id,instagram_media_permalink").eq("id", parsed.giveawayId).eq("organization_id", organization.id).maybeSingle();
   if (error || !giveaway) throw new Error("Sorteio nao encontrado nesta organizacao.");
   if (giveaway.source !== "instagram") throw new Error("Este sorteio nao usa Instagram como fonte.");
   if (!canChangeGiveawayPost(String(giveaway.status), giveaway.snapshot_frozen_at as string | null)) {
@@ -46,6 +48,17 @@ export async function selectGiveawayInstagramMedia(input: z.infer<typeof mediaSe
   const media = await getInstagramMedia(parsed.mediaId, integration.token);
   const owned = resolveOwnedInstagramMedia([media], parsed.mediaId);
   const card = toInstagramMediaCard(owned);
+  const { count, error: countError } = await admin.from("giveaway_entries").select("id", { count: "exact", head: true }).eq("giveaway_id", parsed.giveawayId);
+  if (countError) throw new Error("Nao foi possivel verificar os comentarios deste sorteio.");
+  const existingComments = count ?? 0;
+  if (giveawayRequiresPostChangeConfirmation(existingComments) && !parsed.confirmReplaceComments) {
+    throw new Error("Confirme a troca da publicacao. Os comentarios sincronizados deste rascunho serao removidos.");
+  }
+  if (existingComments > 0) {
+    const { error: clearError } = await admin.from("giveaway_entries").delete().eq("giveaway_id", parsed.giveawayId);
+    if (clearError) throw new Error("Nao foi possivel remover os comentarios deste rascunho.");
+  }
+  const now = new Date().toISOString();
   const { error: updateError } = await admin.from("giveaways").update({
     instagram_integration_id: integration.integrationId,
     instagram_media_id: card.mediaId,
@@ -55,11 +68,23 @@ export async function selectGiveawayInstagramMedia(input: z.infer<typeof mediaSe
     instagram_thumbnail_url: card.thumbnailUrl || null,
     instagram_published_at: toTimestamptz(card.timestamp),
     status: "preparing",
+    synced_at: null,
+    imported_at: null,
     updated_by: user.id,
-    updated_at: new Date().toISOString(),
+    updated_at: now,
   }).eq("id", parsed.giveawayId).eq("organization_id", organization.id).is("snapshot_frozen_at", null);
   if (updateError) throw new Error("Nao foi possivel vincular a publicacao ao sorteio.");
-  return card;
+  const previousPermalink = (giveaway.instagram_media_permalink as string | null) || "sem publicação";
+  await admin.from("giveaway_audit_events").insert({
+    external_event_id: randomUUID(),
+    giveaway_id: parsed.giveawayId,
+    event_type: "post_changed",
+    message: "Publicação alterada",
+    detail: `${previousPermalink} → ${card.permalink}${existingComments ? ` · ${existingComments} comentários removidos deste rascunho` : ""}`,
+    actor_user_id: user.id,
+    created_at: now,
+  });
+  return { ...card, commentsCleared: existingComments, status: "preparing" as const };
 }
 
 export async function syncGiveawayComments(giveawayId: string): Promise<{
@@ -68,6 +93,8 @@ export async function syncGiveawayComments(giveawayId: string): Promise<{
   permalink: string;
   integrationId: string;
   syncedAt: string;
+  status: "preparing" | "ready";
+  pagesFetched: number;
 }> {
   if (!z.string().uuid().safeParse(giveawayId).success) throw new Error("Sorteio invalido.");
   const integration = await requireConnectedInstagramIntegration();
@@ -82,9 +109,10 @@ export async function syncGiveawayComments(giveawayId: string): Promise<{
   assertNumericInstagramMediaId(mediaId);
   const media = await getInstagramMedia(mediaId, integration.token);
   const owned = resolveOwnedInstagramMedia([media], mediaId);
-  const comments = await listInstagramComments(owned.id, integration.token);
+  const { items: comments, pagesFetched } = await listInstagramComments(owned.id, integration.token);
   const entries = normalizeUniqueInstagramComments(comments, owned.permalink!);
   const syncedAt = new Date().toISOString();
+  const nextStatus = statusAfterCommentSync(entries.length);
   const { error: clearError } = await admin.from("giveaway_entries").delete().eq("giveaway_id", giveawayId);
   if (clearError) throw new Error("Nao foi possivel atualizar as participacoes sincronizadas.");
   if (entries.length) {
@@ -104,7 +132,7 @@ export async function syncGiveawayComments(giveawayId: string): Promise<{
   const { error: updateError } = await admin.from("giveaways").update({
     synced_at: syncedAt,
     imported_at: syncedAt,
-    status: "ready",
+    status: nextStatus,
     instagram_media_permalink: owned.permalink,
     instagram_media_caption: owned.caption ?? null,
     instagram_media_type: owned.media_type ?? null,
@@ -114,5 +142,14 @@ export async function syncGiveawayComments(giveawayId: string): Promise<{
     updated_at: syncedAt,
   }).eq("id", giveawayId).eq("organization_id", organization.id).is("snapshot_frozen_at", null);
   if (updateError) throw new Error("Nao foi possivel atualizar o sorteio apos a sincronizacao.");
-  return { entries, mediaId: owned.id, permalink: owned.permalink!, integrationId: integration.integrationId, syncedAt };
+  await admin.from("giveaway_audit_events").insert({
+    external_event_id: randomUUID(),
+    giveaway_id: giveawayId,
+    event_type: "import",
+    message: entries.length ? "Comentários sincronizados pela API oficial da Meta" : "Nenhum comentário encontrado nesta publicação",
+    detail: `${entries.length} comentários · mídia ${owned.id} · ${pagesFetched} página(s)`,
+    actor_user_id: user.id,
+    created_at: syncedAt,
+  });
+  return { entries, mediaId: owned.id, permalink: owned.permalink!, integrationId: integration.integrationId, syncedAt, status: nextStatus, pagesFetched };
 }

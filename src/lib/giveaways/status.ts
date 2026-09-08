@@ -81,7 +81,7 @@ export function isSnapshotMutableStatus(status: string) {
 }
 
 export function canChangeGiveawayPost(status: string, snapshotFrozenAt: string | null) {
-  return snapshotFrozenAt == null && isDraftLikeStatus(status);
+  return snapshotFrozenAt == null && isSnapshotMutableStatus(status);
 }
 
 export function canSyncGiveawayComments(status: string, snapshotFrozenAt: string | null) {
@@ -92,6 +92,18 @@ export function canSyncGiveawayComments(status: string, snapshotFrozenAt: string
 
 export function canImportGiveawayCsv(status: string, snapshotFrozenAt: string | null) {
   return snapshotFrozenAt == null && isSnapshotMutableStatus(status);
+}
+
+export function statusAfterCommentSync(commentsCount: number) {
+  return commentsCount > 0 ? "ready" : "preparing";
+}
+
+export function canStartGiveaway(status: string, snapshotFrozenAt: string | null, commentsCount: number) {
+  return snapshotFrozenAt == null && isReadyStatus(status) && commentsCount > 0;
+}
+
+export function giveawayRequiresPostChangeConfirmation(commentsCount: number) {
+  return commentsCount > 0;
 }
 
 export const DEFAULT_GIVEAWAY_RULES = {
