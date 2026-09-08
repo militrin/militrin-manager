@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 import { getPublicEvents, isEventOpen } from '@/lib/public/events';
 import { PublicBrandMark } from '@/components/public/PublicBrandMark';
+import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 import { HomeLoginForm } from './home-login-form';
 
 export default async function Home() {
@@ -20,8 +21,8 @@ export default async function Home() {
   const featuredEvents = events.slice(0, 3);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-      <section className="mx-auto w-full max-w-6xl rounded-[2rem] border border-slate-800/70 bg-slate-950/65 p-6 shadow-2xl shadow-black/20 sm:p-10">
+    <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-6xl flex-1 rounded-[2rem] border border-slate-800/70 bg-slate-950/65 p-6 shadow-2xl shadow-black/20 sm:p-10">
         <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
           <div className="space-y-5">
             <PublicBrandMark />
@@ -54,6 +55,7 @@ export default async function Home() {
           <HomeLoginForm />
         </div>
       </section>
+      <PublicSiteFooter />
     </main>
   );
 }

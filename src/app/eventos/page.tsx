@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { MilitrinEventArtwork } from '@/components/militrin';
+import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 import { formatDateBR } from '@/lib/utils/date';
 import { getPublicEvents, isEventOpen } from '@/lib/public/events';
 
@@ -7,8 +8,8 @@ export default async function EventsPage() {
   const { events } = await getPublicEvents();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-      <section className="mx-auto w-full max-w-6xl space-y-4">
+    <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-6xl flex-1 space-y-4">
         <div className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
           <Link href="/" className="inline-flex h-9 items-center rounded-xl border border-slate-700 px-3 text-xs text-slate-300 transition hover:border-slate-500 hover:text-white">
             ← Início
@@ -46,6 +47,7 @@ export default async function EventsPage() {
           )}
         </div>
       </section>
+      <PublicSiteFooter />
     </main>
   );
 }

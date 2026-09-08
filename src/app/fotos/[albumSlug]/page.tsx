@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 
 export default async function FotoAlbumPage({ params }: { params: Promise<{ albumSlug: string }> }) {
   const { albumSlug } = await params;
@@ -9,8 +10,8 @@ export default async function FotoAlbumPage({ params }: { params: Promise<{ albu
   } = await supabase.auth.getUser();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-      <section className="mx-auto w-full max-w-5xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+    <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-5xl flex-1 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
         <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Album publico</p>
         <div className="mt-2 flex items-start justify-between gap-3">
           <h1 className="text-3xl font-semibold text-white">{albumSlug.replace(/-/g, ' ')}</h1>
@@ -32,6 +33,7 @@ export default async function FotoAlbumPage({ params }: { params: Promise<{ albu
           Voltar para albuns
         </Link>
       </section>
+      <PublicSiteFooter />
     </main>
   );
 }

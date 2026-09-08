@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 
 const demoAlbums = [
   {
@@ -21,8 +22,8 @@ export default async function FotosPage() {
   } = await supabase.auth.getUser();
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-      <section className="mx-auto w-full max-w-5xl space-y-4">
+    <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-5xl flex-1 space-y-4">
         <header className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
           <div className="flex items-start justify-between gap-3">
             <h1 className="text-3xl font-semibold text-white">Fotos</h1>
@@ -44,6 +45,7 @@ export default async function FotosPage() {
           ))}
         </div>
       </section>
+      <PublicSiteFooter />
     </main>
   );
 }

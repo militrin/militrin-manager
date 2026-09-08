@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { MilitrinEventArtwork } from '@/components/militrin';
+import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 import { formatDateBR } from '@/lib/utils/date';
 import type { PublicAttraction, PublicBenefit, PublicCategory, PublicKitItem } from '@/lib/public/events';
 import { getPublicEventDetails, isEventOpen } from '@/lib/public/events';
@@ -13,8 +14,8 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
 
   if (status === 'query_error') {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-        <section className="mx-auto w-full max-w-3xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
+      <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+        <section className="mx-auto w-full max-w-3xl flex-1 rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
           <h1 className="text-2xl font-semibold text-white">Falha ao carregar o evento</h1>
           <p className="mt-2 text-sm text-slate-300">
             Ocorreu um erro técnico ao consultar o evento por slug.
@@ -31,6 +32,7 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
             </Link>
           </div>
         </section>
+        <PublicSiteFooter />
       </main>
     );
   }
@@ -42,8 +44,8 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
   const open = isEventOpen(event);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-      <section className="mx-auto w-full max-w-5xl space-y-4">
+    <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <section className="mx-auto w-full max-w-5xl flex-1 space-y-4">
         <article className="overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-900/70">
           <MilitrinEventArtwork src={event.bannerHeroUrl} hideWhenEmpty />
           <div className="p-6">
@@ -125,6 +127,7 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
           </article>
         ) : null}
       </section>
+      <PublicSiteFooter />
     </main>
   );
 }

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
+import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 import { formatCpf, formatPhone } from '@/lib/validation/registration';
 import { signUpPublicAccountAction } from '@/app/inscricao/actions';
 import { resolvePostAuthDestination } from '@/lib/utils/safe-navigation';
@@ -127,8 +128,8 @@ export default function CriarContaPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
-      <div className="mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+    <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
+      <div className="mx-auto grid w-full max-w-5xl flex-1 gap-6 lg:grid-cols-[0.95fr_1.05fr]">
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-950/60 p-6 shadow-2xl shadow-black/20 sm:p-8">
           <p className="text-xs uppercase tracking-[0.24em] text-emerald-300">Militrin</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Criar minha conta</h1>
@@ -204,7 +205,13 @@ export default function CriarContaPage() {
 
             <label className="flex items-start gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-300">
               <input required type="checkbox" checked={acceptPrivacy} onChange={(event) => setAcceptPrivacy(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-950" />
-              <span>Aceito a política de privacidade e o uso dos meus dados para gestão da inscrição.</span>
+              <span>
+                Aceito a{' '}
+                <Link href="/politica-de-privacidade" className="font-medium text-emerald-300 underline decoration-emerald-500/40 underline-offset-2 hover:text-emerald-200">
+                  política de privacidade
+                </Link>
+                {' '}e o uso dos meus dados para gestão da inscrição.
+              </span>
             </label>
 
             {message ? (
@@ -236,6 +243,7 @@ export default function CriarContaPage() {
           </form>
         </section>
       </div>
+      <PublicSiteFooter />
     </main>
   );
 }
