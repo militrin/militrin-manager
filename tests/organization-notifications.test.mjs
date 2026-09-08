@@ -65,6 +65,11 @@ test('sininho reutiliza o TopBar, tem badge, dropdown e marcar lidas', async () 
   assert.match(bell, /Ver todas as notificações/);
   assert.match(bell, /postgres_changes/);
   assert.match(bell, /visibilitychange/);
+  assert.match(bell, /CHANNEL_ERROR/);
+  assert.match(bell, /count_unread_organization_notifications/);
+  assert.match(bell, /list_organization_notifications/);
+  assert.doesNotMatch(bell, /countUnreadOrganizationNotificationsAction/);
+  assert.doesNotMatch(bell, /listOrganizationNotificationsAction/);
   assert.match(sidebar, /<NotificationBell compact \/>/);
 });
 

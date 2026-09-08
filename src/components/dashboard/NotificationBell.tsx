@@ -5,14 +5,95 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, CheckCheck, X } from "lucide-react";
 import {
-  countUnreadOrganizationNotificationsAction,
-  listOrganizationNotificationsAction,
   markAllOrganizationNotificationsReadAction,
   markOrganizationNotificationReadAction,
 } from "@/app/notificacoes/actions";
 import { formatRelativeTimePt } from "@/lib/notifications/relative-time";
-import type { OrganizationNotificationRow } from "@/lib/notifications/types";
+import { mapNotificationRow, type OrganizationNotificationRow } from "@/lib/notifications/types";
 import { createClient } from "@/lib/supabase/client";
+
+type BrowserSupabase = ReturnType<typeof createClient>;
+
+let liveRetainers = 0;
+let liveSupabase: BrowserSupabase | null = null;
+let liveChannel: ReturnType<BrowserSupabase["channel"]> | null = null;
+let liveRefreshPromise: Promise<{ count: number; items: OrganizationNotificationRow[] } | null> | null = null;
+const liveListeners = new Set<() => void>();
+
+function emitLiveRefresh() {
+  for (const listener of liveListeners) {
+    try {
+      listener();
+    } catch {
+      // Um sininho falho não pode derrubar os demais.
+    }
+  }
+}
+
+function retainLiveSync(onChange: () => void) {
+  liveListeners.add(onChange);
+  liveRetainers += 1;
+  if (liveRetainers === 1) {
+    try {
+      liveSupabase = createClient();
+      liveChannel = liveSupabase
+        .channel("organization-notifications")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "organization_notifications" }, () => {
+          emitLiveRefresh();
+        })
+        .subscribe((status) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            return;
+          }
+        });
+    } catch {
+      liveSupabase = null;
+      liveChannel = null;
+    }
+  }
+  return () => {
+    liveListeners.delete(onChange);
+    liveRetainers = Math.max(0, liveRetainers - 1);
+    if (liveRetainers === 0 && liveSupabase && liveChannel) {
+      try {
+        void liveSupabase.removeChannel(liveChannel);
+      } catch {
+        // Cleanup de Realtime não pode derrubar a página.
+      }
+      liveChannel = null;
+      liveSupabase = null;
+    }
+  };
+}
+
+async function loadBellSnapshot(): Promise<{ count: number; items: OrganizationNotificationRow[] } | null> {
+  if (liveRefreshPromise) return liveRefreshPromise;
+  liveRefreshPromise = (async () => {
+    try {
+      const supabase = liveSupabase ?? createClient();
+      const [countResult, listResult] = await Promise.all([
+        supabase.rpc("count_unread_organization_notifications"),
+        supabase.rpc("list_organization_notifications", {
+          p_read_state: "all",
+          p_type: null,
+          p_limit: 10,
+          p_offset: 0,
+        }),
+      ]);
+      const count = countResult.error ? 0 : Number(countResult.data ?? 0);
+      const rows = Array.isArray(listResult.data) ? listResult.data : [];
+      const items = listResult.error ? [] : rows.map((row) => mapNotificationRow(row as Record<string, unknown>));
+      return { count: Number.isFinite(count) ? count : 0, items };
+    } catch {
+      return null;
+    }
+  })();
+  try {
+    return await liveRefreshPromise;
+  } finally {
+    liveRefreshPromise = null;
+  }
+}
 
 export function NotificationBell({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
@@ -24,12 +105,10 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
-    const [countResult, listResult] = await Promise.all([
-      countUnreadOrganizationNotificationsAction(),
-      listOrganizationNotificationsAction({ readState: "all", limit: 10, offset: 0 }),
-    ]);
-    if (countResult.success) setUnreadCount(countResult.count);
-    if (listResult.success) setItems(listResult.notifications);
+    const snapshot = await loadBellSnapshot();
+    if (!snapshot) return;
+    setUnreadCount(snapshot.count);
+    setItems(snapshot.items);
   }, []);
 
   useEffect(() => {
@@ -43,22 +122,16 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
   }, [open, refresh]);
 
   useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("organization-notifications")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "organization_notifications" }, () => {
-        void refresh();
-      })
-      .subscribe();
-
+    const release = retainLiveSync(() => {
+      void refresh();
+    });
     const onVisible = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVisible);
-
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
-      void supabase.removeChannel(channel);
+      release();
     };
   }, [refresh]);
 
@@ -83,7 +156,11 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
       if (item.isUnread) {
         setItems((prev) => prev.map((row) => (row.notificationId === item.notificationId ? { ...row, isUnread: false, readAt: new Date().toISOString() } : row)));
         setUnreadCount((prev) => Math.max(0, prev - 1));
-        await markOrganizationNotificationReadAction(item.notificationId);
+        try {
+          await markOrganizationNotificationReadAction(item.notificationId);
+        } catch {
+          // A falha ao marcar lida não pode derrubar o restante do app.
+        }
       }
       setOpen(false);
       router.push(item.actionHref);
@@ -95,7 +172,11 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
     startTransition(async () => {
       setItems((prev) => prev.map((row) => ({ ...row, isUnread: false, readAt: row.readAt ?? new Date().toISOString() })));
       setUnreadCount(0);
-      await markAllOrganizationNotificationsReadAction();
+      try {
+        await markAllOrganizationNotificationsReadAction();
+      } catch {
+        // A falha ao marcar lidas não pode derrubar o restante do app.
+      }
     });
   }
 

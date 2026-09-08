@@ -40,15 +40,25 @@ export function NotificationsInbox({
 
   function openItem(item: OrganizationNotificationRow) {
     startTransition(async () => {
-      if (item.isUnread) await markOrganizationNotificationReadAction(item.notificationId);
+      if (item.isUnread) {
+        try {
+          await markOrganizationNotificationReadAction(item.notificationId);
+        } catch {
+          // Isolated: falha ao marcar lida não derruba a central.
+        }
+      }
       router.push(item.actionHref);
     });
   }
 
   function markAll() {
     startTransition(async () => {
-      await markAllOrganizationNotificationsReadAction();
-      router.refresh();
+      try {
+        await markAllOrganizationNotificationsReadAction();
+        router.refresh();
+      } catch {
+        // Isolated: falha ao marcar lidas não derruba a central.
+      }
     });
   }
 
