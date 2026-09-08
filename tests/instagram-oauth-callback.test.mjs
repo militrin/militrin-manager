@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { processInstagramOAuthCallback } from "../src/lib/instagram/oauth-callback.ts";
 import { INSTAGRAM_OAUTH_STATE_COOKIE, instagramOAuthStateCookieOptions, isValidInstagramOAuthState, oauthStatesMatch } from "../src/lib/instagram/oauth-cookie.ts";
 import { inspectInstagramRuntimeConfig, REQUIRED_META_GRAPH_API_VERSION, CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI, inspectInstagramRedirectUri, readInstagramRedirectUri, requireInstagramRedirectUri } from "../src/lib/instagram/oauth-config.ts";
+import { buildInstagramAuthorizationCodeForm, listInstagramAuthorizationCodeFormKeys } from "../src/lib/instagram/oauth-token-form.ts";
 import { instagramRedirectUriDiagnostics } from "../src/lib/instagram/oauth-log.ts";
 import { InstagramOAuthError } from "../src/lib/instagram/oauth-errors.ts";
 import {
@@ -309,7 +310,41 @@ test("middleware, cookie, callback e UI de feedback estao ligados", async () => 
   assert.equal((metaApi.match(/requireInstagramRedirectUri\(\)/g) ?? []).length, 2);
   assert.match(metaApi, /logInstagramRedirectUri\("oauth_authorize"/);
   assert.match(metaApi, /logInstagramRedirectUri\("oauth_token_exchange"/);
-  assert.doesNotMatch(metaApi, /process\.env\.META_INSTAGRAM_REDIRECT_URI/);
+  const exchange = metaApi.slice(metaApi.indexOf("export async function exchangeInstagramCode"), metaApi.indexOf("export async function refreshInstagramAccessToken"));
+  assert.match(exchange, /buildInstagramAuthorizationCodeForm/);
+  assert.doesNotMatch(exchange, /new URLSearchParams/);
+  assert.doesNotMatch(exchange, /Content-Type/);
+  assert.match(exchange, /fetch\("https:\/\/api\.instagram\.com\/oauth\/access_token", \{ method: "POST", body: form, cache: "no-store" \}\)/);
+});
+
+test("token exchange usa FormData multipart com os mesmos client_id e redirect do authorize", () => {
+  const clientId = "1040676252301612";
+  const redirectUri = requireInstagramRedirectUri({
+    META_INSTAGRAM_REDIRECT_URI: `  ${CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI}\r\n`,
+  });
+  const form = buildInstagramAuthorizationCodeForm({
+    clientId,
+    clientSecret: "test-secret",
+    redirectUri,
+    code: "test-code",
+  });
+  assert.equal(form instanceof FormData, true);
+  assert.deepEqual(listInstagramAuthorizationCodeFormKeys(form), [
+    "client_id",
+    "client_secret",
+    "grant_type",
+    "redirect_uri",
+    "code",
+  ]);
+  assert.equal(form.get("grant_type"), "authorization_code");
+  assert.equal(form.get("client_id"), clientId);
+  assert.equal(form.get("redirect_uri"), redirectUri);
+  assert.equal(form.get("redirect_uri"), CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI);
+  const authorizeUrl = new URL("https://www.instagram.com/oauth/authorize");
+  authorizeUrl.searchParams.set("client_id", clientId);
+  authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+  assert.equal(authorizeUrl.searchParams.get("client_id"), form.get("client_id"));
+  assert.equal(authorizeUrl.searchParams.get("redirect_uri"), form.get("redirect_uri"));
 });
 
 test("redirect URI e normalizada por trim e compartilhada entre authorize e exchange", () => {

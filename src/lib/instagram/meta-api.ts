@@ -3,6 +3,7 @@ import { InstagramOAuthError } from "@/lib/instagram/oauth-errors";
 import { readMetaError } from "@/lib/instagram/meta-error";
 import { isInstagramRuntimeConfigured, requireInstagramRedirectUri } from "@/lib/instagram/oauth-config";
 import { logInstagramRedirectUri } from "@/lib/instagram/oauth-log";
+import { buildInstagramAuthorizationCodeForm } from "@/lib/instagram/oauth-token-form";
 
 const apiVersion = process.env.META_GRAPH_API_VERSION?.trim();
 const graphBase = "https://graph.instagram.com";
@@ -81,7 +82,12 @@ export async function exchangeInstagramCode(code: string) {
   const clientSecret = process.env.META_INSTAGRAM_APP_SECRET!;
   const redirectUri = requireInstagramRedirectUri();
   logInstagramRedirectUri("oauth_token_exchange", redirectUri);
-  const form = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "authorization_code", redirect_uri: redirectUri, code });
+  const form = buildInstagramAuthorizationCodeForm({
+    clientId,
+    clientSecret,
+    redirectUri,
+    code,
+  });
   const shortResponse = await fetch("https://api.instagram.com/oauth/access_token", { method: "POST", body: form, cache: "no-store" });
   const short = await shortResponse.json() as { access_token?: string; user_id?: number; error_message?: string; error_type?: string; code?: number };
   if (!shortResponse.ok || !short.access_token || !short.user_id) {
