@@ -58,6 +58,7 @@ export async function middleware(request: NextRequest) {
   const isPublicFirstAccessResend = pathname === '/primeiro-acesso/reenviar';
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) && !isPublicFirstAccessResend;
   const publicMetaCallbackPaths = new Set([
+    '/api/instagram/oauth/callback',
     '/api/instagram/deauthorize',
     '/api/instagram/data-deletion',
   ]);

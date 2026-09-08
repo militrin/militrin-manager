@@ -1,14 +1,20 @@
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { AdminPageHeader } from "@/components/admin";
 import { requireAdministrativePanelAccess } from "@/lib/admin/panel-access";
+import { InstagramOAuthFeedback } from "@/components/sorteios/InstagramOAuthFeedback";
 import { SorteioApp } from "@/components/sorteios/SorteioApp";
 import { getInstagramStatus, loadLatestGiveawaySession } from "./actions";
 
-export default async function SorteiosPage() {
+export default async function SorteiosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ instagram?: string; reason?: string }>;
+}) {
   await requireAdministrativePanelAccess();
-  const [bootstrap, instagramStatus] = await Promise.all([
+  const [bootstrap, instagramStatus, params] = await Promise.all([
     loadLatestGiveawaySession(),
     getInstagramStatus(),
+    searchParams,
   ]);
 
   return (
@@ -17,6 +23,7 @@ export default async function SorteiosPage() {
         <Sidebar />
         <div className="min-w-0 flex-1 space-y-4">
           <AdminPageHeader compact title="Sorteador Militrin 🍀" subtitle="Sorteio oficial • 1 KIT MILITRIN" />
+          <InstagramOAuthFeedback instagram={params.instagram} reason={params.reason} />
           <SorteioApp initialSession={bootstrap.session} persistenceAvailable={bootstrap.persistence === "available"} initialInstagramStatus={instagramStatus} />
         </div>
       </div>

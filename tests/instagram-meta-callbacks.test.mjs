@@ -279,6 +279,7 @@ test("rotas Meta sao POST publicas e OAuth continua GET", async () => {
   assert.doesNotMatch(deauthorize, /export async function GET/);
   assert.match(deletion, /export async function POST/);
   assert.match(oauth, /export async function GET/);
+  assert.match(middleware, /\/api\/instagram\/oauth\/callback/);
   assert.match(middleware, /\/api\/instagram\/deauthorize/);
   assert.match(middleware, /\/api\/instagram\/data-deletion/);
   assert.match(middleware, /isPublicMetaCallback/);

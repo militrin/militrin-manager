@@ -1,4 +1,7 @@
 import "server-only";
+import { InstagramOAuthError } from "@/lib/instagram/oauth-errors";
+import { readMetaError } from "@/lib/instagram/meta-error";
+import { isInstagramRuntimeConfigured } from "@/lib/instagram/oauth-config";
 
 const apiVersion = process.env.META_GRAPH_API_VERSION?.trim();
 const graphBase = "https://graph.instagram.com";
@@ -69,21 +72,37 @@ export function instagramAuthorizeUrl(state: string) {
 }
 
 export async function exchangeInstagramCode(code: string) {
-  const clientId = process.env.META_INSTAGRAM_APP_ID;
-  const clientSecret = process.env.META_INSTAGRAM_APP_SECRET;
-  const redirectUri = process.env.META_INSTAGRAM_REDIRECT_URI;
-  if (!clientId || !clientSecret || !redirectUri) throw new Error("Credenciais Meta incompletas.");
+  if (!isInstagramRuntimeConfigured()) {
+    throw new InstagramOAuthError("oauth_token_exchange_failed", "unknown", "Integracao Instagram nao configurada.");
+  }
+  const clientId = process.env.META_INSTAGRAM_APP_ID!;
+  const clientSecret = process.env.META_INSTAGRAM_APP_SECRET!;
+  const redirectUri = process.env.META_INSTAGRAM_REDIRECT_URI!;
   const form = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "authorization_code", redirect_uri: redirectUri, code });
   const shortResponse = await fetch("https://api.instagram.com/oauth/access_token", { method: "POST", body: form, cache: "no-store" });
-  const short = await shortResponse.json() as { access_token?: string; user_id?: number; error_message?: string };
-  if (!shortResponse.ok || !short.access_token || !short.user_id) throw new Error("Nao foi possivel autorizar a conta do Instagram. Confira a configuracao do app e tente novamente.");
+  const short = await shortResponse.json() as { access_token?: string; user_id?: number; error_message?: string; error_type?: string; code?: number };
+  if (!shortResponse.ok || !short.access_token || !short.user_id) {
+    throw new InstagramOAuthError("oauth_token_exchange_failed", "token", "Falha na troca do codigo OAuth.", readMetaError(shortResponse.status, short));
+  }
   const longUrl = new URL(`${graphBase}/access_token`);
   longUrl.searchParams.set("grant_type", "ig_exchange_token");
   longUrl.searchParams.set("client_secret", clientSecret);
   longUrl.searchParams.set("access_token", short.access_token);
-  const long = await fetch(longUrl, { cache: "no-store" }).then((r) => r.json()) as { access_token?: string; expires_in?: number; error?: { message?: string } };
-  if (!long.access_token) throw safeMetaError(400, long);
-  const profile = await metaJson<{ id?: string; user_id?: string; username: string }>(versioned("me?fields=user_id,username"), long.access_token);
+  const longResponse = await fetch(longUrl, { cache: "no-store" });
+  const long = await longResponse.json() as { access_token?: string; expires_in?: number; error?: { message?: string; type?: string; code?: number } };
+  if (!longResponse.ok || !long.access_token) {
+    throw new InstagramOAuthError("oauth_token_exchange_failed", "token", "Falha na troca do codigo OAuth.", readMetaError(longResponse.status, long));
+  }
+  const meUrl = versioned("me?fields=user_id,username");
+  assertGraphInstagramUrl(meUrl);
+  const meResponse = await fetch(meUrl, {
+    headers: { Authorization: `Bearer ${long.access_token}` },
+    cache: "no-store",
+  });
+  const profile = await meResponse.json() as { id?: string; user_id?: string; username?: string; error?: { message?: string; type?: string; code?: number } };
+  if (!meResponse.ok || profile.error || !profile.username) {
+    throw new InstagramOAuthError("oauth_profile_fetch_failed", "profile", "Falha ao obter o perfil do Instagram.", readMetaError(meResponse.status, profile));
+  }
   return { accessToken: long.access_token, expiresIn: long.expires_in ?? null, profile: { id: String(profile.user_id ?? profile.id ?? short.user_id), username: profile.username } };
 }
 

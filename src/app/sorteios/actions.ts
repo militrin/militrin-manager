@@ -9,6 +9,9 @@ import { getCurrentOrganizationContext } from "@/lib/organizations/current-organ
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { decryptInstagramToken, encryptInstagramToken } from "@/lib/instagram/crypto";
+import { INSTAGRAM_OAUTH_STATE_COOKIE, INSTAGRAM_OAUTH_STATE_MAX_AGE_SECONDS, instagramOAuthStateCookieOptions } from "@/lib/instagram/oauth-cookie";
+import { isInstagramRuntimeConfigured } from "@/lib/instagram/oauth-config";
+import { createSupabaseInstagramOAuthStore } from "@/lib/instagram/oauth-store-supabase";
 import { instagramAuthorizeUrl, listInstagramComments, listInstagramMedia, refreshInstagramAccessToken } from "@/lib/instagram/meta-api";
 import type { ParticipationEntry, SorteioSession } from "@/components/sorteios/types";
 import { assertFrozenSnapshotInvariant, assertUniqueCommentIds, normalizeUniqueInstagramComments, resolveOwnedInstagramMedia } from "@/lib/instagram/normalize";
@@ -57,7 +60,7 @@ export async function getInstagramStatus(): Promise<InstagramIntegrationStatus> 
     if (isMissingGiveawaySchemaError(error)) return { state: "database_not_ready", connected: false };
     throw new Error("Nao foi possivel consultar o status da integracao Instagram.");
   }
-  if (!process.env.META_INSTAGRAM_APP_ID || !process.env.META_INSTAGRAM_APP_SECRET || !process.env.META_INSTAGRAM_REDIRECT_URI || !process.env.META_GRAPH_API_VERSION || !process.env.INSTAGRAM_TOKEN_ENCRYPTION_KEY) {
+  if (!isInstagramRuntimeConfigured()) {
     return { state: "not_configured", connected: false };
   }
   return data ? { state: "available", connected: true, username: String(data.instagram_username), expiresAt: data.token_expires_at as string | null } : { state: "available", connected: false };
@@ -71,9 +74,16 @@ export async function disconnectInstagram() {
 }
 
 export async function beginInstagramOAuth() {
-  const { organization } = await context();
+  const { user, organization } = await context();
+  if (!isInstagramRuntimeConfigured()) throw new Error("Credenciais da integracao Instagram ainda nao configuradas.");
   const state = randomBytes(32).toString("base64url");
-  (await cookies()).set("instagram_oauth_state", `${state}.${organization.id}`, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/instagram/oauth/callback", maxAge: 600 });
+  await createSupabaseInstagramOAuthStore().createContext({
+    state,
+    adminUserId: user.id,
+    organizationId: organization.id,
+    expiresAt: new Date(Date.now() + INSTAGRAM_OAUTH_STATE_MAX_AGE_SECONDS * 1000),
+  });
+  (await cookies()).set(INSTAGRAM_OAUTH_STATE_COOKIE, state, instagramOAuthStateCookieOptions());
   return { url: instagramAuthorizeUrl(state) };
 }
 

@@ -27,11 +27,13 @@ Todas são privadas, sem prefixo `NEXT_PUBLIC_`:
 META_INSTAGRAM_APP_ID=
 META_INSTAGRAM_APP_SECRET=
 META_INSTAGRAM_REDIRECT_URI=https://www.militrin.com.br/api/instagram/oauth/callback
-META_GRAPH_API_VERSION=vXX.X
+META_GRAPH_API_VERSION=v26.0
 INSTAGRAM_TOKEN_ENCRYPTION_KEY=<segredo aleatorio com pelo menos 32 caracteres>
 ```
 
-`META_GRAPH_API_VERSION` é propositalmente obrigatória: a versão deve ser escolhida no painel/documentação vigente da Meta, evitando que um deploy passe a usar silenciosamente uma versão diferente.
+`META_GRAPH_API_VERSION` é propositalmente obrigatória e, neste hotfix, deve ser exatamente `v26.0` (Instagram Login em `graph.instagram.com`, não `graph.facebook.com`). A versão deve ser escolhida no painel/documentação vigente da Meta.
+
+O callback `GET /api/instagram/oauth/callback` é público no middleware (como deauthorize/data-deletion). O vínculo administrativo fica em `instagram_oauth_states` (nonce, admin, organização, expiração). O cookie `instagram_oauth_state` usa `Path=/`, HttpOnly, SameSite=Lax e é apagado após o callback. Sem sessão do WebView, o callback ainda conclui se o state server-side for válido.
 
 ## Configuração na Meta
 
