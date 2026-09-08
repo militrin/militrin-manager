@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { processInstagramOAuthCallback } from "../src/lib/instagram/oauth-callback.ts";
 import { INSTAGRAM_OAUTH_STATE_COOKIE, instagramOAuthStateCookieOptions, isValidInstagramOAuthState, oauthStatesMatch } from "../src/lib/instagram/oauth-cookie.ts";
 import { inspectInstagramRuntimeConfig, REQUIRED_META_GRAPH_API_VERSION, CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI, inspectInstagramRedirectUri, readInstagramRedirectUri, requireInstagramRedirectUri } from "../src/lib/instagram/oauth-config.ts";
+import { inspectInstagramAppSecret, inspectInstagramCallbackCode, inspectInstagramCodeTrim, percentDecodePreservingPlus, sha256Hex } from "../src/lib/instagram/oauth-code-inspect.ts";
 import { buildInstagramAuthorizationCodeForm, listInstagramAuthorizationCodeFormKeys } from "../src/lib/instagram/oauth-token-form.ts";
 import { instagramRedirectUriDiagnostics } from "../src/lib/instagram/oauth-log.ts";
 import { InstagramOAuthError } from "../src/lib/instagram/oauth-errors.ts";
@@ -269,7 +270,7 @@ test("mensagem Meta e sanitizada e nao vaza token/code", () => {
 });
 
 test("middleware, cookie, callback e UI de feedback estao ligados", async () => {
-  const [middleware, actions, route, page, feedback, messages, metaApi] = await Promise.all([
+  const [middleware, actions, route, page, feedback, messages, metaApi, callback] = await Promise.all([
     readFile(path.join(root, "middleware.ts"), "utf8"),
     readFile(path.join(root, "src/app/sorteios/actions.ts"), "utf8"),
     readFile(path.join(root, "src/app/api/instagram/oauth/callback/route.ts"), "utf8"),
@@ -277,6 +278,7 @@ test("middleware, cookie, callback e UI de feedback estao ligados", async () => 
     readFile(path.join(root, "src/components/sorteios/InstagramOAuthFeedback.tsx"), "utf8"),
     readFile(path.join(root, "src/lib/instagram/oauth-feedback.ts"), "utf8"),
     readFile(path.join(root, "src/lib/instagram/meta-api.ts"), "utf8"),
+    readFile(path.join(root, "src/lib/instagram/oauth-callback.ts"), "utf8"),
   ]);
 
   const publicBlock = middleware.slice(middleware.indexOf("const publicMetaCallbackPaths"), middleware.indexOf("const isPublicMetaCallback"));
@@ -315,6 +317,51 @@ test("middleware, cookie, callback e UI de feedback estao ligados", async () => 
   assert.doesNotMatch(exchange, /new URLSearchParams/);
   assert.doesNotMatch(exchange, /Content-Type/);
   assert.match(exchange, /fetch\("https:\/\/api\.instagram\.com\/oauth\/access_token", \{ method: "POST", body: form, cache: "no-store" \}\)/);
+  assert.match(exchange, /logInstagramAppSecretInspect/);
+  assert.match(exchange, /logInstagramOAuthTokenRequest/);
+  assert.match(route, /const rawUrl = request\.url/);
+  assert.match(route, /inspectInstagramCallbackCode\(rawUrl, parsedCode\)/);
+  assert.match(route, /request\.nextUrl\.searchParams\.get\("code"\)/);
+  assert.ok(route.indexOf("const rawUrl = request.url") < route.indexOf("searchParams.get(\"code\")"));
+  assert.match(callback, /inspectInstagramCodeTrim\(parsedCode\)/);
+  assert.match(callback, /const code = parsedCode\.trim\(\)/);
+});
+
+test("inspecao sanitizada do code distingue + literal de %2B e nao devolve o code", () => {
+  const plusRaw = "https://www.militrin.com.br/api/instagram/oauth/callback?code=abc+def&state=xyz";
+  const plusParsed = new URL(plusRaw).searchParams.get("code");
+  const plusInspect = inspectInstagramCallbackCode(plusRaw, plusParsed);
+  assert.equal(plusInspect.rawHasLiteralPlus, true);
+  assert.equal(plusInspect.rawHasPct2b, false);
+  assert.equal(plusInspect.parsedHasSpace, true);
+  assert.equal(plusInspect.plusPreservingParsedMatch, false);
+  assert.equal(percentDecodePreservingPlus("abc+def"), "abc+def");
+  assert.equal(plusParsed, "abc def");
+  assert.equal(JSON.stringify(plusInspect).includes("abc+def"), false);
+  assert.equal(JSON.stringify(plusInspect).includes("abc def"), false);
+
+  const encoded = "https://www.militrin.com.br/api/instagram/oauth/callback?code=abc%2Bdef&state=xyz";
+  const encodedParsed = new URL(encoded).searchParams.get("code");
+  const encodedInspect = inspectInstagramCallbackCode(encoded, encodedParsed);
+  assert.equal(encodedInspect.rawHasLiteralPlus, false);
+  assert.equal(encodedInspect.rawHasPct2b, true);
+  assert.equal(encodedInspect.parsedHasPlus, true);
+  assert.equal(encodedInspect.plusPreservingParsedMatch, true);
+  assert.equal(encodedParsed, "abc+def");
+
+  const trimInspect = inspectInstagramCodeTrim(" abc ");
+  assert.equal(trimInspect.trimChanged, true);
+  assert.equal(trimInspect.sentMatchesParsed, false);
+  assert.equal(trimInspect.sentHash, trimInspect.trimmedHash);
+  assert.equal(inspectInstagramCodeTrim("abc").trimChanged, false);
+  assert.equal(inspectInstagramCodeTrim("abc").sentMatchesParsed, true);
+
+  const secret = inspectInstagramAppSecret("  secret-value\n");
+  assert.equal(secret.present, true);
+  assert.equal(secret.hasLeadingWhitespace, true);
+  assert.equal(secret.hasCrLf, true);
+  assert.equal(secret.sha256, sha256Hex("  secret-value\n"));
+  assert.equal(JSON.stringify(secret).includes("secret-value"), false);
 });
 
 test("token exchange usa FormData multipart com os mesmos client_id e redirect do authorize", () => {

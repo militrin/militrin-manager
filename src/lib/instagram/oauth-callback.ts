@@ -1,5 +1,6 @@
 import { InstagramOAuthError, type InstagramOAuthReason } from "./oauth-errors.ts";
-import { logInstagramOAuthStage } from "./oauth-log.ts";
+import { inspectInstagramCodeTrim } from "./oauth-code-inspect.ts";
+import { logInstagramOAuthCodeTrim, logInstagramOAuthStage } from "./oauth-log.ts";
 import { isInstagramRuntimeConfigured } from "./oauth-config.ts";
 import { isValidInstagramOAuthState, oauthStatesMatch } from "./oauth-cookie.ts";
 import type { ExchangedInstagramToken, InstagramOAuthStore } from "./oauth-store.ts";
@@ -61,7 +62,10 @@ export async function processInstagramOAuthCallback(
       throw new InstagramOAuthError("oauth_context_missing", "session", "Contexto OAuth ausente ou expirado.");
     }
 
-    const code = input.code?.trim() ?? "";
+    const parsedCode = input.code ?? "";
+    const trimInspect = inspectInstagramCodeTrim(parsedCode);
+    logInstagramOAuthCodeTrim(trimInspect);
+    const code = parsedCode.trim();
     if (!code) {
       throw new InstagramOAuthError("oauth_code_missing", "token", "Codigo OAuth ausente.");
     }

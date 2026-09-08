@@ -2,17 +2,22 @@ import { NextResponse, type NextRequest } from "next/server";
 import { exchangeInstagramCode } from "@/lib/instagram/meta-api";
 import { encryptInstagramToken } from "@/lib/instagram/crypto";
 import { processInstagramOAuthCallback } from "@/lib/instagram/oauth-callback";
+import { inspectInstagramCallbackCode } from "@/lib/instagram/oauth-code-inspect";
 import { INSTAGRAM_OAUTH_STATE_COOKIE, instagramOAuthStateCookieOptions } from "@/lib/instagram/oauth-cookie";
 import { instagramOAuthRedirectSearch } from "@/lib/instagram/oauth-feedback";
+import { logInstagramOAuthCodeInspect } from "@/lib/instagram/oauth-log";
 import { createSupabaseInstagramOAuthStore } from "@/lib/instagram/oauth-store-supabase";
 import { appBaseUrl } from "@/lib/urls/app-base-url";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const rawUrl = request.url;
+  const parsedCode = request.nextUrl.searchParams.get("code");
+  logInstagramOAuthCodeInspect(inspectInstagramCallbackCode(rawUrl, parsedCode));
   const result = await processInstagramOAuthCallback(
     {
-      code: request.nextUrl.searchParams.get("code"),
+      code: parsedCode,
       state: request.nextUrl.searchParams.get("state"),
       cookieState: request.cookies.get(INSTAGRAM_OAUTH_STATE_COOKIE)?.value ?? null,
     },

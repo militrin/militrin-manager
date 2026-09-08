@@ -2,8 +2,9 @@ import "server-only";
 import { InstagramOAuthError } from "@/lib/instagram/oauth-errors";
 import { readMetaError } from "@/lib/instagram/meta-error";
 import { isInstagramRuntimeConfigured, requireInstagramRedirectUri } from "@/lib/instagram/oauth-config";
-import { logInstagramRedirectUri } from "@/lib/instagram/oauth-log";
+import { instagramRedirectUriDiagnostics, logInstagramAppSecretInspect, logInstagramOAuthTokenRequest, logInstagramRedirectUri } from "@/lib/instagram/oauth-log";
 import { buildInstagramAuthorizationCodeForm } from "@/lib/instagram/oauth-token-form";
+import { inspectInstagramAppSecret, sha256Hex } from "@/lib/instagram/oauth-code-inspect";
 
 const apiVersion = process.env.META_GRAPH_API_VERSION?.trim();
 const graphBase = "https://graph.instagram.com";
@@ -82,6 +83,19 @@ export async function exchangeInstagramCode(code: string) {
   const clientSecret = process.env.META_INSTAGRAM_APP_SECRET!;
   const redirectUri = requireInstagramRedirectUri();
   logInstagramRedirectUri("oauth_token_exchange", redirectUri);
+  const secretInspect = inspectInstagramAppSecret(clientSecret);
+  logInstagramAppSecretInspect(secretInspect);
+  const redirect = instagramRedirectUriDiagnostics(redirectUri);
+  logInstagramOAuthTokenRequest({
+    clientIdLast4: clientId.slice(-4),
+    clientSecretLength: secretInspect.length,
+    clientSecretHashPrefix: secretInspect.hashPrefix,
+    redirectUriLength: redirect.redirect_uri_length,
+    redirectUriHash: redirect.redirect_uri_hash,
+    codeLength: code.length,
+    codeHash: sha256Hex(code),
+    grantType: "authorization_code",
+  });
   const form = buildInstagramAuthorizationCodeForm({
     clientId,
     clientSecret,
