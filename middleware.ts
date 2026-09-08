@@ -57,6 +57,11 @@ export async function middleware(request: NextRequest) {
   ];
   const isPublicFirstAccessResend = pathname === '/primeiro-acesso/reenviar';
   const requiresAuth = protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) && !isPublicFirstAccessResend;
+  const publicMetaCallbackPaths = new Set([
+    '/api/instagram/deauthorize',
+    '/api/instagram/data-deletion',
+  ]);
+  const isPublicMetaCallback = publicMetaCallbackPaths.has(pathname);
   const protectedApiPrefixes = [
     '/api/ingressos',
     '/api/inscricao',
@@ -64,7 +69,7 @@ export async function middleware(request: NextRequest) {
     '/api/loja',
     '/api/relatorios',
   ];
-  const isProtectedApi = protectedApiPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  const isProtectedApi = !isPublicMetaCallback && protectedApiPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 
   const loginRedirect = request.nextUrl.clone();
   loginRedirect.pathname = '/entrar';

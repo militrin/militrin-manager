@@ -37,9 +37,13 @@ INSTAGRAM_TOKEN_ENCRYPTION_KEY=<segredo aleatorio com pelo menos 32 caracteres>
 
 1. Crie ou selecione um app no Meta for Developers e adicione o produto Instagram.
 2. Configure Instagram API with Instagram Login e cadastre exatamente a redirect URI acima (troque o domínio em homologação).
-3. Solicite `instagram_business_basic` e `instagram_business_manage_comments`. Em modo Development, adicione a conta profissional como tester; para contas externas, conclua App Review e Business Verification quando o painel exigir.
-4. A conta `@militrinoktober` precisa ser profissional Business ou Creator e aceitar o convite/teste enquanto o app não estiver Live.
-5. Aplique a migration `20260919000000_instagram_giveaways.sql` e configure as cinco variáveis no ambiente do servidor.
+3. No App Dashboard da Meta, cadastre também os callbacks técnicos (POST, públicos, `signed_request`):
+   - URL de retorno de chamada de desautorização: `https://www.militrin.com.br/api/instagram/deauthorize`
+   - URL de solicitação de exclusão de dados: `https://www.militrin.com.br/api/instagram/data-deletion`
+   O status público do pedido de exclusão fica em `/exclusao-de-dados/status/<confirmation_code>`. O formulário humano `/exclusao-de-dados` não é o ping da Meta.
+4. Solicite `instagram_business_basic` e `instagram_business_manage_comments`. Em modo Development, adicione a conta profissional como tester; para contas externas, conclua App Review e Business Verification quando o painel exigir.
+5. A conta `@militrinoktober` precisa ser profissional Business ou Creator e aceitar o convite/teste enquanto o app não estiver Live.
+6. Aplique as migrations de Instagram/giveaways e de callbacks Meta, e configure as cinco variáveis no ambiente do servidor.
 
 ## Semântica e limitações
 
