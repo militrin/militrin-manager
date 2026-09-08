@@ -1,14 +1,15 @@
 "use client";
 
 import { SlideOverPanel } from "@/components/admin/SlideOverPanel";
-import { INSTAGRAM_HANDLE, PRIZE_NAME } from "./types";
+import { PRIZE_NAME } from "./types";
 
 type RulesDialogProps = {
   open: boolean;
   onClose: () => void;
+  instagramHandle: string;
 };
 
-export function RulesDialog({ open, onClose }: RulesDialogProps) {
+export function RulesDialog({ open, onClose, instagramHandle }: RulesDialogProps) {
   return (
     <SlideOverPanel open={open} onClose={onClose} title="Regras do sorteio">
       <div className="space-y-5 text-sm text-slate-300">
@@ -22,7 +23,7 @@ export function RulesDialog({ open, onClose }: RulesDialogProps) {
           <ol className="mt-2 space-y-3">
             <li className="flex gap-3">
               <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-emerald-300">1</span>
-              <span>Seguir {INSTAGRAM_HANDLE}</span>
+              <span>Seguir {instagramHandle}</span>
             </li>
             <li className="flex gap-3">
               <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-emerald-300">2</span>
@@ -34,9 +35,19 @@ export function RulesDialog({ open, onClose }: RulesDialogProps) {
             </li>
             <li className="flex gap-3">
               <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-emerald-300">4</span>
-              <span>Compartilhar o post oficial nos Stories, marcando {INSTAGRAM_HANDLE}.</span>
+              <span>Compartilhar o post oficial nos Stories, marcando {instagramHandle}.</span>
             </li>
           </ol>
+        </section>
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Regras do sorteio</p>
+          <ul className="mt-2 space-y-1 text-sm text-slate-300">
+            <li>Cada comentário = 1 chance</li>
+            <li>Número mínimo de menções: conforme regulamento (verificação manual)</li>
+            <li>Comentários inválidos ou desqualificados saem do pool</li>
+            <li>Critérios manuais: seguir, curtir e Stories</li>
+          </ul>
         </section>
 
         <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400">

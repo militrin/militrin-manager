@@ -1,4 +1,4 @@
-import { INSTAGRAM_HANDLE, PRIZE_NAME } from "./types";
+import { PRIZE_NAME } from "./types";
 
 const WIDTH = 1080;
 const HEIGHT = 1920;
@@ -58,7 +58,7 @@ export async function buildShareImageBlob(username: string): Promise<Blob> {
 
   ctx.fillStyle = "#94a3b8";
   ctx.font = "500 38px Arial";
-  ctx.fillText(INSTAGRAM_HANDLE, WIDTH / 2, HEIGHT - 140);
+  ctx.fillText("Militrin", WIDTH / 2, HEIGHT - 140);
 
   return await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {

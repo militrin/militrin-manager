@@ -1,7 +1,5 @@
 import { jsPDF } from "jspdf";
 import {
-  INSTAGRAM_HANDLE,
-  INSTAGRAM_POST_ID,
   PRIZE_NAME,
   type ParticipationEntry,
   type SorteioSession,
@@ -56,7 +54,7 @@ export function buildComprovantePdf(session: SorteioSession) {
   };
 
   field("Prêmio", PRIZE_NAME);
-  field("Post oficial", INSTAGRAM_POST_ID);
+  field("Post oficial", session.instagramMediaPermalink || session.id);
   field("Identificador do sorteio", session.id);
   field("Data/hora da importação", formatDateTime(session.importedAt));
   field("Data/hora do sorteio", formatDateTime(session.currentDrawAt));
@@ -131,7 +129,7 @@ export function buildComprovantePdf(session: SorteioSession) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...MUTED);
-  doc.text(`Comprovante gerado em ${new Date().toLocaleString("pt-BR")} · ${INSTAGRAM_HANDLE}`, marginX, pageHeight - 30);
+  doc.text(`Comprovante gerado em ${new Date().toLocaleString("pt-BR")} · Militrin`, marginX, pageHeight - 30);
 
   return doc;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   AtSign,
@@ -21,7 +22,7 @@ import { AdminActivityTimeline, type AdminTimelineItem } from "@/components/admi
 import { AdminEmptyState, AdminSection, AdminStatCard } from "@/components/admin";
 import { parseSorteioCsv, type CsvImportSummary } from "./csv";
 import { pickSecureRandomEntry } from "./random";
-import { archiveSession, createEmptySession, loadArchivedSessions, loadSession, makeHistoryEventId, saveSession } from "./storage";
+import { archiveSession, loadArchivedSessions, loadSession, makeHistoryEventId, saveSession } from "./storage";
 import { RouletteAnimation } from "./RouletteAnimation";
 import { RulesDialog } from "./RulesDialog";
 import { DisqualifyModal } from "./DisqualifyModal";
@@ -31,11 +32,11 @@ import { TransparencyPanel } from "./TransparencyPanel";
 import { downloadComprovantePdf } from "./pdf";
 import { downloadShareImage } from "./share-image";
 import { InstagramImport } from "./InstagramImport";
-import { persistGiveawaySession, type InstagramIntegrationStatus } from "@/app/sorteios/actions";
+import { persistGiveawaySession } from "@/app/sorteios/giveaway-actions";
+import type { InstagramIntegrationStatus } from "@/app/sorteios/instagram-actions";
 import {
   EMPTY_CHECKLIST,
-  INSTAGRAM_HANDLE,
-  INSTAGRAM_POST_URL,
+  formatInstagramHandle,
   type ArchivedSession,
   type DisqualificationReason,
   type HistoryEventType,
@@ -43,6 +44,7 @@ import {
   type SorteioSession,
   type ValidationChecklistState,
 } from "./types";
+import { canChangeGiveawayPost, canImportGiveawayCsv, canSyncGiveawayComments, isAwaitingValidationStatus, isCompletedStatus, isDrawingStatus, isReadyStatus } from "@/lib/giveaways/status";
 
 type Tab = "sorteio" | "participacoes" | "transparencia";
 
@@ -68,6 +70,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   const [showDisqualify, setShowDisqualify] = useState(false);
   const [showConfirmWinner, setShowConfirmWinner] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showStartConfirm, setShowStartConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const persistenceQueue = useRef<Promise<void>>(Promise.resolve());
   const databaseIdRef = useRef<string | null>(initialSession?.databaseId ?? null);
@@ -77,15 +80,21 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   const [criticalPending, setCriticalPending] = useState(false);
 
   useEffect(() => {
-    // Leitura do localStorage é síncrona, mas adiada para o próximo microtask
-    // para não disparar setState diretamente no corpo do efeito de montagem.
     queueMicrotask(() => {
-      const loaded = initialSession ?? loadSession();
-      databaseIdRef.current = loaded.databaseId;
-      setSession(loaded);
-      setArchived(loadArchivedSessions());
+      if (initialSession) {
+        databaseIdRef.current = initialSession.databaseId;
+        setSession(initialSession);
+        setArchived(loadArchivedSessions());
+        return;
+      }
+      if (!persistenceAvailable) {
+        const loaded = loadSession();
+        databaseIdRef.current = loaded.databaseId;
+        setSession(loaded);
+        setArchived(loadArchivedSessions());
+      }
     });
-  }, [initialSession]);
+  }, [initialSession, persistenceAvailable]);
 
   useEffect(() => {
     if (session) saveSession(session);
@@ -104,7 +113,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   }, []);
 
   useEffect(() => {
-    if (!persistenceAvailable || !session || session.entries.length === 0) return;
+    if (!persistenceAvailable || !session || !session.databaseId || session.entries.length === 0) return;
     autosaveTimerRef.current = window.setTimeout(async () => {
       try {
         const persisted = await persistQueued(session);
@@ -113,7 +122,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
           setSession((current) => current ? { ...current, databaseId: persisted.databaseId, snapshotFrozenAt: persisted.snapshotFrozenAt } : current);
         }
       } catch (value) {
-        setPersistenceError(value instanceof Error ? value.message : "Falha ao persistir o sorteio.");
+        setPersistenceError(value instanceof Error ? value.message : "Não foi possível salvar o sorteio.");
       }
     }, 350);
     return () => {
@@ -127,11 +136,20 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   }, []);
 
   if (!session) {
-    return <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">Carregando sorteio…</div>;
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300">
+        {initialSession === null && persistenceAvailable
+          ? "Não foi possível abrir este sorteio. Volte à central e escolha um sorteio da lista."
+          : "Carregando sorteio…"}
+      </div>
+    );
   }
   const currentSession = session;
-
-  const isCsvLocked = session.snapshotFrozenAt !== null || (session.status !== "empty" && session.status !== "ready");
+  const instagramHandle = formatInstagramHandle(initialInstagramStatus.username) ?? "a conta oficial";
+  const frozen = session.snapshotFrozenAt !== null;
+  const canImportCsv = canImportGiveawayCsv(session.status, session.snapshotFrozenAt) && session.source === "csv";
+  const canSync = canSyncGiveawayComments(session.status, session.snapshotFrozenAt) && session.source === "instagram";
+  const canChangePost = canChangeGiveawayPost(session.status, session.snapshotFrozenAt) && session.source === "instagram";
   const uniqueParticipants = new Set(session.entries.map((e) => e.username.toLowerCase())).size;
   const activePool = session.entries.filter((e) => e.status === "active");
   const winnerEntry = session.entries.find((e) => e.commentId === session.currentWinnerCommentId) ?? null;
@@ -140,6 +158,10 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   const noEligibleParticipants = session.entries.length > 0 && activePool.length === 0;
 
   function processFile(file: File) {
+    if (!canImportCsv) {
+      setImportError("A importação CSV está bloqueada neste sorteio.");
+      return;
+    }
     setImportError(null);
     setImportSummary(null);
     const reader = new FileReader();
@@ -156,7 +178,11 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
         entries: result.entries,
         source: "csv",
         instagramMediaId: null,
-        instagramMediaPermalink: null,
+        instagramMediaPermalink: prev.instagramMediaPermalink && prev.source === "csv" ? prev.instagramMediaPermalink : null,
+        instagramMediaType: null,
+        instagramCaptionSnapshot: null,
+        instagramThumbnailUrl: null,
+        instagramPublishedAt: null,
         instagramIntegrationId: null,
         snapshotFrozenAt: null,
         importedFileName: file.name,
@@ -189,6 +215,10 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
       source: "instagram",
       instagramMediaId: value.mediaId,
       instagramMediaPermalink: value.permalink,
+      instagramCaptionSnapshot: prev.instagramCaptionSnapshot,
+      instagramMediaType: prev.instagramMediaType,
+      instagramThumbnailUrl: prev.instagramThumbnailUrl,
+      instagramPublishedAt: prev.instagramPublishedAt,
       instagramIntegrationId: value.integrationId,
       importedFileName: null,
       importedAt: value.syncedAt,
@@ -233,7 +263,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
       setSession(persisted);
       return persisted;
     } catch (value) {
-      setPersistenceError(value instanceof Error ? value.message : "Falha ao persistir a operacao critica.");
+      setPersistenceError(value instanceof Error ? value.message : "Não foi possível salvar esta operação.");
       return null;
     } finally {
       criticalPendingRef.current = false;
@@ -245,7 +275,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
     const winner = pickSecureRandomEntry(pool);
     const candidate: SorteioSession = {
       ...base,
-      status: "drawing",
+      status: "running",
       currentWinnerCommentId: winner.commentId,
       currentDrawAt: new Date().toISOString(),
       currentChecklist: { ...EMPTY_CHECKLIST },
@@ -260,8 +290,8 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   }
 
   async function handleDrawClick() {
-    if (currentSession.status !== "ready" || activePool.length === 0 || criticalPending) return;
-    await startDraw("draw_started", activePool);
+    if (!isReadyStatus(currentSession.status) || activePool.length === 0 || criticalPending) return;
+    setShowStartConfirm(true);
   }
 
   async function handleAnimationComplete() {
@@ -319,7 +349,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   async function handleConfirmWinnerFinal() {
     const candidate: SorteioSession = {
       ...currentSession,
-      status: "finalized",
+      status: "completed",
       confirmedWinner: currentSession.currentWinnerCommentId
         ? { commentId: currentSession.currentWinnerCommentId, confirmedAt: new Date().toISOString() }
         : null,
@@ -333,13 +363,10 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
 
   function handleResetConfirmed() {
     setShowResetConfirm(false);
+    if (frozen) return;
     archiveSession(session!);
     setArchived(loadArchivedSessions());
-    databaseIdRef.current = null;
-    setSession(createEmptySession());
-    setImportSummary(null);
-    setImportError(null);
-    setTab("sorteio");
+    window.location.assign("/sorteios");
   }
 
   const timelineItems: AdminTimelineItem[] = session.history
@@ -355,17 +382,21 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4">
-        <div className="flex items-center gap-2 text-sm text-slate-300">
-          <AtSign size={16} className="text-emerald-300" />
-          <span className="font-medium text-white">{INSTAGRAM_HANDLE}</span>
-          <a
-            href={INSTAGRAM_POST_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="ml-2 inline-flex items-center gap-1 text-xs text-slate-400 hover:text-emerald-300"
-          >
-            Ver post oficial <ExternalLink size={12} />
-          </a>
+        <div className="space-y-1 text-sm text-slate-300">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/sorteios" className="text-xs text-slate-400 hover:text-emerald-300">← Central de sorteios</Link>
+            <span className="font-medium text-white">{session.name}</span>
+            <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-slate-400">{session.source === "instagram" ? "Instagram" : "CSV legado / snapshot existente"}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <AtSign size={16} className="text-emerald-300" />
+            <span>Instagram conectado: {instagramHandle}</span>
+            {session.instagramMediaPermalink ? (
+              <a href={session.instagramMediaPermalink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-emerald-300">
+                Ver publicação <ExternalLink size={12} />
+              </a>
+            ) : null}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -377,7 +408,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
           </button>
           <button
             type="button"
-            disabled={session.status === "empty" || criticalPending}
+            disabled={frozen || criticalPending}
             onClick={() => setShowResetConfirm(true)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -421,15 +452,20 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
             />
           </div>
 
-          <AdminSection compact title="Importar comentários" description="CSV exportado do Instagram: entry_number, comment_id, username, comment, mentions_count, mentions, comment_url, chance.">
-            <InstagramImport locked={isCsvLocked} initialStatus={initialInstagramStatus} onImported={handleInstagramImported} />
-            <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wider text-slate-500"><span className="h-px flex-1 bg-slate-800" />ou CSV<span className="h-px flex-1 bg-slate-800" /></div>
-            {isCsvLocked ? (
-              <AdminEmptyState
-                title="Sorteio em andamento"
-                description="Para importar um novo arquivo é preciso resetar o sorteio atual formalmente."
-              />
-            ) : (
+          <AdminSection compact title="Fonte e sincronização" description={session.source === "csv" ? "CSV legado ou arquivo importado. Snapshot congelado permanece imutável." : "Comentários oficiais da publicação vinculada a este sorteio."}>
+            <InstagramImport
+              giveawayId={session.databaseId ?? ""}
+              locked={frozen || (!canSync && !canChangePost)}
+              canChangePost={canChangePost}
+              source={session.source}
+              permalink={session.instagramMediaPermalink}
+              mediaId={session.instagramMediaId}
+              initialStatus={initialInstagramStatus}
+              onImported={handleInstagramImported}
+            />
+            {session.source === "csv" && canImportCsv ? (
+              <>
+                <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wider text-slate-500"><span className="h-px flex-1 bg-slate-800" />CSV<span className="h-px flex-1 bg-slate-800" /></div>
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -452,12 +488,18 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
                 </button>
                 <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileInput} />
               </div>
-            )}
+              </>
+            ) : session.source === "csv" ? (
+              <AdminEmptyState
+                title="Snapshot congelado"
+                description="Importação CSV, sincronização e troca de publicação estão bloqueadas neste sorteio."
+              />
+            ) : null}
 
             {importError ? (
               <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{importError}</p>
             ) : null}
-            {persistenceError ? <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">Supabase: {persistenceError}</p> : null}
+            {persistenceError ? <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{persistenceError}</p> : null}
 
             {importSummary ? (
               <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">
@@ -476,7 +518,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
 
           {session.entries.length === 0 ? null : (
             <AdminSection compact title="Sorteio">
-              {session.status === "ready" ? (
+              {isReadyStatus(session.status) ? (
                 noEligibleParticipants ? (
                   <AdminEmptyState title="Não há mais participantes elegíveis" description="Todos os comentários foram desclassificados neste sorteio." />
                 ) : (
@@ -484,23 +526,24 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
                     <Trophy className="mx-auto text-emerald-300" size={32} />
                     <h3 className="mt-2 text-lg font-semibold text-white">PRONTO PARA SORTEAR</h3>
                     <p className="mt-1 text-sm text-slate-300">{activePool.length} chances carregadas.</p>
+                    <p className="mt-1 text-xs text-slate-400">{session.entries.length} comentários · {uniqueParticipants} participantes · {session.entries.length} chances</p>
                     <button
                       type="button"
                       disabled={criticalPending}
                       onClick={handleDrawClick}
                       className="mx-auto mt-4 inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-300"
                     >
-                      <Sparkles size={20} /> REALIZAR SORTEIO
+                      <Sparkles size={20} /> INICIAR SORTEIO
                     </button>
                   </div>
                 )
               ) : null}
 
-              {session.status === "drawing" ? (
+              {isDrawingStatus(session.status) ? (
                 <RouletteAnimation key={drawAttempt} pool={drawPool} winner={winnerEntry ?? drawPool[0]} onComplete={handleAnimationComplete} />
               ) : null}
 
-              {session.status === "awaiting_validation" && winnerEntry ? (
+              {isAwaitingValidationStatus(session.status) && winnerEntry ? (
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">E o(a) ganhador(a) é...</p>
@@ -532,10 +575,10 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
                     </p>
                     <div className="mt-3 space-y-2">
                       {([
-                        ["follows", `Segue ${INSTAGRAM_HANDLE}`],
+                        ["follows", `Segue ${instagramHandle}`],
                         ["liked", "Curtiu a publicação oficial"],
                         ["taggedFriends", "Marcou os amigos conforme regulamento"],
-                        ["sharedStory", `Compartilhou nos Stories marcando ${INSTAGRAM_HANDLE}`],
+                        ["sharedStory", `Compartilhou nos Stories marcando ${instagramHandle}`],
                       ] as const).map(([key, label]) => (
                         <label key={key} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-200">
                           <input
@@ -578,7 +621,7 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
                 </div>
               ) : null}
 
-              {session.status === "finalized" && confirmedWinnerEntry ? (
+              {isCompletedStatus(session.status) && confirmedWinnerEntry ? (
                 <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-6">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Ganhador confirmado</p>
                   <p className="mt-2 text-3xl font-bold text-white">@{confirmedWinnerEntry.username}</p>
@@ -633,13 +676,26 @@ export function SorteioApp({ initialSession = null, persistenceAvailable = true,
         </AdminSection>
       ) : null}
 
-      <RulesDialog open={showRules} onClose={() => setShowRules(false)} />
+      <RulesDialog open={showRules} onClose={() => setShowRules(false)} instagramHandle={instagramHandle} />
 
       <DisqualifyModal
         open={showDisqualify}
         winner={winnerEntry}
         onClose={() => setShowDisqualify(false)}
         onConfirm={handleDisqualifyConfirm}
+        pending={criticalPending}
+      />
+
+      <StrongConfirmModal
+        open={showStartConfirm}
+        title="Iniciar sorteio"
+        description="Após iniciar, o snapshot ficará congelado."
+        confirmLabel="INICIAR E CONGELAR SNAPSHOT"
+        onCancel={() => setShowStartConfirm(false)}
+        onConfirm={async () => {
+          setShowStartConfirm(false);
+          await startDraw("draw_started", activePool);
+        }}
         pending={criticalPending}
       />
 

@@ -1,3 +1,4 @@
+import { DEFAULT_GIVEAWAY_RULES } from "@/lib/giveaways/status";
 import { EMPTY_CHECKLIST, type ArchivedSession, type SorteioSession } from "./types";
 
 const SESSION_KEY = "militrin-sorteio-session-v1";
@@ -25,6 +26,8 @@ export function createEmptySession(): SorteioSession {
   return {
     databaseId: null,
     id: generateSorteioId(),
+    name: "Novo sorteio",
+    description: null,
     createdAt: new Date().toISOString(),
     importedFileName: null,
     importedAt: null,
@@ -39,8 +42,13 @@ export function createEmptySession(): SorteioSession {
     source: "csv",
     instagramMediaId: null,
     instagramMediaPermalink: null,
+    instagramMediaType: null,
+    instagramCaptionSnapshot: null,
+    instagramThumbnailUrl: null,
+    instagramPublishedAt: null,
     instagramIntegrationId: null,
     snapshotFrozenAt: null,
+    rules: { ...DEFAULT_GIVEAWAY_RULES },
   };
 }
 
@@ -55,11 +63,18 @@ export function loadSession(): SorteioSession {
       ...parsed,
       databaseId: parsed.databaseId ?? null,
       entries: Array.isArray(parsed.entries) ? parsed.entries.map((entry) => ({ ...entry, commentCreatedAt: entry.commentCreatedAt ?? null })) : [],
+      name: parsed.name ?? parsed.id,
+      description: parsed.description ?? null,
       source: parsed.source ?? "csv",
       instagramMediaId: parsed.instagramMediaId ?? null,
       instagramMediaPermalink: parsed.instagramMediaPermalink ?? null,
+      instagramMediaType: parsed.instagramMediaType ?? null,
+      instagramCaptionSnapshot: parsed.instagramCaptionSnapshot ?? null,
+      instagramThumbnailUrl: parsed.instagramThumbnailUrl ?? null,
+      instagramPublishedAt: parsed.instagramPublishedAt ?? null,
       instagramIntegrationId: parsed.instagramIntegrationId ?? null,
       snapshotFrozenAt: parsed.snapshotFrozenAt ?? null,
+      rules: parsed.rules ?? { ...DEFAULT_GIVEAWAY_RULES },
     };
   } catch {
     return createEmptySession();

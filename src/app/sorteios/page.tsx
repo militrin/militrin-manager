@@ -1,9 +1,9 @@
-import { Sidebar } from "@/components/dashboard/Sidebar";
-import { AdminPageHeader } from "@/components/admin";
-import { requireAdministrativePanelAccess } from "@/lib/admin/panel-access";
 import { InstagramOAuthFeedback } from "@/components/sorteios/InstagramOAuthFeedback";
-import { SorteioApp } from "@/components/sorteios/SorteioApp";
-import { getInstagramStatus, loadLatestGiveawaySession } from "./actions";
+import { GiveawayHub } from "@/components/sorteios/GiveawayHub";
+import { SorteiosShell } from "@/components/sorteios/SorteiosShell";
+import { requireAdministrativePanelAccess } from "@/lib/admin/panel-access";
+import { getInstagramStatus } from "./instagram-actions";
+import { listGiveaways } from "./giveaway-actions";
 
 export default async function SorteiosPage({
   searchParams,
@@ -11,22 +11,19 @@ export default async function SorteiosPage({
   searchParams: Promise<{ instagram?: string; reason?: string }>;
 }) {
   await requireAdministrativePanelAccess();
-  const [bootstrap, instagramStatus, params] = await Promise.all([
-    loadLatestGiveawaySession(),
+  const [list, instagramStatus, params] = await Promise.all([
+    listGiveaways(),
     getInstagramStatus(),
     searchParams,
   ]);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-3 py-4 text-slate-100 sm:px-5 lg:px-6">
-      <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
-        <Sidebar />
-        <div className="min-w-0 flex-1 space-y-4">
-          <AdminPageHeader compact title="Sorteador Militrin 🍀" subtitle="Sorteio oficial • 1 KIT MILITRIN" />
-          <InstagramOAuthFeedback instagram={params.instagram} reason={params.reason} />
-          <SorteioApp initialSession={bootstrap.session} persistenceAvailable={bootstrap.persistence === "available"} initialInstagramStatus={instagramStatus} />
-        </div>
-      </div>
-    </main>
+    <SorteiosShell title="Sorteios" subtitle="Central de sorteios reutilizável. O sorteio oficial permanece intacto.">
+      <InstagramOAuthFeedback instagram={params.instagram} reason={params.reason} />
+      <GiveawayHub
+        items={list.items}
+        instagramStatus={instagramStatus}
+      />
+    </SorteiosShell>
   );
 }

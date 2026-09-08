@@ -23,7 +23,7 @@ test("erro nao relacionado ao schema continua sendo erro real", () => {
 
 test("modo local preserva importador CSV quando persistencia esta indisponivel", () => {
   const app = readFileSync(new URL("../src/components/sorteios/SorteioApp.tsx", import.meta.url), "utf8");
-  const instagram = readFileSync(new URL("../src/components/sorteios/InstagramImport.tsx", import.meta.url), "utf8");
+  const instagram = readFileSync(new URL("../src/components/sorteios/InstagramConnectionCard.tsx", import.meta.url), "utf8");
   assert.match(app, /if \(!persistenceAvailable\)/);
   assert.match(app, /parseSorteioCsv/);
   assert.match(instagram, /O sorteio por CSV continua disponível/);

@@ -21,7 +21,11 @@ function assertGraphInstagramUrl(value: string) {
   }
 }
 
-type MetaPage<T> = { data?: T[]; paging?: { next?: string }; error?: { message?: string } };
+type MetaPage<T> = {
+  data?: T[];
+  paging?: { next?: string; cursors?: { after?: string } };
+  error?: { message?: string };
+};
 
 type MetaErrorBody = { error?: { code?: number; error_subcode?: number; type?: string; message?: string } };
 
@@ -139,8 +143,31 @@ export async function refreshInstagramAccessToken(accessToken: string) {
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? null };
 }
 
+const INSTAGRAM_MEDIA_FIELDS = "id,caption,media_type,permalink,timestamp,thumbnail_url,media_url";
+
 export async function listInstagramMedia(userId: string, accessToken: string) {
-  return allPages<InstagramMedia>(versioned(`${userId}/media?fields=id,caption,media_type,permalink,timestamp,thumbnail_url&limit=100`), accessToken);
+  return allPages<InstagramMedia>(versioned(`${userId}/media?fields=${INSTAGRAM_MEDIA_FIELDS}&limit=100`), accessToken);
+}
+
+export async function listInstagramMediaPage(userId: string, accessToken: string, after?: string | null) {
+  const url = new URL(versioned(`${userId}/media`));
+  url.searchParams.set("fields", INSTAGRAM_MEDIA_FIELDS);
+  url.searchParams.set("limit", "24");
+  if (after) url.searchParams.set("after", after);
+  const page = await metaJson<MetaPage<InstagramMedia>>(url.toString(), accessToken);
+  let nextCursor = page.paging?.cursors?.after ?? null;
+  if (!nextCursor && page.paging?.next) {
+    try {
+      nextCursor = new URL(page.paging.next).searchParams.get("after");
+    } catch {
+      nextCursor = null;
+    }
+  }
+  return { items: page.data ?? [], nextCursor: nextCursor || null };
+}
+
+export async function getInstagramMedia(mediaId: string, accessToken: string) {
+  return metaJson<InstagramMedia>(versioned(`${mediaId}?fields=${INSTAGRAM_MEDIA_FIELDS}`), accessToken);
 }
 
 export async function listInstagramComments(mediaId: string, accessToken: string) {

@@ -272,7 +272,7 @@ test("mensagem Meta e sanitizada e nao vaza token/code", () => {
 test("middleware, cookie, callback e UI de feedback estao ligados", async () => {
   const [middleware, actions, route, page, feedback, messages, metaApi, callback] = await Promise.all([
     readFile(path.join(root, "middleware.ts"), "utf8"),
-    readFile(path.join(root, "src/app/sorteios/actions.ts"), "utf8"),
+    readFile(path.join(root, "src/app/sorteios/instagram-actions.ts"), "utf8"),
     readFile(path.join(root, "src/app/api/instagram/oauth/callback/route.ts"), "utf8"),
     readFile(path.join(root, "src/app/sorteios/page.tsx"), "utf8"),
     readFile(path.join(root, "src/components/sorteios/InstagramOAuthFeedback.tsx"), "utf8"),

@@ -14,7 +14,7 @@ export type ParticipationEntry = {
 };
 
 export const DISQUALIFICATION_REASONS = [
-  { value: "not_following", label: "Não segue @militrinoktober" },
+  { value: "not_following", label: "Não segue a conta oficial" },
   { value: "not_liked", label: "Não curtiu a publicação" },
   { value: "not_tagged_friends", label: "Não marcou os amigos conforme regulamento" },
   { value: "not_shared_story", label: "Não compartilhou nos Stories" },
@@ -66,16 +66,33 @@ export type HistoryEvent = {
   detail?: string;
 };
 
-export type SorteioStatus = "empty" | "ready" | "drawing" | "awaiting_validation" | "finalized";
+export type SorteioStatus =
+  | "empty"
+  | "draft"
+  | "preparing"
+  | "ready"
+  | "drawing"
+  | "running"
+  | "awaiting_validation"
+  | "finalized"
+  | "completed"
+  | "cancelled";
 
 export type ConfirmedWinner = {
   commentId: string;
   confirmedAt: string;
 };
 
+export type GiveawayRules = {
+  chancePerComment: number;
+  minMentions: number;
+};
+
 export type SorteioSession = {
   databaseId: string | null;
   id: string;
+  name: string;
+  description: string | null;
   createdAt: string;
   importedFileName: string | null;
   importedAt: string | null;
@@ -90,13 +107,20 @@ export type SorteioSession = {
   source: "csv" | "instagram";
   instagramMediaId: string | null;
   instagramMediaPermalink: string | null;
+  instagramMediaType: string | null;
+  instagramCaptionSnapshot: string | null;
+  instagramThumbnailUrl: string | null;
+  instagramPublishedAt: string | null;
   instagramIntegrationId: string | null;
   snapshotFrozenAt: string | null;
+  rules: GiveawayRules;
 };
 
 export type ArchivedSession = SorteioSession & { archivedAt: string };
 
 export const PRIZE_NAME = "1 KIT MILITRIN";
-export const INSTAGRAM_HANDLE = "@militrinoktober";
-export const INSTAGRAM_POST_URL = "https://www.instagram.com/p/Dcb8sKsJ91b/";
-export const INSTAGRAM_POST_ID = "Dcb8sKsJ91b";
+
+export function formatInstagramHandle(username?: string | null) {
+  const value = username?.replace(/^@/, "").trim();
+  return value ? `@${value}` : null;
+}
