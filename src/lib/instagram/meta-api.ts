@@ -1,7 +1,8 @@
 import "server-only";
 import { InstagramOAuthError } from "@/lib/instagram/oauth-errors";
 import { readMetaError } from "@/lib/instagram/meta-error";
-import { isInstagramRuntimeConfigured } from "@/lib/instagram/oauth-config";
+import { isInstagramRuntimeConfigured, requireInstagramRedirectUri } from "@/lib/instagram/oauth-config";
+import { logInstagramRedirectUri } from "@/lib/instagram/oauth-log";
 
 const apiVersion = process.env.META_GRAPH_API_VERSION?.trim();
 const graphBase = "https://graph.instagram.com";
@@ -61,8 +62,9 @@ async function allPages<T>(firstUrl: string, accessToken: string): Promise<T[]> 
 
 export function instagramAuthorizeUrl(state: string) {
   const clientId = process.env.META_INSTAGRAM_APP_ID;
-  const redirectUri = process.env.META_INSTAGRAM_REDIRECT_URI;
+  const redirectUri = requireInstagramRedirectUri();
   if (!clientId || !redirectUri) throw new Error("META_INSTAGRAM_APP_ID e META_INSTAGRAM_REDIRECT_URI sao obrigatorios.");
+  logInstagramRedirectUri("oauth_authorize", redirectUri);
   const params = new URLSearchParams({
     enable_fb_login: "0", force_authentication: "1", client_id: clientId,
     redirect_uri: redirectUri, response_type: "code", state,
@@ -77,7 +79,8 @@ export async function exchangeInstagramCode(code: string) {
   }
   const clientId = process.env.META_INSTAGRAM_APP_ID!;
   const clientSecret = process.env.META_INSTAGRAM_APP_SECRET!;
-  const redirectUri = process.env.META_INSTAGRAM_REDIRECT_URI!;
+  const redirectUri = requireInstagramRedirectUri();
+  logInstagramRedirectUri("oauth_token_exchange", redirectUri);
   const form = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "authorization_code", redirect_uri: redirectUri, code });
   const shortResponse = await fetch("https://api.instagram.com/oauth/access_token", { method: "POST", body: form, cache: "no-store" });
   const short = await shortResponse.json() as { access_token?: string; user_id?: number; error_message?: string; error_type?: string; code?: number };

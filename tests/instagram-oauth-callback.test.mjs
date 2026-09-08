@@ -6,7 +6,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { processInstagramOAuthCallback } from "../src/lib/instagram/oauth-callback.ts";
 import { INSTAGRAM_OAUTH_STATE_COOKIE, instagramOAuthStateCookieOptions, isValidInstagramOAuthState, oauthStatesMatch } from "../src/lib/instagram/oauth-cookie.ts";
-import { inspectInstagramRuntimeConfig, REQUIRED_META_GRAPH_API_VERSION } from "../src/lib/instagram/oauth-config.ts";
+import { inspectInstagramRuntimeConfig, REQUIRED_META_GRAPH_API_VERSION, CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI, inspectInstagramRedirectUri, readInstagramRedirectUri, requireInstagramRedirectUri } from "../src/lib/instagram/oauth-config.ts";
+import { instagramRedirectUriDiagnostics } from "../src/lib/instagram/oauth-log.ts";
 import { InstagramOAuthError } from "../src/lib/instagram/oauth-errors.ts";
 import {
   INSTAGRAM_OAUTH_ERROR_MESSAGE,
@@ -305,4 +306,32 @@ test("middleware, cookie, callback e UI de feedback estao ligados", async () => 
   assert.match(metaApi, /graph\.instagram\.com/);
   assert.match(metaApi, /me\?fields=user_id,username/);
   assert.doesNotMatch(metaApi, /graph\.facebook\.com/);
+  assert.equal((metaApi.match(/requireInstagramRedirectUri\(\)/g) ?? []).length, 2);
+  assert.match(metaApi, /logInstagramRedirectUri\("oauth_authorize"/);
+  assert.match(metaApi, /logInstagramRedirectUri\("oauth_token_exchange"/);
+  assert.doesNotMatch(metaApi, /process\.env\.META_INSTAGRAM_REDIRECT_URI/);
+});
+
+test("redirect URI e normalizada por trim e compartilhada entre authorize e exchange", () => {
+  const dirty = "  https://www.militrin.com.br/api/instagram/oauth/callback\r\n";
+  assert.equal(readInstagramRedirectUri({ META_INSTAGRAM_REDIRECT_URI: dirty }), CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI);
+  assert.equal(requireInstagramRedirectUri({ META_INSTAGRAM_REDIRECT_URI: dirty }), CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI);
+  const inspection = inspectInstagramRedirectUri(dirty);
+  assert.equal(inspection.hasLeadingWhitespace, true);
+  assert.equal(inspection.hasTrailingWhitespace, true);
+  assert.equal(inspection.hasCrLf, true);
+  assert.equal(inspection.exactCanonical, false);
+  assert.equal(inspection.hasTrailingSlash, false);
+
+  const withSlash = `${CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI}/`;
+  assert.equal(readInstagramRedirectUri({ META_INSTAGRAM_REDIRECT_URI: withSlash }), withSlash);
+  assert.notEqual(readInstagramRedirectUri({ META_INSTAGRAM_REDIRECT_URI: withSlash }), CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI);
+  assert.equal(inspectInstagramRedirectUri(withSlash).hasTrailingSlash, true);
+  assert.equal(inspectInstagramRedirectUri(CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI).exactCanonical, true);
+
+  const authorizeUri = requireInstagramRedirectUri({ META_INSTAGRAM_REDIRECT_URI: dirty });
+  const exchangeUri = requireInstagramRedirectUri({ META_INSTAGRAM_REDIRECT_URI: dirty });
+  assert.equal(authorizeUri, exchangeUri);
+  assert.deepEqual(instagramRedirectUriDiagnostics(authorizeUri), instagramRedirectUriDiagnostics(exchangeUri));
+  assert.equal(instagramRedirectUriDiagnostics(authorizeUri).redirect_uri_length, CANONICAL_INSTAGRAM_OAUTH_REDIRECT_URI.length);
 });

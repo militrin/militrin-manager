@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { InstagramOAuthMetaDetails, InstagramOAuthStage } from "./oauth-errors.ts";
 
 const FORBIDDEN_KEYS = new Set([
@@ -22,4 +23,18 @@ export function logInstagramOAuthStage(stage: InstagramOAuthStage, meta?: Instag
     if (FORBIDDEN_KEYS.has(key.toLowerCase())) delete payload[key];
   }
   console.info("[instagram-oauth]", JSON.stringify(payload));
+}
+
+export function instagramRedirectUriDiagnostics(redirectUri: string) {
+  return {
+    redirect_uri_length: redirectUri.length,
+    redirect_uri_hash: createHash("sha256").update(redirectUri, "utf8").digest("hex"),
+  };
+}
+
+export function logInstagramRedirectUri(stage: "oauth_authorize" | "oauth_token_exchange", redirectUri: string) {
+  console.info("[instagram-oauth]", JSON.stringify({
+    event: stage,
+    ...instagramRedirectUriDiagnostics(redirectUri),
+  }));
 }
