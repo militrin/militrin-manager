@@ -450,28 +450,32 @@ export function ShirtStockTable({
         </div>
       ) : null}
 
-      <div className="hidden overflow-x-auto rounded-2xl border border-slate-800/80 lg:block">
-        <table className={`${ADMIN_TABLE_ZEBRA_CLASS} min-w-full divide-y divide-slate-800 text-sm`}>
+      <div className="hidden min-w-0 overflow-x-auto rounded-2xl border border-slate-800/80 md:block">
+        <table className={`${ADMIN_TABLE_ZEBRA_CLASS} w-full text-sm`}>
           <thead className="bg-slate-950/70 text-left text-slate-400">
             <tr>
-              <th className="px-3 py-2 font-medium">Modelo</th>
-              <th className="px-3 py-2 font-medium">Tamanho</th>
-              <th className="px-3 py-2 font-medium">Total</th>
-              <th className="px-3 py-2 font-medium">Reservadas</th>
-              <th className="px-3 py-2 font-medium">Entregues</th>
-              <th className="px-3 py-2 font-medium">
-                Disponível físico
-                <abbr title="Estoque total menos itens já entregues." className="ml-1 inline-flex cursor-help no-underline">
-                  <Info className="inline size-3.5 text-slate-500" aria-label="Estoque total menos itens já entregues." />
-                </abbr>
+              <th className="px-2 py-2 font-medium">Modelo</th>
+              <th className="px-2 py-2 font-medium">Tamanho</th>
+              <th className="px-2 py-2 font-medium">Total</th>
+              <th className="px-2 py-2 font-medium">Reservadas</th>
+              <th className="px-2 py-2 font-medium">Entregues</th>
+              <th className="min-w-[7.5rem] border-l border-slate-700/80 px-2 py-2 font-medium">
+                <span className="inline-flex items-start gap-1 leading-tight">
+                  <span>Disponível<br />físico</span>
+                  <abbr title="Estoque total menos itens já entregues." className="mt-0.5 inline-flex cursor-help no-underline">
+                    <Info className="inline size-3.5 text-slate-500" aria-label="Estoque total menos itens já entregues." />
+                  </abbr>
+                </span>
               </th>
-              <th className="px-3 py-2 font-medium">
-                Livre para reserva
-                <abbr title="Estoque físico disponível menos reservas ativas." className="ml-1 inline-flex cursor-help no-underline">
-                  <Info className="inline size-3.5 text-slate-500" aria-label="Estoque físico disponível menos reservas ativas." />
-                </abbr>
+              <th className="min-w-[7.5rem] px-2 py-2 font-medium">
+                <span className="inline-flex items-start gap-1 leading-tight">
+                  <span>Livre para<br />reserva</span>
+                  <abbr title="Estoque físico disponível menos reservas ativas." className="mt-0.5 inline-flex cursor-help no-underline">
+                    <Info className="inline size-3.5 text-slate-500" aria-label="Estoque físico disponível menos reservas ativas." />
+                  </abbr>
+                </span>
               </th>
-              <th className="px-3 py-2 font-medium">
+              <th className="px-2 py-2 font-medium">
                 {bulkMode === "purchase" ? "Quantidade recebida" : bulkMode === "adjustment" ? "Ajuste (+/-)" : "Histórico"}
               </th>
             </tr>
@@ -499,20 +503,20 @@ export function ShirtStockTable({
                 return (
                   <Fragment key={row.id}>
                     <tr {...adminTableRowProps({ selected: isHistoryOpen, groupStart })}>
-                      <td className="px-3 py-2">{row.shirt_type}</td>
-                      <td className="px-3 py-2">{row.shirt_size}</td>
-                      <td className="px-3 py-2">{row.total_quantity}</td>
-                      <td className="px-3 py-2">{row.reserved_quantity}</td>
-                      <td className="px-3 py-2">{row.delivered_quantity}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">{row.shirt_type}</td>
+                      <td className="px-2 py-2">{row.shirt_size}</td>
+                      <td className="px-2 py-2">{row.total_quantity}</td>
+                      <td className="px-2 py-2">{row.reserved_quantity}</td>
+                      <td className="px-2 py-2">{row.delivered_quantity}</td>
+                      <td className="border-l border-slate-700/80 px-2 py-2">
                         <span className="sr-only">Disponível físico: </span>
                         {availability.physicalAvailable}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         <span className="sr-only">Livre para reserva: </span>
                         <FreeReservationValue free={free} overbooked={availability.overbooked} />
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         {bulkMode ? (
                           <input
                             type="number"
@@ -580,20 +584,20 @@ export function ShirtStockTable({
           {rows.length > 0 ? (
             <tfoot className="bg-slate-950/90 text-slate-100">
               <tr>
-                <td className="px-3 py-2 font-semibold" colSpan={2}>TOTAL</td>
-                <td className="px-3 py-2 font-semibold">{totals.total}</td>
-                <td className="px-3 py-2 font-semibold">{totals.reserved}</td>
-                <td className="px-3 py-2 font-semibold">{totals.delivered}</td>
-                <td className="px-3 py-2 font-semibold">{totals.physical}</td>
-                <td className="px-3 py-2 font-semibold">{totals.free}</td>
-                <td className="px-3 py-2" />
+                <td className="px-2 py-2 font-semibold" colSpan={2}>TOTAL</td>
+                <td className="px-2 py-2 font-semibold">{totals.total}</td>
+                <td className="px-2 py-2 font-semibold">{totals.reserved}</td>
+                <td className="px-2 py-2 font-semibold">{totals.delivered}</td>
+                <td className="border-l border-slate-700/80 px-2 py-2 font-semibold">{totals.physical}</td>
+                <td className="px-2 py-2 font-semibold">{totals.free}</td>
+                <td className="px-2 py-2" />
               </tr>
             </tfoot>
           ) : null}
         </table>
       </div>
 
-      <div className={`${ADMIN_LIST_ZEBRA_CLASS} space-y-2 lg:hidden`}>
+      <div className={`${ADMIN_LIST_ZEBRA_CLASS} space-y-2 md:hidden`}>
         {rows.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-700 py-8 text-center text-sm text-slate-400">
             Sem linhas de estoque neste evento.
