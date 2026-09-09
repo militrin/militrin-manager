@@ -16,6 +16,25 @@ function describeCellKind(value: unknown): CpfCellKind {
   return 'text';
 }
 
+function excelDateOnlyToIso(value: Date) {
+  const year = value.getUTCFullYear();
+  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(value.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function stringifyImportedCell(formattedValue: unknown, rawValue: unknown) {
+  if (rawValue instanceof Date && !Number.isNaN(rawValue.getTime())) {
+    const formatted = String(formattedValue ?? '').trim();
+    // Date-only Excel cells are formatted as m/d/yy without a clock.
+    // Timestamps (carimbo) keep the formatted string so the time is not dropped.
+    if (formatted && !/\d{1,2}:\d{2}/.test(formatted)) {
+      return excelDateOnlyToIso(rawValue);
+    }
+  }
+  return String(formattedValue ?? '').trim();
+}
+
 export function parseSpreadsheetMatrix(
   matrix: unknown[][],
   rawMatrix?: unknown[][],
@@ -53,8 +72,8 @@ export function parseSpreadsheetMatrix(
     .map((row, rowIndex) => ({ row, rawRow: rawDataRows[rowIndex] ?? row }))
     .filter(({ row }) => columns.some(({ index }) => String(row[index] ?? '').trim().length > 0));
 
-  const rows = kept.map(({ row }) => Object.fromEntries(
-    columns.map(({ header, index }) => [header, String(row[index] ?? '').trim()]),
+  const rows = kept.map(({ row, rawRow }) => Object.fromEntries(
+    columns.map(({ header, index }) => [header, stringifyImportedCell(row[index], rawRow[index])]),
   ));
   const cellKinds = kept.map(({ rawRow }) => Object.fromEntries(
     columns.map(({ header, index }) => [header, describeCellKind(rawRow[index])]),
