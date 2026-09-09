@@ -117,7 +117,7 @@ export function ShirtKitConfigurator({ eventId, initial }: { eventId: string; in
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[320px] border-collapse text-xs">
+        <table className="admin-table-zebra w-full min-w-[320px] border-collapse text-xs">
           <thead>
             <tr>
               <th className="border-b border-slate-800 px-2 py-1.5 text-left text-slate-400">Tamanho</th>

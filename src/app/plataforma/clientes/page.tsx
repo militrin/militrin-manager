@@ -104,7 +104,7 @@ export default async function ClientesPage() {
             <AdminEmptyState title="Sem organizações" description="Nenhuma organização cadastrada na plataforma ainda." />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="admin-table-zebra w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 text-xs uppercase tracking-widest text-slate-500">
                     <th className="py-2 pr-4 text-left font-medium">Nome</th>

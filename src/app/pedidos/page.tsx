@@ -198,7 +198,7 @@ export default async function PedidosPage({
                       {order.items.length === 0 ? (
                         <p className="text-xs text-slate-500">Nenhum ingresso encontrado para este pedido.</p>
                       ) : (
-                        <table className="w-full text-xs">
+                        <table className="admin-table-zebra w-full text-xs">
                           <thead>
                             <tr className="text-slate-500 border-b border-slate-800/60">
                               <th className="py-1.5 pr-4 text-left font-medium">#</th>

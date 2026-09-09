@@ -6,6 +6,7 @@ import { useTransition } from "react";
 import { markAllOrganizationNotificationsReadAction, markOrganizationNotificationReadAction } from "./actions";
 import { formatRelativeTimePt } from "@/lib/notifications/relative-time";
 import { notificationTypeLabel, type OrganizationNotificationRow } from "@/lib/notifications/types";
+import { ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS } from "@/components/admin";
 
 function hrefFor(readState: string, typeFilter: string, page: number) {
   const params = new URLSearchParams();
@@ -108,10 +109,10 @@ export function NotificationsInbox({
       {notifications.length === 0 && !errorMessage ? (
         <p className="mt-8 text-center text-sm text-slate-400">Nenhuma notificação neste filtro.</p>
       ) : (
-        <ul className="mt-4 divide-y divide-slate-800">
+        <ul className={`mt-4 divide-y divide-slate-800 ${ADMIN_LIST_ZEBRA_CLASS}`}>
           {notifications.map((item) => (
-            <li key={item.notificationId}>
-              <button type="button" onClick={() => openItem(item)} className="flex w-full items-start gap-3 py-4 text-left hover:bg-slate-950/40">
+            <li key={item.notificationId} className={ADMIN_LIST_ROW_CLASS}>
+              <button type="button" onClick={() => openItem(item)} className="flex w-full items-start gap-3 px-1 py-4 text-left">
                 <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${item.isUnread ? "bg-emerald-400" : "bg-slate-700"}`} />
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-2">

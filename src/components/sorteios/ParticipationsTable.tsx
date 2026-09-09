@@ -50,7 +50,7 @@ export function ParticipationsTable({ session }: ParticipationsTableProps) {
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-slate-800">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="admin-table-zebra w-full min-w-[720px] text-left text-sm">
           <thead className="bg-slate-900/80 text-xs uppercase tracking-[0.08em] text-slate-400">
             <tr>
               <th className="px-3 py-2.5">#</th>
@@ -66,7 +66,19 @@ export function ParticipationsTable({ session }: ParticipationsTableProps) {
             {filtered.map((entry) => {
               const status = statusLabel(entry, session);
               return (
-                <tr key={entry.commentId} className="text-slate-200">
+                <tr
+                  key={entry.commentId}
+                  className="text-slate-200"
+                  data-row-state={
+                    session.confirmedWinner?.commentId === entry.commentId
+                      ? "selected"
+                      : entry.status === "disqualified"
+                        ? "cancelled"
+                        : session.currentWinnerCommentId === entry.commentId && session.status === "awaiting_validation"
+                          ? "pending"
+                          : undefined
+                  }
+                >
                   <td className="px-3 py-2.5 text-slate-400">{entry.entryNumber}</td>
                   <td className="px-3 py-2.5 font-medium text-white">@{entry.username}</td>
                   <td className="max-w-[320px] truncate px-3 py-2.5 text-slate-300" title={entry.comment}>

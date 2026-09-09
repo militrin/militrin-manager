@@ -29,7 +29,7 @@ export function ReportDataTable({ columns, rows }: ReportDataTableProps) {
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
+          <tbody className="divide-y divide-slate-800 text-slate-200">
             {rows.map((row, index) => (
               <tr key={index}>
                 {columns.map((column) => (

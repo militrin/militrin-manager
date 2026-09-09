@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CopyableId } from "@/components/CopyableId";
+import { ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
 
 type Row = {
   id: string;
@@ -31,10 +32,10 @@ export function CadastroList({ rows, canEdit, canIssueTicket }: { rows: Row[]; c
   if (!rows.length) return <div className="rounded-2xl border border-dashed border-slate-700 py-12 text-center text-slate-400">Nenhum cadastro encontrado com estes filtros.</div>;
   return <div className="overflow-hidden rounded-2xl border border-slate-800 text-sm">
     <div className="hidden grid-cols-[minmax(0,1.8fr)_130px_minmax(0,1.4fr)_90px_90px_130px] gap-2 bg-slate-900 px-3 py-3 text-slate-400 lg:grid"><span>Nome</span><span>CPF</span><span>Contato</span><span>Ingressos</span><span>Eventos</span><span>Ações</span></div>
-    <div className="divide-y divide-slate-800">{rows.map((row) => {
+    <div className={`${ADMIN_LIST_ZEBRA_CLASS} divide-y divide-slate-800`}>{rows.map((row) => {
       const isOpen = expanded === row.id;
       const secondaryLine = row.email || row.phone || (row.cpf.replace(/\D/g, "").length === 11 ? maskCpf(row.cpf) : null);
-      return <div key={row.id} className="bg-slate-950/40">
+      return <div key={row.id} className={ADMIN_LIST_ROW_CLASS} {...adminTableRowProps({ selected: isOpen })}>
         <div className="flex items-center gap-2 px-3 py-2.5 lg:grid lg:grid-cols-[minmax(0,1.8fr)_130px_minmax(0,1.4fr)_90px_90px_130px] lg:items-center lg:gap-2 lg:py-3">
           <button type="button" onClick={() => setExpanded(isOpen ? null : row.id)} className="min-w-0 flex-1 text-left">
             <span className="block truncate font-medium hover:text-emerald-300">{row.name}</span>

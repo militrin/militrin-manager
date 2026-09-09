@@ -40,7 +40,6 @@ type ShirtsPageData = {
     total_quantity: number;
     reserved_quantity: number;
     delivered_quantity: number;
-    available: number;
   }>;
   errorMessage: string | null;
 };
@@ -132,7 +131,6 @@ async function getStock(requestedEventId: string | null) {
       total_quantity: row.total_quantity,
       reserved_quantity: reserved,
       delivered_quantity: delivered,
-      available: Math.max(row.total_quantity - delivered, 0),
     };
   });
 

@@ -1,3 +1,4 @@
+export * from './admin-table';
 export * from './AdminActivityTimeline';
 export * from './AdminConfirmDialog';
 export * from './AdminDataTable';

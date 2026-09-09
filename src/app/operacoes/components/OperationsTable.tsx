@@ -4,6 +4,7 @@ import { ExpandedTicketDetails } from "./ExpandedTicketDetails";
 import { ExpandedParticipantDetails } from "./ExpandedParticipantDetails";
 import { OperationRow } from "./OperationRow";
 import { getOperationsGridConfig } from "./tableGrid";
+import { ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
 import type {
   ActionResult,
   PickupCapabilities,
@@ -212,13 +213,19 @@ export function OperationsTable({
                   </div>
                 </div>
 
+                <div className={ADMIN_LIST_ZEBRA_CLASS}>
                 {group.tickets.map((item) => {
                   const isExpanded = expandedId === item.id;
                   const detail = details[item.id];
                   const busy = actionId === item.id;
 
                   return (
-                    <div id={`participant-${item.id}`} key={item.id} className="border-t border-slate-800/70 first:border-t-0">
+                    <div
+                      id={`participant-${item.id}`}
+                      key={item.id}
+                      className={`${ADMIN_LIST_ROW_CLASS} border-t border-slate-800/70 first:border-t-0`}
+                      {...adminTableRowProps({ selected: isExpanded })}
+                    >
                       <OperationRow
                         item={item}
                         selectedEvent={selectedEvent}
@@ -264,6 +271,7 @@ export function OperationsTable({
                     </div>
                   );
                 })}
+                </div>
               </div>
             ))
           )}

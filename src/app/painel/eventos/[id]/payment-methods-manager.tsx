@@ -266,7 +266,7 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
                 />
                 <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Taxa por numero de parcelas</p>
-                  <table className="w-full min-w-[420px] text-sm text-slate-200">
+                  <table className="admin-table-zebra w-full min-w-[420px] text-sm text-slate-200">
                     <thead>
                       <tr className="text-left text-xs text-slate-500">
                         <th className="pb-1 pr-2">Parcelas</th>

@@ -140,9 +140,7 @@ export function OperationRow({
           toggle();
         }
       }}
-      className={`grid grid-cols-1 gap-1.5 px-3 py-2.5 transition hover:bg-slate-800/45 lg:gap-2 ${grid.row} ${
-        isExpanded ? "bg-slate-800/45" : "bg-slate-900/55"
-      }`}
+      className={`grid grid-cols-1 gap-1.5 px-3 py-2.5 lg:gap-2 ${grid.row}`}
     >
       <div>
         <div className="flex items-center gap-2">

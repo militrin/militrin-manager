@@ -17,6 +17,7 @@ import {
   isImportRowReadyToImport,
   resolveImportBatchOperationalState,
 } from '@/lib/imports/batch-operational-state';
+import { adminTableRowProps, adminTableRowStateFromStatus } from '@/components/admin';
 
 type EventOption = {
   id: string;
@@ -469,7 +470,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
           </div>
 
           <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-800">
-            <table className="min-w-full text-left text-xs text-slate-300">
+            <table className="admin-table-zebra min-w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-950/80 text-slate-400">
                 <tr>
                   <th className="px-3 py-2">Linha</th>
@@ -482,7 +483,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className="border-t border-slate-800">
+                  <tr key={row.id} className="border-t border-slate-800" {...adminTableRowProps({ state: adminTableRowStateFromStatus(row.status) })}>
                     <td className="px-3 py-2">{row.row_number}</td>
                     <td className="px-3 py-2">{row.full_name}</td>
                     <td className="px-3 py-2">{row.cpf_masked}</td>

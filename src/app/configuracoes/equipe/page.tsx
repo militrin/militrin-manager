@@ -103,7 +103,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
                   <AdminEmptyState title="Nenhum usuario encontrado" description="Ajuste os filtros para localizar membros da equipe." />
                 ) : (
                   <div className="overflow-x-auto rounded-2xl border border-slate-800">
-                    <table className="min-w-[980px] w-full text-left text-sm">
+                    <table className="admin-table-zebra min-w-[980px] w-full text-left text-sm">
                       <thead className="bg-slate-900/80 text-xs uppercase tracking-wide text-slate-300">
                         <tr>
                           <th className="px-3 py-2">Nome</th>
@@ -120,7 +120,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
                           const id = String(row.user_id);
                           const active = Boolean(row.is_active);
                           return (
-                            <tr key={id} className="border-t border-slate-800/80 bg-slate-950/50">
+                            <tr key={id} className="border-t border-slate-800/80" data-row-state={active ? undefined : 'disabled'}>
                               <td className="px-3 py-2 font-medium text-slate-100">{String(row.full_name ?? '')}</td>
                               <td className="px-3 py-2 text-slate-300">{String(row.email ?? '')}</td>
                               <td className="px-3 py-2 text-slate-300">{String(row.role_name ?? 'Sem funcao')}</td>

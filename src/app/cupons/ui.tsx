@@ -357,7 +357,7 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
       )}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
-        <table className="min-w-full divide-y divide-slate-800 text-sm">
+            <table className="admin-table-zebra min-w-full divide-y divide-slate-800 text-sm">
           <thead className="bg-slate-950/70 text-left text-slate-400">
             <tr>
               <th className="px-4 py-3">Código</th>
@@ -369,14 +369,14 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
               <th className="px-4 py-3">Ações</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800 bg-slate-900/60 text-slate-200">
+          <tbody className="divide-y divide-slate-800 text-slate-200">
             {coupons.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">Nenhum cupom criado para esta organização.</td></tr>
             ) : (
               coupons.map((coupon) => {
                 const archived = coupon.archived_at !== null;
                 return (
-                <tr key={coupon.id}>
+                <tr key={coupon.id} data-row-state={archived ? "disabled" : coupon.is_active ? undefined : "disabled"}>
                   <td className="px-4 py-3 font-semibold">{coupon.code}</td>
                   <td className="px-4 py-3">{coupon.discount_type === "percentage" ? `${Number(coupon.discount_value).toFixed(0)}%` : money(Number(coupon.discount_value))}</td>
                   <td className="px-4 py-3">{[coupon.applies_to_tickets ? "Ingressos" : null, coupon.applies_to_products ? "Produtos" : null].filter(Boolean).join(" + ")}</td>

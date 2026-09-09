@@ -35,7 +35,7 @@ export function GatewayFinancialDivergencesPanel({ divergences }: Props) {
         identificável — requer investigação manual. Nenhum ingresso foi emitido.
       </p>
       <div className="overflow-x-auto">
-        <table className="w-full text-xs text-left">
+        <table className="admin-table-zebra w-full text-xs text-left">
           <thead>
             <tr className="border-b border-rose-500/20 text-rose-300/70">
               <th className="py-1 pr-4 font-medium">Provider</th>

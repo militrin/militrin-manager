@@ -249,3 +249,114 @@ body {
     padding-bottom: calc(var(--mobile-bottomnav-h) + var(--safe-bottom) + 1.25rem);
   }
 }
+
+/*
+ * Zebra / "camaleão" — padrão global de tabelas e listas administrativas.
+ * Hierarquia: estado semântico > selected > hover > zebra.
+ * Tons deliberadamente sutis no navy atual; hover some ao sair.
+ */
+:root {
+  --admin-zebra-odd: transparent;
+  --admin-zebra-even: rgb(255 255 255 / 0.038);
+  --admin-zebra-hover: rgb(148 163 184 / 0.14);
+  --admin-zebra-selected: rgb(16 185 129 / 0.12);
+  --admin-zebra-error: rgb(244 63 94 / 0.12);
+  --admin-zebra-warning: rgb(245 158 11 / 0.10);
+  --admin-zebra-pending: rgb(245 158 11 / 0.08);
+  --admin-zebra-paid: rgb(16 185 129 / 0.07);
+  --admin-zebra-refunded: rgb(56 189 248 / 0.08);
+  --admin-zebra-cancelled: rgb(100 116 139 / 0.12);
+  --admin-zebra-disabled: rgb(51 65 85 / 0.35);
+  --admin-zebra-review: rgb(245 158 11 / 0.11);
+}
+
+.admin-table-zebra > tbody > tr {
+  transition: background-color 140ms ease;
+}
+
+.admin-table-zebra > tbody > tr:nth-child(odd):not([data-row-state]):not([data-row-detail]) {
+  background-color: var(--admin-zebra-odd);
+}
+
+.admin-table-zebra > tbody > tr:nth-child(even):not([data-row-state]):not([data-row-detail]) {
+  background-color: var(--admin-zebra-even);
+}
+
+.admin-table-zebra > tbody > tr:hover:not([data-row-state]):not([data-row-detail]) {
+  background-color: var(--admin-zebra-hover);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state]:hover:not([data-row-detail]),
+.admin-list-zebra > .admin-list-row[data-row-state]:hover {
+  box-shadow: inset 0 0 0 999px rgb(148 163 184 / 0.06);
+}
+
+.admin-table-zebra > tbody > tr[data-row-group-start] {
+  border-top: 1px solid rgb(148 163 184 / 0.28);
+}
+
+.admin-list-zebra > .admin-list-row {
+  transition: background-color 140ms ease;
+}
+
+.admin-list-zebra > .admin-list-row:nth-child(odd):not([data-row-state]) {
+  background-color: var(--admin-zebra-odd);
+}
+
+.admin-list-zebra > .admin-list-row:nth-child(even):not([data-row-state]) {
+  background-color: var(--admin-zebra-even);
+}
+
+.admin-list-zebra > .admin-list-row:hover:not([data-row-state]) {
+  background-color: var(--admin-zebra-hover);
+}
+
+.admin-list-zebra > .admin-list-row-group-start,
+.admin-list-zebra > .admin-list-row[data-row-group-start] {
+  box-shadow: inset 0 1px 0 rgb(148 163 184 / 0.28);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="selected"],
+.admin-list-zebra > .admin-list-row[data-row-state="selected"] {
+  background-color: var(--admin-zebra-selected);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="error"],
+.admin-list-zebra > .admin-list-row[data-row-state="error"] {
+  background-color: var(--admin-zebra-error);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="warning"],
+.admin-list-zebra > .admin-list-row[data-row-state="warning"] {
+  background-color: var(--admin-zebra-warning);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="pending"],
+.admin-list-zebra > .admin-list-row[data-row-state="pending"] {
+  background-color: var(--admin-zebra-pending);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="paid"],
+.admin-list-zebra > .admin-list-row[data-row-state="paid"] {
+  background-color: var(--admin-zebra-paid);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="refunded"],
+.admin-list-zebra > .admin-list-row[data-row-state="refunded"] {
+  background-color: var(--admin-zebra-refunded);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="cancelled"],
+.admin-list-zebra > .admin-list-row[data-row-state="cancelled"] {
+  background-color: var(--admin-zebra-cancelled);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="disabled"],
+.admin-list-zebra > .admin-list-row[data-row-state="disabled"] {
+  background-color: var(--admin-zebra-disabled);
+}
+
+.admin-table-zebra > tbody > tr[data-row-state="review_required"],
+.admin-list-zebra > .admin-list-row[data-row-state="review_required"] {
+  background-color: var(--admin-zebra-review);
+}
