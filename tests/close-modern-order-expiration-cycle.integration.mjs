@@ -501,7 +501,7 @@ test('release_store_item_reservation nunca deixa reserved_quantity negativa mesm
   assert.equal(inv.reserved_quantity, 0, 'nunca deve ficar negativa');
 });
 
-test('cancelar pedido (refunded) libera a reserva do produto', async () => {
+test('estorno de pagamento nao libera produto; cancelar entitlements sim', async () => {
   const storeItemId = await fx.createStoreItem(20);
   const orderId = await fx.createOrder(1);
   await fx.addProduct(orderId, storeItemId, 4);
@@ -512,16 +512,31 @@ test('cancelar pedido (refunded) libera a reserva do produto', async () => {
   }), 'confirma pagamento');
   assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 4, 'reserva permanece apos confirmar pagamento (so libera na entrega fisica)');
 
-  const { data: payment } = await fx.service.from('payments').select('id').eq('order_id', orderId).single();
+  const { data: payment } = await fx.service.from('payments').select('id,organization_id,event_id,order_id,final_amount').eq('order_id', orderId).single();
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
     p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'REFUNDED', p_internal_status: 'refunded',
   }), 'estorna pagamento');
-  void payment;
 
-  const inv = await fx.storeInventoryOf(storeItemId);
-  assert.equal(inv.reserved_quantity, 0, 'estorno deve liberar a reserva do produto ainda nao entregue');
+  const invAfterRefund = await fx.storeInventoryOf(storeItemId);
+  assert.equal(invAfterRefund.reserved_quantity, 4, 'estorno de pagamento nao cancela produto silenciosamente');
   const { data: order } = await fx.service.from('orders').select('status').eq('id', orderId).single();
   assert.equal(order.status, 'refunded');
+
+  const attempt = await fx.must(fx.service.from('payment_refund_attempts').insert({
+    payment_id: payment.id,
+    order_id: orderId,
+    organization_id: payment.organization_id,
+    event_id: payment.event_id,
+    reason_code: 'administrative_test',
+    cancel_tickets: true,
+    amount: Number(payment.final_amount || 100),
+    status: 'completed',
+    environment: 'sandbox',
+    account_key: 'asaas-sandbox-militrin',
+    gateway_payment_id: gatewayPaymentId,
+  }).select('id').single(), 'refund attempt');
+  await fx.must(fx.service.rpc('apply_refund_linked_entitlement_cancellations', { p_attempt_id: attempt.id }), 'cancela entitlements');
+  assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 0, 'cancelamento explicito de entitlements libera a reserva do produto ainda nao entregue');
 });
 
 test('confirmar pagamento normalmente NAO libera a reserva do produto por acidente', async () => {

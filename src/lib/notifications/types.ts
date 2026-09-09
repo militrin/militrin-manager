@@ -1,6 +1,8 @@
 export const ORGANIZATION_NOTIFICATION_TYPES = [
   'CHANGE_REQUEST_CREATED',
   'FEEDBACK_CREATED',
+  'PAYMENT_REFUNDED',
+  'PAYMENT_REFUND_FAILED',
 ] as const;
 
 export type OrganizationNotificationType = (typeof ORGANIZATION_NOTIFICATION_TYPES)[number];
@@ -22,6 +24,8 @@ export type OrganizationNotificationRow = {
 export function notificationTypeLabel(type: string) {
   if (type === 'CHANGE_REQUEST_CREATED') return 'Solicitações';
   if (type === 'FEEDBACK_CREATED') return 'Feedbacks';
+  if (type === 'PAYMENT_REFUNDED') return 'Estornos';
+  if (type === 'PAYMENT_REFUND_FAILED') return 'Estornos';
   return type;
 }
 

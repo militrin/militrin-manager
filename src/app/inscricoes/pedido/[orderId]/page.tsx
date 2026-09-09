@@ -52,7 +52,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       .order("item_position", { ascending: true }),
     supabase
       .from("payments")
-      .select("id,payment_status,payment_method,final_amount,price_origin,created_at,paid_at")
+      .select("id,payment_status,payment_method,final_amount,price_origin,created_at,paid_at,provider,gateway_payment_id,gateway_account_key,gateway_environment,refund_status")
       .eq("order_id", orderId)
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id,order_item_id,status,cancellation_replacement_required").eq("order_id", orderId),
@@ -67,6 +67,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // regularizacao aparece aqui; a acao em si (reclassificar) so acontece na
   // ficha do ingresso, nunca duplicada nesta listagem.
   const canRegularizeCancellation = await hasPermission("orders.cancel");
+  const canRefundPayment = await hasPermission("finance.refund");
 
   // Auditoria do caso real #001078 (Integridade Operacional, P0): esta pagina
   // tratava "existe uma linha em tickets" como "ingresso valido" e mostrava
@@ -268,13 +269,22 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
             <AdminSection title="Tentativas de pagamento">
               <div className="grid gap-2 sm:grid-cols-2">
                 {payments.map((payment) => (
-                  <AdminStatCard
-                    key={payment.id}
-                    compact
-                    label={formatImportedPaymentMethod(payment.payment_method)}
-                    value={canViewFinancial ? money(payment.final_amount ?? 0, payment.price_origin ?? order.price_origin) : "—"}
-                    hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}`}
-                  />
+                  <div key={payment.id} className="space-y-2">
+                    <AdminStatCard
+                      compact
+                      label={formatImportedPaymentMethod(payment.payment_method)}
+                      value={canViewFinancial ? money(payment.final_amount ?? 0, payment.price_origin ?? order.price_origin) : "—"}
+                      hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}`}
+                    />
+                    {canViewFinancial ? (
+                      <Link
+                        href={`/financeiro/pagamento/${payment.id}`}
+                        className="inline-flex h-8 items-center rounded-lg border border-emerald-500/40 px-2.5 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10"
+                      >
+                        {canRefundPayment && payment.payment_status === "paid" ? "ESTORNAR PAGAMENTO" : "Ver pagamento"}
+                      </Link>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             </AdminSection>

@@ -286,7 +286,7 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       status: String(payment.payment_status),
       value: shouldIncludeAmountInFinancialTotals(payment.price_origin) ? Number(payment.final_amount ?? 0) : undefined,
       issue: exclusion ?? (cancelledTicketWithoutRefund ? 'Ticket cancelado sem estorno: permanece na receita confirmada' : undefined),
-      href: `/financeiro?tab=sales&status=${payment.payment_method === 'courtesy' ? 'courtesy' : payment.payment_status}&eventId=${payment.event_id}`,
+      href: `/financeiro/pagamento/${payment.id}`,
       actionLabel: 'Ver pagamento',
     };
   };

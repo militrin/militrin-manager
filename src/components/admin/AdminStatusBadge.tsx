@@ -15,6 +15,11 @@ const map: Record<string, { label: string; className: string }> = {
   delivered: { label: 'Entregue', className: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
   event_ended: { label: 'Evento encerrado', className: 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200' },
   inactive: { label: 'Inativo', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' },
+  refunded: { label: 'Estornado', className: 'border-rose-500/40 bg-rose-500/15 text-rose-200' },
+  requested: { label: 'Estorno solicitado', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' },
+  refund_pending: { label: 'Estorno em processamento', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' },
+  uncertain: { label: 'Estorno em conciliação', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' },
+  failed: { label: 'Falha no estorno', className: 'border-rose-500/40 bg-rose-500/15 text-rose-200' },
   reserved: { label: 'Reservado', className: 'border-slate-600 bg-slate-800/70 text-slate-200' },
 };
 

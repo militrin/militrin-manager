@@ -12,8 +12,14 @@ import type {
 } from "./provider.ts";
 import { mapAsaasPaymentStatus, mapAsaasWebhookProviderStatus, mapAsaasWebhookToInternalStatus } from "./asaas-status-map.ts";
 import { verifyAsaasWebhookToken } from "./asaas-webhook-token.ts";
+import { ASAAS_REFUND_TIMEOUT_MS, GatewayTimeoutError, isGatewayTimeoutError } from "./gateway-timeout.ts";
 
 export type AsaasEnvironment = "sandbox" | "production";
+
+export function isAsaasAlreadyRefundedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /already refunded|payment is already refunded|j[aá] (foi )?estornad|invalid_action.*refund/i.test(message);
+}
 
 const BASE_URLS: Record<AsaasEnvironment, string> = {
   sandbox: "https://api-sandbox.asaas.com/v3",
@@ -108,15 +114,28 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "militrin-manager",
-        access_token: this.apiKey,
-        ...(init?.headers ?? {}),
-      },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ASAAS_REFUND_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        signal: init?.signal ?? controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "militrin-manager",
+          access_token: this.apiKey,
+          ...(init?.headers ?? {}),
+        },
+      });
+    } catch (error) {
+      if (isGatewayTimeoutError(error) || (error instanceof Error && error.name === "AbortError")) {
+        throw new GatewayTimeoutError(`Timeout ao chamar Asaas (${path}).`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
 
     const text = await response.text();
     const body = text ? (JSON.parse(text) as unknown) : null;
@@ -292,13 +311,18 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
   }
 
   async refundPayment(input: RefundPaymentInput): Promise<void> {
-    await this.request(`/payments/${input.providerPaymentId}/refund`, {
-      method: "POST",
-      body: JSON.stringify({
-        value: input.amount,
-        description: input.reason,
-      }),
-    });
+    const body: Record<string, unknown> = {};
+    if (input.reason) body.description = input.reason;
+    // Full refund: omit `value`. Partial so e interpretado via webhook externo.
+    try {
+      await this.request(`/payments/${input.providerPaymentId}/refund`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (isAsaasAlreadyRefundedError(error)) return;
+      throw error;
+    }
   }
 
   verifyWebhook(input: { headers: Headers | Record<string, string | string[] | undefined>; rawBody: string }): boolean {

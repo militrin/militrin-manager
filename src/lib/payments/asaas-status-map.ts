@@ -41,8 +41,8 @@ export type AsaasPaymentStatus =
  * | OVERDUE                        | expired                  | expira order/order_items pendentes (nunca emite ticket)       |
  * | REFUND_REQUESTED               | processing               | nenhum ainda -- so sinaliza, nao desfaz ticket                |
  * | REFUND_IN_PROGRESS             | processing               | nenhum ainda -- so sinaliza, nao desfaz ticket                |
- * | REFUNDED                       | refunded                 | cancela ticket/order_item preservando historico (nao reabre)  |
- * | PARTIALLY_REFUNDED              | refunded                 | idem REFUNDED nesta fase (decisao de negocio fina fica p/ F2) |
+ * | REFUNDED                       | refunded                 | payment/order refunded; ingressos so cancelam se o admin pediu explicitamente |
+ * | PARTIALLY_REFUNDED              | refunded                 | idem REFUNDED nesta fase (sem UI de estorno parcial; schema futuro: refunded_amount/remaining_amount) |
  * | CHARGEBACK_REQUESTED            | chargeback               | apenas sinaliza -- nao cancela ticket automaticamente         |
  * | CHARGEBACK_DISPUTE               | chargeback               | apenas sinaliza -- nao cancela ticket automaticamente         |
  * | AWAITING_CHARGEBACK_REVERSAL    | chargeback               | apenas sinaliza -- nao cancela ticket automaticamente         |

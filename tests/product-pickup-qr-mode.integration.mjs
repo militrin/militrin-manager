@@ -440,15 +440,33 @@ test('undo exige motivo e permissao (store.undo_delivery, nunca store.deliver)',
   assert.match(staffUndo.error.message, /permissao/i);
 });
 
-test('cancelamento antes da retirada: linha e unidades sao canceladas, estoque liberado', async () => {
+test('cancelamento antes da retirada: estorno sozinho nao reverte produto; entitlement sim', async () => {
   const orderId = await fx.createTicketOrder();
   const added = await fx.must(fx.buyer.rpc('add_product_to_cart_order', { p_order_id: orderId, p_store_item_id: fx.perUnitItemId, p_quantity: 2 }), 'add product');
   const itemId = added.order_item_ids[0];
   await fx.markOrderPaid(orderId);
 
-  const payment = await fx.must(fx.service.from('payments').select('id').eq('order_id', orderId).order('created_at', { ascending: false }).limit(1), 'payment');
+  const payment = await fx.must(fx.service.from('payments').select('id,organization_id,event_id,final_amount,gateway_payment_id').eq('order_id', orderId).order('created_at', { ascending: false }).limit(1), 'payment');
   const refund = await fx.service.rpc('_apply_terminal_order_payment_status', { p_payment_id: payment[0].id, p_target_status: 'refunded' });
   assert.equal(refund.error, null, refund.error?.message);
+
+  const lineAfterRefund = (await fx.must(fx.service.from('order_items').select('status').eq('id', itemId), 'line after refund')).find(Boolean);
+  assert.equal(lineAfterRefund.status, 'confirmed', 'estorno de pagamento nao cancela produto silenciosamente');
+
+  const attempt = await fx.must(fx.service.from('payment_refund_attempts').insert({
+    payment_id: payment[0].id,
+    order_id: orderId,
+    organization_id: payment[0].organization_id,
+    event_id: payment[0].event_id,
+    reason_code: 'administrative_test',
+    cancel_tickets: true,
+    amount: Number(payment[0].final_amount || 100),
+    status: 'completed',
+    environment: 'sandbox',
+    account_key: 'asaas-sandbox-militrin',
+    gateway_payment_id: payment[0].gateway_payment_id,
+  }).select('id').single(), 'refund attempt');
+  await fx.must(fx.service.rpc('apply_refund_linked_entitlement_cancellations', { p_attempt_id: attempt.id }), 'cancela entitlements');
 
   const line = (await fx.must(fx.service.from('order_items').select('status').eq('id', itemId), 'line')).find(Boolean);
   assert.equal(line.status, 'refunded');

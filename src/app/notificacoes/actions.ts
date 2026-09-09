@@ -7,7 +7,7 @@ import { mapNotificationRow, type OrganizationNotificationRow } from '@/lib/noti
 
 const listSchema = z.object({
   readState: z.enum(['all', 'unread', 'read']).default('all'),
-  type: z.enum(['CHANGE_REQUEST_CREATED', 'FEEDBACK_CREATED']).optional().nullable(),
+  type: z.enum(['CHANGE_REQUEST_CREATED', 'FEEDBACK_CREATED', 'PAYMENT_REFUNDED', 'PAYMENT_REFUND_FAILED']).optional().nullable(),
   limit: z.number().int().min(1).max(100).default(20),
   offset: z.number().int().min(0).default(0),
 });
