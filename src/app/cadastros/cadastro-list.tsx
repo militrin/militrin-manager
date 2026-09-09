@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CopyableId } from "@/components/CopyableId";
-import { ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
+import { ADMIN_LIST_HEADER_CLASS, ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
 
 type Row = {
   id: string;
@@ -25,13 +25,13 @@ function maskCpf(value: string) {
   return digits.length === 11 ? `***.***.***-${digits.slice(-2)}` : "Não informado";
 }
 
-const actionClass = "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-slate-700 px-2.5 text-xs lg:h-9 lg:px-3";
+const actionClass = "inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-lg border border-slate-700 px-2.5 text-xs";
 
 export function CadastroList({ rows, canEdit, canIssueTicket }: { rows: Row[]; canEdit: boolean; canIssueTicket: boolean }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (!rows.length) return <div className="rounded-2xl border border-dashed border-slate-700 py-12 text-center text-slate-400">Nenhum cadastro encontrado com estes filtros.</div>;
   return <div className="overflow-hidden rounded-2xl border border-slate-800 text-sm">
-    <div className="hidden grid-cols-[minmax(0,1.8fr)_130px_minmax(0,1.4fr)_90px_90px_130px] gap-2 bg-slate-900 px-3 py-3 text-slate-400 lg:grid"><span>Nome</span><span>CPF</span><span>Contato</span><span>Ingressos</span><span>Eventos</span><span>Ações</span></div>
+    <div className={`hidden grid-cols-[minmax(0,1.8fr)_130px_minmax(0,1.4fr)_90px_90px_130px] gap-2 bg-slate-900 px-3 text-slate-400 lg:grid ${ADMIN_LIST_HEADER_CLASS}`}><span>Nome</span><span>CPF</span><span>Contato</span><span>Ingressos</span><span>Eventos</span><span>Ações</span></div>
     <div className={`${ADMIN_LIST_ZEBRA_CLASS} divide-y divide-slate-800`}>{rows.map((row) => {
       const isOpen = expanded === row.id;
       const secondaryLine = row.email || row.phone || (row.cpf.replace(/\D/g, "").length === 11 ? maskCpf(row.cpf) : null);

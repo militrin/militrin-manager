@@ -4,7 +4,7 @@ import { ExpandedTicketDetails } from "./ExpandedTicketDetails";
 import { ExpandedParticipantDetails } from "./ExpandedParticipantDetails";
 import { OperationRow } from "./OperationRow";
 import { getOperationsGridConfig } from "./tableGrid";
-import { ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
+import { ADMIN_LIST_HEADER_CLASS, ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
 import type {
   ActionResult,
   PickupCapabilities,
@@ -156,7 +156,7 @@ export function OperationsTable({
 
         <div className={grid.minWidth}>
           <div
-            className={`hidden gap-2 bg-slate-950/80 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 lg:grid ${grid.header}`}
+            className={`hidden gap-2 bg-slate-950/80 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 lg:grid ${grid.header} ${ADMIN_LIST_HEADER_CLASS}`}
           >
             <HeaderButton label="Compra / participante" field="name" currentField={sortField} currentDirection={sortDirection} onSort={onSort} />
             <div>Categoria</div>

@@ -3,6 +3,7 @@ import { cx } from './utils';
 export const ADMIN_TABLE_ZEBRA_CLASS = 'admin-table-zebra';
 export const ADMIN_LIST_ZEBRA_CLASS = 'admin-list-zebra';
 export const ADMIN_LIST_ROW_CLASS = 'admin-list-row';
+export const ADMIN_LIST_HEADER_CLASS = 'admin-list-header';
 
 /**
  * Estados semânticos que vencem zebra e hover.

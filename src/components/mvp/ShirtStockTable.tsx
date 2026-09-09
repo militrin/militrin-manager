@@ -531,7 +531,7 @@ export function ShirtStockTable({
                             type="button"
                             onClick={() => handleOpenHistory(row.id)}
                             disabled={historyLoadingRowId === row.id}
-                            className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-200 transition hover:border-slate-500"
+                            className="h-7 rounded-lg border border-slate-700 px-2 text-xs text-slate-200 transition hover:border-slate-500"
                           >
                             {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Ver histórico"}
                           </button>
