@@ -63,14 +63,17 @@ export function CardPaymentCard({
         <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" aria-hidden />
         <h3 className="mt-3 text-xl font-semibold text-emerald-100">Pagamento aprovado</h3>
         <p className="mt-1 text-sm text-emerald-200/90">
-          Seu pagamento com cartao foi confirmado. Os ingressos aparecem em Minha Conta assim que a emissao for concluida.
+          Seu pagamento com cartao foi confirmado. Seu pacote Militrin aparece em Minha Conta assim que a emissao for concluida.
+        </p>
+        <p className="mt-2 text-xs text-emerald-100/80">
+          Nao se esqueca: o ingresso para acessar a Ala Jovem da Oktoberfest e adquirido separadamente.
         </p>
         {confirmedHref ? (
           <a
             href={confirmedHref}
             className="mt-4 inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
           >
-            {confirmedLabel ?? 'Ver meus ingressos'}
+            {confirmedLabel ?? 'Ver meus acessos'}
           </a>
         ) : null}
       </div>
@@ -93,7 +96,7 @@ export function CardPaymentCard({
         <AlertTriangle className="mx-auto h-12 w-12 text-red-400" aria-hidden />
         <h3 className="mt-3 text-xl font-semibold text-red-100">Cartao recusado. Tente novamente.</h3>
         <p className="mt-1 text-sm text-red-200/90">
-          A tentativa nao foi autorizada. Nenhum ingresso foi emitido. Voce pode usar a mesma pagina de pagamento com outro cartao.
+          A tentativa nao foi autorizada. Nenhum pacote Militrin foi emitido. Voce pode usar a mesma pagina de pagamento com outro cartao.
         </p>
         {reuseUrl && !isFakePaymentProvider ? (
           <a
@@ -167,7 +170,7 @@ export function CardPaymentCard({
         <AlertTriangle className="mx-auto h-12 w-12 text-red-400" aria-hidden />
         <h3 className="mt-3 text-xl font-semibold text-red-100">Pagamento recusado</h3>
         <p className="mt-1 text-sm text-red-200/90">
-          Nao foi possivel confirmar este pagamento. Nenhum ingresso foi emitido. Tente novamente.
+          Nao foi possivel confirmar este pagamento. Nenhum pacote Militrin foi emitido. Tente novamente.
         </p>
         {onRetryCheckout ? (
           <button

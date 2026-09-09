@@ -34,7 +34,7 @@ const navigationGroups: Array<{ title: string; items: NavItem[] }> = [
     title: 'Minha conta',
     items: [
       { href: '/minha-conta', label: 'Início', icon: LayoutDashboard, isCart: false },
-      { href: '/minha-conta/ingressos', label: 'Meus ingressos', icon: Ticket, isCart: false },
+      { href: '/minha-conta/ingressos', label: 'Meus acessos', icon: Ticket, isCart: false },
       { href: '/minha-conta/compras', label: 'Minhas compras', icon: Coins, isCart: false },
       { href: '/minha-conta/historico', label: 'Histórico', icon: History, isCart: false },
       { href: '/minha-conta/loja', label: 'Loja', icon: ShoppingBag, isCart: false },

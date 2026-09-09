@@ -28,7 +28,7 @@ export default async function TicketItemsPage({ params }: { params: Promise<{ ti
   const deadlinePassed = Boolean(deadline && Date.now() > deadline.getTime());
   async function submit(formData: FormData) { 'use server'; await requestTicketItemChangeAction(formData); }
   return <section className="space-y-4">
-    <nav className="text-xs text-slate-400"><Link href="/minha-conta/ingressos">Meus ingressos</Link> → <Link href={`/minha-conta/ingressos/${ticketId}`}>{String(event?.name ?? 'Evento')}</Link> → Ingresso → Itens</nav>
+    <nav className="text-xs text-slate-400"><Link href="/minha-conta/ingressos">Meus acessos</Link> → <Link href={`/minha-conta/ingressos/${ticketId}`}>{String(event?.name ?? 'Evento')}</Link> → Acesso → Itens</nav>
     <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5"><h1 className="text-xl font-semibold">Itens do ingresso</h1><div className="mt-4 grid gap-3">{(links ?? []).map((link) => {
       const item = first(link.event_kit_items); const variants = (item?.event_kit_item_variants ?? []).filter((variant) => variant.is_active).sort((a,b) => a.sort_order-b.sort_order);
       const current = object(link.variant_data);

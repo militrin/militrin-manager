@@ -133,7 +133,7 @@ export default function CriarContaPage() {
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-950/60 p-6 shadow-2xl shadow-black/20 sm:p-8">
           <p className="text-xs uppercase tracking-[0.24em] text-emerald-300">Militrin</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Criar minha conta</h1>
-          <p className="mt-2 text-sm text-slate-300">Use seu e-mail para acessar ingressos, QR Codes e histórico no Militrin.</p>
+          <p className="mt-2 text-sm text-slate-300">Use seu e-mail para acessar pacotes Militrin, QR Codes de kit e histórico.</p>
 
           <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300">
             <p className="font-medium text-slate-100">Antes de continuar</p>

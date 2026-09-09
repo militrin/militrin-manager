@@ -551,7 +551,7 @@ export async function resendTicketEmailAction(orderId: string) {
   if (orderError) return { success: false, message: orderError.message };
   if (!order) return { success: false, message: 'Pedido nao encontrado.' };
   if (order.status !== 'confirmed') {
-    return { success: false, message: 'Ingresso disponivel apenas para pedido confirmado.' };
+    return { success: false, message: 'Event Pass disponivel apenas para pedido confirmado.' };
   }
 
   const { data: ticket, error: ticketError } = await supabase
@@ -561,7 +561,7 @@ export async function resendTicketEmailAction(orderId: string) {
     .maybeSingle();
 
   if (ticketError) return { success: false, message: ticketError.message };
-  if (!ticket?.token) return { success: false, message: 'Ingresso ainda nao emitido.' };
+  if (!ticket?.token) return { success: false, message: 'Acesso Militrin ainda nao emitido.' };
 
   const { data: kitItems, error: kitError } = await supabase.rpc('get_ticket_kit_items', {
     p_ticket_id: ticket.id,
@@ -596,7 +596,7 @@ export async function resendTicketEmailAction(orderId: string) {
     accountUrl: `${appBaseUrl()}/minha-conta/compras/${order.id}`,
   });
 
-  return { success: true, message: 'Ingresso reenviado por e-mail.' };
+  return { success: true, message: 'Event Pass reenviado por e-mail.' };
 }
 
 export async function payOrderNowAction(orderId: string) {

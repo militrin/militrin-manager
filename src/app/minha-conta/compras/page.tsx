@@ -106,7 +106,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
           </MilitrinLinkButton>
         ) : showQr ? (
           <MilitrinLinkButton href={`/minha-conta/ingressos/${activeTicket?.id}`} variant="success" size="md" iconLeft={<TicketIcon size={16} />} className="w-full">
-            Ver ingresso
+            Ver acesso
           </MilitrinLinkButton>
         ) : (
           <MilitrinLinkButton href={`/minha-conta/compras/${order.id}`} variant="secondary" size="md" iconLeft={<ClipboardList size={16} />} className="w-full">

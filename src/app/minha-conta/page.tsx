@@ -269,8 +269,8 @@ export default async function MinhaContaPage() {
                 <QrCode size={17} className="text-emerald-300" />
               </span>
               <span className="min-w-0">
-                <span className="block text-[11px] text-slate-300">{ticketCta.type === 'ticket' ? 'Acesse seu ingresso' : 'Acesse seus ingressos'}</span>
-                <span className="flex items-center gap-1 text-sm font-bold text-emerald-300">{ticketCta.type === 'ticket' ? 'Ver QR Code' : 'Ver ingressos'}<ChevronRight size={13} /></span>
+                <span className="block text-[11px] text-slate-300">{ticketCta.type === 'ticket' ? 'Acesse seu pacote Militrin' : 'Acesse seus pacotes Militrin'}</span>
+                <span className="flex items-center gap-1 text-sm font-bold text-emerald-300">{ticketCta.type === 'ticket' ? 'Ver QR Code' : 'Ver acessos'}<ChevronRight size={13} /></span>
               </span>
             </Link>
           ) : null
@@ -328,7 +328,7 @@ export default async function MinhaContaPage() {
         <section className="rounded-[2rem] border border-slate-800/80 bg-slate-900/70 p-5 shadow-lg shadow-black/10 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
-              <TicketIcon size={18} className="text-(--brand-300)" />Seus ingressos
+              <TicketIcon size={18} className="text-(--brand-300)" />Seus acessos
             </h2>
             {ticketCards.length > 0 || archivedTicketCount > 0 ? (
               <Link href="/minha-conta/ingressos" className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500">

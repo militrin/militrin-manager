@@ -52,7 +52,7 @@ export function TicketViewModal({ ticketId, onClose }: { ticketId: string; onClo
       <div
         role="dialog"
         aria-modal="true"
-        className="w-full max-w-2xl rounded-t-3xl border border-emerald-500/30 bg-slate-950 p-5 sm:rounded-3xl"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-emerald-500/30 bg-slate-950 p-5 sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">

@@ -50,7 +50,7 @@ function describePendingTicketIssues(summary: TicketReconciliationSummary | null
   const hasPaymentPending = problems.some((r) => r.finalization === 'payment_pending');
   const hasError = problems.some((r) => r.finalization === 'error' || r.finalization === 'issues_remaining');
   if (hasPaymentPending && !hasError) {
-    return 'Seu ingresso importado ainda depende da confirmação do pagamento pela organização — assim que for confirmado, ele será emitido automaticamente.';
+    return 'Seu pacote Militrin importado ainda depende da confirmação do pagamento pela organização — assim que for confirmado, o acesso será emitido automaticamente.';
   }
   return 'Não foi possível emitir automaticamente um dos seus ingressos importados agora. Entre em contato com a organização do evento para verificar.';
 }

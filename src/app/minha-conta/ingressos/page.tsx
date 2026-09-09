@@ -224,11 +224,11 @@ export default async function IngressosPage({
       <section className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-4 sm:p-5')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className={militrinType.sectionTitle}>{showArchived ? 'Anteriores e inativos' : 'Ingressos e QR Codes'}</h2>
+            <h2 className={militrinType.sectionTitle}>{showArchived ? 'Anteriores e inativos' : 'Meus acessos e QR Codes'}</h2>
             <p className={cx('mt-0.5', militrinType.bodyMuted)}>
               {showArchived
                 ? 'Histórico preservado: eventos encerrados, cancelados e inativos.'
-                : 'Acesse seus ingressos ativos e QR Codes.'}
+                : 'Acesse seus pacotes Militrin ativos e o QR Code de retirada do kit.'}
             </p>
           </div>
           {enhancedItems.length > 0 ? <p className={cx('shrink-0', militrinType.bodyMuted)}>{ticketsSummary}</p> : null}
@@ -247,23 +247,23 @@ export default async function IngressosPage({
         <div className="mt-4">
       {(orderItems ?? []).length === 0 ? (
         <MilitrinEmptyState
-          title="Você ainda não possui ingressos."
-          description="Assim que seu pagamento for confirmado, o ingresso aparece aqui automaticamente."
+          title="Você ainda não possui acessos Militrin."
+          description="Assim que seu pagamento for confirmado, o pacote aparece aqui automaticamente."
           actionHref="/minha-conta/comprar"
           actionLabel="Ver eventos"
         />
       ) : visibleItems.length === 0 ? (
         <MilitrinEmptyState
-          title={showArchived ? 'Você não possui ingressos anteriores ou inativos.' : 'Você não possui ingressos ativos.'}
+          title={showArchived ? 'Você não possui acessos anteriores ou inativos.' : 'Você não possui acessos ativos.'}
           description={
             showArchived
-              ? 'Seus ingressos ativos ficam na aba Ingressos ativos.'
+              ? 'Seus acessos ativos ficam na aba Acessos ativos.'
               : archived.length > 0
-                ? 'Ingressos de eventos encerrados, cancelados ou inativos ficam em Anteriores e inativos.'
-                : 'Assim que seu pagamento for confirmado, o ingresso aparece aqui automaticamente.'
+                ? 'Acessos de eventos encerrados, cancelados ou inativos ficam em Anteriores e inativos.'
+                : 'Assim que seu pagamento for confirmado, o pacote aparece aqui automaticamente.'
           }
           actionHref={showArchived ? '/minha-conta/ingressos' : archived.length > 0 ? '/minha-conta/ingressos?ver=anteriores' : '/minha-conta/comprar'}
-          actionLabel={showArchived ? 'Ver ingressos ativos' : archived.length > 0 ? `Anteriores e inativos (${archived.length})` : 'Ver eventos'}
+          actionLabel={showArchived ? 'Ver acessos ativos' : archived.length > 0 ? `Anteriores e inativos (${archived.length})` : 'Ver eventos'}
         />
       ) : (
         <div className="space-y-3">
@@ -293,7 +293,7 @@ export default async function IngressosPage({
                   ) : null}
                   {item.ticketId ? (
                     <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
-                      Ver ingresso
+                      Ver acesso
                     </MilitrinLinkButton>
                   ) : null}
                   {item.orderId && item.isBuyer ? (

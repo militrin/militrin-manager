@@ -28,7 +28,7 @@ export default async function Home() {
             <PublicBrandMark />
             <h1 className="text-3xl font-semibold text-white sm:text-5xl">Prepare o caneco: viva a Oktoberfest com o Militrin!</h1>
             <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-              Garanta seu pacote de forma rápida, sem complicação e 100% online.
+              Garanta seu pacote Militrin de forma rápida, sem complicação e 100% online. O ingresso oficial da Ala Jovem da Oktoberfest é adquirido separadamente.
             </p>
             <Link href="/eventos" className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
               Ver eventos

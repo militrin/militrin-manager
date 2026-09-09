@@ -14,7 +14,7 @@ type ParticipantAuthCardProps = {
 // mesma identidade de produto, so que esta pagina e focada em login.
 export function ParticipantAuthCard({
   title = 'Entrar',
-  subtitle = 'Acesse suas compras, ingressos e dados do usuário.',
+  subtitle = 'Acesse suas compras, acessos Militrin e dados do usuário.',
   defaultNext = '/minha-conta',
 }: ParticipantAuthCardProps) {
   return (
@@ -32,8 +32,8 @@ export function ParticipantAuthCard({
                 <p className="mt-2 text-sm text-slate-200">Acompanhe pedidos, pagamentos e reservas.</p>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ingressos</p>
-                <p className="mt-2 text-sm text-slate-200">Abra seus QR codes e baixe os comprovantes.</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Acessos</p>
+                <p className="mt-2 text-sm text-slate-200">Abra o QR de retirada do kit e baixe o Event Pass.</p>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Perfil</p>

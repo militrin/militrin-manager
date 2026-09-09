@@ -14,7 +14,7 @@ export function AccountTicketsSituationNav({
     {
       id: 'ativos' as const,
       href: '/minha-conta/ingressos',
-      label: activeCount === 1 ? 'Ingressos ativos (1)' : `Ingressos ativos (${activeCount})`,
+      label: activeCount === 1 ? 'Acessos ativos (1)' : `Acessos ativos (${activeCount})`,
     },
     {
       id: 'anteriores' as const,
@@ -24,7 +24,7 @@ export function AccountTicketsSituationNav({
   ];
 
   return (
-    <nav className="flex flex-wrap gap-2" aria-label="Situação dos ingressos">
+    <nav className="flex flex-wrap gap-2" aria-label="Situação dos acessos">
       {tabs.map((tab) => {
         const selected = view === tab.id;
         return (
@@ -44,7 +44,7 @@ export function AccountTicketsSituationNav({
         );
       })}
       <p className={cx('sr-only', militrinType.micro)}>
-        {view === 'ativos' ? 'Mostrando ingressos ativos.' : 'Mostrando ingressos anteriores e inativos.'}
+        {view === 'ativos' ? 'Mostrando acessos ativos.' : 'Mostrando acessos anteriores e inativos.'}
       </p>
     </nav>
   );

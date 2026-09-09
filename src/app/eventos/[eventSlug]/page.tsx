@@ -62,7 +62,7 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
             <Link href={`/inscricao/${event.slug}`} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
-              Comprar ingresso
+              Comprar pacote Militrin
             </Link>
             <Link href="/eventos" className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-700 px-5 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:text-white">
               Ver outros eventos

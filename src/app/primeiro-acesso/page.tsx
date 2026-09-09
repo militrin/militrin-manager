@@ -130,7 +130,7 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
       <section className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6">
         <h1 className="text-3xl font-semibold text-white">Vamos concluir seu cadastro</h1>
-        <p className="mt-2 text-sm text-slate-300">Confirme seus dados para acessar ingressos, compras e QR Codes.</p>
+        <p className="mt-2 text-sm text-slate-300">Confirme seus dados para acessar pacotes Militrin, compras e QR Codes de retirada do kit.</p>
 
         {editableFields.size > 0 ? (
           <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">Complete seu cadastro para continuar.</p>

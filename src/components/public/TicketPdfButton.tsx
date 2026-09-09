@@ -1,9 +1,22 @@
 'use client';
 
 import { useState } from 'react';
-import { getStatusLabel } from '@/lib/status-labels';
 import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
-import { applyReportPage, finalizeReportPages, formatReportDateTime, REPORT_THEME } from '@/lib/reports/report-theme';
+import { cx, militrinButtonSize, militrinButtonVariant, militrinTokens } from '@/components/militrin';
+import { readTicketPassAccent } from '@/components/ticket-pass/ticket-pass-accent';
+import {
+  drawTicketPassPdf,
+  drawTicketPassPng,
+  TICKET_PASS_EXPORT_QR_SIZE,
+  TICKET_PASS_LOGO_PATH,
+  TICKET_PASS_PDF_SIZE,
+  TICKET_PASS_PNG_SIZE,
+} from '@/components/ticket-pass/ticket-pass-export';
+import {
+  buildTicketPassViewModel,
+  TICKET_PASS_COPY,
+  ticketPassExportFileStem,
+} from '@/components/ticket-pass/ticket-pass-format';
 
 type TicketPdfButtonProps = {
   eventName: string;
@@ -17,20 +30,36 @@ type TicketPdfButtonProps = {
   className?: string;
 };
 
-const TICKET_PDF_LOGO_PATH = '/militrin-logo.png';
+type ExportKind = 'pdf' | 'png';
 
-async function fetchAsDataUrl(url: string, errorMessage: string) {
+async function fetchAsDataUrl(url: string) {
   const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(errorMessage);
-  }
+  if (!response.ok) throw new Error('Falha ao carregar logo.');
   const blob = await response.blob();
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error(errorMessage));
+    reader.onerror = () => reject(new Error('Falha ao carregar logo.'));
     reader.readAsDataURL(blob);
   });
+}
+
+function loadHtmlImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Falha ao carregar imagem do ingresso.'));
+    image.src = src;
+  });
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = href;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(href);
 }
 
 export function TicketPdfButton({
@@ -44,89 +73,92 @@ export function TicketPdfButton({
   orderNumber,
   className,
 }: TicketPdfButtonProps) {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<ExportKind | null>(null);
 
-  const downloadTicket = async () => {
-    setLoading(true);
+  const exportTicket = async (kind: ExportKind) => {
+    setLoading(kind);
     try {
-      const [{ jsPDF }, qrDataUrl] = await Promise.all([
-        import('jspdf'),
-        generateQrDataUrl(token, 320),
+      const model = buildTicketPassViewModel({
+        eventName,
+        participantName,
+        status,
+        categoryName,
+        eventDate,
+        eventLocation,
+        token,
+        orderNumber,
+      });
+      const accent = readTicketPassAccent();
+      const [qrDataUrl, logoDataUrl] = await Promise.all([
+        generateQrDataUrl(model.token, TICKET_PASS_EXPORT_QR_SIZE),
+        fetchAsDataUrl(TICKET_PASS_LOGO_PATH).catch(() => null),
       ]);
+      const stem = ticketPassExportFileStem(model);
+      const assets = {
+        qrDataUrl,
+        logoDataUrl,
+        accent: accent.accent,
+        accentSoft: accent.accentSoft,
+      };
 
-      let logoDataUrl: string | null = null;
-      try {
-        logoDataUrl = await fetchAsDataUrl(TICKET_PDF_LOGO_PATH, 'Falha ao carregar logo.');
-      } catch {
-        // Fallback badge is rendered below when the logo file is unavailable.
+      if (kind === 'pdf') {
+        const { jsPDF } = await import('jspdf');
+        const doc = new jsPDF({
+          unit: 'pt',
+          format: [TICKET_PASS_PDF_SIZE.width, TICKET_PASS_PDF_SIZE.height],
+          orientation: 'portrait',
+        });
+        drawTicketPassPdf(doc, model, assets);
+        doc.save(`${stem}.pdf`);
+        return;
       }
 
-      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-      const generatedAt = new Date().toISOString();
-      const { colors } = REPORT_THEME;
-      const rgb = (value: readonly [number, number, number]) => [value[0], value[1], value[2]] as [number, number, number];
-
-      applyReportPage(doc, 'Ingresso Militrin');
-
-      // Header block.
-      doc.setFillColor(...rgb(colors.card));
-      doc.roundedRect(40, 56, 515, 58, 8, 8, 'F');
-      doc.setDrawColor(...rgb(colors.border));
-      doc.roundedRect(40, 56, 515, 58, 8, 8, 'S');
-
-      doc.setTextColor(...rgb(colors.text));
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(16);
-      doc.text(eventName, 56, 89);
-
-      if (logoDataUrl) {
-        doc.addImage(logoDataUrl, 'PNG', 446, 61, 96, 46);
-      } else {
-        doc.setFillColor(...rgb(colors.green));
-        doc.roundedRect(456, 68, 86, 30, 7, 7, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(12);
-        doc.text('MILITRIN', 499, 88, { align: 'center' });
-        doc.setTextColor(...rgb(colors.text));
-      }
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(12);
-      const detailLines = [
-        `Evento: ${eventName}`,
-        participantName ? `Titular: ${participantName}` : null,
-        categoryName ? `Categoria: ${categoryName}` : null,
-        `Ingresso: ${getStatusLabel(status)}`,
-        eventDate ? `Data: ${formatReportDateTime(eventDate)}` : null,
-        eventLocation ? `Local: ${eventLocation}` : null,
-        orderNumber ? `Pedido: ${orderNumber}` : null,
-      ].filter((line): line is string => Boolean(line));
-      detailLines.forEach((line, index) => doc.text(line, 56, 145 + (index * 21)));
-
-      doc.setFillColor(...rgb(colors.white));
-      doc.setDrawColor(...rgb(colors.border));
-      doc.roundedRect(56, 330, 300, 300, 12, 12, 'FD');
-      doc.addImage(qrDataUrl, 'PNG', 74, 348, 264, 264);
-
-      doc.setFontSize(10);
-      doc.setTextColor(...rgb(colors.muted));
-      doc.text('Apresente este QR Code na entrada do evento.', 56, 650);
-      finalizeReportPages(doc, generatedAt, 'Militrin · Ingresso');
-      doc.save(`ingresso-${token}.pdf`);
+      const canvas = document.createElement('canvas');
+      canvas.width = TICKET_PASS_PNG_SIZE.width;
+      canvas.height = TICKET_PASS_PNG_SIZE.height;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Não foi possível gerar a imagem do ingresso.');
+      const [qrImage, logoImage] = await Promise.all([
+        loadHtmlImage(qrDataUrl),
+        logoDataUrl ? loadHtmlImage(logoDataUrl).catch(() => null) : Promise.resolve(null),
+      ]);
+      drawTicketPassPng(context, model, { ...assets, qrImage, logoImage });
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result);
+          else reject(new Error('Não foi possível gerar a imagem do ingresso.'));
+        }, 'image/png');
+      });
+      triggerDownload(blob, `${stem}.png`);
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   };
 
+  const buttonClass = cx(
+    'inline-flex w-full items-center justify-center rounded-2xl font-semibold transition disabled:opacity-60 sm:w-auto',
+    militrinButtonSize.md,
+    militrinTokens.focusRing,
+  );
+
   return (
-    <button
-      type="button"
-      onClick={downloadTicket}
-      disabled={loading}
-      className={className ?? 'rounded-xl border border-slate-600 px-3 py-2 text-xs text-slate-200'}
-    >
-      {loading ? 'Gerando PDF...' : 'Baixar PDF'}
-    </button>
+    <div className={cx('flex w-full flex-col gap-2 sm:flex-row sm:justify-center', className)}>
+      <button
+        type="button"
+        onClick={() => void exportTicket('pdf')}
+        disabled={Boolean(loading)}
+        className={cx(buttonClass, militrinButtonVariant.primary)}
+      >
+        {loading === 'pdf' ? TICKET_PASS_COPY.generatingPdf : TICKET_PASS_COPY.downloadPdf}
+      </button>
+      <button
+        type="button"
+        onClick={() => void exportTicket('png')}
+        disabled={Boolean(loading)}
+        className={cx(buttonClass, militrinButtonVariant.secondary)}
+      >
+        {loading === 'png' ? TICKET_PASS_COPY.generatingImage : TICKET_PASS_COPY.downloadImage}
+      </button>
+    </div>
   );
 }

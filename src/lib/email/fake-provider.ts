@@ -1,4 +1,5 @@
 import type { EmailProvider, TicketEmailPayload } from "@/lib/email/provider";
+import { OKTOBERFEST_ACCESS_NOTICE } from "@/lib/public/oktoberfest-access-notice";
 
 function logMail(kind: string, payload: unknown) {
   console.log(`[email:${kind}]`, JSON.stringify(payload, null, 2));
@@ -14,7 +15,12 @@ export class ConsoleEmailProvider implements EmailProvider {
   }
 
   async sendTicketConfirmation(input: TicketEmailPayload): Promise<void> {
-    logMail("ticket-confirmation", input);
+    // Templates HTML reais ficam no provedor de e-mail; este log documenta a copy obrigatória.
+    logMail("ticket-confirmation", {
+      ...input,
+      qrUsage: "Use seu QR Code para retirar o kit Militrin.",
+      importantNotice: `Importante: ${OKTOBERFEST_ACCESS_NOTICE.full}`,
+    });
   }
 
   async sendPasswordReset(input: { to: string; resetUrl?: string }): Promise<void> {

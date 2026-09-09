@@ -92,7 +92,7 @@ export function HomeTicketCarousel({
 
           <div className="mt-3 flex flex-wrap gap-2 border-t border-dashed border-slate-800 pt-3">
             <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
-              Ver ingresso
+              Ver acesso
             </MilitrinLinkButton>
             {current.canShowTicket ? (
               <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">

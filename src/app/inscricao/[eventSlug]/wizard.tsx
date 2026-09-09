@@ -32,6 +32,8 @@ import {
 } from '@/lib/checkout/card-checkout-redirect';
 import { kitItemStatusLabel } from '@/lib/checkout/kit-item-status';
 import { TicketViewer } from '@/components/public/TicketViewer';
+import { OktoberfestTicketNotice } from '@/components/public/OktoberfestTicketNotice';
+import { OKTOBERFEST_ACCESS_NOTICE, MILITRIN_PARTICIPANT_COPY } from '@/lib/public/oktoberfest-access-notice';
 import {
   formatCpf,
   formatPhone,
@@ -2057,7 +2059,7 @@ export function RegistrationWizard({
   const progress = (stepShown / totalSteps) * 100;
   const visibleTotalSteps = totalSteps;
   const trail = [
-    { id: 1, label: editModeOrderId ? 'Editar ingressos' : 'Escolha seu ingresso' },
+    { id: 1, label: editModeOrderId ? 'Editar acessos' : 'Escolha seu pacote' },
     { id: 2, label: 'Seus dados' },
     { id: 3, label: 'Pagamento' },
     { id: 4, label: 'Concluído' },
@@ -2353,8 +2355,8 @@ export function RegistrationWizard({
                 <div className="mb-4 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200 lg:hidden">
                   <p className="text-base font-semibold">{summaryValues.event}</p>
                   {shouldShowCategoryLabel ? <p className="mt-2">Categoria: {summaryValues.category}</p> : null}
-                  <p>Ingressos: {summaryValues.quantity}</p>
-                  <p>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {summaryValues.batch}</p>
+                  <p>Pacotes: {summaryValues.quantity}</p>
+                  <p>{isSingleTicketEvent ? 'Pacote' : 'Lote'}: {summaryValues.batch}</p>
                   {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
                     <p key={`m-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
                   ))}
@@ -2366,6 +2368,7 @@ export function RegistrationWizard({
                   <p>Desconto: {summaryValues.discount}</p>
                   {summaryValues.showFee ? <p>Taxa de pagamento: {summaryValues.fee}</p> : null}
                   <p className="text-emerald-300">Total: {summaryValues.total}</p>
+                  <OktoberfestTicketNotice variant="checkout" className="mt-3" />
                 </div>
               ) : null}
 
@@ -2393,7 +2396,7 @@ export function RegistrationWizard({
 
             {step === 1 && !editModeOrderId && (
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">1. Escolha seu ingresso</h2>
+                <h2 className="text-lg font-semibold">1. Escolha seu pacote</h2>
                 {categorySelectionRequired ? (
                   <p className="text-sm text-slate-300">Selecione o tipo de ingresso e configure os itens da compra.</p>
                 ) : null}
@@ -3218,7 +3221,7 @@ export function RegistrationWizard({
                       }}
                       className="h-11 rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
                     >
-                      Ver meu ingresso
+                      Ver meu acesso
                     </button>
                     <Link
                       href="/minha-conta"
@@ -3276,7 +3279,10 @@ export function RegistrationWizard({
 
                   {registration.payment.payment_status === 'paid' && registration.qr_token ? (
                     <div className="mt-4 space-y-3">
-                      <p className="text-emerald-200">Pagamento confirmado. O ingresso com titular definido ja possui QR Code e PDF.</p>
+                      <p className="text-emerald-200">
+                        {MILITRIN_PARTICIPANT_COPY.accessConfirmed} O acesso com titular definido já possui QR Code e PDF.
+                      </p>
+                      <p className="text-sm text-emerald-100/80">{OKTOBERFEST_ACCESS_NOTICE.reminder}</p>
                       <TicketViewer
                         eventName={event.name}
                         participantName={registration.participant_name}
@@ -3437,7 +3443,7 @@ export function RegistrationWizard({
                 <div className="mt-3 space-y-1">
                   {shouldShowCategoryLabel ? <p>Categoria: {summaryValues.category}</p> : null}
                   <p>Quantidade: {summaryValues.quantity}</p>
-                  <p>{isSingleTicketEvent ? 'Ingresso' : 'Lote'}: {summaryValues.batch}</p>
+                  <p>{isSingleTicketEvent ? 'Pacote' : 'Lote'}: {summaryValues.batch}</p>
                   {summaryValues.groupedShirts.map(([shirtKey, qty]) => (
                     <p key={`d-s-${shirtKey}`} className="text-xs text-slate-400">{qty}x {shirtKey.replace('::', ' / ')}</p>
                   ))}
@@ -3452,6 +3458,7 @@ export function RegistrationWizard({
                   {summaryValues.showFee ? <p>Taxa de pagamento: {summaryValues.fee}</p> : null}
                   <p className="font-semibold text-emerald-300">Total: {summaryValues.total}</p>
                 </div>
+                <OktoberfestTicketNotice variant="checkout" className="mt-4" />
               </div>
             </aside>
           </div>

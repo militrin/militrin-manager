@@ -114,9 +114,9 @@ export function MilitrinTicketCard({
           {qrUrl ? (
             <>
               <div className="rounded-xl border border-slate-700 bg-white p-2">
-                <Image src={qrUrl} alt="QR Code do ingresso" width={160} height={160} unoptimized className="h-40 w-40" />
+                <Image src={qrUrl} alt="QR Code para retirada do kit Militrin" width={160} height={160} unoptimized className="h-40 w-40" />
               </div>
-              <p className={cx('text-center', militrinType.micro)}>Apresente este QR Code para retirar seu kit</p>
+              <p className={cx('text-center', militrinType.micro)}>Apresente este QR Code no ponto de retirada do Militrin</p>
             </>
           ) : (
             <div

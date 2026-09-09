@@ -1,27 +1,25 @@
-import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CalendarDays, CheckCircle2, MapPin, Shirt, Ticket as TicketIcon } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatDateLongBR, formatDateTimeBR } from '@/lib/utils/date';
+import { formatDateTimeBR } from '@/lib/utils/date';
 import { getCurrentPermissionMap } from '@/lib/admin/permissions';
 import {
   MilitrinBadge,
   MilitrinButton,
-  MilitrinHeader,
   MilitrinLinkButton,
   MilitrinSection,
   MilitrinStatusBadge,
   MilitrinTimeline,
-  checkinStatusChip,
   cx,
   militrinTokens,
   militrinType,
   type MilitrinTimelineItem,
 } from '@/components/militrin';
-import { buildAccountHeaderEvent } from '@/lib/account/header-event';
 import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { TicketPdfButton } from '@/components/public/TicketPdfButton';
+import { OKTOBERFEST_ACCESS_NOTICE } from '@/lib/public/oktoberfest-access-notice';
+import { TicketPass } from '@/components/ticket-pass/TicketPass';
 import {
   reviewTicketItemChangeAction,
   updateTicketNotesAction,
@@ -272,14 +270,6 @@ export default async function TicketDetailPage({
   // agregado, que ja e a fonte existente.
   const kitItemsForDisplay = kitItems.filter((item) => String(item.status ?? '') !== 'cancelled');
   const kitDeliveredAt = kitItems.find((item) => String(item.status ?? '') === 'delivered')?.delivered_at as string | null | undefined;
-  const checkinChip = checkinStatusChip(checkinDone);
-  const eventDateLong = eventObj?.starts_at ? formatDateLongBR(String(eventObj.starts_at)) : null;
-  const headerEvent = buildAccountHeaderEvent({
-    name: eventObj?.name ? String(eventObj.name) : null,
-    starts_at: eventObj?.starts_at ? String(eventObj.starts_at) : null,
-    ends_at: eventObj?.ends_at ? String(eventObj.ends_at) : null,
-    location: eventObj?.location ? String(eventObj.location) : null,
-  });
   // Secao "Administracao" -- so o que exige permissao administrativa
   // (participants.edit_basic ou kits/checkin). Definir/transferir titular
   // (TicketHolderActions) e uma capacidade do PROPRIO dono do ingresso
@@ -291,7 +281,7 @@ export default async function TicketDetailPage({
   const timelineItems = [
     {
       id: `ticket-issued-${ticket.id}`,
-      title: 'Ingresso emitido',
+      title: 'Acesso emitido',
       subtitle: `Pedido ${orderDisplayReference(null, order?.order_number)}`,
       date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : undefined,
       status: 'confirmed',
@@ -301,7 +291,7 @@ export default async function TicketDetailPage({
           {
             id: `ticket-used-${ticket.id}`,
             title: 'Check-in realizado',
-            subtitle: `Ingressou em ${String(eventObj?.name ?? 'evento')}`,
+            subtitle: `Check-in em ${String(eventObj?.name ?? 'evento')}`,
             date: formatDateTimeBR(String(ticket.used_at), ' às '),
             status: 'used',
           },
@@ -331,7 +321,7 @@ export default async function TicketDetailPage({
             : {
                 id: `kit-pending-${ticket.id}`,
                 title: 'Aguardando retirada do kit',
-                subtitle: 'Apresente o QR Code no evento para retirar.',
+                subtitle: 'Apresente o QR Code no ponto de retirada do Militrin.',
                 date: undefined,
                 status: 'pending',
               },
@@ -372,87 +362,26 @@ export default async function TicketDetailPage({
 
   return (
     <section className="space-y-4">
-      <MilitrinHeader event={headerEvent} showBuyButton={false} />
-
-      <Link href={accountTicketsHref} className={cx('inline-flex items-center gap-1.5', militrinType.micro)}>
-        ← Voltar para meus ingressos
+      <Link href={accountTicketsHref} className={cx('inline-flex min-h-11 items-center gap-1.5', militrinType.micro)}>
+        ← Voltar para meus acessos
       </Link>
 
-      {/* Cabecalho: cartao de identidade do ingresso -- sem termos tecnicos, sem uuid. */}
-      <div className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-5 sm:p-6')}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className={militrinTokens.eyebrow}>Ingresso</p>
-            <h1 className={cx('mt-1 truncate', militrinType.pageTitle)} title={String(eventObj?.name ?? 'Ingresso')}>{String(eventObj?.name ?? 'Ingresso')}</h1>
-            <p className={cx('mt-1', militrinType.micro)}>
-              Pedido {orderDisplayReference(null, order?.order_number)}
-              {ticket.issued_at ? ` • Emitido em ${formatDateTimeBR(String(ticket.issued_at), ' às ')}` : ''}
-            </p>
-          </div>
-          <MilitrinStatusBadge status={ticketStatus} />
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          {optionalDisplayValue(batchObj?.name) ? (
-            <div className="min-w-0">
-              <p className={militrinType.label}>Lote</p>
-              <p className={cx('truncate', militrinType.body)}>{optionalDisplayValue(batchObj?.name)}</p>
-            </div>
-          ) : null}
-          {eventDateLong ? (
-            <div className="min-w-0">
-              <p className={militrinType.label}>Data do evento</p>
-              <p className={cx('flex items-center gap-1.5', militrinType.body)}><CalendarDays size={13} className="shrink-0 text-slate-500" /><span className="truncate">{eventDateLong}</span></p>
-            </div>
-          ) : null}
-          {optionalDisplayValue(eventObj?.location) ? (
-            <div className="min-w-0">
-              <p className={militrinType.label}>Local</p>
-              <p className={cx('flex items-center gap-1.5', militrinType.body)}><MapPin size={13} className="shrink-0 text-slate-500" /><span className="truncate">{optionalDisplayValue(eventObj?.location)}</span></p>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-slate-800/80 pt-4">
-          <div className="min-w-0">
-            <p className={militrinType.label}>Titular</p>
-            <p className={cx('truncate', militrinType.body)}>{holderName}</p>
-          </div>
-          {optionalDisplayValue(categoryObj?.name) ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
-              <TicketIcon size={11} />{optionalDisplayValue(categoryObj?.name)}
-            </span>
-          ) : null}
-          {shirtSize ? (
-            <div className="min-w-0">
-              <p className={militrinType.label}>Camiseta</p>
-              <p className={cx('flex items-center gap-1.5', militrinType.body)}><Shirt size={13} className="shrink-0 text-slate-500" />{shirtSize}</p>
-            </div>
-          ) : null}
-          <div className="ml-auto">
-            <MilitrinBadge tone={checkinChip.tone}>
-              <span className="inline-flex items-center gap-1"><checkinChip.icon size={11} />{checkinChip.label}</span>
-            </MilitrinBadge>
-          </div>
-        </div>
-      </div>
-
-      {/* Seu ingresso (QR) + Seu kit -- lado a lado no desktop, empilhados no mobile. */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
-          <h2 className={militrinType.cardTitle}>Seu ingresso</h2>
-          {canShowTicket ? (
-            <div id="qr" className="mt-4 flex flex-col items-center gap-3">
-              <p className={cx('text-center', militrinType.body)}>
-                Apresente este QR Code para <strong className="text-white">retirar seu kit</strong>.
-              </p>
-              <div className="rounded-2xl border border-slate-700 bg-white p-3">
-                {qrDataUrl ? (
-                  <Image src={qrDataUrl} alt="QR Code do ingresso" width={220} height={220} unoptimized className="h-55 w-55" />
-                ) : (
-                  <p className="p-6 text-sm text-slate-500">Não foi possível gerar o QR Code.</p>
-                )}
-              </div>
+      <div className="[--ticket-notch:#070708] rounded-[1.75rem] bg-[#070708] px-3 py-8 sm:px-6 sm:py-10">
+        <TicketPass
+          eventName={String(eventObj?.name ?? 'Ingresso')}
+          participantName={holderName}
+          status={ticketStatus}
+          categoryName={optionalDisplayValue(categoryObj?.name)}
+          eventDate={eventObj?.starts_at ? String(eventObj.starts_at) : null}
+          eventLocation={optionalDisplayValue(eventObj?.location)}
+          token={String(ticket.token ?? '')}
+          orderNumber={orderDisplayReference(null, order?.order_number)}
+          qrDataUrl={qrDataUrl}
+          canShowQr={canShowTicket}
+          qrUnavailableMessage={ticketIssuanceBlocked ? 'Acesso aguardando conferência. O QR Code ficará disponível após a liberação do organizador.' : 'O QR Code fica disponível assim que o pagamento é confirmado.'}
+          qrAnchorId="qr"
+          actions={
+            canShowTicket && ticket.token ? (
               <TicketPdfButton
                 eventName={String(eventObj?.name ?? 'Evento')}
                 participantName={holderName}
@@ -462,18 +391,14 @@ export default async function TicketDetailPage({
                 eventLocation={eventObj?.location ? String(eventObj.location) : null}
                 token={String(ticket.token ?? '')}
                 orderNumber={orderDisplayReference(null, order?.order_number)}
-                className={cx('mt-1 inline-flex w-full items-center justify-center gap-2 rounded-2xl font-semibold transition sm:w-auto', militrinTokens.focusRing, 'bg-linear-to-r from-(--brand-600) to-(--brand-500) text-white shadow-lg shadow-(--brand-600)/25 hover:from-(--brand-500) hover:to-(--brand-400) h-11 px-5 text-sm')}
               />
-            </div>
-          ) : (
-            <div className="mt-4 rounded-2xl border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-100">
-              {ticketIssuanceBlocked ? 'Ingresso aguardando conferência. O QR Code ficará disponível após a liberação do organizador.' : 'O QR Code fica disponível assim que o pagamento é confirmado.'}
-            </div>
-          )}
-        </div>
+            ) : null
+          }
+        />
+      </div>
 
-        {kitItemsForDisplay.length ? (
-          <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
+      {kitItemsForDisplay.length ? (
+        <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
             <div className="flex items-center justify-between gap-2">
               <h2 className={militrinType.cardTitle}>Seu kit</h2>
               <MilitrinBadge tone={kitFullyDelivered ? 'success' : 'neutral'}>{kitFullyDelivered ? 'Kit retirado' : 'A retirar'}</MilitrinBadge>
@@ -493,7 +418,7 @@ export default async function TicketDetailPage({
               })}
             </ul>
             <p className={cx('mt-3 border-t border-slate-800/80 pt-3', militrinType.micro)}>
-              Todos os itens do kit são retirados juntos com o QR Code do seu ingresso.
+              Todos os itens do kit são retirados juntos com o QR Code do seu acesso Militrin.
               {kitFullyDelivered && kitDeliveredAt ? ` Retirado em ${formatDateTimeBR(String(kitDeliveredAt), ' às ')}.` : ''}
             </p>
             {participantShirtChangeEnabled ? (
@@ -504,11 +429,10 @@ export default async function TicketDetailPage({
             {shirtConfigurationIssue ? <p className="mt-3 rounded-xl border border-amber-600/30 bg-amber-950/20 p-3 text-xs text-amber-100">{shirtConfigurationIssue}</p> : null}
           </div>
         ) : null}
-      </div>
 
       {/* Detalhes do ingresso -- so informacoes que fazem sentido pro participante, sem uuid/status cru. */}
       <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
-        <h2 className={militrinType.cardTitle}>Detalhes do ingresso</h2>
+        <h2 className={militrinType.cardTitle}>Detalhes do acesso</h2>
         <div className="mt-3 divide-y divide-slate-800/80 text-sm">
           {optionalDisplayValue(categoryObj?.name) ? <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Categoria</span><span className={militrinType.body}>{optionalDisplayValue(categoryObj?.name)}</span></div> : null}
           {optionalDisplayValue(batchObj?.name) ? <div className="flex items-center justify-between gap-3 py-2"><span className={militrinType.bodyMuted}>Lote</span><span className={militrinType.body}>{optionalDisplayValue(batchObj?.name)}</span></div> : null}
@@ -521,7 +445,7 @@ export default async function TicketDetailPage({
 
       {showHolderActions ? (
         <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
-          <h2 className={militrinType.cardTitle}>Titular do ingresso</h2>
+          <h2 className={militrinType.cardTitle}>Titular do acesso</h2>
           <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div>
         </div>
       ) : null}
@@ -530,19 +454,20 @@ export default async function TicketDetailPage({
         <h2 className={militrinType.cardTitle}>Informações importantes</h2>
         <ul className="mt-3 space-y-2">
           <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />Chegue com antecedência para retirar seu kit.</li>
-          <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />O ingresso é pessoal e intransferível.</li>
+          <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />O acesso Militrin é pessoal e intransferível.</li>
+          <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />{OKTOBERFEST_ACCESS_NOTICE.reminder}</li>
           <li className={cx('flex items-start gap-2', militrinType.body)}><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />Em caso de dúvidas, fale com a organização.</li>
         </ul>
       </div>
 
       {showTimeline ? (
-        <MilitrinSection eyebrow="Histórico" title="Histórico do ingresso" description="Acompanhe a vida do ingresso em ordem cronológica.">
+        <MilitrinSection eyebrow="Histórico" title="Histórico do acesso" description="Acompanhe a vida do seu acesso Militrin em ordem cronológica.">
           {timelineItems.length ? <MilitrinTimeline items={timelineItems} /> : <p className={militrinType.bodyMuted}>Sem eventos registrados ainda.</p>}
         </MilitrinSection>
       ) : null}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <MilitrinLinkButton href={accountTicketsHref} variant="secondary" size="md" className="w-full sm:w-auto">Voltar para ingressos</MilitrinLinkButton>
+        <MilitrinLinkButton href={accountTicketsHref} variant="secondary" size="md" className="w-full sm:w-auto">Voltar para acessos</MilitrinLinkButton>
         {orderId && isBuyer ? <MilitrinLinkButton href={`/minha-conta/compras/${orderId}`} variant="secondary" size="md" className="w-full sm:w-auto">Ver compra</MilitrinLinkButton> : null}
       </div>
 

@@ -85,14 +85,17 @@ export function PixPaymentCard({
         <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" aria-hidden />
         <h3 className="mt-3 text-xl font-semibold text-emerald-100">Pagamento confirmado</h3>
         <p className="mt-1 text-sm text-emerald-200/90">
-          Seu pagamento foi confirmado. Os ingressos aparecem em Minha Conta assim que a emissão for concluída.
+          Seu pagamento foi confirmado. Seu pacote Militrin aparece em Minha Conta assim que a emissão for concluída.
+        </p>
+        <p className="mt-2 text-xs text-emerald-100/80">
+          Não se esqueça: o ingresso para acessar a Ala Jovem da Oktoberfest é adquirido separadamente.
         </p>
         {confirmedHref ? (
           <a
             href={confirmedHref}
             className="mt-4 inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
           >
-            {confirmedLabel ?? 'Ver meus ingressos'}
+            {confirmedLabel ?? 'Ver meus acessos'}
           </a>
         ) : null}
       </div>
@@ -222,7 +225,7 @@ export function PixPaymentCard({
       ) : null}
 
       <p className="mt-4 text-center text-sm text-slate-400">
-        Seu ingresso será liberado automaticamente após a confirmação do pagamento.
+        Seu pacote Militrin será liberado automaticamente após a confirmação do pagamento.
       </p>
 
       {isFakePaymentProvider ? (

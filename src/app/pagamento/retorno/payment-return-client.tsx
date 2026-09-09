@@ -136,13 +136,16 @@ export function PaymentReturnClient({
         <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" aria-hidden />
         <h1 className="mt-3 text-2xl font-semibold text-emerald-100">Pagamento confirmado</h1>
         <p className="mt-2 text-sm text-emerald-200/90">
-          {reference} foi confirmado. Os ingressos ja podem ser acessados na sua conta.
+          {reference} foi confirmado. Seu pacote Militrin já pode ser acessado na sua conta.
+        </p>
+        <p className="mt-2 text-xs text-emerald-100/80">
+          Não se esqueça: o ingresso para acessar a Ala Jovem da Oktoberfest é adquirido separadamente.
         </p>
         <Link
           href="/minha-conta/ingressos"
           className="mt-5 inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-500 px-6 text-sm font-semibold text-emerald-950"
         >
-          Ver meus ingressos
+          Ver meus acessos
         </Link>
       </section>
     );

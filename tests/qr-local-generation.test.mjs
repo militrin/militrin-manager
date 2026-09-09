@@ -13,6 +13,8 @@ test('codigo operacional nao envia token para api.qrserver.com', async () => {
   const files = [
     '../src/lib/qr/generate-qr-data-url.ts',
     '../src/components/qr/LocalQrImage.tsx',
+    '../src/components/ticket-pass/TicketQRCode.tsx',
+    '../src/components/public/TicketPdfButton.tsx',
     '../src/app/minha-conta/ingressos/page.tsx',
     '../src/app/minha-conta/ingressos/[ticketId]/page.tsx',
     '../src/app/api/inscricao/pedidos/[orderId]/itens/[itemId]/qrcode/route.ts',

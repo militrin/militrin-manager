@@ -59,13 +59,12 @@ test("MenuSheet da conta contem acesso as funcoes secundarias: ingressos, compra
   assert.match(sheetFn, /Sair/);
   // navigationGroups (fonte compartilhada com o desktop) precisa cobrir os
   // itens sugeridos pelo AJUSTE MOBILE item 1.
-  assert.match(accountNav, /label: 'Meus ingressos'/);
+  assert.match(accountNav, /label: 'Meus acessos'/);
   assert.match(accountNav, /label: 'Minhas compras'/);
   assert.match(accountNav, /label: 'Carrinho de Compras'/);
   assert.match(accountNav, /label: 'Meu perfil'/);
   assert.match(accountNav, /href: '\/fotos'/);
   assert.match(accountNav, /label: 'Histórico'/);
-  assert.match(accountNav, /label: 'Minha categoria - Em breve'/);
 });
 
 test("MenuSheet mostra Painel administrativo/Area do patrocinador reaproveitando o MESMO destino administrativo do desktop", () => {
@@ -87,12 +86,12 @@ test("AccountMobileNav recebe o destino administrativo como prop -- layout.tsx r
   assert.match(layout, /<AccountMobileNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} \/>/);
 });
 
-test("home da Minha Conta destaca Eventos e Loja perto do topo (cards visuais com CTA), antes da secao 'Seus ingressos'", () => {
+test("home da Minha Conta destaca Eventos e Loja perto do topo (cards visuais com CTA), antes da secao 'Seus acessos'", () => {
   const highlightIdx = homePage.indexOf('href="/minha-conta/comprar"');
   const lojaHighlightIdx = homePage.indexOf('href="/minha-conta/loja"');
-  const seusIngressosIdx = homePage.indexOf("/>Seus ingressos");
+  const seusAcessosIdx = homePage.indexOf("/>Seus acessos");
   assert.ok(highlightIdx !== -1 && lojaHighlightIdx !== -1, "os 2 cards de destaque (Eventos e Loja) precisam existir na home");
-  assert.ok(highlightIdx < seusIngressosIdx && lojaHighlightIdx < seusIngressosIdx, "os cards de destaque precisam vir ANTES de 'Seus ingressos', perto do topo");
+  assert.ok(highlightIdx < seusAcessosIdx && lojaHighlightIdx < seusAcessosIdx, "os cards de destaque precisam vir ANTES de 'Seus acessos', perto do topo");
   assert.match(homePage, /Próximos eventos/);
   assert.match(homePage, /Ver eventos/);
   assert.match(homePage, /Loja Militrin/);

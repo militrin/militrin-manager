@@ -155,7 +155,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
           {
             id: `checkin-${String(ticket.id)}`,
             title: 'Check-in realizado',
-            description: 'Ingresso utilizado na entrada do evento.',
+            description: 'Check-in Militrin realizado (retirada/credenciamento).',
             date: formatDateTimeBR(String(ticket.used_at), ' às '),
             status: 'used',
           },

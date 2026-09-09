@@ -203,7 +203,7 @@ export default async function OrderDetailPage({
       </MilitrinSection>
 
       {ticketItems.length > 0 ? (
-        <MilitrinSection eyebrow="Ingressos" title="Ingressos do pedido" description="Cada ingresso do pedido, com sua própria configuração — nunca consolidado.">
+      <MilitrinSection eyebrow="Pacote" title="Acessos do pedido" description="Cada acesso Militrin do pedido, com sua própria configuração — nunca consolidado.">
           <div className="space-y-3">
             {ticketItems.map((item, index) => {
               const shirtLabel = shirtDisplayLabel(item.shirt_type);
@@ -215,7 +215,7 @@ export default async function OrderDetailPage({
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-[220px] flex-1 space-y-1">
                       <p className="text-base font-semibold text-white">
-                        Ingresso {position}{item.category_name ? ` — ${item.category_name}` : ''}
+                        Acesso {position}{item.category_name ? ` — ${item.category_name}` : ''}
                       </p>
                       <p className="text-sm text-slate-300">{holderLabel ? `Titular: ${holderLabel}` : 'Titular ainda não definido'}</p>
                       {shirtLabel ? (
@@ -330,12 +330,12 @@ export default async function OrderDetailPage({
         </div>
       </MilitrinSection>
 
-      <MilitrinSection eyebrow="Ingresso" title="Ingresso e QR Code" description="Disponível apenas para pedidos confirmados.">
+      <MilitrinSection eyebrow="Acesso Militrin" title="Event Pass e QR Code" description="Disponível apenas para pedidos confirmados. O QR é para retirada do kit Militrin.">
         {canShowTicket ? (
           <div className="space-y-4">
             {ticketItems.filter((item) => item.ticket_token).map((item, index) => (
-              <div key={item.order_item_id} className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-                <p className="mb-3 text-sm text-slate-300">Ingresso {item.item_position ?? index + 1}</p>
+              <div key={item.order_item_id} className="space-y-3">
+                <p className="text-center text-sm text-slate-300">Acesso {item.item_position ?? index + 1}</p>
                 <TicketViewer
                   eventName={String(eventRow?.name ?? order.event_name ?? 'Evento')}
                   participantName={item.participant_name ?? item.holder_full_name ?? ''}
@@ -377,7 +377,7 @@ export default async function OrderDetailPage({
         ) : null}
         {canShowTicket ? (
           <form action={resendAction}>
-            <MilitrinButton type="submit" variant="success">Reenviar ingresso por e-mail</MilitrinButton>
+            <MilitrinButton type="submit" variant="success">Reenviar Event Pass por e-mail</MilitrinButton>
           </form>
         ) : null}
         <Link href="/minha-conta/compras">
