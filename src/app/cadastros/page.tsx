@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { hasPermission } from "@/lib/admin/permissions";
 import { contactIdForTicket } from "@/lib/registrations/contact-tickets";
-import { countSharedEmails, matchesSharedEmailFilter, parseSharedEmailFilter } from "@/lib/account/shared-email-ownership";
+import { countSharedEmails, matchesSharedEmailFilter, normalizeSharedEmail, parseSharedEmailFilter, sharedEmailCountersLabel, sharedEmailGroupStatus } from "@/lib/account/shared-email-ownership";
 import { CadastroList } from "./cadastro-list";
 
 type Params = { q?: string; origin?: string; import_batch_id?: string; shared_email?: string };
@@ -37,7 +37,7 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
       .order("created_at", { ascending: false }),
     supabase
       .from("tickets")
-      .select("id,event_id,order_items(registration_contact_id),participants(registration_contact_id),events(name)")
+      .select("id,event_id,status,intended_owner_contact_id,order_items(registration_contact_id),participants(registration_contact_id),events(name)")
       .eq("organization_id", organization.id)
       .range(0, 4999),
     supabase
@@ -85,10 +85,41 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
   const query = params.q?.trim() ?? "";
   const sharedEmailFilter = parseSharedEmailFilter(params.shared_email);
   const sharedEmailCounts = countSharedEmails((contacts ?? []).map((contact) => contact.email ? String(contact.email) : null));
+  const namesById = new Map((contacts ?? []).map((contact) => [String(contact.id), String(contact.full_name ?? "")]));
+  const emailByContactId = new Map((contacts ?? []).map((contact) => [String(contact.id), normalizeSharedEmail(contact.email ? String(contact.email) : null)]));
+  const ticketsByEmail = new Map<string, Array<{ intendedOwnerContactId: string | null }>>();
+  for (const row of tickets ?? []) {
+    if (["cancelled", "canceled", "void", "voided"].includes(String(row.status ?? ""))) continue;
+    const orderItem = relation(row.order_items);
+    const participant = relation(row.participants);
+    const holderId = participant?.registration_contact_id
+      ? String(participant.registration_contact_id)
+      : orderItem?.registration_contact_id
+        ? String(orderItem.registration_contact_id)
+        : "";
+    const email = emailByContactId.get(holderId) ?? null;
+    if (!email || (sharedEmailCounts.get(email) ?? 0) <= 1) continue;
+    const list = ticketsByEmail.get(email) ?? [];
+    list.push({ intendedOwnerContactId: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null });
+    ticketsByEmail.set(email, list);
+  }
+  const groupStatusByEmail = new Map<string, { status: "pending" | "resolved"; principalName: string | null }>();
+  for (const [email, count] of sharedEmailCounts) {
+    if (count <= 1) continue;
+    const resolution = sharedEmailGroupStatus(ticketsByEmail.get(email) ?? []);
+    groupStatusByEmail.set(email, {
+      status: resolution.status,
+      principalName: resolution.principalId ? namesById.get(resolution.principalId) ?? null : null,
+    });
+  }
+  const pendingGroups = [...groupStatusByEmail.values()].filter((group) => group.status === "pending").length;
+  const resolvedGroups = [...groupStatusByEmail.values()].filter((group) => group.status === "resolved").length;
   const rows = (contacts ?? []).map((contact) => {
     const contactStats = stats.get(String(contact.id));
     const origin = importedContactIds.has(String(contact.id)) ? "Importação" : "Cadastro global";
     const email = String(contact.email ?? "");
+    const emailKey = normalizeSharedEmail(email);
+    const group = emailKey ? groupStatusByEmail.get(emailKey) : null;
     return {
       id: String(contact.id),
       name: String(contact.full_name ?? ""),
@@ -102,7 +133,9 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
       origin,
       ticketCount: contactStats?.ticketIds.size ?? 0,
       eventCount: contactStats?.eventIds.size ?? 0,
-      sharedEmailCount: sharedEmailCounts.get(email.trim().toLowerCase()) ?? (email.trim() ? 1 : 0),
+      sharedEmailCount: emailKey ? sharedEmailCounts.get(emailKey) ?? 0 : 0,
+      sharedEmailStatus: group?.status ?? null,
+      sharedEmailPrincipalName: group?.principalName ?? null,
       importBatchIds: Array.from(importBatchIdsByContact.get(String(contact.id)) ?? []),
     };
   }).filter((row) => {
@@ -110,23 +143,24 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
     if (params.origin === "import" && row.origin !== "Importação") return false;
     if (params.origin === "manual" && row.origin === "Importação") return false;
     if (params.import_batch_id && !row.importBatchIds.includes(params.import_batch_id)) return false;
-    if (!matchesSharedEmailFilter(row.email, row.sharedEmailCount, sharedEmailFilter)) return false;
+    if (!matchesSharedEmailFilter(row.sharedEmailCount, row.sharedEmailStatus, sharedEmailFilter)) return false;
     return true;
   });
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
     <TopBar title="Cadastros" subtitle={`${organization.name} · pessoas da organização`}/>
     <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-400">{rows.length} pessoa(s) encontrada(s)</p><Link href="/cadastros/novo" className="inline-flex h-10 items-center rounded-xl bg-emerald-500 px-4 font-semibold text-emerald-950">Novo cadastro</Link></div>
+    {groupStatusByEmail.size ? <p className="text-sm text-violet-100"><Link href="/cadastros?shared_email=pending" className="hover:underline">Pendentes: {pendingGroups}</Link>{" · "}<Link href="/cadastros?shared_email=resolved" className="hover:underline">Resolvidos: {resolvedGroups}</Link><span className="sr-only">{sharedEmailCountersLabel(pendingGroups, resolvedGroups)}</span><span className="text-slate-500"> · a pendência some ao definir a conta principal; as Pessoas permanecem</span></p> : null}
     {params.import_batch_id ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"><p className="text-sm text-amber-100">Exibindo pessoas vinculadas ao lote de importação, sem alterar a identidade global do cadastro.</p><Link href="/cadastros" className="rounded-xl border border-amber-400/40 px-4 py-2 text-sm text-amber-100">Ver todos os cadastros</Link></div> : null}
     <form className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto]">
       <input name="q" defaultValue={query} placeholder="Nome, CPF, e-mail ou telefone" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"/>
       <select name="origin" defaultValue={params.origin ?? ""} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"><option value="">Todas as origens</option><option value="import">Importação</option><option value="manual">Cadastro global</option></select>
       <label className="grid gap-1">
         <span className="text-xs text-slate-400">E-mail compartilhado</span>
-        <select name="shared_email" defaultValue={sharedEmailFilter === "all" ? "" : sharedEmailFilter} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
-          <option value="">Todos</option>
-          <option value="shared">Apenas e-mails compartilhados</option>
-          <option value="unique">Apenas e-mails únicos</option>
+        <select name="shared_email" defaultValue={sharedEmailFilter} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
+          <option value="all">Todos</option>
+          <option value="pending">Pendentes</option>
+          <option value="resolved">Resolvidos</option>
         </select>
       </label>
       {params.import_batch_id ? <input type="hidden" name="import_batch_id" value={params.import_batch_id}/> : null}

@@ -35,6 +35,7 @@ export function SharedEmailAccountCard({
           ["Pessoas", String(group.peopleCount)],
           ["Ingressos", String(group.ticketCount)],
           ["Pessoa principal atual", group.currentPrincipalName ?? "Ainda não definida"],
+          ["Pendência", group.currentPrincipalId && group.principalUnanimous ? "Resolvida — as Pessoas permanecem" : "Definir conta principal"],
           ["Status da conta", group.accountStatus === "active" ? "Conta ativa" : "Conta ainda não ativada"],
           ["Status do convite", group.inviteStatusLabel],
         ].map(([label, value]) => (

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { CopyableId } from "@/components/CopyableId";
 import { ADMIN_LIST_HEADER_CLASS, ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
-import { sharedEmailBadgeLabel } from "@/lib/account/shared-email-ownership";
+import { sharedEmailBadgeLabel, sharedEmailResolvedAccountLabel } from "@/lib/account/shared-email-ownership";
 
 type Row = {
   id: string;
@@ -20,7 +20,30 @@ type Row = {
   ticketCount: number;
   eventCount: number;
   sharedEmailCount: number;
+  sharedEmailStatus: "pending" | "resolved" | null;
+  sharedEmailPrincipalName: string | null;
 };
+
+function SharedEmailBadges({ row }: { row: Row }) {
+  if (row.sharedEmailCount <= 1) return null;
+  const accountLabel = row.sharedEmailStatus === "resolved" ? sharedEmailResolvedAccountLabel(row.sharedEmailPrincipalName) : null;
+  return (
+    <span className="flex flex-wrap gap-1">
+      <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 hover:border-violet-300">
+        {sharedEmailBadgeLabel(row.sharedEmailCount)}
+      </Link>
+      {accountLabel ? (
+        <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-100 hover:border-emerald-300">
+          {accountLabel}
+        </Link>
+      ) : (
+        <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-100 hover:border-amber-300">
+          Pendente
+        </Link>
+      )}
+    </span>
+  );
+}
 
 function maskCpf(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -42,20 +65,12 @@ export function CadastroList({ rows, canEdit, canIssueTicket }: { rows: Row[]; c
           <button type="button" onClick={() => setExpanded(isOpen ? null : row.id)} className="min-w-0 flex-1 text-left">
             <span className="block truncate font-medium hover:text-emerald-300">{row.name}</span>
             {secondaryLine ? <span className="mt-0.5 block truncate text-xs text-slate-500 lg:hidden">{secondaryLine}</span> : null}
-            {row.sharedEmailCount > 1 ? (
-              <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="mt-1 inline-flex rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 lg:hidden">
-                {sharedEmailBadgeLabel(row.sharedEmailCount)}
-              </Link>
-            ) : null}
+            <span className="mt-1 block lg:hidden"><SharedEmailBadges row={row} /></span>
           </button>
           <span className="hidden lg:inline">{maskCpf(row.cpf)}</span>
           <span className="hidden min-w-0 lg:flex lg:flex-col">
             <span className="truncate text-slate-300" title={row.email || row.phone}>{row.email || row.phone || "Não informado"}</span>
-            {row.sharedEmailCount > 1 ? (
-              <Link href={`/cadastros/${row.id}/conta-compartilhada`} className="mt-1 w-fit rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 hover:border-violet-300">
-                {sharedEmailBadgeLabel(row.sharedEmailCount)}
-              </Link>
-            ) : null}
+            <SharedEmailBadges row={row} />
           </span>
           <span className="hidden lg:inline">{row.ticketCount}</span><span className="hidden lg:inline">{row.eventCount}</span>
           <div className="hidden shrink-0 gap-1.5 lg:flex"><Link href={`/cadastros/${row.id}`} className={actionClass}>Abrir ficha</Link></div>

@@ -7,7 +7,10 @@ import {
   matchesSharedEmailFilter,
   parseSharedEmailFilter,
   sharedEmailBadgeLabel,
+  sharedEmailCountersLabel,
   sharedEmailGroupCount,
+  sharedEmailGroupStatus,
+  sharedEmailResolvedAccountLabel,
   validateTicketAccountOwnerReason,
 } from '../src/lib/account/shared-email-ownership.ts';
 
@@ -36,20 +39,30 @@ const eighteenGroupEmails = [
 
 test('T1 — filtro encontra os 18 grupos atuais', () => {
   assert.equal(sharedEmailGroupCount(eighteenGroupEmails), 18);
-  const counts = countSharedEmails(eighteenGroupEmails);
-  const sharedPeople = eighteenGroupEmails.filter((email) => matchesSharedEmailFilter(email, counts.get(email) ?? 0, 'shared'));
-  assert.equal(sharedPeople.length, 37);
-  assert.equal(parseSharedEmailFilter('shared'), 'shared');
+  assert.equal(parseSharedEmailFilter('pending'), 'pending');
+  assert.equal(parseSharedEmailFilter('resolved'), 'resolved');
+  assert.equal(parseSharedEmailFilter('all'), 'all');
+  assert.equal(parseSharedEmailFilter(''), 'all');
+  assert.equal(matchesSharedEmailFilter(1, null, 'all'), true);
+  assert.equal(matchesSharedEmailFilter(3, 'resolved', 'all'), true);
+  assert.equal(matchesSharedEmailFilter(3, 'pending', 'all'), true);
   assert.match(cadastrosPage, /E-mail compartilhado/);
-  assert.match(cadastrosPage, /Apenas e-mails compartilhados/);
-  assert.match(cadastrosPage, /Apenas e-mails únicos/);
-  assert.match(cadastrosPage, /shared_email/);
+  assert.match(cadastrosPage, /value="all">Todos/);
+  assert.match(cadastrosPage, /Pendentes/);
+  assert.match(cadastrosPage, /Resolvidos/);
+  assert.match(cadastrosPage, /Pendentes: \{pendingGroups\}/);
+  assert.match(cadastrosPage, /Resolvidos: \{resolvedGroups\}/);
+  assert.match(cadastrosPage, /sharedEmailCountersLabel\(pendingGroups, resolvedGroups\)/);
+  assert.match(cadastrosPage, /shared_email=pending/);
+  assert.match(cadastrosPage, /shared_email=resolved/);
 });
 
 test('T2 — badge mostra quantidade correta', () => {
   assert.equal(sharedEmailBadgeLabel(2), '2 cadastros neste e-mail');
   assert.equal(sharedEmailBadgeLabel(3), '3 cadastros neste e-mail');
+  assert.equal(sharedEmailResolvedAccountLabel('Aline Herbert'), 'Conta: Aline Herbert ✓');
   assert.match(cadastroList, /sharedEmailBadgeLabel\(row\.sharedEmailCount\)/);
+  assert.match(cadastroList, /sharedEmailResolvedAccountLabel/);
   assert.match(cadastroList, /conta-compartilhada/);
 });
 
@@ -131,6 +144,35 @@ test('T12 — reprocessamento idempotente', () => {
   assert.match(migration, /owner_user_id is not distinct from v_auth_user_id/);
   assert.match(loader, /currentSharedEmailPrincipalId/);
   assert.doesNotMatch(loader, /chooseSharedEmailPrincipal/);
+});
+
+test('pendência some ao resolver a conta principal; Pessoas não são removidas', () => {
+  const alineGroup = [
+    { intendedOwnerContactId: null },
+    { intendedOwnerContactId: null },
+    { intendedOwnerContactId: null },
+  ];
+  assert.equal(sharedEmailGroupStatus(alineGroup).status, 'pending');
+  assert.equal(matchesSharedEmailFilter(3, 'pending', 'pending'), true);
+  assert.equal(matchesSharedEmailFilter(3, 'pending', 'resolved'), false);
+  const resolved = alineGroup.map(() => ({ intendedOwnerContactId: 'aline' }));
+  assert.equal(sharedEmailGroupStatus(resolved).status, 'resolved');
+  assert.equal(sharedEmailGroupStatus(resolved).principalId, 'aline');
+  assert.equal(matchesSharedEmailFilter(3, 'resolved', 'pending'), false);
+  assert.equal(matchesSharedEmailFilter(3, 'resolved', 'resolved'), true);
+  assert.equal(sharedEmailCountersLabel(0, 18), 'Pendentes: 0 · Resolvidos: 18');
+  const eighteenResolved = Array.from({ length: 18 }, (_, index) => [
+    { intendedOwnerContactId: `principal-${index}` },
+    { intendedOwnerContactId: `principal-${index}` },
+  ]);
+  assert.equal(eighteenResolved.filter((tickets) => sharedEmailGroupStatus(tickets).status === 'pending').length, 0);
+  assert.equal(eighteenResolved.filter((tickets) => sharedEmailGroupStatus(tickets).status === 'resolved').length, 18);
+  assert.equal(sharedEmailBadgeLabel(3), '3 cadastros neste e-mail');
+  assert.equal(sharedEmailResolvedAccountLabel('Aline Herbert'), 'Conta: Aline Herbert ✓');
+  assert.match(manageForm, /shared_email=resolved/);
+  assert.match(cadastrosPage, /as Pessoas permanecem/);
+  assert.match(card, /as Pessoas permanecem/);
+  assert.doesNotMatch(manageForm, /merge|delete from public\.registration_contacts/i);
 });
 
 test('principal atual vem da intenção já gravada, sem recalcular Gate #7', () => {

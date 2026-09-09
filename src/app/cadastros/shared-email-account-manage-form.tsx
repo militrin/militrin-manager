@@ -112,7 +112,7 @@ export function SharedEmailAccountManageForm({ group }: { group: SharedEmailGrou
             reasonText,
           });
           setMessage(result.message);
-          if (result.success) router.refresh();
+          if (result.success) router.push("/cadastros?shared_email=resolved");
         })}
         className="rounded-xl bg-violet-400 px-4 py-2 font-semibold text-slate-950 disabled:opacity-40"
       >

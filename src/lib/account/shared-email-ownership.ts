@@ -56,10 +56,11 @@ export function normalizeSharedEmail(email: string | null | undefined) {
   return value || null;
 }
 
-export type SharedEmailFilter = 'all' | 'shared' | 'unique';
+export type SharedEmailFilter = 'all' | 'pending' | 'resolved';
+export type SharedEmailGroupStatus = 'pending' | 'resolved';
 
 export function parseSharedEmailFilter(value: string | null | undefined): SharedEmailFilter {
-  if (value === 'shared' || value === 'unique') return value;
+  if (value === 'pending' || value === 'resolved' || value === 'all') return value;
   return 'all';
 }
 
@@ -77,19 +78,39 @@ export function sharedEmailBadgeLabel(count: number) {
   return `${count} cadastros neste e-mail`;
 }
 
+export function sharedEmailResolvedAccountLabel(name: string | null | undefined) {
+  const value = String(name ?? '').trim();
+  return value ? `Conta: ${value} ✓` : null;
+}
+
+export function sharedEmailCountersLabel(pending: number, resolved: number) {
+  return `Pendentes: ${pending} · Resolvidos: ${resolved}`;
+}
+
 export function sharedEmailGroupCount(emails: Array<string | null | undefined>) {
   return [...countSharedEmails(emails).values()].filter((count) => count > 1).length;
 }
 
+export function sharedEmailGroupStatus(
+  tickets: Array<{ intendedOwnerContactId?: string | null }>,
+): { status: SharedEmailGroupStatus; principalId: string | null } {
+  if (!tickets.length) return { status: 'pending', principalId: null };
+  const current = currentSharedEmailPrincipalId(tickets);
+  const allHaveIntended = tickets.every((ticket) => String(ticket.intendedOwnerContactId ?? '').trim());
+  if (current.id && current.unanimous && allHaveIntended) {
+    return { status: 'resolved', principalId: current.id };
+  }
+  return { status: 'pending', principalId: current.id };
+}
+
 export function matchesSharedEmailFilter(
-  email: string | null | undefined,
   sharedCount: number,
+  groupStatus: SharedEmailGroupStatus | null,
   filter: SharedEmailFilter,
 ) {
   if (filter === 'all') return true;
-  const key = normalizeSharedEmail(email);
-  if (filter === 'shared') return Boolean(key) && sharedCount > 1;
-  return !key || sharedCount <= 1;
+  if (sharedCount <= 1 || !groupStatus) return false;
+  return groupStatus === filter;
 }
 
 export function currentSharedEmailPrincipalId(
