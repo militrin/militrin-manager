@@ -56,11 +56,24 @@ export function importShouldCreatePricingGenderIssue(input: {
     && !input.gender;
 }
 
+export function isLegacyUnknownPriceOrigin(value: string | null | undefined) {
+  return value === 'legacy_unknown';
+}
+
+/**
+ * Placeholder interno amount=0 de legacy_unknown nunca entra em totais,
+ * ticket medio, receita pendente/confirmada ou exportacoes.
+ * Preco catalogo/legado conhecido igual a 0 continua financeiro real.
+ */
+export function shouldIncludeAmountInFinancialTotals(priceOrigin?: string | null) {
+  return !isLegacyUnknownPriceOrigin(priceOrigin);
+}
+
 export function formatImportedHistoricalAmount(
   amount: number | null | undefined,
   priceOrigin?: string | null,
 ) {
-  if (priceOrigin === 'legacy_unknown') return 'Não informado';
+  if (isLegacyUnknownPriceOrigin(priceOrigin)) return 'Não informado';
   if (amount == null) return 'Não informado';
   return Number(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }

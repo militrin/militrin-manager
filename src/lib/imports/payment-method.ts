@@ -27,3 +27,21 @@ export function normalizeImportedPaymentMethod(value: string | null | undefined)
   if (normalized === 'cortesia' || normalized === 'courtesy') return 'courtesy';
   return null;
 }
+
+const IMPORTED_PAYMENT_METHOD_LABELS: Record<ImportedPaymentMethod, string> = {
+  pix: 'PIX',
+  credit_card: 'Cartão',
+  cash: 'Dinheiro',
+  courtesy: 'Cortesia',
+};
+
+/**
+ * Origem vazia permanece desconhecida. Nunca apresenta pix/cortesia/gratuito
+ * so porque o CSV nao trouxe forma de pagamento.
+ */
+export function formatImportedPaymentMethod(value: string | null | undefined) {
+  if (!String(value ?? '').trim()) return 'Não informado';
+  const method = normalizeImportedPaymentMethod(value);
+  if (!method) return 'Não informado';
+  return IMPORTED_PAYMENT_METHOD_LABELS[method];
+}

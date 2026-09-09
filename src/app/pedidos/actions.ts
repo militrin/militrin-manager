@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/admin/permissions";
 import type { OrderRow, OrderItemRow, OrderProductItemRow, OrdersFilterInput } from "./types";
 import { ORDER_PAGE_SIZE } from "./types";
 import { orderDisplayReference } from "@/lib/display-reference";
+import { countIssuedTickets } from "@/lib/imports/issuance-presentation";
 
 export type OrdersResult = {
   events: { id: string; name: string; is_active: boolean }[];
@@ -58,7 +59,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
   const { data: ordersRaw } = await supabase
     .from("orders")
     .select(`
-      id, order_number, display_number, status,
+      id, order_number, display_number, status, price_origin,
       base_amount, discount_amount, final_amount,
       created_at, confirmed_at,
       participants!inner(id, full_name, email, phone, cpf)
@@ -156,6 +157,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
     const items = itemsByOrder.get(oid) ?? [];
     const productItems = productItemsByOrder.get(oid) ?? [];
     const categoryNames = [...new Set(items.map((i) => i.categoryName).filter(Boolean))] as string[];
+    const issuedTicketCount = countIssuedTickets(items);
 
     return {
       id: oid,
@@ -173,9 +175,12 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
       confirmedAt: o.confirmed_at ? String(o.confirmed_at) : null,
       paymentMethod: payment.method,
       paymentStatus: payment.status,
-      ticketCount: items.length,
+      itemCount: items.length,
+      issuedTicketCount,
+      ticketCount: issuedTicketCount,
       categoryNames,
       hasDiscount: Number(o.discount_amount ?? 0) > 0,
+      priceOrigin: o.price_origin ? String(o.price_origin) : null,
       items,
       productItems,
     };

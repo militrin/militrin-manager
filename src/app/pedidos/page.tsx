@@ -6,6 +6,9 @@ import { EventContextSelector } from "@/components/admin/EventContextSelector";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { hasPermission } from "@/lib/admin/permissions";
 import { listOrdersAction } from "./actions";
+import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
+import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
+import { additionalTicketHolderUnassignedCopy } from "@/lib/imports/issuance-presentation";
 
 type SearchParams = {
   eventId?: string;
@@ -25,12 +28,8 @@ const orderStatusLabel: Record<string, string> = {
   cancelled: "Cancelado", refunded: "Estornado",
 };
 
-const paymentMethodLabel: Record<string, string> = {
-  pix: "PIX", credit_card: "Cartão", cash: "Dinheiro", courtesy: "Cortesia",
-};
-
-function money(value: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+function money(value: number, priceOrigin?: string | null) {
+  return formatImportedHistoricalAmount(value, priceOrigin);
 }
 
 export default async function PedidosPage({
@@ -159,13 +158,16 @@ export default async function PedidosPage({
                       </span>
 
                       {/* Ingressos */}
-                      <span className="text-xs text-slate-300 w-20 shrink-0 text-center">
-                        {order.ticketCount} {order.ticketCount === 1 ? "ingresso" : "ingressos"}
+                      <span className="text-xs text-slate-300 w-28 shrink-0 text-center">
+                        {order.issuedTicketCount} {order.issuedTicketCount === 1 ? "ingresso" : "ingressos"}
+                        {order.itemCount !== order.issuedTicketCount ? (
+                          <span className="block text-[11px] text-slate-500">{order.itemCount} {order.itemCount === 1 ? "inscrição" : "inscrições"}</span>
+                        ) : null}
                       </span>
 
                       {/* Método */}
                       <span className="text-xs text-slate-400 w-20 shrink-0 hidden md:block">
-                        {order.paymentMethod ? paymentMethodLabel[order.paymentMethod] ?? order.paymentMethod : "—"}
+                        {formatImportedPaymentMethod(order.paymentMethod)}
                       </span>
 
                       {/* Pagamento */}
@@ -178,7 +180,7 @@ export default async function PedidosPage({
                       {/* Valor total */}
                       {canViewAmounts && (
                         <span className="text-sm font-medium text-slate-100 w-24 text-right shrink-0">
-                          {money(order.finalAmount)}
+                          {money(order.finalAmount, order.priceOrigin)}
                           {order.hasDiscount && (
                             <span className="ml-1 text-xs text-emerald-400">
                               -{money(order.discountAmount)}
@@ -211,7 +213,10 @@ export default async function PedidosPage({
                               <tr key={item.id} className="border-b border-slate-800/30 last:border-0">
                                 <td className="py-2 pr-4 text-slate-400">{item.itemPosition}</td>
                                 <td className="py-2 pr-4 text-slate-200">
-                                  {item.holderName ?? <span className="text-slate-500 italic">Não atribuído</span>}
+                                  {item.holderName ?? <span className="text-slate-500 italic">Titular não definido</span>}
+                                  {!item.holderName && item.ownershipStatus === "unassigned" ? (
+                                    <span className="mt-1 block text-[11px] leading-snug text-slate-500">{additionalTicketHolderUnassignedCopy()}</span>
+                                  ) : null}
                                 </td>
                                 <td className="py-2 pr-4 text-slate-300">
                                   {item.categoryName ?? "—"}

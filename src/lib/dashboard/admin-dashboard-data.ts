@@ -5,6 +5,9 @@ import type { DashboardSection } from '@/lib/dashboard/dashboard-permissions';
 import { makeShirtInventoryKey } from '@/lib/constants/shirts';
 import { orderDisplayReference } from '@/lib/display-reference';
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from '@/lib/dashboard/commercial-status';
+import { formatImportedPaymentMethod } from '@/lib/imports/payment-method';
+import { additionalTicketHolderUnassignedCopy } from '@/lib/imports/issuance-presentation';
+import { isLegacyUnknownPriceOrigin, shouldIncludeAmountInFinancialTotals } from '@/lib/imports/legacy-price';
 
 export type DashboardMetricKey =
   | 'people' | 'registrations' | 'confirmed' | 'pending' | 'expired' | 'cancelled'
@@ -60,8 +63,8 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
     enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
-    enabled.has('operations') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
-    enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,created_at,paid_at,participants(full_name)')) : emptyResult,
+    enabled.has('operations') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
+    enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,price_origin,created_at,paid_at,participants(full_name)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
     // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
     // o snapshot legado, nao mantido pelo fluxo ticket-first (ver reconciliacao
@@ -130,6 +133,15 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const itemById = new Map(items.map((row) => [String(row.id), row as Row]));
   const ticketByItem = new Map(tickets.filter((row) => row.order_item_id).map((row) => [String(row.order_item_id), row as Row]));
   const paymentByOrder = new Map(payments.filter((row) => row.order_id).map((row) => [String(row.order_id), row as Row]));
+  const assignedHolderKeys = new Set(
+    items
+      .filter((item) =>
+        String(item.ownership_status ?? '') === 'assigned'
+        && item.registration_contact_id
+        && !['cancelled', 'expired', 'refunded'].includes(String(item.status ?? '')),
+      )
+      .map((item) => `${item.event_id}:${item.registration_contact_id}`),
+  );
   const issuesByParticipant = new Map<string, Row[]>();
   for (const issue of issues) {
     const key = String(issue.participant_id ?? '');
@@ -140,10 +152,10 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   // Comprador real (orders.buyer_type='account') resolvido via
   // get_operation_buyers (RPC ja existente e ja usada por /operacoes e pelos
   // relatorios -- reaproveitada aqui, sem duplicar a logica de resolucao).
-  // Emissao administrativa/cortesia (buyer_type='administrative'/
-  // 'imported_holder') tem orders.user_id SEMPRE null por design (CHECK
-  // orders_buyer_ownership_check) -- nunca inventamos um comprador pra esses,
-  // resolveBuyerPresentation() troca para "Destinatário" com o titular.
+  // Emissao administrativa (buyer_type='administrative') tem orders.user_id
+  // SEMPRE null por design (CHECK orders_buyer_ownership_check). Importacao
+  // (imported_holder) tambem nao inventa comprador -- mostra Destinatário,
+  // nunca Cortesia, salvo payment_method='courtesy'.
   const buyerEventIds = [...new Set(items.map((item) => String(item.event_id ?? '')).filter(Boolean))];
   const buyerMap = new Map<string, Row>();
   if (enabled.has('people') || enabled.has('operations')) {
@@ -174,6 +186,10 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       href = item.registration_contact_id ? `/cadastros/${item.registration_contact_id}` : '/cadastros';
       requiredPermission = 'participants.edit_basic';
     }
+    else if (item.ownership_status === 'unassigned' && item.registration_contact_id && assignedHolderKeys.has(`${item.event_id}:${item.registration_contact_id}`)) {
+      actionLabel = ticket?.id ? 'Ver ingresso' : 'Ver pedido';
+      href = ticket?.id ? `/ingressos/${ticket.id}` : (order?.id ? `/inscricoes/pedido/${order.id}` : '/inscricoes');
+    }
     else if (!item.registration_contact_id || item.ownership_status === 'unassigned') { actionLabel = 'Definir titular'; href = ticket?.id ? `/ingressos/${ticket.id}/editar` : '/ingressos'; requiredPermission = 'participants.edit_basic'; }
     else if (!item.shirt_type || !item.shirt_size) { actionLabel = 'Selecionar camiseta'; href = ticket?.id ? `/ingressos/${ticket.id}/editar` : '/camisetas'; requiredPermission = 'inventory.change_participant_shirt'; }
     else if (payment?.payment_status === 'pending') { actionLabel = 'Confirmar pagamento'; href = `/financeiro?tab=sales&status=pending&eventId=${item.event_id}`; requiredPermission = 'finance.confirm_payment'; }
@@ -181,6 +197,9 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     const snapshotNotice = textualHolderOnly ? `Nome informado na compra: ${String(item.holder_full_name).trim()}` : '';
     const issueMessages = open.map((issue) => String(issue.message ?? issue.field_code));
     if (textualHolderOnly) issueMessages.unshift('Titular informado sem dados suficientes para identificação');
+    if (item.ownership_status === 'unassigned' && item.registration_contact_id && assignedHolderKeys.has(`${item.event_id}:${item.registration_contact_id}`)) {
+      issueMessages.unshift(additionalTicketHolderUnassignedCopy());
+    }
     const holderName = personName(item, participant);
     const buyer = order?.user_id ? buyerMap.get(String(order.user_id)) : null;
     const buyerPresentation = resolveBuyerPresentation({
@@ -204,10 +223,11 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   };
   const ticketRow = (ticket: Row): DashboardDetailRow => { const item = one(ticket.order_items) ?? itemById.get(String(ticket.order_item_id)); const participant = participantById.get(String(ticket.participant_id ?? '')) ?? one(ticket.participants);
     const textualHolderOnly = !item?.registration_contact_id && !participant?.registration_contact_id && String(item?.holder_full_name ?? '').trim();
-    return { id: String(ticket.id), primary: personName(item, participant), secondary: [textualHolderOnly ? `Nome informado na compra: ${String(item?.holder_full_name).trim()}` : '', one(item?.ticket_categories)?.name ?? 'Ingresso único', `#${String(ticket.id).slice(0, 8).toUpperCase()}`].filter(Boolean).join(' · '),
+    const additionalUnassigned = item?.ownership_status === 'unassigned' && item?.registration_contact_id && assignedHolderKeys.has(`${ticket.event_id}:${item.registration_contact_id}`);
+    return { id: String(ticket.id), primary: additionalUnassigned ? 'Titular não definido' : personName(item, participant), secondary: [textualHolderOnly ? `Nome informado na compra: ${String(item?.holder_full_name).trim()}` : additionalUnassigned ? additionalTicketHolderUnassignedCopy() : '', one(item?.ticket_categories)?.name ?? 'Ingresso único', `#${String(ticket.id).slice(0, 8).toUpperCase()}`].filter(Boolean).join(' · '),
       status: String(ticket.status), href: textualHolderOnly ? `/ingressos/${ticket.id}/editar` : `/ingressos/${ticket.id}`,
       actionLabel: textualHolderOnly ? 'Definir titular' : 'Ver ingresso', requiredPermission: textualHolderOnly ? 'participants.edit_basic' : undefined,
-      issue: textualHolderOnly ? 'Titular informado sem dados suficientes para identificação' : undefined }; };
+      issue: textualHolderOnly ? 'Titular informado sem dados suficientes para identificação' : additionalUnassigned ? additionalTicketHolderUnassignedCopy() : undefined }; };
   const checkinRow = (ticket: Row): DashboardDetailRow => ({
     ...ticketRow(ticket), secondary: `${ticketRow(ticket).secondary} · ${ticket.used_at ? new Date(String(ticket.used_at)).toLocaleString('pt-BR') : 'Horário não registrado'}`,
   });
@@ -216,7 +236,9 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     href: `/ingressos/${ticket.id}/editar`, actionLabel: 'Selecionar camiseta', requiredPermission: 'inventory.change_participant_shirt',
   });
   const paymentRow = (payment: Row): DashboardDetailRow => ({ id: String(payment.id), primary: String(one(payment.participants)?.full_name ?? 'Pagamento'),
-    secondary: String(payment.payment_method ?? 'Não informado'), status: String(payment.payment_status), value: Number(payment.final_amount ?? 0),
+    secondary: formatImportedPaymentMethod(payment.payment_method), status: String(payment.payment_status),
+    value: shouldIncludeAmountInFinancialTotals(payment.price_origin) ? Number(payment.final_amount ?? 0) : undefined,
+    issue: isLegacyUnknownPriceOrigin(payment.price_origin) ? 'Não informado' : undefined,
     href: `/financeiro?tab=sales&status=${payment.payment_method === 'courtesy' ? 'courtesy' : payment.payment_status}&eventId=${payment.event_id}`, actionLabel: 'Ver pagamento' });
   const inventoryRow = (row: Row, status: string, value: number): DashboardDetailRow => {
     const linkedTickets = row.canonical_variant_id
@@ -256,6 +278,7 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const expiredItems = items.filter((item) => itemCommercialStatus(item) === 'expired');
   const cancelledItems = items.filter((item) => itemCommercialStatus(item) === 'cancelled');
   const paid = payments.filter((payment) => payment.payment_status === 'paid'); const pendingPayments = payments.filter((payment) => payment.payment_status === 'pending');
+  const revenueAmount = (row: Row) => shouldIncludeAmountInFinancialTotals(row.price_origin) ? Number(row.final_amount ?? 0) : 0;
   const received = inventory.reduce((sum, row) => sum + Number(row.total_quantity ?? 0), 0); const reserved = inventory.reduce((sum, row) => sum + Number(row.reserved_quantity ?? 0), 0);
   const delivered = inventory.reduce((sum, row) => sum + Number(row.delivered_quantity ?? 0), 0); const available = inventory.reduce((sum, row) => sum + Math.max(0, Number(row.total_quantity ?? 0) - Number(row.delivered_quantity ?? 0)), 0);
   const deficit = inventory.reduce((sum, row) => sum + Math.max(0, Number(row.reserved_quantity ?? 0) - Math.max(0, Number(row.total_quantity ?? 0) - Number(row.delivered_quantity ?? 0))), 0);
@@ -272,8 +295,8 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   put('shirts_delivered', 'Camisetas entregues', delivered, inventory.filter((row) => Number(row.delivered_quantity) > 0).map((row) => inventoryRow(row, 'delivered', Number(row.delivered_quantity))));
   put('shirts_available', 'Disponíveis em estoque', available, inventory.map((row) => inventoryRow(row, 'available', Math.max(0, Number(row.total_quantity) - Number(row.delivered_quantity)))));
   put('shirts_deficit', 'Faltam encomendar', deficit, inventory.filter((row) => Number(row.reserved_quantity) > Number(row.total_quantity) - Number(row.delivered_quantity)).map((row) => inventoryRow(row, 'deficit', Math.max(0, Number(row.reserved_quantity) - (Number(row.total_quantity) - Number(row.delivered_quantity))))));
-  put('revenue_confirmed', 'Receita confirmada', paid.reduce((sum, row) => sum + Number(row.final_amount ?? 0), 0), paid.map(paymentRow));
-  put('revenue_pending', 'Receita pendente', pendingPayments.reduce((sum, row) => sum + Number(row.final_amount ?? 0), 0), pendingPayments.map(paymentRow));
+  put('revenue_confirmed', 'Receita confirmada', paid.reduce((sum, row) => sum + revenueAmount(row), 0), paid.map(paymentRow));
+  put('revenue_pending', 'Receita pendente', pendingPayments.reduce((sum, row) => sum + revenueAmount(row), 0), pendingPayments.map(paymentRow));
   put('pix', 'Pagamentos via PIX', paid.filter((row) => row.payment_method === 'pix').length, paid.filter((row) => row.payment_method === 'pix').map(paymentRow));
   put('card', 'Pagamentos via cartão', paid.filter((row) => row.payment_method === 'credit_card').length, paid.filter((row) => row.payment_method === 'credit_card').map(paymentRow));
   put('courtesy', 'Cortesias', paid.filter((row) => row.payment_method === 'courtesy').length, paid.filter((row) => row.payment_method === 'courtesy').map(paymentRow));

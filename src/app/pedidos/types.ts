@@ -33,9 +33,12 @@ export type OrderRow = {
   confirmedAt: string | null;
   paymentMethod: string | null;
   paymentStatus: string;
+  itemCount: number;
+  issuedTicketCount: number;
   ticketCount: number;
   categoryNames: string[];
   hasDiscount: boolean;
+  priceOrigin: string | null;
   items: OrderItemRow[];
   productItems: OrderProductItemRow[];
 };

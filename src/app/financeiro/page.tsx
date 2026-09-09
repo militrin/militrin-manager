@@ -19,6 +19,8 @@ import {
   removeFinancialCategoryAction, removeFinancialSupplierAction,
 } from "./actions";
 import { listPaidOrdersAwaitingTicketIssueAction } from "@/app/painel/integridade/actions";
+import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
+import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 
 const tabs = [
   ["overview", "Visão geral"], ["sales", "Receitas"], ["expenses", "Despesas"],
@@ -37,7 +39,7 @@ type Settlement = { id: string; expense_entry_id: string; amount: number; paid_o
 type Reversal = { id: string; original_entry_id: string; amount: number; created_at: string };
 type Allocation = { entry_id: string; event_id: string; amount: number };
 type TicketMetric = { eventId: string; issuedAt: string; kind: "sold" | "courtesy" };
-type PaymentRow = { id: string; final_amount: number; payment_method: string; payment_status: string; created_at: string; paid_at: string | null; participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null };
+type PaymentRow = { id: string; final_amount: number; payment_method: string | null; payment_status: string; price_origin?: string | null; created_at: string; paid_at: string | null; participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null };
 
 async function loadContext(eventId: string | null) {
   const supabase = await createServerSupabaseClient();
@@ -61,7 +63,7 @@ async function loadSales(status: string, eventId: string | null) {
   if (!context.selected) return { ...context, rows: [] };
   const paymentStatus = status === "courtesy" ? "paid" : status;
   let query = context.supabase.from("payments")
-    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,created_at,paid_at,participants!inner(full_name,cpf)")
+    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,price_origin,created_at,paid_at,participants!inner(full_name,cpf)")
     .eq("event_id", context.selected.id).eq("payment_status", paymentStatus).order("created_at", { ascending: false }).limit(200);
   if (status === "courtesy") query = query.eq("payment_method", "courtesy");
   const { data } = await query;
@@ -206,7 +208,7 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
     ) : (
       <EventContextSelector events={eventOptions} selectedEventId={selectedEventId || null} pathname="/financeiro"/>
     )}
-    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Listagem existente de pagamentos; não cria lançamentos no livro."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">R$ {Number(row.final_amount).toFixed(2)}</td><td className="p-3">{row.payment_method}</td><td className="p-3">{row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : "Cancelado"}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td></tr>; })}</tbody></table></div></SectionCard> : null}
+    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Listagem existente de pagamentos; não cria lançamentos no livro."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">{formatImportedHistoricalAmount(row.final_amount, row.price_origin)}</td><td className="p-3">{formatImportedPaymentMethod(row.payment_method)}</td><td className="p-3">{row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : "Cancelado"}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td></tr>; })}</tbody></table></div></SectionCard> : null}
     {active !== "sales" && ledger && !ledger.available ? <LedgerUnavailable/> : null}
     {ledger?.available && organizationId && (selectedEventId || active === "overview") ? (() => {
       const inRange = (value: string | null, from: string, to: string) => Boolean(value) && (!from || value!.slice(0,10) >= from) && (!to || value!.slice(0, 10) <= to);

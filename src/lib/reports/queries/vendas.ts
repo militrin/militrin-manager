@@ -1,5 +1,7 @@
 import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "../types";
 import { dateRangeLabel, money, pct, reportError, reportSuccess, resolveRequiredEvent } from "../helpers";
+import { formatImportedHistoricalAmount, shouldIncludeAmountInFinancialTotals } from "@/lib/imports/legacy-price";
+import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
 
@@ -15,7 +17,7 @@ export async function vendasFunil(supabase: ReportSupabaseClient, ctx: ReportQue
   const resolved = await resolveRequiredEvent(supabase, ctx.eventId, ctx.organizationId);
   if ("error" in resolved) return reportError(resolved.error);
 
-  let query = supabase.from("orders").select("status,final_amount,created_at").eq("event_id", resolved.event.id);
+  let query = supabase.from("orders").select("status,final_amount,price_origin,created_at").eq("event_id", resolved.event.id);
   if (ctx.dateFrom) query = query.gte("created_at", `${ctx.dateFrom}T00:00:00`);
   if (ctx.dateTo) query = query.lte("created_at", `${ctx.dateTo}T23:59:59`);
   const { data, error } = await query;
@@ -29,7 +31,7 @@ export async function vendasFunil(supabase: ReportSupabaseClient, ctx: ReportQue
   for (const order of orders) {
     const status = String(order.status ?? "pending");
     byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
-    if (status === "confirmed" && order.final_amount != null) {
+    if (status === "confirmed" && order.final_amount != null && shouldIncludeAmountInFinancialTotals((order as { price_origin?: string | null }).price_origin)) {
       revenueSum += Number(order.final_amount);
       revenueCount += 1;
     }
@@ -77,7 +79,7 @@ export async function financeiroTaxasPagamento(supabase: ReportSupabaseClient, c
 
   let query = supabase
     .from("orders")
-    .select("order_number,display_number,status,final_amount,discount_amount,created_at,payments(payment_method,installments,final_amount,payment_fee_mode,payment_fee_calculated_amount,payment_fee_customer_amount,payment_fee_organizer_amount,fee_amount,net_amount,payment_status)")
+    .select("order_number,display_number,status,final_amount,price_origin,discount_amount,created_at,payments(payment_method,installments,final_amount,payment_fee_mode,payment_fee_calculated_amount,payment_fee_customer_amount,payment_fee_organizer_amount,fee_amount,net_amount,payment_status)")
     .eq("event_id", resolved.event.id)
     .order("created_at", { ascending: false })
     .limit(2001);
@@ -95,13 +97,15 @@ export async function financeiroTaxasPagamento(supabase: ReportSupabaseClient, c
 
   const rows = orders.map((order) => {
     const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
+    const priceOrigin = (order as { price_origin?: string | null }).price_origin;
+    const includeTotals = shouldIncludeAmountInFinancialTotals(priceOrigin);
     const itemsNet = Number(order.final_amount ?? 0);
     const calculatedFee = Number(payment?.payment_fee_calculated_amount ?? 0);
     const customerFee = Number(payment?.payment_fee_customer_amount ?? 0);
     const organizerFee = Number(payment?.payment_fee_organizer_amount ?? 0);
     const charged = Number(payment?.final_amount ?? itemsNet);
 
-    if (order.status === "confirmed") {
+    if (order.status === "confirmed" && includeTotals) {
       totalItemsNet += itemsNet;
       totalCalculatedFee += calculatedFee;
       totalCustomerFee += customerFee;
@@ -112,14 +116,14 @@ export async function financeiroTaxasPagamento(supabase: ReportSupabaseClient, c
     return {
       pedido: orderDisplayReference(order.display_number, order.order_number),
       status: STATUS_LABELS[String(order.status ?? "")] ?? String(order.status ?? ""),
-      pagamento: payment?.payment_method ? String(payment.payment_method) : "-",
+      pagamento: formatImportedPaymentMethod(payment?.payment_method),
       parcelas: payment?.installments ? String(payment.installments) : "-",
-      valor_itens: money(itemsNet),
+      valor_itens: formatImportedHistoricalAmount(itemsNet, priceOrigin),
       modo_taxa: payment?.payment_fee_mode ? String(payment.payment_fee_mode) : "-",
-      taxa_calculada: money(calculatedFee),
-      taxa_repassada_cliente: money(customerFee),
-      taxa_absorvida_organizador: money(organizerFee),
-      total_cobrado: money(charged),
+      taxa_calculada: includeTotals ? money(calculatedFee) : "Não informado",
+      taxa_repassada_cliente: includeTotals ? money(customerFee) : "Não informado",
+      taxa_absorvida_organizador: includeTotals ? money(organizerFee) : "Não informado",
+      total_cobrado: formatImportedHistoricalAmount(charged, priceOrigin),
       taxa_real_gateway: payment?.fee_amount != null ? money(Number(payment.fee_amount)) : "-",
       criado_em: formatDateTimeBR(String(order.created_at ?? "")),
     };
@@ -161,7 +165,7 @@ export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQ
 
   let query = supabase
     .from("orders")
-    .select("order_number,display_number,status,final_amount,created_at,participants(full_name,cpf),payments(payment_method)")
+    .select("order_number,display_number,status,final_amount,price_origin,created_at,participants(full_name,cpf),payments(payment_method)")
     .eq("event_id", resolved.event.id)
     .order("created_at", { ascending: false })
     .limit(2001);
@@ -177,8 +181,8 @@ export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQ
       pedido: orderDisplayReference(order.display_number, order.order_number),
       status: STATUS_LABELS[String(order.status ?? "")] ?? String(order.status ?? ""),
       comprador: participant?.full_name ? String(participant.full_name) : "Sem titular definido",
-      valor: money(Number(order.final_amount ?? 0)),
-      pagamento: payment?.payment_method ? String(payment.payment_method) : "-",
+      valor: formatImportedHistoricalAmount(Number(order.final_amount ?? 0), (order as { price_origin?: string | null }).price_origin),
+      pagamento: formatImportedPaymentMethod(payment?.payment_method),
       criado_em: formatDateTimeBR(String(order.created_at ?? "")),
     };
   });

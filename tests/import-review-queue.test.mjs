@@ -49,7 +49,7 @@ test('reprocessamento usa totais persistidos e não duplica contadores', () => {
 
 test('linha resolvida sai da fila e decisão fica auditada', () => {
   assert.match(queue, /isPendingReview/);
-  assert.match(queue, /account_review === 'shared_email'/);
+  assert.match(queue, /isPendingImportIdentityReview/);
   assert.match(migration, /import_row_review_resolved/);
   assert.match(migration, /reviewed_by=v_actor,reviewed_at=now\(\)/);
 });

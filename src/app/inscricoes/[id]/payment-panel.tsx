@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { Copy } from "lucide-react";
+import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
+import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 
 type PaymentPanelProps = {
   payment: {
@@ -13,6 +15,7 @@ type PaymentPanelProps = {
     expires_at: string | null;
     paid_at: string | null;
     final_amount: number;
+    price_origin?: string | null;
   } | null;
 };
 
@@ -74,8 +77,8 @@ export function PaymentPanel({ payment }: PaymentPanelProps) {
       <p className="text-sm font-semibold text-slate-100">Pagamento</p>
       <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
         <p>Status: {payment.payment_status}</p>
-        <p>Forma: {payment.payment_method ?? "não definida"}</p>
-        <p>Valor final: R$ {Number(payment.final_amount ?? 0).toFixed(2)}</p>
+        <p>Forma: {formatImportedPaymentMethod(payment.payment_method)}</p>
+        <p>Valor final: {formatImportedHistoricalAmount(payment.final_amount, payment.price_origin)}</p>
         <p>Tempo restante: {remaining ?? "--"}</p>
       </div>
 

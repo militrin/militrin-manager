@@ -149,6 +149,7 @@ test('normalizePaymentMethod aceita Cartao com acento, caixa e espacos sem inven
   assert.equal(normalizeImportedPaymentMethod(''), null);
   assert.match(actions, /normalizeImportedPaymentMethod/);
   assert.doesNotMatch(actions, /payment_status.*=.*normalizeImportedPaymentMethod/);
+  assert.doesNotMatch(actions, /normalized\.payment_method \?\? 'pix'/);
 });
 
 test('Tipo Babylook/Camiseta mapeia camiseta e nao infere genero', () => {

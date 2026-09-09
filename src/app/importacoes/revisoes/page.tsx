@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { resolveImportReviewAction } from '../actions';
 import { redirect } from 'next/navigation';
-import { importRowHasExistingCpfIdentity } from '@/lib/imports/identity-review';
+import { importRowHasExistingCpfIdentity, isPendingImportIdentityReview, isSharedEmailOwnershipReview } from '@/lib/imports/identity-review';
 
 type Candidate = {
   registration_contact_id?: string;
@@ -40,9 +40,7 @@ function isPendingReview(row: {
   resolution: string;
   identity_match_details: { reason?: string; account_review?: string; account_review_resolved?: string };
 }) {
-  if (row.status === 'review_required' && row.resolution === 'pending') return true;
-  return row.identity_match_details?.account_review === 'shared_email'
-    && !row.identity_match_details?.account_review_resolved;
+  return isPendingImportIdentityReview(row);
 }
 
 export default async function ImportReviewQueuePage({ searchParams }: { searchParams: Promise<{ batchId?: string; error?: string }> }) {
@@ -116,6 +114,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
         return id && all.findIndex((item) => String(item.registration_contact_id ?? '') === id) === index;
       });
       const hasExistingCpf = importRowHasExistingCpfIdentity(details, String(imported.cpf ?? imported.cpf_input ?? ''));
+      const isOwnershipReview = isSharedEmailOwnershipReview(details);
       const batch = Array.isArray(row.import_batches) ? row.import_batches[0] : row.import_batches;
       const event = batch && (Array.isArray(batch.events) ? batch.events[0] : batch.events);
       const reason = details?.reason ?? '';
@@ -149,7 +148,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
                 <p className="font-semibold">{candidate.full_name || 'Cadastro sem nome'}</p>
                 <p className="text-xs text-emerald-300">{labels[candidate.reason ?? ''] ?? candidate.reason}</p>
                 <p className="mt-2 text-slate-400">CPF: {maskCpf(candidate.cpf ?? '')} · E-mail: {candidate.email || '-'}</p>
-                {reason !== 'possible_reimport' && reason !== 'excel_leading_zero' ? (
+                {reason !== 'possible_reimport' && reason !== 'excel_leading_zero' && !isOwnershipReview ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <form action={submitReview}>
                       <input type="hidden" name="row_id" value={row.id}/>

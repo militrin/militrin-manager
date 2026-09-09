@@ -93,13 +93,13 @@ export function commercialStatusFriendlyReason(status: CommercialStatus, hasPaym
   return undefined;
 }
 
-// ── Comprador / destinatário de cortesia ────────────────────────────────────
+// ── Comprador / destinatário ────────────────────────────────────────────────
 // orders.buyer_type distingue 'account' (comprador real, orders.user_id
-// preenchido) de 'administrative' (emissão manual/cortesia, user_id SEMPRE
-// null por design -- ver CHECK orders_buyer_ownership_check) e
-// 'imported_holder' (importação em lote). Nunca inventar um comprador quando
-// user_id é null; em vez disso, mostrar quem RECEBEU o ingresso (holder) com
-// um rótulo que deixa claro que não é uma compra comercial.
+// preenchido) de 'administrative' (emissão manual, user_id SEMPRE null por
+// design -- ver CHECK orders_buyer_ownership_check) e 'imported_holder'
+// (importação em lote). Importação legada NÃO é cortesia.
+// "Cortesia" só com evidência real: payment_method='courtesy' ou
+// buyer_type='administrative'.
 export type BuyerPresentation = {
   label: string; // "Comprador" ou "Destinatário"
   name: string; // nome resolvido, nunca "Comprador não identificado" quando já sabemos pra quem foi
@@ -112,9 +112,9 @@ export function resolveBuyerPresentation(input: {
   holderName?: string | null; // titular/destinatário do ingresso (order_items.holder_full_name ou participants.full_name)
   paymentMethod?: string | null; // 'courtesy' quando aplicável
 }): BuyerPresentation {
-  const isAdministrative = input.buyerType === "administrative" || input.buyerType === "imported_holder";
-  const isCourtesyPayment = input.paymentMethod === "courtesy";
-  const isCourtesy = isAdministrative || isCourtesyPayment;
+  const isImportedHolder = input.buyerType === "imported_holder";
+  const isAdministrative = input.buyerType === "administrative";
+  const isCourtesy = isAdministrative || input.paymentMethod === "courtesy";
 
   if (input.buyerName) {
     return { label: "Comprador", name: isCourtesy ? `${input.buyerName} (Cortesia)` : input.buyerName, isCourtesy };
@@ -122,5 +122,11 @@ export function resolveBuyerPresentation(input: {
   if (isCourtesy && input.holderName) {
     return { label: "Destinatário", name: `${input.holderName} (Cortesia)`, isCourtesy: true };
   }
-  return { label: "Comprador", name: "Comprador não identificado", isCourtesy };
+  if (isImportedHolder && input.holderName) {
+    return { label: "Destinatário", name: input.holderName, isCourtesy: false };
+  }
+  if (isImportedHolder) {
+    return { label: "Destinatário", name: "Titular importado", isCourtesy: false };
+  }
+  return { label: "Comprador", name: "Comprador não identificado", isCourtesy: false };
 }

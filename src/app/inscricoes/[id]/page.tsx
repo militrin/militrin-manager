@@ -15,6 +15,7 @@ import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { getAdminAccessContext } from '@/lib/admin/access';
 import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
 import { formatImportedHistoricalAmount } from '@/lib/imports/legacy-price';
+import { formatImportedPaymentMethod } from '@/lib/imports/payment-method';
 
 function money(value: number, priceOrigin?: string | null) {
   return formatImportedHistoricalAmount(value, priceOrigin);
@@ -47,7 +48,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
     participant.user_id ? supabase.rpc('get_customer_profile', { p_user_id: participant.user_id }) : Promise.resolve({ data: null }),
     supabase
       .from('payments')
-      .select('id, amount, discount_amount, final_amount, payment_method, payment_status, created_at, paid_at, expires_at')
+      .select('id, amount, discount_amount, final_amount, payment_method, payment_status, price_origin, created_at, paid_at, expires_at')
       .eq('participant_id', participant.id)
       .order('created_at', { ascending: false })
       .limit(1),
@@ -121,7 +122,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
           {
             id: `payment-created-${String(payment.id)}`,
             title: 'Pagamento criado',
-            description: `Método: ${String(payment.payment_method ?? '-')}`,
+            description: `Método: ${formatImportedPaymentMethod(payment.payment_method)}`,
             date: payment.created_at ? formatDateTimeBR(String(payment.created_at), ' às ') : undefined,
             status: mapStatus(String(payment.payment_status ?? 'pending')),
           },
@@ -276,7 +277,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                   <p><span className="text-slate-400">Valor original:</span> {money(Number(order?.base_amount ?? participant.base_amount ?? 0), order?.price_origin)}</p>
                   <p><span className="text-slate-400">Desconto:</span> {money(Number(order?.discount_amount ?? participant.discount_amount ?? 0), order?.price_origin)}</p>
                   <p><span className="text-slate-400">Valor final:</span> {money(Number(order?.final_amount ?? payment?.final_amount ?? participant.final_amount ?? 0), order?.price_origin)}</p>
-                  <p><span className="text-slate-400">Método:</span> {payment?.payment_method ? String(payment.payment_method) : '-'}</p>
+                  <p><span className="text-slate-400">Método:</span> {formatImportedPaymentMethod(payment?.payment_method)}</p>
                   <p><span className="text-slate-400">Status pagamento:</span> <AdminStatusBadge status={mapStatus(String(payment?.payment_status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Pagamento em:</span> {payment?.paid_at ? formatDateTimeBR(String(payment.paid_at), ' às ') : '-'}</p>
                 </div>

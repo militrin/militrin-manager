@@ -9,6 +9,8 @@ import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from "@/lib/dashboard/commercial-status";
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
+import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
+import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
 
 function money(value: number, priceOrigin?: string | null) {
   return formatImportedHistoricalAmount(value, priceOrigin);
@@ -22,10 +24,6 @@ function maskCpf(cpf: string | null | undefined) {
   if (digits.length !== 11) return "Não informado";
   return `***.***.***-${digits.slice(-2)}`;
 }
-
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  pix: "PIX", credit_card: "Cartão de crédito", cash: "Dinheiro", courtesy: "Cortesia",
-};
 
 // Pedido/inscrição comercial que ainda NÃO emitiu ingresso (pendente, expirado
 // ou em qualquer estado anterior à emissão). Existe pra dar destino real ao
@@ -49,7 +47,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const [{ data: items }, { data: payments }, { data: tickets }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id,item_position,status,item_kind,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,price_origin,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
+      .select("id,item_position,status,item_kind,ownership_status,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,price_origin,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
       .eq("order_id", orderId)
       .order("item_position", { ascending: true }),
     supabase
@@ -59,6 +57,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id,order_item_id,status,cancellation_replacement_required").eq("order_id", orderId),
   ]);
+  const itemIds = (items ?? []).map((item) => String(item.id));
+  const { data: issuanceIssues } = itemIds.length
+    ? await supabase.from("participant_data_issues").select("order_item_id,issue_type,message,blocks_ticket_issuance,status").in("order_item_id", itemIds).eq("status", "open")
+    : { data: [] as Array<{ order_item_id?: string | null; issue_type?: string | null; message?: string | null; blocks_ticket_issuance?: boolean | null; status?: string | null }> };
 
   // Mesma regra ja auditada e publicada em owner_cancel_ticket (acesso a
   // organizacao + Owner OU orders.cancel) -- decide so se o CTA de
@@ -93,6 +95,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // MIL-2026-00001086/00001089).
   const ticketItems = (items ?? []).filter((item) => (item.item_kind ?? "ticket") === "ticket") as Row[];
   const productItems = (items ?? []).filter((item) => item.item_kind === "product") as Row[];
+  const issuedTickets = (tickets ?? []).filter((ticket) => String(ticket.status ?? "") !== "cancelled");
+  const issuesByItem = new Map<string, typeof issuanceIssues>();
+  for (const issue of issuanceIssues ?? []) {
+    const key = String(issue.order_item_id ?? "");
+    if (!key) continue;
+    issuesByItem.set(key, [...(issuesByItem.get(key) ?? []), issue]);
+  }
 
   const firstItem = (items ?? [])[0] as Row | undefined;
   const holderName = firstItem?.holder_full_name ?? one(firstItem?.participants)?.full_name ?? null;
@@ -114,7 +123,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
         <div className="min-w-0 flex-1 space-y-6">
           <AdminPageHeader
             title={`Pedido ${orderDisplayReference(order.display_number, order.order_number)}`}
-            subtitle={`${eventRelation?.name ?? "Evento"} · ${ticketItems.length} ingresso(s)${productItems.length ? ` · ${productItems.length} item(ns) adicional(is)` : ""}`}
+            subtitle={`${eventRelation?.name ?? "Evento"} · ${ticketItems.length} ${ticketItems.length === 1 ? "inscrição" : "inscrições"} · ${issuedTickets.length} ${issuedTickets.length === 1 ? "ingresso emitido" : "ingressos emitidos"}${productItems.length ? ` · ${productItems.length} item(ns) adicional(is)` : ""}`}
             actions={<Link href="/inscricoes" className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">Voltar</Link>}
           />
 
@@ -122,7 +131,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <Field label={buyerPresentation.label} value={buyerPresentation.name} />
               <Field label="Evento" value={eventRelation?.name ?? "—"} />
-              <Field label="Forma de pagamento tentada" value={latestPayment?.payment_method ? (PAYMENT_METHOD_LABELS[latestPayment.payment_method] ?? latestPayment.payment_method) : "Não informado"} />
+              <Field label="Forma de pagamento tentada" value={formatImportedPaymentMethod(latestPayment?.payment_method)} />
               <Field label="Valor" value={canViewFinancial ? money(order.final_amount ?? 0, order.price_origin) : "Restrito"} />
               <Field label="Criado em" value={formatDateTimeBR(order.created_at) ?? "—"} />
               <Field label="Prazo de pagamento" value={firstItem?.reservation_expires_at ? formatDateTimeBR(firstItem.reservation_expires_at) ?? "—" : "—"} />
@@ -134,7 +143,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
             ) : null}
           </AdminSection>
 
-          <AdminSection title={`Ingresso(s) do pedido (${ticketItems.length})`}>
+          <AdminSection title={`Inscrições do pedido (${ticketItems.length}) · ingressos emitidos (${issuedTickets.length})`}>
             {!ticketItems.length ? <AdminEmptyState title="Nenhum ingresso encontrado" description="Este pedido não tem itens de ingresso registrados." /> : (
               <div className="space-y-2">
                 {ticketItems.map((item) => {
@@ -159,9 +168,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                   const cancellationResolved = hasCancelledOnlyTicket && ticket!.replacementRequired === false;
                   const cancellationNeedsRegularization = hasCancelledOnlyTicket && ticket!.replacementRequired === null;
                   const missingTicket = isConfirmedItem && !hasActiveTicket && !cancellationResolved;
+                  const blockerMessages = formatIssuanceBlockerMessages(issuesByItem.get(String(item.id)) ?? []);
+                  const blockedIssuance = !hasActiveTicket && blockerMessages.length > 0;
+                  const unassignedHolder = String(item.ownership_status ?? "") === "unassigned" && name === "Titular não definido";
 
                   return (
-                    <div key={item.id} className={`rounded-xl border p-3 text-sm ${missingTicket ? "border-rose-500/40 bg-rose-500/5" : "border-slate-800 bg-slate-900/60"}`}>
+                    <div key={item.id} className={`rounded-xl border p-3 text-sm ${missingTicket || blockedIssuance ? "border-rose-500/40 bg-rose-500/5" : "border-slate-800 bg-slate-900/60"}`}>
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-slate-100">Item {item.item_position ?? "—"} · {name}</p>
@@ -173,7 +185,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                             CPF {maskCpf(participant?.cpf)}
                             {canViewFinancial ? ` · ${money(item.final_amount ?? 0, item.price_origin ?? order.price_origin)}` : ""}
                           </p>
-                          {missingTicket ? (
+                          {unassignedHolder ? (
+                            <p className="mt-2 text-xs text-slate-400">{additionalTicketHolderUnassignedCopy()}</p>
+                          ) : null}
+                          {blockedIssuance ? (
+                            <p className="mt-2 text-xs text-rose-200">{formatImportedPurchaseWithoutTicketCopy({ eventName: eventRelation?.name ?? "Evento", blockerMessages })}</p>
+                          ) : missingTicket ? (
                             <p className="mt-2 text-xs text-rose-200">
                               {cancellationNeedsRegularization
                                 ? "O ingresso emitido para este item foi cancelado administrativamente antes de o sistema registrar se haveria substituto. Requer regularização manual."
@@ -194,7 +211,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                             <Link href={`/ingressos/${ticket!.id}${cancellationNeedsRegularization ? "#regularizacao-cancelamento" : ""}`} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-rose-500/40 px-2.5 text-xs text-rose-200">
                               Ver ingresso cancelado
                             </Link>
-                          ) : missingTicket ? (
+                          ) : missingTicket || blockedIssuance ? (
                             <span className="shrink-0 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200">Ingresso não emitido</span>
                           ) : (
                             <span className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400">Aguardando pagamento</span>
@@ -254,7 +271,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                   <AdminStatCard
                     key={payment.id}
                     compact
-                    label={PAYMENT_METHOD_LABELS[payment.payment_method ?? ""] ?? payment.payment_method ?? "Pagamento"}
+                    label={formatImportedPaymentMethod(payment.payment_method)}
                     value={canViewFinancial ? money(payment.final_amount ?? 0, payment.price_origin ?? order.price_origin) : "—"}
                     hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}`}
                   />

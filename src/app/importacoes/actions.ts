@@ -45,6 +45,7 @@ import {
   isImportRowReadyToImport,
   resolveImportBatchOperationalState,
 } from '@/lib/imports/batch-operational-state';
+import { resolveSharedEmailReviewAfterMaterialization } from '@/lib/imports/identity-review';
 
 const importTypeSchema = z.enum([
   'historical_participations',
@@ -1315,7 +1316,7 @@ export async function executeImportBatchAction(
 
   const { data: rows, error: rowsError } = await supabase
     .from('import_batch_rows')
-    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id, intended_owner_contact_id')
+    .select('id, row_number, status, resolution, data_issues, normalized_data, matched_participant_id, matched_user_id, registration_contact_id, order_item_id, ticket_id, intended_owner_contact_id, identity_match_details')
     .eq('import_batch_id', batchId)
     .order('row_number', { ascending: true });
 
@@ -1375,7 +1376,9 @@ export async function executeImportBatchAction(
       const city = String(normalized.city ?? '').trim() || null;
       const eventYear = Number(normalized.event_year ?? 0) || new Date().getFullYear();
       const registrationStatus = normalizeStatus(String(normalized.status ?? 'pending'));
-      const paymentMethod = normalizePaymentMethod(String(normalized.payment_method ?? 'pix')) ?? 'pix';
+      const paymentMethod = normalizePaymentMethod(
+        normalized.payment_method == null ? null : String(normalized.payment_method),
+      );
 
       if (!fullName) {
         await supabase
@@ -1526,7 +1529,14 @@ export async function executeImportBatchAction(
 
         await supabase
           .from('import_batch_rows')
-          .update({ status: 'imported', error_message: null, matched_participant_id: participantId, registration_contact_id: registrationContactId, order_item_id: orderItemId })
+          .update({
+            status: 'imported',
+            error_message: null,
+            matched_participant_id: participantId,
+            registration_contact_id: registrationContactId,
+            order_item_id: orderItemId,
+            identity_match_details: resolveSharedEmailReviewAfterMaterialization(row.identity_match_details),
+          })
           .eq('id', row.id);
 
         importedRows += 1;
