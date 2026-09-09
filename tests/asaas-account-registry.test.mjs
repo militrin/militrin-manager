@@ -106,6 +106,23 @@ test('token de webhook identifica a conta; token errado nao resolve', () => {
   });
 });
 
+test('token $aact_prod_ classifica production mesmo se ASAAS_ENVIRONMENT=sandbox', () => {
+  withEnv({
+    ASAAS_ENVIRONMENT: 'sandbox',
+    ASAAS_PIX_API_KEY: '$aact_prod_example',
+    ASAAS_PIX_ACCOUNT_KEY: 'asaas-conta-live-01',
+    ASAAS_PIX_WEBHOOK_TOKEN: 'pix-token',
+    ASAAS_CARD_API_KEY: undefined,
+    ASAAS_CARD_ACCOUNT_KEY: undefined,
+    ASAAS_CARD_WEBHOOK_TOKEN: undefined,
+    ASAAS_ACCOUNT_KEY: undefined,
+    ASAAS_API_KEY: undefined,
+    ASAAS_WEBHOOK_TOKEN: undefined,
+  }, () => {
+    assert.equal(getAsaasAccountCredentialsForMethod('pix')?.environment, 'production');
+  });
+});
+
 test('rotulo historico desconhecido falha fechado', () => {
   withEnv({
     ASAAS_PIX_API_KEY: 'pix-api',

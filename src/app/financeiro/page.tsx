@@ -21,6 +21,7 @@ import {
 import { listPaidOrdersAwaitingTicketIssueAction } from "@/app/painel/integridade/actions";
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
+import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from "@/lib/payments/gateway-environment";
 
 const tabs = [
   ["overview", "Visão geral"], ["sales", "Receitas"], ["expenses", "Despesas"],
@@ -28,8 +29,8 @@ const tabs = [
   ["settings", "Configurações"],
 ] as const;
 type Tab = (typeof tabs)[number][0];
-const statusOptions = ["pending", "paid", "cancelled", "expired", "courtesy"] as const;
-const statusLabels = { pending: "Pendentes", paid: "Confirmados", cancelled: "Cancelados", expired: "Expirados", courtesy: "Cortesias" };
+const statusOptions = ["pending", "paid", "cancelled", "expired", "refunded", "courtesy"] as const;
+const statusLabels = { pending: "Pendentes", paid: "Confirmados", cancelled: "Cancelados", expired: "Expirados", refunded: "Estornados", courtesy: "Cortesias" };
 const field = "w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100";
 type Account = { id: string; code: string; name: string; account_type: string; is_active: boolean };
 type Category = { id: string; name: string; entry_kind: string; is_active: boolean };
@@ -39,7 +40,7 @@ type Settlement = { id: string; expense_entry_id: string; amount: number; paid_o
 type Reversal = { id: string; original_entry_id: string; amount: number; created_at: string };
 type Allocation = { entry_id: string; event_id: string; amount: number };
 type TicketMetric = { eventId: string; issuedAt: string; kind: "sold" | "courtesy" };
-type PaymentRow = { id: string; final_amount: number; payment_method: string | null; payment_status: string; price_origin?: string | null; created_at: string; paid_at: string | null; participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null };
+type PaymentRow = { id: string; final_amount: number; payment_method: string | null; payment_status: string; price_origin?: string | null; provider?: string | null; gateway_payment_id?: string | null; gateway_account_key?: string | null; gateway_environment?: string | null; created_at: string; paid_at: string | null; participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null };
 
 async function loadContext(eventId: string | null) {
   const supabase = await createServerSupabaseClient();
@@ -63,7 +64,7 @@ async function loadSales(status: string, eventId: string | null) {
   if (!context.selected) return { ...context, rows: [] };
   const paymentStatus = status === "courtesy" ? "paid" : status;
   let query = context.supabase.from("payments")
-    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,price_origin,created_at,paid_at,participants!inner(full_name,cpf)")
+    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,created_at,paid_at,participants!inner(full_name,cpf)")
     .eq("event_id", context.selected.id).eq("payment_status", paymentStatus).order("created_at", { ascending: false }).limit(200);
   if (status === "courtesy") query = query.eq("payment_method", "courtesy");
   const { data } = await query;
@@ -208,7 +209,7 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
     ) : (
       <EventContextSelector events={eventOptions} selectedEventId={selectedEventId || null} pathname="/financeiro"/>
     )}
-    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Listagem existente de pagamentos; não cria lançamentos no livro."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">{formatImportedHistoricalAmount(row.final_amount, row.price_origin)}</td><td className="p-3">{formatImportedPaymentMethod(row.payment_method)}</td><td className="p-3">{row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : "Cancelado"}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td></tr>; })}</tbody></table></div></SectionCard> : null}
+    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="SANDBOX permanece visível para auditoria e não entra na Receita confirmada operacional. Composição do card: /painel/detalhes?metric=revenue_confirmed."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Ambiente</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; const environment = gatewayEnvironmentLabel(resolveGatewayEnvironment(row)); const statusLabel = row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : row.payment_status === "refunded" ? "Estornado" : "Cancelado"; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">{formatImportedHistoricalAmount(row.final_amount, row.price_origin)}</td><td className="p-3">{formatImportedPaymentMethod(row.payment_method)}</td><td className="p-3">{environment ? <span className={`rounded-full border px-2 py-0.5 text-xs ${environment === "LIVE" ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}>{environment}</span> : "—"}</td><td className="p-3">{statusLabel}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td></tr>; })}</tbody></table></div></SectionCard> : null}
     {active !== "sales" && ledger && !ledger.available ? <LedgerUnavailable/> : null}
     {ledger?.available && organizationId && (selectedEventId || active === "overview") ? (() => {
       const inRange = (value: string | null, from: string, to: string) => Boolean(value) && (!from || value!.slice(0,10) >= from) && (!to || value!.slice(0, 10) <= to);

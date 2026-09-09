@@ -46,6 +46,7 @@ import {
   resolveImportBatchOperationalState,
 } from '@/lib/imports/batch-operational-state';
 import { resolveSharedEmailReviewAfterMaterialization } from '@/lib/imports/identity-review';
+import { resolveShirtVariant, shirtVariantReviewIssue } from '@/lib/imports/shirt-variant';
 
 const importTypeSchema = z.enum([
   'historical_participations',
@@ -277,13 +278,11 @@ async function getCurrentEventImportRules(
     .in('batch_id', batchIds) : { data: [] };
 
   const shirtItemIds = (shirtItems ?? []).map((item) => String(item.id));
-  // Mesmo par name+value que ensure_ticket_kit_items usa pra resolver a
-  // variante na entrega (comparacao exata, sem normalizar caixa) -- validar
-  // aqui com a mesma regra evita que uma linha "pronta" na importacao va
-  // falhar silenciosamente so no dia do evento.
+  // Mesma regra de ensure_ticket_kit_items: name case-insensitive, size uppercase.
+  // 0 ou >1 matches viram review; match unico e resolvido na materializacao.
   const { data: shirtVariantRows } = shirtItemIds.length ? await supabase
     .from('event_kit_item_variants')
-    .select('name,value')
+    .select('id,name,value,is_active')
     .in('kit_item_id', shirtItemIds)
     .eq('is_active', true) : { data: [] };
 
@@ -296,7 +295,12 @@ async function getCurrentEventImportRules(
     minAge: Number(event?.min_age ?? 0),
     shirtRequiredBeforeCompletion: false,
     shirtRequiredForImport: Boolean(event?.limit_shirt_selection_to_stock && shirtItems?.length),
-    shirtVariantKeys: new Set((shirtVariantRows ?? []).map((variant) => `${String(variant.name).trim()} ${String(variant.value).trim()}`)),
+    shirtVariants: (shirtVariantRows ?? []).map((variant) => ({
+      id: String(variant.id),
+      name: String(variant.name ?? ''),
+      value: String(variant.value ?? ''),
+      is_active: true,
+    })),
     batches: (batches ?? []).map((batch) => ({
       id: String(batch.id),
       name: String(batch.name),
@@ -778,12 +782,10 @@ export async function parseImportFileAction(formData: FormData) {
 
         if (eventRules.shirtRequiredForImport && (!row.shirt_type || !row.shirt_size)) {
           addIssue({ field_code: 'shirt_selection', issue_type: 'missing_required_for_inventory', message: 'Modelo e tamanho da camiseta pendentes para o kit.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: true });
-        } else if (row.shirt_type && row.shirt_size && eventRules.shirtVariantKeys.size
-          && !eventRules.shirtVariantKeys.has(`${row.shirt_type.trim()} ${row.shirt_size.trim()}`)) {
-          // Camiseta preenchida mas o par tipo+tamanho nao corresponde a
-          // nenhuma variante ativa do evento -- sem isso a linha "passa" na
-          // importacao e so falha (silenciosamente) na entrega fisica do kit.
-          addIssue({ field_code: 'shirt_selection', issue_type: 'invalid_variant', message: `Camiseta "${row.shirt_type} ${row.shirt_size}" nao corresponde a nenhuma variante ativa do evento.`, blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: true });
+        } else if (row.shirt_type && row.shirt_size && eventRules.shirtVariants.length) {
+          const shirtResolution = resolveShirtVariant(eventRules.shirtVariants, row.shirt_type, row.shirt_size);
+          const shirtIssue = shirtVariantReviewIssue(shirtResolution, row.shirt_type, row.shirt_size);
+          if (shirtIssue) addIssue(shirtIssue);
         }
         if (dataIssues.length) {
           status = 'data_pending';

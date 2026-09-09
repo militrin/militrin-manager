@@ -1,4 +1,5 @@
 import type { AsaasEnvironment } from "./asaas-provider.ts";
+import { detectAsaasAccessTokenEnvironment } from "./gateway-environment.ts";
 import { getHeader, type HeaderBag } from "./http-headers.ts";
 import { timingSafeEqualString } from "./asaas-webhook-token.ts";
 
@@ -37,6 +38,10 @@ function readEnv(name: string): string {
 
 export function getAsaasEnvironment(): AsaasEnvironment {
   return readEnv("ASAAS_ENVIRONMENT").toLowerCase() === "production" ? "production" : "sandbox";
+}
+
+function environmentForApiKey(apiKey: string): AsaasEnvironment {
+  return detectAsaasAccessTokenEnvironment(apiKey) ?? getAsaasEnvironment();
 }
 
 function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
@@ -83,11 +88,10 @@ function cardSlot(): MethodSlot | null {
  * dos rotulos por metodo, para consultar/cancelar cobrancas Gate #1 sem
  * reescrever historico.
  *
- * Ambiente e compartilhado (`ASAAS_ENVIRONMENT`). Contas distintas em
- * sandbox vs production exigiria desenho extra — nao implementado.
+ * Ambiente de cada conta vem do prefixo oficial do access token
+ * (`$aact_hmlg_` / `$aact_prod_`), com fallback em `ASAAS_ENVIRONMENT`.
  */
 export function listConfiguredAsaasAccounts(): AsaasAccountCredentials[] {
-  const environment = getAsaasEnvironment();
   const byKey = new Map<string, AsaasAccountCredentials>();
 
   function add(slot: MethodSlot | null) {
@@ -99,7 +103,7 @@ export function listConfiguredAsaasAccounts(): AsaasAccountCredentials[] {
         apiKey: slot.apiKey,
         webhookToken: slot.webhookToken,
         webhookTokens: [slot.webhookToken],
-        environment,
+        environment: environmentForApiKey(slot.apiKey),
         methods: [slot.method],
       });
       return;
@@ -126,7 +130,7 @@ export function listConfiguredAsaasAccounts(): AsaasAccountCredentials[] {
       apiKey: legacyApi,
       webhookToken: legacyToken,
       webhookTokens: [legacyToken],
-      environment,
+      environment: environmentForApiKey(legacyApi),
       methods: ["pix"],
     });
   }
@@ -153,7 +157,7 @@ export function getAsaasAccountCredentialsForMethod(method: AsaasCheckoutMethod)
     apiKey: slot.apiKey,
     webhookToken: slot.webhookToken,
     webhookTokens: [slot.webhookToken],
-    environment: getAsaasEnvironment(),
+    environment: environmentForApiKey(slot.apiKey),
     methods: [slot.method],
   };
 }

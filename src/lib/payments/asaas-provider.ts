@@ -10,7 +10,7 @@ import type {
   PaymentGatewayProvider,
   RefundPaymentInput,
 } from "./provider.ts";
-import { mapAsaasPaymentStatus } from "./asaas-status-map.ts";
+import { mapAsaasPaymentStatus, mapAsaasWebhookProviderStatus, mapAsaasWebhookToInternalStatus } from "./asaas-status-map.ts";
 import { verifyAsaasWebhookToken } from "./asaas-webhook-token.ts";
 
 export type AsaasEnvironment = "sandbox" | "production";
@@ -44,14 +44,16 @@ function readAsaasAccountId(payload: Record<string, unknown>): string | null {
 export function parseAsaasWebhookPayload(rawBody: string): ParsedWebhookEvent {
   const payload = JSON.parse(rawBody) as Record<string, unknown>;
   const payment = (payload.payment ?? {}) as Record<string, unknown>;
-  const providerStatus = payment.status ? String(payment.status) : null;
+  const eventType = String(payload.event ?? "");
+  const paymentStatus = payment.status ? String(payment.status) : null;
+  const providerStatus = mapAsaasWebhookProviderStatus(eventType, paymentStatus);
 
   return {
     externalEventId: String(payload.id ?? ""),
-    eventType: String(payload.event ?? ""),
+    eventType,
     providerPaymentId: payment.id ? String(payment.id) : null,
     providerStatus,
-    status: mapAsaasPaymentStatus(providerStatus),
+    status: mapAsaasWebhookToInternalStatus(eventType, paymentStatus),
     occurredAt: payload.dateCreated ? String(payload.dateCreated) : null,
     rawPayload: payload,
     gatewayAccountId: readAsaasAccountId(payload),

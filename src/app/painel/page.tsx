@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import {
   Banknote, Ban, Boxes, CheckCircle2, ClipboardList, Clock3, CreditCard,
-  FileSpreadsheet, Gift, PackageCheck, QrCode, ScanLine, ShieldAlert, Shirt, Ticket,
+  FileSpreadsheet, Gift, PackageCheck, QrCode, RotateCcw, ScanLine, ShieldAlert, Shirt, Ticket,
   TriangleAlert, Truck, UserPlus, Users, WalletCards, Warehouse,
 } from 'lucide-react';
 import { Sidebar } from '@/components/dashboard/Sidebar';
@@ -112,7 +112,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
                 <AdminStatCard compact label="Check-ins realizados" value={metric('checkins').value} href={href('checkins')} icon={ScanLine} tone="info" />
                 <AdminStatCard compact label="Kits completos entregues" value={metric('complete_kits').value} href={href('complete_kits')} icon={PackageCheck} tone="success" />
                 <div className="sm:col-span-2 xl:col-span-2">
-                  <AdminStatCard compact label={shirtAttention ? 'Consistência operacional' : 'Camisetas consistentes'} value={shirtAttention ? `${shirtAttention} com atenção` : 'Tudo certo'} hint={shirtAttention ? 'Ingressos ativos sem variante canônica de camiseta.' : 'Ingressos ativos possuem variant_id quando exigido.'} href={href('shirt_coherence')} actionLabel={shirtAttention ? 'Corrigir pendências' : 'Auditar vínculos'} icon={shirtAttention ? TriangleAlert : Shirt} tone={shirtAttention ? 'warning' : 'success'} />
+                  <AdminStatCard compact label={shirtAttention ? 'Consistência operacional' : 'Camisetas consistentes'} value={shirtAttention ? `${shirtAttention} com atenção` : 'Tudo certo'} hint={shirtAttention ? 'Ingressos ativos sem variant_id. Combinação inequívoca é resolvível automaticamente; 0 ou várias variantes exigem revisão.' : 'Ingressos ativos possuem variant_id quando exigido.'} href={href('shirt_coherence')} actionLabel={shirtAttention ? 'Ver pendências' : 'Auditar vínculos'} icon={shirtAttention ? TriangleAlert : Shirt} tone={shirtAttention ? 'warning' : 'success'} />
                 </div>
               </div>
             </AdminSection> : null}
@@ -129,13 +129,15 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             </AdminSection> : null}
 
             {canViewFinanceSection ? <AdminSection compact title="Financeiro" actions={<AdminStatusBadge status="confirmed" />}>
-              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
-                <AdminStatCard compact label="Receita confirmada" value={money(metric('revenue_confirmed').value)} href={href('revenue_confirmed')} icon={Banknote} tone="success" />
-                <AdminStatCard compact label="Receita pendente" value={money(metric('revenue_pending').value)} href={href('revenue_pending')} icon={Clock3} tone="warning" />
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+                <AdminStatCard compact label="Receita confirmada" value={money(metric('revenue_confirmed').value)} hint="Somente pagamentos LIVE pagos. SANDBOX, fake, cortesia e estorno ficam de fora." href={href('revenue_confirmed')} actionLabel="Ver composição" icon={Banknote} tone="success" />
+                <AdminStatCard compact label="Receita pendente" value={money(metric('revenue_pending').value)} hint="LIVE aguardando confirmação. SANDBOX não entra." href={href('revenue_pending')} icon={Clock3} tone="warning" />
+                <AdminStatCard compact label="Receita estornada" value={money(metric('revenue_refunded').value)} hint="LIVE efetivamente refunded. Histórico; não é receita atual." href={href('revenue_refunded')} icon={RotateCcw} />
                 <AdminStatCard compact label="PIX" value={metric('pix').value} href={href('pix')} icon={QrCode} />
                 <AdminStatCard compact label="Cartão" value={metric('card').value} href={href('card')} icon={CreditCard} />
                 <AdminStatCard compact label="Cortesias" value={metric('courtesy').value} href={href('courtesy')} icon={Gift} />
               </div>
+              <p className="mt-2 text-[11px] leading-4 text-slate-400">Receita confirmada é LIVE pago. SANDBOX permanece armazenado para auditoria e não entra nas métricas. Cancelar ingresso sem estorno não remove receita LIVE. Estorno LIVE sai da confirmada e entra em Receita estornada.</p>
             </AdminSection> : null}
 
             {quickActions.length ? <section aria-labelledby="quick-actions-title" className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/60 px-4 py-3">

@@ -118,3 +118,32 @@ export function isAsaasCardCaptureRefusedEvent(rawEventType: string | null | und
 export function isAsaasPaymentDeletedEvent(rawEventType: string | null | undefined): boolean {
   return normalizeAsaasEventType(rawEventType) === ASAAS_PAYMENT_DELETED_EVENT;
 }
+
+export function isAsaasRefundedEvent(rawEventType: string | null | undefined): boolean {
+  const event = normalizeAsaasEventType(rawEventType);
+  return event === "PAYMENT_REFUNDED" || event === "PAYMENT_PARTIALLY_REFUNDED";
+}
+
+/**
+ * Webhook Asaas: o tipo do evento prevalece quando payment.status ainda
+ * nao refletiu o estorno (PAYMENT_PARTIALLY_REFUNDED + RECEIVED).
+ */
+export function mapAsaasWebhookToInternalStatus(
+  eventType: string | null | undefined,
+  paymentStatus: string | null | undefined,
+): InternalPaymentStatus {
+  if (isAsaasRefundedEvent(eventType)) return "refunded";
+  return mapAsaasPaymentStatus(paymentStatus);
+}
+
+export function mapAsaasWebhookProviderStatus(
+  eventType: string | null | undefined,
+  paymentStatus: string | null | undefined,
+): string | null {
+  if (isAsaasRefundedEvent(eventType)) {
+    const normalized = String(paymentStatus ?? "").trim().toUpperCase();
+    if (normalized === "REFUNDED" || normalized === "PARTIALLY_REFUNDED") return normalized;
+    return normalizeAsaasEventType(eventType) === "PAYMENT_REFUNDED" ? "REFUNDED" : "PARTIALLY_REFUNDED";
+  }
+  return paymentStatus ? String(paymentStatus) : null;
+}
