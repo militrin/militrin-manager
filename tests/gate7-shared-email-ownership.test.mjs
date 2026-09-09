@@ -5,6 +5,7 @@ import { chooseSharedEmailPrincipal, maskSharedEmail, sharedEmailCadastroScore }
 
 const migration = await readFile(new URL('../supabase/migrations/20261012000000_shared_email_account_ownership.sql', import.meta.url), 'utf8');
 const listFix = await readFile(new URL('../supabase/migrations/20261012100000_fix_shared_email_list_min_uuid.sql', import.meta.url), 'utf8');
+const listOrderFix = await readFile(new URL('../supabase/migrations/20261012200000_fix_shared_email_list_order_label.sql', import.meta.url), 'utf8');
 const actions = await readFile(new URL('../src/app/importacoes/actions.ts', import.meta.url), 'utf8');
 const cadastroActions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
 const panel = await readFile(new URL('../src/app/importacoes/shared-email-account-groups.tsx', import.meta.url), 'utf8');
@@ -69,6 +70,7 @@ test('T5/T6: Auth orfao so apaga com zero vinculos; Auth real nunca apaga', () =
   assert.match(panel, /Excluir Auth orfao/);
   assert.match(listFix, /bool_and\(t.intended_owner_contact_id =/);
   assert.doesNotMatch(listFix, /min\(t.intended_owner_contact_id\)/);
+  assert.match(listOrderFix, /coalesce\(o.display_number::text, o.order_number::text, t.order_id::text\)/);
 });
 
 test('T7/F: claim materializa owner_user_id de todos os tickets do grupo; antes permanece null', () => {
