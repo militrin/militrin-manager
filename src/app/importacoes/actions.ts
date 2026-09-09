@@ -1676,3 +1676,90 @@ export async function exportImportErrorsCsvAction(batchId: string) {
     content: lines.join('\n'),
   };
 }
+
+export type SharedEmailOwnershipGroup = {
+  email_masked: string;
+  people_count: number;
+  recommended_contact_id: string | null;
+  current_primary_contact_id: string | null;
+  resolved: boolean;
+  has_auth: boolean;
+  pending_invites: number;
+  people: Array<{
+    contact_id: string;
+    pin: string | null;
+    full_name: string | null;
+    user_id: string | null;
+    has_valid_auth: boolean;
+    completeness: number;
+    source_row: number | null;
+    valid_cpf: boolean;
+    has_dob: boolean;
+  }>;
+  tickets: Array<{
+    ticket_id: string;
+    holder_contact_id: string;
+    holder_pin: string | null;
+    holder_name: string | null;
+    intended_owner_contact_id: string | null;
+    owner_user_id: string | null;
+    order_label: string | null;
+  }>;
+};
+
+export type FirstAccessAuthConflict = {
+  contact_id: string;
+  pin: string | null;
+  full_name: string | null;
+  email_masked: string | null;
+  auth_user_id: string;
+  classification: 'ORPHAN_AUTH' | 'ACTIVE_REAL_ACCOUNT' | 'NO_AUTH' | string;
+  inspect: { real_link_count?: number; links?: Record<string, number> };
+};
+
+export async function listEventFirstAccessBlockersAction(eventId: string) {
+  const allowed = await hasPermission('participants.edit_basic');
+  if (!allowed) return { success: false as const, message: 'Sem permissao para revisar convites.' };
+  if (!z.string().uuid().safeParse(eventId).success) return { success: false as const, message: 'Evento invalido.' };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('list_event_first_access_blockers', { p_event_id: eventId });
+  if (error) return { success: false as const, message: error.message };
+  const payload = (data ?? {}) as { groups?: SharedEmailOwnershipGroup[]; auth_conflicts?: FirstAccessAuthConflict[] };
+  return {
+    success: true as const,
+    groups: payload.groups ?? [],
+    authConflicts: payload.auth_conflicts ?? [],
+  };
+}
+
+export async function assignSharedEmailAccountOwnerAction(eventId: string, primaryContactId: string) {
+  const allowed = await hasPermission('participants.edit_basic');
+  if (!allowed) return { success: false as const, message: 'Sem permissao para definir a conta principal.' };
+  if (!z.string().uuid().safeParse(eventId).success || !z.string().uuid().safeParse(primaryContactId).success) {
+    return { success: false as const, message: 'Evento ou Pessoa invalida.' };
+  }
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('assign_shared_email_account_owner', {
+    p_event_id: eventId,
+    p_primary_contact_id: primaryContactId,
+  });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath('/importacoes');
+  revalidatePath('/importacoes/revisoes');
+  revalidatePath('/cadastros');
+  return { success: true as const, result: data as { tickets_updated?: number; primary_contact_id?: string } };
+}
+
+export async function deleteOrphanAuthUserAction(userId: string) {
+  const context = await getCurrentOrganizationContext();
+  if (!context.organization?.id || !context.isOrgOwner) {
+    return { success: false as const, message: 'Somente o owner pode excluir Auth orfao.' };
+  }
+  if (!z.string().uuid().safeParse(userId).success) return { success: false as const, message: 'Conta invalida.' };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('delete_orphan_auth_user', { p_user_id: userId });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath('/importacoes');
+  revalidatePath('/cadastros');
+  return { success: true as const, result: data };
+}

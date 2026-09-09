@@ -393,7 +393,14 @@ export async function processImportAccountInviteJobChunkAction(jobId: string) {
       if (skipped.error) return { success: false as const, message: skipped.error.message };
       continue;
     }
-    const result = await inviteCadastroFirstAccessAction(String(item.participant_id));
+    const { data: participant } = await supabase
+      .from("participants")
+      .select("registration_contact_id")
+      .eq("id", item.participant_id)
+      .maybeSingle();
+    const result = participant?.registration_contact_id
+      ? await inviteCadastroFirstAccessAction(String(participant.registration_contact_id), "contact")
+      : await inviteCadastroFirstAccessAction(String(item.participant_id));
     const status = result.success && result.sent ? "sent" : "prepared" in result && result.prepared ? "failed" : "skipped";
     const reasonCode = "reasonCode" in result && result.reasonCode
       ? String(result.reasonCode)

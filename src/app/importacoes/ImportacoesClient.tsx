@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { ImportAccountInvites } from './import-account-invites';
+import { SharedEmailAccountGroups } from './shared-email-account-groups';
 import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
 import {
   executeImportBatchAction,
@@ -640,6 +641,7 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
         </article>
       ) : null}
 
+      {showInvitePanel && (openedBatch?.event_id || eventId) ? <SharedEmailAccountGroups eventId={String(openedBatch?.event_id || eventId)} /> : null}
       {showInvitePanel && batchId ? <ImportAccountInvites importBatchId={batchId} importedCount={Number(openedBatch?.imported_rows ?? report?.imported ?? 0)} /> : null}
 
       {message ? (

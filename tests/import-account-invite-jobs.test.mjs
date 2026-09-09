@@ -30,6 +30,8 @@ test('processamento reivindica no maximo 25 com skip locked e recupera lease', (
 test('cada item reusa convite individual canonico e registra retry sem token', () => {
   assert.match(actions, /check_account_invite_job_item_turn/);
   assert.match(migration, /other\.status='processing'[\s\S]*other\.created_at,other\.id/);
+  assert.match(actions, /inviteCadastroFirstAccessAction\(String\(participant\.registration_contact_id\), "contact"\)/);
+  assert.match(actions, /inviteCadastroFirstAccessAction\(String\(participant\.registration_contact_id\), "contact"\)/);
   assert.match(actions, /inviteCadastroFirstAccessAction\(String\(item\.participant_id\)\)/);
   assert.match(actions, /finish_account_invite_job_item/);
   assert.match(migration, /attempt_count=attempt_count\+1/);
