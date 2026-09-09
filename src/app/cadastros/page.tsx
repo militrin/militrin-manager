@@ -5,9 +5,10 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { hasPermission } from "@/lib/admin/permissions";
 import { contactIdForTicket } from "@/lib/registrations/contact-tickets";
+import { countSharedEmails, matchesSharedEmailFilter, parseSharedEmailFilter } from "@/lib/account/shared-email-ownership";
 import { CadastroList } from "./cadastro-list";
 
-type Params = { q?: string; origin?: string; import_batch_id?: string };
+type Params = { q?: string; origin?: string; import_batch_id?: string; shared_email?: string };
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -82,9 +83,12 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
   }
 
   const query = params.q?.trim() ?? "";
+  const sharedEmailFilter = parseSharedEmailFilter(params.shared_email);
+  const sharedEmailCounts = countSharedEmails((contacts ?? []).map((contact) => contact.email ? String(contact.email) : null));
   const rows = (contacts ?? []).map((contact) => {
     const contactStats = stats.get(String(contact.id));
     const origin = importedContactIds.has(String(contact.id)) ? "Importação" : "Cadastro global";
+    const email = String(contact.email ?? "");
     return {
       id: String(contact.id),
       name: String(contact.full_name ?? ""),
@@ -92,12 +96,13 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
       birthDate: contact.birth_date ? String(contact.birth_date) : "",
       gender: String(contact.gender ?? ""),
       phone: String(contact.phone ?? ""),
-      email: String(contact.email ?? ""),
+      email,
       city: String(contact.city ?? ""),
       publicPin: contact.public_pin ? String(contact.public_pin) : null,
       origin,
       ticketCount: contactStats?.ticketIds.size ?? 0,
       eventCount: contactStats?.eventIds.size ?? 0,
+      sharedEmailCount: sharedEmailCounts.get(email.trim().toLowerCase()) ?? (email.trim() ? 1 : 0),
       importBatchIds: Array.from(importBatchIdsByContact.get(String(contact.id)) ?? []),
     };
   }).filter((row) => {
@@ -105,6 +110,7 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
     if (params.origin === "import" && row.origin !== "Importação") return false;
     if (params.origin === "manual" && row.origin === "Importação") return false;
     if (params.import_batch_id && !row.importBatchIds.includes(params.import_batch_id)) return false;
+    if (!matchesSharedEmailFilter(row.email, row.sharedEmailCount, sharedEmailFilter)) return false;
     return true;
   });
 
@@ -112,11 +118,19 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
     <TopBar title="Cadastros" subtitle={`${organization.name} · pessoas da organização`}/>
     <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-400">{rows.length} pessoa(s) encontrada(s)</p><Link href="/cadastros/novo" className="inline-flex h-10 items-center rounded-xl bg-emerald-500 px-4 font-semibold text-emerald-950">Novo cadastro</Link></div>
     {params.import_batch_id ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"><p className="text-sm text-amber-100">Exibindo pessoas vinculadas ao lote de importação, sem alterar a identidade global do cadastro.</p><Link href="/cadastros" className="rounded-xl border border-amber-400/40 px-4 py-2 text-sm text-amber-100">Ver todos os cadastros</Link></div> : null}
-    <form className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]">
+    <form className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto]">
       <input name="q" defaultValue={query} placeholder="Nome, CPF, e-mail ou telefone" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"/>
       <select name="origin" defaultValue={params.origin ?? ""} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"><option value="">Todas as origens</option><option value="import">Importação</option><option value="manual">Cadastro global</option></select>
+      <label className="grid gap-1">
+        <span className="text-xs text-slate-400">E-mail compartilhado</span>
+        <select name="shared_email" defaultValue={sharedEmailFilter === "all" ? "" : sharedEmailFilter} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
+          <option value="">Todos</option>
+          <option value="shared">Apenas e-mails compartilhados</option>
+          <option value="unique">Apenas e-mails únicos</option>
+        </select>
+      </label>
       {params.import_batch_id ? <input type="hidden" name="import_batch_id" value={params.import_batch_id}/> : null}
-      <button className="inline-flex h-10 items-center justify-center rounded-xl border border-emerald-500/40 px-4 text-emerald-200">Filtrar</button>
+      <button className="inline-flex h-10 items-center justify-center self-end rounded-xl border border-emerald-500/40 px-4 text-emerald-200">Filtrar</button>
     </form>
     <CadastroList rows={rows} canEdit={canEdit} canIssueTicket={canIssueTicket}/>
   </div></div></main>;

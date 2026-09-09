@@ -14,6 +14,8 @@ import { ticketDisplayReference } from "@/lib/display-reference";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
+import { loadSharedEmailGroup } from "@/lib/account/load-shared-email-group";
+import { SharedEmailAccountCard } from "../shared-email-account-card";
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -197,6 +199,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     if (!key) continue;
     importedIssuesByItem.set(key, [...(importedIssuesByItem.get(key) ?? []), issue]);
   }
+  const sharedEmailGroup = await loadSharedEmailGroup(supabase, organization.id, id);
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
     <TopBar title={String(contact.full_name)} subtitle="Ficha global da pessoa" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contact.full_name)}]} backHref="/cadastros" fallbackHref="/cadastros"/>
@@ -211,6 +214,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
         </div>
       ) : null}
     </section>
+    {sharedEmailGroup ? <SharedEmailAccountCard group={sharedEmailGroup} contactId={id} /> : null}
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
       <h2 className="text-lg font-semibold">Itens adicionais</h2><p className="text-sm text-slate-400">Produtos vinculados diretamente a este cadastro, separados dos ingressos.</p>
       {additionalItems.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum item adicional vinculado.</p> : <div className="mt-5 grid gap-3 sm:grid-cols-2">{additionalItems.map((item) => <div key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.productName}{item.variantLabel ? ` — ${item.variantLabel}` : ""} ×{item.quantity}</p><p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Concedido pela organização" : ""}</p></div><span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{item.status === "delivered" ? "Entregue" : item.status === "confirmed" ? "Pendente" : "Aguardando pagamento"}</span></div><div className="mt-3 flex items-center gap-4"><Link href={`/loja/pedidos/${item.orderId}#item-${item.id}`} className="text-xs font-semibold text-emerald-300">Ver item</Link>{isOrganizationOwner ? <OwnerCancelAdditionalItemButton contactId={id} itemId={item.id} financeHref={`/loja/pedidos/${item.orderId}#pagamento`} details={[`Produto: ${item.productName}`,`Variante: ${item.variantLabel ?? "Sem variante"}`,`Quantidade: ${item.quantity}`,`Origem: ${item.isCourtesy ? "Concessão administrativa" : "Pedido da loja"}`,`Status: ${item.status}`,`Pagamento: ${item.paymentStatus}`]}/> : null}</div></div>)}</div>}

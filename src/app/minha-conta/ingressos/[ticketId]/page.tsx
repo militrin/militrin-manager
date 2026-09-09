@@ -523,7 +523,7 @@ export default async function TicketDetailPage({
                 <MilitrinButton size="sm" variant="secondary">Editar ingresso</MilitrinButton>
               </Link>
             ) : null}
-            {canAdminEdit && canTransferOwnership ? <Link href={`${adminEditHref ?? `/ingressos/${ticketId}/editar`}#propriedade`} className="inline-flex"><MilitrinButton size="sm" variant="secondary">Transferir propriedade</MilitrinButton></Link> : null}
+            {canAdminEdit && canTransferOwnership ? <Link href={`/ingressos/${ticketId}`} className="inline-flex"><MilitrinButton size="sm" variant="secondary">Alterar conta proprietária</MilitrinButton></Link> : null}
 
             {canAdminEdit ? (
               <form action={submitTicketNotesChange} className="space-y-3">

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { CopyableId } from "@/components/CopyableId";
 import { ADMIN_LIST_HEADER_CLASS, ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
+import { sharedEmailBadgeLabel } from "@/lib/account/shared-email-ownership";
 
 type Row = {
   id: string;
@@ -18,6 +19,7 @@ type Row = {
   origin: string;
   ticketCount: number;
   eventCount: number;
+  sharedEmailCount: number;
 };
 
 function maskCpf(value: string) {
@@ -40,9 +42,21 @@ export function CadastroList({ rows, canEdit, canIssueTicket }: { rows: Row[]; c
           <button type="button" onClick={() => setExpanded(isOpen ? null : row.id)} className="min-w-0 flex-1 text-left">
             <span className="block truncate font-medium hover:text-emerald-300">{row.name}</span>
             {secondaryLine ? <span className="mt-0.5 block truncate text-xs text-slate-500 lg:hidden">{secondaryLine}</span> : null}
+            {row.sharedEmailCount > 1 ? (
+              <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="mt-1 inline-flex rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 lg:hidden">
+                {sharedEmailBadgeLabel(row.sharedEmailCount)}
+              </Link>
+            ) : null}
           </button>
           <span className="hidden lg:inline">{maskCpf(row.cpf)}</span>
-          <span className="hidden truncate text-slate-300 lg:inline" title={row.email || row.phone}>{row.email || row.phone || "Não informado"}</span>
+          <span className="hidden min-w-0 lg:flex lg:flex-col">
+            <span className="truncate text-slate-300" title={row.email || row.phone}>{row.email || row.phone || "Não informado"}</span>
+            {row.sharedEmailCount > 1 ? (
+              <Link href={`/cadastros/${row.id}/conta-compartilhada`} className="mt-1 w-fit rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 hover:border-violet-300">
+                {sharedEmailBadgeLabel(row.sharedEmailCount)}
+              </Link>
+            ) : null}
+          </span>
           <span className="hidden lg:inline">{row.ticketCount}</span><span className="hidden lg:inline">{row.eventCount}</span>
           <div className="hidden shrink-0 gap-1.5 lg:flex"><Link href={`/cadastros/${row.id}`} className={actionClass}>Abrir ficha</Link></div>
           <Link href={`/cadastros/${row.id}`} className={`${actionClass} lg:hidden`}>Abrir ficha</Link>
@@ -50,7 +64,7 @@ export function CadastroList({ rows, canEdit, canIssueTicket }: { rows: Row[]; c
         {isOpen ? <div className="border-t border-slate-800 bg-slate-900/60 p-4">
           <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Nome completo",row.name],["CPF",maskCpf(row.cpf)],["Nascimento",row.birthDate || "Não informado"],["Gênero",row.gender || "Não informado"],["Telefone",row.phone || "Não informado"],["E-mail",row.email || "Não informado"],["Cidade",row.city || "Não informada"],["Origem",row.origin]].map(([label,value]) => <div key={label}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-0.5 break-words text-slate-200">{value}</dd></div>)}</dl>
           <div className="mt-3"><CopyableId label="PIN do cadastro" value={row.publicPin}/></div>
-          <div className="mt-4 flex flex-wrap gap-2"><Link href={`/cadastros/${row.id}`} className={actionClass}>Ver ficha e ingressos</Link>{canEdit ? <Link href={`/cadastros/${row.id}/editar`} className={actionClass}>Editar cadastro</Link> : null}{canIssueTicket ? <Link href={row.publicPin ? `/ingressos/emitir?pin=${row.publicPin}` : "/ingressos/emitir"} className={actionClass}>Emitir ingresso</Link> : null}</div>
+          <div className="mt-4 flex flex-wrap gap-2"><Link href={`/cadastros/${row.id}`} className={actionClass}>Ver ficha e ingressos</Link>{row.sharedEmailCount > 1 ? <Link href={`/cadastros/${row.id}/conta-compartilhada`} className={actionClass}>Gerenciar conta e ingressos</Link> : null}{canEdit ? <Link href={`/cadastros/${row.id}/editar`} className={actionClass}>Editar cadastro</Link> : null}{canIssueTicket ? <Link href={row.publicPin ? `/ingressos/emitir?pin=${row.publicPin}` : "/ingressos/emitir"} className={actionClass}>Emitir ingresso</Link> : null}</div>
         </div> : null}
       </div>;
     })}</div>

@@ -10,6 +10,8 @@ import { AdministrativeTicketTimeline } from "./timeline-panel";
 import { TicketCancellationRegularization } from "./cancellation-regularization";
 import { appendNavigationContext, isSafeContextUuid } from "@/lib/navigation/admin-navigation";
 import { sanitizeAdminTicketsReturnTo } from "@/lib/admin/admin-ticket-filters";
+import { resolveLinkedAccountLabel } from "@/lib/admin/operator-names";
+import { ChangeTicketAccountOwnerCard } from "./change-ticket-account-owner";
 
 type Search = { from?: string; to?: string; type?: string; scope?: "ticket" | "account"; eventId?: string; page?: string; contactId?: string; returnTo?: string };
 
@@ -19,7 +21,7 @@ export default async function AdministrativeTicketDetailPage({ params, searchPar
   const organization = (await getCurrentOrganizationContext()).organization;
   if (!organization?.id) redirect("/acesso-negado");
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.from("tickets").select("id,token,organization_id,event_id,owner_user_id,order_id,status,cancellation_replacement_required,cancellation_reason_text,order_items(registration_contact_id,ticket_categories(name)),participants(registration_contact_id)").eq("id", resolved.ticketId).eq("organization_id", organization.id).maybeSingle();
+  const { data, error } = await supabase.from("tickets").select("id,token,organization_id,event_id,owner_user_id,intended_owner_contact_id,order_id,status,cancellation_replacement_required,cancellation_reason_text,order_items(registration_contact_id,holder_full_name,ticket_categories(name)),participants(registration_contact_id,full_name)").eq("id", resolved.ticketId).eq("organization_id", organization.id).maybeSingle();
   if (error) throw error; if (!data) redirect("/acesso-negado");
   const orderItem = Array.isArray(data.order_items) ? data.order_items[0] : data.order_items;
   const participant = Array.isArray(data.participants) ? data.participants[0] : data.participants;
@@ -41,5 +43,15 @@ export default async function AdministrativeTicketDetailPage({ params, searchPar
   // entao uma unica checagem aqui ja cobre os dois casos.
   const canRegularizeCancellation = await hasPermission("orders.cancel");
   const timeline = await getAdministrativeTicketTimeline(supabase, resolved.ticketId, organization.id, { from:filters.from,to:filters.to,type:filters.type,scope:filters.scope,eventId:filters.eventId,page:Number(filters.page??1),pageSize:25,canViewTechnicalAudit });
-  return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6"><TopBar title="Ficha administrativa do ingresso" subtitle={ticketLabel} breadcrumbs={breadcrumbs} backHref={listHref} fallbackHref="/ingressos"/><TicketDetailPage params={Promise.resolve(resolved)} showTimeline={false} adminEditHref={editHref}/><TicketCancellationRegularization ticketId={resolved.ticketId} status={String(data.status ?? "")} replacementRequired={data.cancellation_replacement_required as boolean | null} reasonText={data.cancellation_reason_text as string | null} canRegularize={canRegularizeCancellation}/><AdministrativeTicketTimeline result={timeline} filters={{...filters,from:filters.from}}/></div></div></main>;
+  const canManageAccountOwner = await hasPermission("participants.edit_basic") || await hasPermission("tickets.transfer_ownership");
+  const holderName = String(participant?.full_name ?? orderItem?.holder_full_name ?? "Titular não definido");
+  const intendedOwner = data.intended_owner_contact_id
+    ? await supabase.from("registration_contacts").select("full_name,user_id").eq("id", data.intended_owner_contact_id).maybeSingle()
+    : null;
+  const ownerName = data.owner_user_id
+    ? await resolveLinkedAccountLabel(String(data.owner_user_id))
+    : intendedOwner?.data?.full_name
+      ? `${String(intendedOwner.data.full_name)} (conta ainda não ativada)`
+      : "Conta proprietária não definida";
+  return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6"><TopBar title="Ficha administrativa do ingresso" subtitle={ticketLabel} breadcrumbs={breadcrumbs} backHref={listHref} fallbackHref="/ingressos"/><ChangeTicketAccountOwnerCard ticketId={resolved.ticketId} holderName={holderName} currentOwnerName={ownerName} canManage={canManageAccountOwner}/><TicketDetailPage params={Promise.resolve(resolved)} showTimeline={false} adminEditHref={editHref}/><TicketCancellationRegularization ticketId={resolved.ticketId} status={String(data.status ?? "")} replacementRequired={data.cancellation_replacement_required as boolean | null} reasonText={data.cancellation_reason_text as string | null} canRegularize={canRegularizeCancellation}/><AdministrativeTicketTimeline result={timeline} filters={{...filters,from:filters.from}}/></div></div></main>;
 }

@@ -50,3 +50,90 @@ export function maskSharedEmail(email: string | null | undefined) {
   if (at < 1) return value || null;
   return `${value.slice(0, 2)}***@${value.slice(at + 1)}`;
 }
+
+export function normalizeSharedEmail(email: string | null | undefined) {
+  const value = String(email ?? '').trim().toLowerCase();
+  return value || null;
+}
+
+export type SharedEmailFilter = 'all' | 'shared' | 'unique';
+
+export function parseSharedEmailFilter(value: string | null | undefined): SharedEmailFilter {
+  if (value === 'shared' || value === 'unique') return value;
+  return 'all';
+}
+
+export function countSharedEmails(emails: Array<string | null | undefined>) {
+  const counts = new Map<string, number>();
+  for (const email of emails) {
+    const key = normalizeSharedEmail(email);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function sharedEmailBadgeLabel(count: number) {
+  return `${count} cadastros neste e-mail`;
+}
+
+export function sharedEmailGroupCount(emails: Array<string | null | undefined>) {
+  return [...countSharedEmails(emails).values()].filter((count) => count > 1).length;
+}
+
+export function matchesSharedEmailFilter(
+  email: string | null | undefined,
+  sharedCount: number,
+  filter: SharedEmailFilter,
+) {
+  if (filter === 'all') return true;
+  const key = normalizeSharedEmail(email);
+  if (filter === 'shared') return Boolean(key) && sharedCount > 1;
+  return !key || sharedCount <= 1;
+}
+
+export function currentSharedEmailPrincipalId(
+  tickets: Array<{ intendedOwnerContactId?: string | null }>,
+) {
+  const counts = new Map<string, number>();
+  for (const ticket of tickets) {
+    const id = String(ticket.intendedOwnerContactId ?? '').trim();
+    if (!id) continue;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  if (counts.size === 0) return { id: null as string | null, unanimous: true, mixed: false };
+  let selected: string | null = null;
+  let selectedCount = 0;
+  for (const [id, count] of counts) {
+    if (count > selectedCount || (count === selectedCount && selected && id < selected)) {
+      selected = id;
+      selectedCount = count;
+    }
+  }
+  return { id: selected, unanimous: counts.size === 1, mixed: counts.size > 1 };
+}
+
+export const TICKET_ACCOUNT_OWNER_REASON_OPTIONS = [
+  { code: 'shared_email', label: 'E-mail compartilhado' },
+  { code: 'family_responsible', label: 'Responsável familiar' },
+  { code: 'account_correction', label: 'Correção de conta' },
+  { code: 'administrative_transfer', label: 'Transferência administrativa' },
+  { code: 'other', label: 'Outro' },
+] as const;
+
+export type TicketAccountOwnerReasonCode = typeof TICKET_ACCOUNT_OWNER_REASON_OPTIONS[number]['code'];
+
+export function isTicketAccountOwnerReasonCode(value: string): value is TicketAccountOwnerReasonCode {
+  return TICKET_ACCOUNT_OWNER_REASON_OPTIONS.some((item) => item.code === value);
+}
+
+export function ticketAccountOwnerReasonLabel(code: string | null | undefined) {
+  return TICKET_ACCOUNT_OWNER_REASON_OPTIONS.find((item) => item.code === code)?.label ?? null;
+}
+
+export function validateTicketAccountOwnerReason(code: string, text?: string | null) {
+  if (!isTicketAccountOwnerReasonCode(code)) throw new Error('Selecione um motivo válido.');
+  const reasonText = text?.trim() || null;
+  if (code === 'other' && !reasonText) throw new Error('Descreva o motivo da alteração.');
+  return { reasonCode: code, reasonText };
+}

@@ -15,6 +15,10 @@ export type SensitiveActionReasonCode = typeof SENSITIVE_ACTION_REASON_OPTIONS[n
 const labels = new Map<string,string>([
   ...SENSITIVE_ACTION_REASON_OPTIONS.map((item) => [item.code,item.label] as const),
   ["legacy_unclassified","Motivo legado não classificado"],
+  ["shared_email","E-mail compartilhado"],
+  ["family_responsible","Responsável familiar"],
+  ["account_correction","Correção de conta"],
+  ["administrative_transfer","Transferência administrativa"],
 ]);
 
 export function sensitiveActionReasonLabel(code: string | null | undefined) {
