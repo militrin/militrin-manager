@@ -30,6 +30,7 @@ export type OperationalProductItem = {
   event_id: string | null;
   event_name: string;
   buyer: string;
+  person_name: string | null;
   /** Status do PEDIDO (pending/confirmed/cancelled/expired/refunded) -- pagamento, nao entrega. */
   payment_status: string;
   /** not_applicable = pedido ainda nao confirmado (pagamento pendente). */

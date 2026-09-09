@@ -70,13 +70,20 @@ test("resolveTurboScanAction resolve ticket OU produto (qualquer canal) no backe
   assert.match(fn, /await assertPermission\("participants\.view"\)/);
   assert.match(fn, /\.from\("tickets"\)/);
   assert.match(fn, /resolveOperationalProductByQr/);
-  assert.match(fn, /await assertPermission\("store\.deliver"\)/);
+  assert.doesNotMatch(fn, /await assertPermission\("store\.deliver"\)/);
 });
 
 test("resolucao de item de loja (dentro da resolucao unificada) usa store_order_items.qr_token (nunca order_number, nunca id adulteravel sem lookup)", () => {
   const helper = slice(actions, "async function resolveStoreOrderItemByQr", "// Produto \"compre junto\"");
   assert.match(helper, /\.from\("store_order_items"\)/);
   assert.match(helper, /\.eq\("qr_token", tokenCandidate\)/);
+});
+
+test("identificacao de produto no Turbo nao exige store.deliver -- a permissao continua so na entrega", () => {
+  const identify = slice(actions, "export async function resolveTurboScanAction", "export async function deliverKitCheckinAndLinkWristbandAction");
+  assert.doesNotMatch(identify, /store\.deliver/);
+  const deliver = slice(actions, "export async function deliverAdditionalStoreItemAction", "export async function deliverOperationalProductItemAction");
+  assert.match(deliver, /await assertPermission\("store\.deliver"\)/);
 });
 
 test("entrega de ingresso e de produto (qualquer canal) reaproveitam as actions/RPCs canonicas ja existentes, via o dispatcher unico deliverOperationalProductItemAction -- nenhuma RPC de entrega duplicada", () => {
@@ -203,7 +210,7 @@ test("rota de QR por item permite o proprietario do pedido OU store.deliver OU s
   // ver/gerar o QR do proprio item -- so bloqueia (403) quem nao e o dono E nao
   // tem nenhuma das duas permissoes administrativas.
   assert.match(itemQrRoute, /if \(order\?\.user_id !== user\.id && !canDeliver && !canManage\)/);
-  assert.match(itemQrRoute, /data=\$\{encodeURIComponent\(String\(item\.qr_token\)\)\}/);
+  assert.match(itemQrRoute, /generateQrPngBase64\(String\(item\.qr_token\)/);
   assert.match(storeOrderDetailActions, /\/api\/loja\/pedidos\/\$\{storeOrderId\}\/itens\/\$\{itemId\}\/qrcode/);
 });
 

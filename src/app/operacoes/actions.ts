@@ -1218,6 +1218,7 @@ async function buildTicketDetails(
         order_items(
           id,
           participant_id,
+          registration_contact_id,
           holder_full_name,
           shirt_type,
           shirt_size,
@@ -1272,6 +1273,9 @@ async function buildTicketDetails(
   );
   const participantId = detailOrderItem?.participant_id
     ? String(detailOrderItem.participant_id)
+    : null;
+  const contactId = detailOrderItem?.registration_contact_id
+    ? String(detailOrderItem.registration_contact_id)
     : null;
 
   const { error: ensureKitError } = await supabase.rpc("ensure_ticket_kit_items", { p_ticket_id: ticketId });
@@ -1358,18 +1362,17 @@ async function buildTicketDetails(
   // reaproveita store_orders.participant_id (coluna ja existente, nunca
   // relacionada ao kit do ingresso). Fica FORA de participant_kit_items de
   // proposito: nunca deve ser contado como parte do kit principal.
-  const { data: additionalItemRows, error: additionalItemsError } = participantId
+  const additionalOwnerFilter = [
+    participantId ? `participant_id.eq.${participantId}` : null,
+    contactId ? `registration_contact_id.eq.${contactId}` : null,
+  ].filter(Boolean).join(",");
+  const { data: additionalItemRows, error: additionalItemsError } = additionalOwnerFilter
     ? await supabase
         .from("store_order_items")
         .select(
-          "id, store_item_id, variant_id, quantity, status, delivered_at, store_items(name), store_item_variants(name,value), store_orders!inner(participant_id,event_id,payment_method)",
+          "id, store_item_id, variant_id, quantity, status, delivered_at, store_items(name), store_item_variants(name,value), store_orders!inner(participant_id,registration_contact_id,event_id,payment_method)",
         )
-        .eq("store_orders.participant_id", participantId)
-        // Inclui tambem pedidos de produto GLOBAL (store_orders.event_id
-        // null) feitos por este participante -- nao apenas os do evento do
-        // ingresso aberto. Um "= event_id" estrito nunca bate com NULL em
-        // SQL, entao sem este OR o item global comprado ficava invisivel
-        // aqui mesmo tendo sido legitimamente pago.
+        .or(additionalOwnerFilter, { referencedTable: "store_orders" })
         .or(`event_id.eq.${String(ticketRow.event_id ?? "")},event_id.is.null`, { referencedTable: "store_orders" })
         .neq("status", "cancelled")
     : { data: [] as Array<Record<string, unknown>>, error: null };
@@ -1994,7 +1997,6 @@ export async function searchPickupParticipantByQrAction(rawValue: string): Promi
   // por qr_token (text), nunca id (uuid) -- o token escaneado nao e um uuid.
   const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
   if (item) {
-    await assertPermission("store.deliver");
     return { success: true, kind: "product", item };
   }
 
@@ -2785,29 +2787,47 @@ async function resolveStoreOrderItemByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
 ): Promise<OperationalProductItem | null> {
-  const { data: line } = await supabase
+  const { data: line, error: lineError } = await supabase
     .from("store_order_items")
-    .select(
-      "id, store_order_id, quantity, status, delivered_at, pickup_qr_mode, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name))",
-    )
+    .select("id, store_order_id, quantity, status, delivered_at, pickup_qr_mode, store_item_id, variant_id")
     .eq("qr_token", tokenCandidate)
     .limit(1)
     .maybeSingle();
 
-  if (!line?.id) return null;
+  if (lineError || !line?.id) return null;
 
-  const storeItem = getRelation(line.store_items as { name: string } | { name: string }[] | null);
+  const [{ data: hydrated }, { data: orderRow }] = await Promise.all([
+    supabase
+      .from("store_order_items")
+      .select("store_items(name), store_item_variants(name, value)")
+      .eq("id", line.id)
+      .maybeSingle(),
+    supabase
+      .from("store_orders")
+      .select("order_number, display_number, event_id, user_id, registration_contact_id, events(name), registration_contacts(full_name)")
+      .eq("id", line.store_order_id)
+      .maybeSingle(),
+  ]);
+
+  const storeItem = getRelation(hydrated?.store_items as { name: string } | { name: string }[] | null);
   const variant = getRelation(
-    line.store_item_variants as { name: string; value: string } | Array<{ name: string; value: string }> | null,
+    hydrated?.store_item_variants as { name: string; value: string } | Array<{ name: string; value: string }> | null,
   );
-  const order = getRelation(
-    line.store_orders as { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null }> | null,
-  );
+  const order = orderRow as {
+    order_number?: string;
+    display_number?: string | null;
+    event_id?: string | null;
+    user_id?: string | null;
+    events?: { name: string } | { name: string }[] | null;
+    registration_contacts?: { full_name: string } | { full_name: string }[] | null;
+  } | null;
   const event = order ? getRelation(order.events) : null;
+  const contact = order ? getRelation(order.registration_contacts) : null;
+  const personName = contact?.full_name ? String(contact.full_name) : null;
 
-  let buyerName = "Comprador não identificado";
+  let buyerName = personName ?? "Comprador não identificado";
   const buyerUserId = order?.user_id ? String(order.user_id) : null;
-  if (buyerUserId && order?.event_id) {
+  if (!personName && buyerUserId && order?.event_id) {
     const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(order.event_id) });
     const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
     if (buyer?.full_name) buyerName = String(buyer.full_name);
@@ -2830,6 +2850,7 @@ async function resolveStoreOrderItemByQr(
     event_id: order?.event_id ? String(order.event_id) : null,
     event_name: event?.name ?? "Produto global",
     buyer: buyerName,
+    person_name: personName ?? buyerName,
     payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
     delivery_status: deliveryStatus,
     delivered_at: line.delivered_at ? String(line.delivered_at) : null,
@@ -2844,7 +2865,7 @@ async function resolveOrderItemProductByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
 ): Promise<OperationalProductItem | null> {
-  const { data: line } = await supabase
+  const { data: line, error: lineError } = await supabase
     .from("order_items")
     .select(
       "id, order_id, event_id, quantity, status, delivered_at, pickup_qr_mode, store_item_id, store_items(name), store_item_variants(name, value), orders(order_number, display_number, user_id), events(name)",
@@ -2854,7 +2875,7 @@ async function resolveOrderItemProductByQr(
     .limit(1)
     .maybeSingle();
 
-  if (!line?.id) return null;
+  if (lineError || !line?.id) return null;
 
   const storeItem = getRelation(line.store_items as { name: string } | { name: string }[] | null);
   const variant = getRelation(
@@ -2891,6 +2912,7 @@ async function resolveOrderItemProductByQr(
     event_id: String(line.event_id),
     event_name: event?.name ?? "Evento",
     buyer: buyerName,
+    person_name: buyerName,
     payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
     delivery_status: deliveryStatus,
     delivered_at: line.delivered_at ? String(line.delivered_at) : null,
@@ -2907,21 +2929,21 @@ async function resolveStoreOrderItemPickupUnitByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
 ): Promise<OperationalProductItem | null> {
-  const { data: unit } = await supabase
+  const { data: unit, error: unitError } = await supabase
     .from("store_order_item_pickup_units")
     .select(
-      "id, unit_index, status, delivered_at, store_order_item_id, store_order_items(id, store_order_id, quantity, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name)))",
+      "id, unit_index, status, delivered_at, store_order_item_id, store_order_items(id, store_order_id, quantity, store_item_id, store_items(name), store_item_variants(name, value), store_orders(order_number, display_number, event_id, user_id, events(name), registration_contacts(full_name)))",
     )
     .eq("qr_token", tokenCandidate)
     .limit(1)
     .maybeSingle();
 
-  if (!unit?.id) return null;
+  if (unitError || !unit?.id) return null;
 
   const line = getRelation(
     unit.store_order_items as
-      | { id: string; store_order_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; store_orders: { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null }> | null }
-      | Array<{ id: string; store_order_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; store_orders: { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null }> | null }>
+      | { id: string; store_order_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; store_orders: { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null; registration_contacts: { full_name: string } | { full_name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null; registration_contacts: { full_name: string } | { full_name: string }[] | null }> | null }
+      | Array<{ id: string; store_order_id: string; quantity: number; store_item_id: string; store_items: { name: string } | { name: string }[] | null; store_item_variants: { name: string; value: string } | Array<{ name: string; value: string }> | null; store_orders: { order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null; registration_contacts: { full_name: string } | { full_name: string }[] | null } | Array<{ order_number: string; display_number: string | null; event_id: string | null; user_id: string | null; events: { name: string } | { name: string }[] | null; registration_contacts: { full_name: string } | { full_name: string }[] | null }> | null }>
       | null,
   );
   if (!line) return null;
@@ -2931,9 +2953,11 @@ async function resolveStoreOrderItemPickupUnitByQr(
   const order = getRelation(line.store_orders);
   const event = order ? getRelation(order.events) : null;
 
-  let buyerName = "Comprador não identificado";
+  const contact = order ? getRelation(order.registration_contacts) : null;
+  const personName = contact?.full_name ? String(contact.full_name) : null;
+  let buyerName = personName ?? "Comprador não identificado";
   const buyerUserId = order?.user_id ? String(order.user_id) : null;
-  if (buyerUserId && order?.event_id) {
+  if (!personName && buyerUserId && order?.event_id) {
     const { data: buyerRows } = await supabase.rpc("get_operation_buyers", { p_event_id: String(order.event_id) });
     const buyer = ((buyerRows ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === buyerUserId);
     if (buyer?.full_name) buyerName = String(buyer.full_name);
@@ -2956,6 +2980,7 @@ async function resolveStoreOrderItemPickupUnitByQr(
     event_id: order?.event_id ? String(order.event_id) : null,
     event_name: event?.name ?? "Produto global",
     buyer: buyerName,
+    person_name: personName ?? buyerName,
     payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
     delivery_status: deliveryStatus,
     delivered_at: unit.delivered_at ? String(unit.delivered_at) : null,
@@ -2969,7 +2994,7 @@ async function resolveOrderItemPickupUnitByQr(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
 ): Promise<OperationalProductItem | null> {
-  const { data: unit } = await supabase
+  const { data: unit, error: unitError } = await supabase
     .from("order_item_pickup_units")
     .select(
       "id, unit_index, status, delivered_at, order_item_id, order_items(id, order_id, event_id, quantity, store_item_id, store_items(name), store_item_variants(name, value), orders(order_number, display_number, user_id), events(name))",
@@ -2978,7 +3003,7 @@ async function resolveOrderItemPickupUnitByQr(
     .limit(1)
     .maybeSingle();
 
-  if (!unit?.id) return null;
+  if (unitError || !unit?.id) return null;
 
   const line = getRelation(
     unit.order_items as
@@ -3018,6 +3043,7 @@ async function resolveOrderItemPickupUnitByQr(
     event_id: String(line.event_id),
     event_name: event?.name ?? "Evento",
     buyer: buyerName,
+    person_name: buyerName,
     payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
     delivery_status: deliveryStatus,
     delivered_at: unit.delivered_at ? String(unit.delivered_at) : null,
@@ -3067,11 +3093,9 @@ export async function resolveTurboScanAction(rawValue: string): Promise<TurboSca
 
   const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
   if (item) {
-    // So exige store.deliver quando o QR realmente resolveu pra um produto
-    // (de qualquer um dos dois canais) -- assim um operador sem essa
-    // permissao continua recebendo "nao encontrado" pra qualquer outro QR,
-    // e uma mensagem especifica de permissao so quando o item existe.
-    await assertPermission("store.deliver");
+    // Identificacao do item adicional/produto nao exige permissao de entrega.
+    // Sem isso o catch do Turbo virava "QR nao reconhecido" mesmo com o
+    // token valido. A autorizacao de entrega continua na acao de confirmar.
     return { success: true, kind: "product", item };
   }
 

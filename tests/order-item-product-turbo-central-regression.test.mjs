@@ -60,7 +60,8 @@ function extractTsFunction(source, name) {
 // ============================================================
 test('OperationalProductItem carrega source+item_id+order_id explicitos (nunca inferidos) -- e o formato unico consumido por Turbo, Central e Loja -> Pedidos', async () => {
   const source = await fs.readFile(canonicalTypeUrl, 'utf8');
-  assert.match(source, /source: "store" \| "checkout";/);
+  assert.match(source, /source: "store" \| "checkout" \| "store_unit" \| "checkout_unit";/);
+  assert.match(source, /person_name: string \| null;/);
   assert.match(source, /item_id: string;/);
   assert.match(source, /order_id: string;/);
   assert.match(source, /delivered_by: string \| null;/);
@@ -99,7 +100,8 @@ test('resolveOperationalProductByQr tenta loja standalone primeiro, depois "comp
   const source = await fs.readFile(actionsUrl, 'utf8');
   const fn = extractTsFunction(source, 'resolveOperationalProductByQr');
   assert.match(fn, /const storeItem = await resolveStoreOrderItemByQr\(supabase, tokenCandidate\);/);
-  assert.match(fn, /return resolveOrderItemProductByQr\(supabase, tokenCandidate\);/);
+  assert.match(fn, /const orderItem = await resolveOrderItemProductByQr\(supabase, tokenCandidate\);/);
+  assert.match(fn, /return resolveOrderItemPickupUnitByQr\(supabase, tokenCandidate\);/);
   const storeIdx = fn.indexOf('resolveStoreOrderItemByQr');
   const checkoutIdx = fn.indexOf('resolveOrderItemProductByQr');
   assert.ok(storeIdx < checkoutIdx);
@@ -169,8 +171,9 @@ test('Turbo: tela de resumo mostra produto/quantidade/variante/pedido/comprador/
   const source = await fs.readFile(turboModeUrl, 'utf8');
   const fn = source.slice(source.indexOf('function ProductAlreadyDelivered('), source.indexOf('function InfoTile('));
   assert.match(fn, /Item já entregue/);
-  assert.match(fn, /item\.quantity\}x \{item\.product_name\}/);
+  assert.match(fn, /item\.quantity\}x \$\{item\.product_name\}/);
   assert.match(fn, /item\.variant/);
+  assert.match(fn, /label="Pessoa" value=\{item\.person_name \?\? item\.buyer\}/);
   assert.match(fn, /label="Pedido" value=\{item\.order_reference\}/);
   assert.match(fn, /label="Comprador" value=\{item\.buyer\}/);
   assert.match(fn, /label="Evento" value=\{item\.event_name\}/);
@@ -196,8 +199,7 @@ test('Central: modal unico mostra resumo quando ja entregue, formulario de confi
 // Idempotencia (backend) -- reafirma que a leitura nunca reprocessa
 // ============================================================
 test('deliver_order_item_product continua idempotente: status=delivered retorna true ANTES de qualquer baixa de estoque/update/audit -- nenhuma mudanca nesta migration', async () => {
-  const { source, definedInFile } = await resolveCurrentFunctionDefinition('deliver_order_item_product');
-  assert.equal(definedInFile, '20260917000000_order_item_product_delivery.sql');
+  const { source } = await resolveCurrentFunctionDefinition('deliver_order_item_product');
   const idempotentIdx = source.indexOf("if v_item.status = 'delivered' then return true; end if;");
   const stockIdx = source.indexOf('perform public.deliver_store_item_stock');
   assert.ok(idempotentIdx !== -1 && stockIdx !== -1 && idempotentIdx < stockIdx);
@@ -241,9 +243,10 @@ test('store.deliver continua a unica permissao de entrega -- nenhuma permissao n
   const turboFnStart = source.indexOf('export async function resolveTurboScanAction(');
   const turboFnEnd = source.indexOf('\nexport async function deliverKitCheckinAndLinkWristbandAction(');
   const turboFn = source.slice(turboFnStart, turboFnEnd);
-  assert.match(turboFn, /await assertPermission\("store\.deliver"\);/);
+  assert.doesNotMatch(turboFn, /await assertPermission\("store\.deliver"\);/);
   const dispatcherSource = await fs.readFile(actionsUrl, 'utf8');
   assert.match(dispatcherSource, /export async function deliverOrderItemProductAction\(orderItemId: string\) \{\s*\n\s*await assertPermission\("store\.deliver"\);/);
+  assert.match(dispatcherSource, /export async function deliverAdditionalStoreItemAction\(storeOrderItemId: string\) \{\s*\n\s*await assertPermission\("store\.deliver"\);/);
 });
 
 // ============================================================

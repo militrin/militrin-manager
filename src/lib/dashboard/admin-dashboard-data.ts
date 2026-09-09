@@ -65,35 +65,48 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const eventIds = selectedEvent ? [selectedEvent.id] : eventOptions.map((event) => event.id);
   if (!eventIds.length) return { organization, events: eventOptions, selectedEvent, metrics: new Map<DashboardMetricKey, DashboardMetric>(), hasData: false };
 
-  // Os builders do Supabase possuem tipos recursivos profundos; o escopo em si e
-  // simples e permanece centralizado para impedir qualquer consulta sem evento.
+  // PostgREST/Supabase corta SELECT sem range em 1000 linhas. 4 itens de kit
+  // × ~489 ingressos passam de 1900 em participant_kit_items e o card
+  // "camisetas com atenção" virava falso positivo.
+  const DASHBOARD_PAGE_SIZE = 1000;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const scope = (query: any) => query.in('event_id', eventIds);
+  async function fetchAllScoped(build: () => any) {
+    const rows: Row[] = [];
+    let from = 0;
+    for (;;) {
+      const { data, error } = await build().in('event_id', eventIds).range(from, from + DASHBOARD_PAGE_SIZE - 1);
+      if (error) return { data: rows, error };
+      rows.push(...((data ?? []) as Row[]));
+      if ((data ?? []).length < DASHBOARD_PAGE_SIZE) break;
+      from += DASHBOARD_PAGE_SIZE;
+    }
+    return { data: rows, error: null };
+  }
   const enabled = new Set(authorizedSections);
   const emptyResult = { data: [], error: null };
   const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
-    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
-    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
-    enabled.has('operations') || enabled.has('finance') ? scope(supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
-    enabled.has('finance') ? scope(supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
+    enabled.has('operations') || enabled.has('finance') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
+    enabled.has('finance') ? fetchAllScoped(() => supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
     // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
     // o snapshot legado, nao mantido pelo fluxo ticket-first (ver reconciliacao
     // com event_kit_item_variant_inventory logo abaixo).
-    enabled.has('inventory') ? scope(supabase.from('shirt_inventory').select('id,event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity')) : emptyResult,
+    enabled.has('inventory') ? fetchAllScoped(() => supabase.from('shirt_inventory').select('id,event_id,shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity')) : emptyResult,
     // Fonte canonica de demanda/entrega: derivada de participant_kit_items via
     // account_ticket_shirt_demand e do fluxo operacional de entrega (Central de
     // Operacoes), nunca de shirt_inventory. Mesmo padrao ja usado e validado em
     // /camisetas (src/app/camisetas/page.tsx) -- reaproveitado aqui em vez de
     // inventar uma segunda forma de reconciliar as duas tabelas.
-    enabled.has('inventory') ? scope(supabase.from('event_kit_item_variant_inventory').select('event_id,reserved_quantity,delivered_quantity,event_kit_item_variants(id,name,value)')) : emptyResult,
-    enabled.has('operations') || enabled.has('inventory') ? scope(supabase.from('participant_kit_items').select('id,event_id,ticket_id,order_item_id,kit_item_id,status,quantity,variant_data,delivered_at')) : emptyResult,
-    enabled.has('operations') ? scope(supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant,event_kit_item_variants(id,name,value,is_active)')) : emptyResult,
+    enabled.has('inventory') ? fetchAllScoped(() => supabase.from('event_kit_item_variant_inventory').select('event_id,reserved_quantity,delivered_quantity,event_kit_item_variants(id,name,value)')) : emptyResult,
+    enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('participant_kit_items').select('id,event_id,ticket_id,order_item_id,kit_item_id,status,quantity,variant_data,delivered_at')) : emptyResult,
+    enabled.has('operations') ? fetchAllScoped(() => supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant,event_kit_item_variants(id,name,value,is_active)')) : emptyResult,
     // Compatibilidade com o baseline remoto: as pendencias antigas sao ligadas
     // ao participant. A migration contact-first adiciona order_item_id/ticket_id,
     // mas o Dashboard nao pode exigir essas colunas antes de ela ser publicada.
-    enabled.has('people') || enabled.has('operations') ? scope(supabase.from('participant_data_issues').select('id,event_id,participant_id,field_code,message,status,resolution_scope').eq('status', 'open')) : emptyResult,
-    enabled.has('inventory') ? scope(supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participant_data_issues').select('id,event_id,participant_id,field_code,message,status,resolution_scope').eq('status', 'open')) : emptyResult,
+    enabled.has('inventory') ? fetchAllScoped(() => supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')) : emptyResult,
   ]);
   for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult]) if (result.error) throw result.error;
   const participants = (participantsResult.data ?? []) as Row[];

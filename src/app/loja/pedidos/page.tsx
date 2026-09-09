@@ -108,6 +108,7 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
     event_id: row.event_id,
     event_name: row.event_name,
     buyer: row.buyer,
+    person_name: row.buyer,
     payment_status: row.payment_status,
     delivery_status: row.delivery_status,
     delivered_at: row.delivered_at,

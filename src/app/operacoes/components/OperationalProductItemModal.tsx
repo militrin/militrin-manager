@@ -60,15 +60,17 @@ export function OperationalProductItemModal({
         <h2 className="mt-1 text-xl font-bold text-slate-100">
           {isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}
         </h2>
+        <p className="text-sm font-semibold text-slate-200">{item.person_name ?? item.buyer}</p>
         {isUnit && item.unit_index ? (
           <p className="text-sm font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p>
         ) : null}
         {item.variant ? <p className="text-sm text-slate-400">{item.variant}</p> : null}
+        <p className="text-sm text-slate-300">Quantidade: {item.quantity}</p>
 
         <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div><dt className="text-xs text-slate-500">Pessoa</dt><dd className="text-slate-200">{item.person_name ?? item.buyer}</dd></div>
           <div><dt className="text-xs text-slate-500">Pedido</dt><dd className="text-slate-200">{item.order_reference}</dd></div>
-          <div><dt className="text-xs text-slate-500">Comprador</dt><dd className="text-slate-200">{item.buyer}</dd></div>
-          <div><dt className="text-xs text-slate-500">Evento</dt><dd className="text-slate-200">{item.event_name}</dd></div>
+          <div><dt className="text-xs text-slate-500">Produto</dt><dd className="text-slate-200">{item.product_name}</dd></div>
           <div><dt className="text-xs text-slate-500">Status</dt><dd className="text-slate-200">{status.label}</dd></div>
         </dl>
 

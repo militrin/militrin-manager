@@ -514,15 +514,17 @@ function ProductReview({
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex flex-col items-center gap-3 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center">
         <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-400">{SOURCE_LABEL[item.source]}</span>
+        <p className="text-lg font-semibold text-slate-100">{item.person_name ?? item.buyer}</p>
         <p className="text-2xl font-black">{isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}</p>
         {isUnit && item.unit_index ? <p className="text-lg font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
         {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
+        <p className="text-sm text-slate-300">Quantidade: {item.quantity}</p>
 
         <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
+          <InfoTile label="Pessoa" value={item.person_name ?? item.buyer} />
           <InfoTile label="Pedido" value={item.order_reference} />
           <InfoTile label="Comprador" value={item.buyer} />
           <InfoTile label="Evento" value={item.event_name} />
-          <InfoTile label="Pagamento" value="Pago" />
         </div>
 
         <p className="text-sm uppercase tracking-wide text-amber-300">A entregar</p>
@@ -564,11 +566,14 @@ function ProductAlreadyDelivered({
       <div className="flex flex-col items-center gap-3 rounded-3xl border border-cyan-500/30 bg-slate-900 p-6 text-center">
         <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-400">{SOURCE_LABEL[item.source]}</span>
         <p className="text-xl font-black uppercase tracking-wide text-cyan-300">{isUnit ? 'Unidade já entregue' : 'Item já entregue'}</p>
+        <p className="text-lg font-semibold text-slate-100">{item.person_name ?? item.buyer}</p>
         <p className="text-2xl font-black">{isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}</p>
         {isUnit && item.unit_index ? <p className="text-lg font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
         {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
+        <p className="text-sm text-slate-300">Quantidade: {item.quantity}</p>
 
         <div className="mt-2 grid w-full grid-cols-2 gap-3 text-sm">
+          <InfoTile label="Pessoa" value={item.person_name ?? item.buyer} />
           <InfoTile label="Pedido" value={item.order_reference} />
           <InfoTile label="Comprador" value={item.buyer} />
           <InfoTile label="Evento" value={item.event_name} />
