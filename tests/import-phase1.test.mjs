@@ -13,7 +13,7 @@ import { CANONICAL_FIELD_LABELS, inferColumnMapping } from '../src/lib/imports/c
 import { deduplicateTicketTimelineEvents, loadOptionalTimelineSource } from '../src/lib/admin/ticket-timeline-query.ts';
 import { getTimelineStateLabel, TIMELINE_STATE_LABELS } from '../src/lib/status-labels.ts';
 import { timelineTypeOptions } from '../src/lib/admin/ticket-event-taxonomy.ts';
-import { parseSpreadsheetMatrix } from '../src/lib/imports/parse-file.ts';
+import { parseSpreadsheetFile, parseSpreadsheetMatrix, stringifyImportedCell } from '../src/lib/imports/parse-file.ts';
 import { evaluateParticipantInviteAccess } from '../src/lib/account/participant-invite-policy.ts';
 import { getParticipantOperationBlocks, isAdministrativeIssue, isRequiredUserResolvableIssue } from '../src/lib/account/participant-issue-policy.ts';
 import { formatReportDateTime, REPORT_THEME, reportIsoDateTime, splitTechnicalIdentifier } from '../src/lib/reports/report-theme.ts';
@@ -822,6 +822,24 @@ test('mapeamento ambiguo exige escolha manual', () => {
   assert.equal(mapping.cpf, 'CPF');
 });
 
+test('headers do Google Forms mapeiam email, camiseta e tamanho sem inferir genero', () => {
+  const mapping = inferColumnMapping([
+    'Carimbo de data/hora',
+    'Endereço de e-mail',
+    'Nome Completo',
+    'CPF',
+    'Data de nascimento',
+    'Tipo',
+    'Tamanho Camiseta',
+    'Forma de pagamento',
+  ]);
+  assert.equal(mapping.email, 'Endereço de e-mail');
+  assert.equal(mapping.shirt_type, 'Tipo');
+  assert.equal(mapping.shirt_size, 'Tamanho Camiseta');
+  assert.equal(mapping.payment_method, 'Forma de pagamento');
+  assert.equal(mapping.gender, undefined);
+});
+
 test('parser usa a primeira linha real e ignora colunas vazias', () => {
   const parsed = parseSpreadsheetMatrix([
     ['', '', '', ''],
@@ -831,6 +849,42 @@ test('parser usa a primeira linha real e ignora colunas vazias', () => {
 
   assert.deepEqual(parsed.headers, ['Nome completo', 'CPF']);
   assert.deepEqual(parsed.rows, [{ 'Nome completo': 'Ana', CPF: '52998224725' }]);
+});
+
+test('celula Date do XLSX vira ISO date-only e nao depende de m/d/yy nem dd/mm/yyyy', () => {
+  const dob = new Date(Date.UTC(2007, 3, 9, 3, 0, 28));
+  assert.equal(stringifyImportedCell('4/9/07', dob), '2007-04-09');
+  assert.equal(stringifyImportedCell('9/30/04', new Date(Date.UTC(2004, 8, 30, 3, 0, 28))), '2004-09-30');
+  assert.equal(stringifyImportedCell('7/25/2026 19:19:28', new Date('2026-07-25T22:19:28.000Z')), '7/25/2026 19:19:28');
+
+  const parsed = parseSpreadsheetMatrix(
+    [
+      ['Nome completo', 'Data de nascimento', 'Carimbo de data/hora'],
+      ['Ana', '4/9/07', '7/25/2026 19:19:28'],
+    ],
+    [
+      ['Nome completo', 'Data de nascimento', 'Carimbo de data/hora'],
+      ['Ana', dob, new Date('2026-07-25T22:19:28.000Z')],
+    ],
+  );
+  assert.equal(parsed.rows[0]['Data de nascimento'], '2007-04-09');
+  assert.equal(parsed.rows[0]['Carimbo de data/hora'], '7/25/2026 19:19:28');
+  assert.equal(parsed.cellKinds[0]['Data de nascimento'], 'date');
+});
+
+test('XLSX real com cellDates preserva o calendario da celula Date, nao a string americana', async () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['Nome completo', 'Data de nascimento'],
+    ['Ana', null],
+  ]);
+  sheet.B2 = { t: 'd', v: new Date(Date.UTC(2007, 3, 9, 3, 0, 28)), z: 'm/d/yy' };
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Respostas');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', cellDates: true });
+  const file = new File([buffer], 'nascimentos.xlsx');
+  const parsed = await parseSpreadsheetFile(file);
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.rows[0]['Data de nascimento'], '2007-04-09');
 });
 
 test('CPF valida digitos verificadores e rejeita sequencias', () => {

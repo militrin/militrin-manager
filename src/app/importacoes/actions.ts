@@ -24,6 +24,11 @@ import {
 } from '@/lib/imports/import-row-validation';
 import { calculateAgeAtEventDate } from '@/lib/utils/date';
 import { normalizeImportedShirtType } from '@/lib/imports/shirt-type';
+import { normalizeImportedPaymentMethod } from '@/lib/imports/payment-method';
+import {
+  importShouldCreatePricingGenderIssue,
+  resolveLegacyImportPrice,
+} from '@/lib/imports/legacy-price';
 import { classifyImportedCpf, type CpfCellKind } from '@/lib/imports/cpf-excel';
 import {
   assignOccurrenceIndexes,
@@ -72,6 +77,8 @@ type NormalizedRow = {
   status: string;
   amount: number | null;
   payment_method: string | null;
+  price_origin: 'legacy_unknown' | 'legacy_provided';
+  legacy_price_status: 'unknown' | 'provided';
   resolved_batch_id: string | null;
   resolved_category_id: string | null;
   resolved_male_price: number | null;
@@ -93,13 +100,7 @@ function normalizeStatus(value: string | null | undefined) {
 }
 
 function normalizePaymentMethod(value: string | null | undefined) {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (['pix', 'credito', 'credit_card', 'cartao', 'card'].includes(normalized)) {
-    return normalized === 'pix' ? 'pix' : 'credit_card';
-  }
-  if (['dinheiro', 'cash'].includes(normalized)) return 'cash';
-  if (['cortesia', 'courtesy'].includes(normalized)) return 'courtesy';
-  return null;
+  return normalizeImportedPaymentMethod(value);
 }
 
 function normalizeImportedGender(value: string | null | undefined) {
@@ -212,6 +213,8 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
   const externalPurchaseKey = removeDuplicateSpaces(get('external_purchase_key')) || null;
   const shirtType = normalizeImportedShirtType(originalShirtType);
   const importedGender = normalizeImportedGender(get('gender'));
+  const amount = parseAmount(get('amount'));
+  const legacyPrice = resolveLegacyImportPrice(amount);
 
   const row: NormalizedRow = {
     full_name: fullName,
@@ -234,8 +237,10 @@ function toCanonicalRow(rawRow: Record<string, string>, mapping: Partial<Record<
     shirt_type: shirtType,
     shirt_size: removeDuplicateSpaces(get('shirt_size')) || null,
     status: normalizeStatus(get('status')),
-    amount: parseAmount(get('amount')),
+    amount: legacyPrice.amount,
     payment_method: normalizePaymentMethod(get('payment_method')),
+    price_origin: legacyPrice.priceOrigin,
+    legacy_price_status: legacyPrice.legacyPriceStatus,
     resolved_batch_id: null,
     resolved_category_id: null,
     resolved_male_price: null,
@@ -751,12 +756,20 @@ export async function parseImportFileAction(formData: FormData) {
         if (!row.resolved_category_id) addIssue({ field_code: 'category', issue_type: 'unresolved', message: 'Categoria nao resolvida de forma deterministica.', blocks_payment: true, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
 
         const price = eventRules.prices.find((candidate) => candidate.batchId === row.resolved_batch_id && candidate.categoryId === row.resolved_category_id);
-        if (row.resolved_batch_id && row.resolved_category_id && !price) {
-          addIssue({ field_code: 'price', issue_type: 'unresolved', message: 'Preco nao encontrado para lote e categoria.', blocks_payment: true, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-        } else if (price) {
+        if (price) {
           row.resolved_male_price = price.malePrice;
           row.resolved_female_price = price.femalePrice;
-          if (price.malePrice !== price.femalePrice && !row.gender) addIssue({ field_code: 'gender', issue_type: 'missing_required_for_pricing', message: 'Informe o genero para calcular o valor.', blocks_payment: true, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
+        }
+        // Categoria/lote administrativos classificam o ingresso. O preco
+        // atual do lote NAO vira preco historico, e genero vazio NAO abre
+        // missing_required_for_pricing nesta importacao.
+        if (importShouldCreatePricingGenderIssue({
+          amount: row.amount,
+          malePrice: price?.malePrice,
+          femalePrice: price?.femalePrice,
+          gender: row.gender,
+        })) {
+          addIssue({ field_code: 'gender', issue_type: 'missing_required_for_pricing', message: 'Informe o genero para calcular o valor.', blocks_payment: true, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
         }
 
         if (eventRules.shirtRequiredForImport && (!row.shirt_type || !row.shirt_size)) {
@@ -1496,7 +1509,7 @@ export async function executeImportBatchAction(
           importBatchId: batchId,
         });
 
-        if (!hasBlockingDataIssues && persistedPaymentMode === 'confirm_all') {
+        if (!hasBlockingDataIssues) {
           const { data: finalization, error: finalizationError } = await supabase.rpc(
             'finalize_imported_ticket_after_issue_resolution',
             { p_order_item_id: orderItemId, p_resolved_fields: [] },

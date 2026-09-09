@@ -178,7 +178,8 @@ test('5-7) confirm_all exige finance.confirm_payment no backend antes de persist
   assert.ok(permissionGate < persistIntent, 'permissao precisa ser checada antes de gravar confirm_all');
   assert.match(execute, /if \(paymentMode === 'confirm_all'\)/);
   assert.match(execute, /Sem permissao para confirmar pagamentos e emitir ingressos/);
-  assert.match(execute, /if \(!hasBlockingDataIssues && persistedPaymentMode === 'confirm_all'\)/);
+  assert.match(execute, /if \(!hasBlockingDataIssues\) \{/);
+  assert.doesNotMatch(execute, /if \(!hasBlockingDataIssues && persistedPaymentMode === 'confirm_all'\)/);
   assert.ok(finalizeCall > persistIntent);
   assert.match(importer, /useState<'pending' \| 'confirm_all'>\('pending'\)/);
 });

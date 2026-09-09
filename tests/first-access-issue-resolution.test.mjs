@@ -13,9 +13,9 @@ const inscricoesActions = await readFile(new URL('../src/app/inscricoes/actions.
 // pendencia -- comportamento pre-existente do import contact-first, nao
 // alterado por esta correcao (a auditoria de Integridade confirmou que a
 // causa raiz era na RESOLUCAO, nao na criacao da pendencia).
-test('1) importacao sem genero necessario para preco abre participant_data_issues', () => {
-  assert.match(importActions, /field_code: 'gender', issue_type: 'missing_required_for_pricing'/);
-  assert.match(importActions, /price\.malePrice !== price\.femalePrice && !row\.gender/);
+test('1) importacao legada nao abre missing_required_for_pricing por genero/catalogo', () => {
+  assert.match(importActions, /importShouldCreatePricingGenderIssue/);
+  assert.doesNotMatch(importActions, /price\.malePrice !== price\.femalePrice && !row\.gender/);
 });
 
 // Cenario 2 (bug real corrigido): convites ancorados em registration_contact

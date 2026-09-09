@@ -103,10 +103,10 @@ test('preview de preco unissex nao espera genero do comprador', () => {
   assert.equal(resolvePricingPreviewGender({}, null), null);
 });
 
-test('importacao nao marca genderRequiredForPricing; so exige genero quando precos M/F divergem', async () => {
+test('importacao nao marca genderRequiredForPricing; preco de catalogo nao exige genero no legado', async () => {
   const source = await readFile(new URL('../src/app/importacoes/actions.ts', import.meta.url), 'utf8');
   assert.match(source, /genderRequiredForPricing: false/);
-  assert.match(source, /price\.malePrice !== price\.femalePrice && !row\.gender/);
-  assert.match(source, /missing_required_for_pricing/);
+  assert.match(source, /importShouldCreatePricingGenderIssue/);
+  assert.doesNotMatch(source, /price\.malePrice !== price\.femalePrice && !row\.gender/);
   assert.doesNotMatch(source, /genderRequiredForPricing:\s*true/);
 });

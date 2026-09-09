@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const migration = await readFile(new URL('../supabase/migrations/20260942000000_confirm_imported_pending_payment_and_reconcile.sql', import.meta.url), 'utf8');
+const latestFinalizerMigration = await readFile(new URL('../supabase/migrations/20260957000000_legacy_import_unknown_price.sql', import.meta.url), 'utf8');
 const actions = await readFile(new URL('../src/app/cadastros/actions.ts', import.meta.url), 'utf8');
 const detail = await readFile(new URL('../src/app/cadastros/[id]/page.tsx', import.meta.url), 'utf8');
 const confirmation = migration.match(/create or replace function public\.confirm_imported_pending_payment_and_reconcile[\s\S]*?end; \$\$;/)?.[0] ?? '';
-const finalizer = migration.match(/create or replace function public\.finalize_imported_ticket_after_issue_resolution[\s\S]*?end; \$\$;/)?.[0] ?? '';
+const finalizer = latestFinalizerMigration.match(/create or replace function public\.finalize_imported_ticket_after_issue_resolution[\s\S]*?end; \$\$;/)?.[0] ?? '';
 
 test('pending continua sem emissao ate confirmacao administrativa', () => {
   assert.match(finalizer, /v_payment\.payment_status <> 'paid'[\s\S]*payment_mode_original,'pending'\)='pending'[\s\S]*not p_force_confirm/);
