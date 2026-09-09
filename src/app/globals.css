@@ -376,7 +376,9 @@ body {
 
 /*
  * Densidade canônica das tabelas/listas administrativas.
- * Linha simples ~34–38px; conteúdo multilinha continua crescendo.
+ * Desktop: linha simples ~38–40px (botão 1.75rem + padding).
+ * Conteúdo multilinha continua crescendo. Mobile permanece mais folgado.
+ * Headers de 2 linhas (ex.: estoque) não são comprimidos além do padding do th.
  */
 .admin-table-zebra > thead > tr > th {
   padding-block: 0.4rem;
@@ -391,9 +393,16 @@ body {
   padding-block: 0.4rem;
 }
 
+@media (min-width: 48rem) {
+  .admin-table-zebra > tbody > tr:not([data-row-detail]) > td,
+  .admin-table-zebra > tfoot > tr > td {
+    padding-block: 0.35rem;
+  }
+}
+
 @media (min-width: 64rem) {
   .admin-list-zebra > .admin-list-row > :first-child {
-    padding-block: 0.45rem;
+    padding-block: 0.35rem;
   }
 }
 
