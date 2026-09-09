@@ -14,9 +14,10 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { getAdminAccessContext } from '@/lib/admin/access';
 import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
+import { formatImportedHistoricalAmount } from '@/lib/imports/legacy-price';
 
-function money(value: number) {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+function money(value: number, priceOrigin?: string | null) {
+  return formatImportedHistoricalAmount(value, priceOrigin);
 }
 
 function mapStatus(value: string | null | undefined) {
@@ -52,7 +53,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
       .limit(1),
     supabase
       .from('orders')
-      .select('id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, cancelled_at')
+      .select('id, order_number, display_number, status, base_amount, discount_amount, final_amount, price_origin, created_at, confirmed_at, cancelled_at')
       .eq('participant_id', participant.id)
       .order('created_at', { ascending: false })
       .limit(1),
@@ -272,9 +273,9 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                 <div className="grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
                   <p><span className="text-slate-400">Pedido:</span> {order ? orderDisplayReference(order.display_number, order.order_number) : '-'}</p>
                   <p><span className="text-slate-400">Status pedido:</span> <AdminStatusBadge status={mapStatus(String(order?.status ?? participant.registration_status ?? 'pending'))} /></p>
-                  <p><span className="text-slate-400">Valor original:</span> {money(Number(order?.base_amount ?? participant.base_amount ?? 0))}</p>
-                  <p><span className="text-slate-400">Desconto:</span> {money(Number(order?.discount_amount ?? participant.discount_amount ?? 0))}</p>
-                  <p><span className="text-slate-400">Valor final:</span> {money(Number(order?.final_amount ?? payment?.final_amount ?? participant.final_amount ?? 0))}</p>
+                  <p><span className="text-slate-400">Valor original:</span> {money(Number(order?.base_amount ?? participant.base_amount ?? 0), order?.price_origin)}</p>
+                  <p><span className="text-slate-400">Desconto:</span> {money(Number(order?.discount_amount ?? participant.discount_amount ?? 0), order?.price_origin)}</p>
+                  <p><span className="text-slate-400">Valor final:</span> {money(Number(order?.final_amount ?? payment?.final_amount ?? participant.final_amount ?? 0), order?.price_origin)}</p>
                   <p><span className="text-slate-400">Método:</span> {payment?.payment_method ? String(payment.payment_method) : '-'}</p>
                   <p><span className="text-slate-400">Status pagamento:</span> <AdminStatusBadge status={mapStatus(String(payment?.payment_status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Pagamento em:</span> {payment?.paid_at ? formatDateTimeBR(String(payment.paid_at), ' às ') : '-'}</p>

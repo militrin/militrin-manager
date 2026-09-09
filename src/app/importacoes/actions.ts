@@ -27,6 +27,7 @@ import { normalizeImportedShirtType } from '@/lib/imports/shirt-type';
 import { normalizeImportedPaymentMethod } from '@/lib/imports/payment-method';
 import {
   importShouldCreatePricingGenderIssue,
+  isLegacyImportPriceOrigin,
   resolveLegacyImportPrice,
 } from '@/lib/imports/legacy-price';
 import { classifyImportedCpf, type CpfCellKind } from '@/lib/imports/cpf-excel';
@@ -763,7 +764,9 @@ export async function parseImportFileAction(formData: FormData) {
         // Categoria/lote administrativos classificam o ingresso. O preco
         // atual do lote NAO vira preco historico, e genero vazio NAO abre
         // missing_required_for_pricing nesta importacao.
-        if (importShouldCreatePricingGenderIssue({
+        if (
+          !isLegacyImportPriceOrigin(row.price_origin)
+          && importShouldCreatePricingGenderIssue({
           amount: row.amount,
           malePrice: price?.malePrice,
           femalePrice: price?.femalePrice,

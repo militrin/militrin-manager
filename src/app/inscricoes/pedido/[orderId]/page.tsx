@@ -8,9 +8,10 @@ import { hasPermission } from "@/lib/admin/permissions";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from "@/lib/dashboard/commercial-status";
+import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 
-function money(value: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value || 0);
+function money(value: number, priceOrigin?: string | null) {
+  return formatImportedHistoricalAmount(value, priceOrigin);
 }
 
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -38,7 +39,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,order_number,display_number,status,buyer_type,user_id,base_amount,discount_amount,final_amount,created_at,confirmed_at,cancelled_at,event_id,events(name)")
+    .select("id,order_number,display_number,status,buyer_type,user_id,base_amount,discount_amount,final_amount,price_origin,created_at,confirmed_at,cancelled_at,event_id,events(name)")
     .eq("id", orderId)
     .maybeSingle();
   if (error) throw error;
@@ -48,12 +49,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const [{ data: items }, { data: payments }, { data: tickets }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id,item_position,status,item_kind,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
+      .select("id,item_position,status,item_kind,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,price_origin,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
       .eq("order_id", orderId)
       .order("item_position", { ascending: true }),
     supabase
       .from("payments")
-      .select("id,payment_status,payment_method,final_amount,created_at,paid_at")
+      .select("id,payment_status,payment_method,final_amount,price_origin,created_at,paid_at")
       .eq("order_id", orderId)
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id,order_item_id,status,cancellation_replacement_required").eq("order_id", orderId),
@@ -122,7 +123,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               <Field label={buyerPresentation.label} value={buyerPresentation.name} />
               <Field label="Evento" value={eventRelation?.name ?? "—"} />
               <Field label="Forma de pagamento tentada" value={latestPayment?.payment_method ? (PAYMENT_METHOD_LABELS[latestPayment.payment_method] ?? latestPayment.payment_method) : "Não informado"} />
-              <Field label="Valor" value={canViewFinancial ? money(order.final_amount ?? 0) : "Restrito"} />
+              <Field label="Valor" value={canViewFinancial ? money(order.final_amount ?? 0, order.price_origin) : "Restrito"} />
               <Field label="Criado em" value={formatDateTimeBR(order.created_at) ?? "—"} />
               <Field label="Prazo de pagamento" value={firstItem?.reservation_expires_at ? formatDateTimeBR(firstItem.reservation_expires_at) ?? "—" : "—"} />
               <Field label="Confirmado em" value={order.confirmed_at ? formatDateTimeBR(order.confirmed_at) ?? "—" : "—"} />
@@ -170,7 +171,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                           </p>
                           <p className="mt-0.5 text-xs text-slate-500">
                             CPF {maskCpf(participant?.cpf)}
-                            {canViewFinancial ? ` · ${money(item.final_amount ?? 0)}` : ""}
+                            {canViewFinancial ? ` · ${money(item.final_amount ?? 0, item.price_origin ?? order.price_origin)}` : ""}
                           </p>
                           {missingTicket ? (
                             <p className="mt-2 text-xs text-rose-200">
@@ -235,7 +236,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-slate-100">{item.quantity}x {name}</p>
                           <p className="text-xs text-slate-400">{variantText ?? "Sem variante"}</p>
-                          <p className="mt-0.5 text-xs text-slate-500">{canViewFinancial ? money(item.final_amount ?? 0) : ""}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">{canViewFinancial ? money(item.final_amount ?? 0, item.price_origin ?? order.price_origin) : ""}</p>
                         </div>
                         <span className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${deliveryClass}`}>{deliveryLabel}</span>
                       </div>
@@ -254,7 +255,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                     key={payment.id}
                     compact
                     label={PAYMENT_METHOD_LABELS[payment.payment_method ?? ""] ?? payment.payment_method ?? "Pagamento"}
-                    value={canViewFinancial ? money(payment.final_amount ?? 0) : "—"}
+                    value={canViewFinancial ? money(payment.final_amount ?? 0, payment.price_origin ?? order.price_origin) : "—"}
                     hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}`}
                   />
                 ))}

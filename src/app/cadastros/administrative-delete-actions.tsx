@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { cancelCadastroAdditionalItemAction, cancelCadastroTicketAction } from "./actions";
@@ -15,7 +16,7 @@ const reasons = [
   ["administrative_correction", "Correção administrativa"], ["other", "Outro"],
 ] as const;
 
-function AdministrativeDeleteButton({ kind, contactId, entityId, details, alreadyCancelled }: { kind: "ticket" | "item"; contactId: string; entityId: string; details: string[]; alreadyCancelled?: boolean }) {
+function AdministrativeDeleteButton({ kind, contactId, entityId, details, alreadyCancelled, financeHref }: { kind: "ticket" | "item"; contactId: string; entityId: string; details: string[]; alreadyCancelled?: boolean; financeHref?: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false); const [reasonCode, setReasonCode] = useState(""); const [reasonText, setReasonText] = useState("");
   const [replacementRequired, setReplacementRequired] = useState<"" | "yes" | "no">("");
@@ -42,6 +43,11 @@ function AdministrativeDeleteButton({ kind, contactId, entityId, details, alread
         {reasonCode === "other" ? <label className="block text-sm">Detalhes<textarea value={reasonText} onChange={(event) => setReasonText(event.target.value)} className="mt-1 min-h-24 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"/></label> : null}
         {isTicket ? <label className="block text-sm">Precisa de um ingresso substituto?<select value={replacementRequired} onChange={(event) => setReplacementRequired(event.target.value as "" | "yes" | "no")} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2"><option value="">Selecione</option><option value="no">Não — o entitlement acaba aqui</option><option value="yes">Sim — um novo ingresso ainda precisa ser emitido</option></select></label> : null}
         {message ? <p className="text-sm text-amber-300" role="alert">{message}</p> : null}
+        {!isTicket && financeHref ? (
+          <Link href={financeHref} className="inline-flex rounded-xl border border-emerald-500/40 px-4 py-2 text-sm font-semibold text-emerald-300 hover:border-emerald-400">
+            {/cobran[cç]a paga|financeiro/i.test(message) ? "Ir para o financeiro" : "Ver pagamento"}
+          </Link>
+        ) : null}
         <div className="flex justify-end gap-2"><button type="button" onClick={() => setOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Cancelar</button><button type="button" onClick={confirm} disabled={pending || !canSubmit} className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{pending ? "Salvando..." : confirmLabel}</button></div>
       </div>
     </Dialog>
@@ -49,4 +55,4 @@ function AdministrativeDeleteButton({ kind, contactId, entityId, details, alread
 }
 
 export function OwnerCancelTicketButton(props: { contactId: string; ticketId: string; details: string[]; alreadyCancelled?: boolean }) { return <AdministrativeDeleteButton kind="ticket" entityId={props.ticketId} {...props}/>; }
-export function OwnerCancelAdditionalItemButton(props: { contactId: string; itemId: string; details: string[] }) { return <AdministrativeDeleteButton kind="item" entityId={props.itemId} {...props}/>; }
+export function OwnerCancelAdditionalItemButton(props: { contactId: string; itemId: string; details: string[]; financeHref?: string }) { return <AdministrativeDeleteButton kind="item" entityId={props.itemId} {...props}/>; }

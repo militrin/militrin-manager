@@ -50,6 +50,7 @@ test('import legado sem preco: malePrice != femalePrice e gender vazio nao cria 
     gender: null,
   }), false);
   assert.match(actions, /importShouldCreatePricingGenderIssue/);
+  assert.match(actions, /!isLegacyImportPriceOrigin\(row\.price_origin\)/);
   assert.doesNotMatch(actions, /price\.malePrice !== price\.femalePrice && !row\.gender/);
 });
 
