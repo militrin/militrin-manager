@@ -1,7 +1,7 @@
 "use server";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { assertPermission } from "@/lib/admin/permissions";
+import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import type { OrderRow, OrderItemRow, OrderProductItemRow, OrdersFilterInput } from "./types";
 import { ORDER_PAGE_SIZE } from "./types";
 import { orderDisplayReference } from "@/lib/display-reference";
@@ -49,11 +49,7 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
     return { events, selectedEvent: null, rows: [], page: 1, totalPages: 1, totalFiltered: 0, canViewAmounts: false };
   }
 
-  // Verifica permissão de valores financeiros
-  const { data: amountsData } = await supabase.rpc("current_user_has_permission", {
-    p_permission_code: "finance.view_amounts",
-  });
-  const canViewAmounts = Boolean(amountsData);
+  const canViewAmounts = await hasPermission("finance.view_amounts");
 
   // ── 1. Pedidos com comprador ─────────────────────────────────────────
   const { data: ordersRaw } = await supabase

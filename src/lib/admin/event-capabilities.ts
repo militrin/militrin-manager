@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export type EventCapabilities = {
@@ -45,7 +46,7 @@ const empty: EventCapabilities = {
  * Resolve as capacidades do evento ativo da organização do usuário autenticado.
  * Nunca confia em event_id vindo do cliente.
  */
-export async function getOrganizationEventCapabilities(): Promise<EventCapabilities> {
+export const getOrganizationEventCapabilities = cache(async (): Promise<EventCapabilities> => {
   const supabase = await createServerSupabaseClient();
 
   const {
@@ -140,4 +141,4 @@ export async function getOrganizationEventCapabilities(): Promise<EventCapabilit
     hasWristbands: wristbandEnabled,
     hasPhotos: true, // fotos não têm flag de evento
   };
-}
+});

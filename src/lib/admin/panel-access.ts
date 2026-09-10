@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { hasPermission } from '@/lib/admin/permissions';
+import { getCurrentUser } from '@/lib/auth/request-auth';
+import { getCurrentPermissionMap, hasPermission } from '@/lib/admin/permissions';
 
 /**
  * Permissoes que representam acesso real a pelo menos uma area operacional.
@@ -41,10 +42,16 @@ export const ADMINISTRATIVE_PANEL_PERMISSION_CODES = [
 ] as const;
 
 export async function canAccessAdministrativePanel(userId?: string) {
-  const results = await Promise.all(
-    ADMINISTRATIVE_PANEL_PERMISSION_CODES.map((code) => hasPermission(code, userId)),
-  );
-  return results.some(Boolean);
+  const currentUser = await getCurrentUser();
+  if (userId && currentUser?.id && userId !== currentUser.id) {
+    const results = await Promise.all(
+      ADMINISTRATIVE_PANEL_PERMISSION_CODES.map((code) => hasPermission(code, userId)),
+    );
+    return results.some(Boolean);
+  }
+
+  const permissionMap = await getCurrentPermissionMap([...ADMINISTRATIVE_PANEL_PERMISSION_CODES]);
+  return ADMINISTRATIVE_PANEL_PERMISSION_CODES.some((code) => permissionMap[code]);
 }
 
 export async function requireAdministrativePanelAccess() {
