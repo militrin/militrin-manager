@@ -44,14 +44,8 @@ export function logRequestAuthMetrics() {
   }));
 }
 
-type CachedClient = {
-  client: ReturnType<typeof createServerClient>;
-  originalGetUser: ReturnType<typeof createServerClient>['auth']['getUser'];
-};
-
-const getCachedServerClient = cache(async (): Promise<CachedClient> => {
-  const cookieStore = await cookies();
-  const client = createServerClient(
+function buildServerClient(cookieStore: Awaited<ReturnType<typeof cookies>>) {
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
     getSupabaseAnonKey(),
     {
@@ -69,6 +63,18 @@ const getCachedServerClient = cache(async (): Promise<CachedClient> => {
       },
     },
   );
+}
+
+type ServerClient = ReturnType<typeof buildServerClient>;
+
+type CachedClient = {
+  client: ServerClient;
+  originalGetUser: ServerClient['auth']['getUser'];
+};
+
+const getCachedServerClient = cache(async (): Promise<CachedClient> => {
+  const cookieStore = await cookies();
+  const client = buildServerClient(cookieStore);
   return { client, originalGetUser: client.auth.getUser.bind(client.auth) };
 });
 
@@ -108,7 +114,7 @@ export async function getCurrentUser() {
   return resolved.user;
 }
 
-export async function createServerSupabaseClient() {
+export async function createServerSupabaseClient(): Promise<ServerClient> {
   const { client, originalGetUser } = await getCachedServerClient();
   client.auth.getUser = (async (...args: Parameters<typeof originalGetUser>) => {
     if (args.length > 0) {
