@@ -1,4 +1,7 @@
+import { withTimeout } from '@/lib/auth/middleware-guard';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+
+const PUBLIC_EVENTS_TIMEOUT_MS = 3000;
 
 export type PublicEvent = {
   id: string;
@@ -106,12 +109,19 @@ export function isEventOpen(event: {
 export async function getPublicEvents() {
   const supabase = await createServerSupabaseClient();
 
-  const { data, error } = await supabase
-    .from('events')
-    .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, is_active, year, organization_id, banner_hero_url, banner_card_url')
-    .eq('is_active', true)
-    .is('archived_at', null)
-    .order('starts_at', { ascending: true, nullsFirst: false });
+  const raced = await withTimeout(
+    supabase
+      .from('events')
+      .select('id, name, slug, description, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at, is_active, year, organization_id, banner_hero_url, banner_card_url')
+      .eq('is_active', true)
+      .is('archived_at', null)
+      .order('starts_at', { ascending: true, nullsFirst: false }),
+    PUBLIC_EVENTS_TIMEOUT_MS,
+  );
+  if (!raced.ok) {
+    return { events: [] as PublicEvent[], error: 'timeout' };
+  }
+  const { data, error } = raced.value;
 
   if (error) {
     return { events: [] as PublicEvent[], error: error.message };

@@ -68,8 +68,9 @@ test('middleware trata /minha-conta, /painel e as demais rotas protegidas como u
   }
 
   // /entrar nao esta na lista de prefixos protegidos: se estivesse, redirect
-  // para /entrar?next=/entrar cairia num loop.
-  assert.doesNotMatch(source, /'\/entrar'\s*,/);
+  // para /entrar?next=/entrar cairia num loop. Pode aparecer no matcher.
+  const protectedList = source.slice(source.indexOf('const protectedPrefixes'), source.indexOf('const isPublicFirstAccessResend'));
+  assert.doesNotMatch(protectedList, /'\/entrar'/);
 
   // Deslogado numa rota protegida -> vai para /entrar preservando pathname+search como next.
   assert.match(source, /loginRedirect\.pathname\s*=\s*'\/entrar'/);

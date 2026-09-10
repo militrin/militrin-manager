@@ -1,13 +1,12 @@
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 import { Home } from 'lucide-react';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { hasSupabaseAuthCookie } from '@/lib/auth/middleware-guard';
 
 export async function HomeButton() {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const href = user ? '/minha-conta' : '/';
+  const cookieStore = await cookies();
+  const hasSessionCookie = hasSupabaseAuthCookie(cookieStore.getAll().map((cookie) => cookie.name));
+  const href = hasSessionCookie ? '/minha-conta' : '/';
 
   return (
     <Link
@@ -20,7 +19,7 @@ export async function HomeButton() {
       // flutuante ali só sobrepunha o botão "Voltar" do cabeçalho de cada
       // página. Deslogado (páginas públicas/login) e em qualquer tela >= lg
       // (desktop) o comportamento continua exatamente o mesmo de sempre.
-      className={`fixed z-50 ${user ? "hidden lg:flex" : "flex"} h-10 w-10 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/80 text-slate-200 shadow-lg shadow-black/30 backdrop-blur transition hover:border-emerald-400/60 hover:text-emerald-200`}
+      className={`fixed z-50 ${hasSessionCookie ? "hidden lg:flex" : "flex"} h-10 w-10 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/80 text-slate-200 shadow-lg shadow-black/30 backdrop-blur transition hover:border-emerald-400/60 hover:text-emerald-200`}
       style={{ top: "max(0.75rem, calc(var(--safe-top) + 0.5rem))", left: "0.75rem" }}
     >
       <Home size={18} />
