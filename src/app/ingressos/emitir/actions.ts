@@ -170,12 +170,42 @@ export async function issueTicketAction(input: {
   });
   if (error) return { success: false as const, message: error.message ?? "Falha ao emitir ingressos." };
   const ticketRows = (data ?? []) as Array<{ ticket_id: unknown }>;
-  const ticketIds = ticketRows.map((row) => String(row.ticket_id));
-  if (ticketIds.length !== quantity) return { success: false as const, message: "A emissao nao retornou todos os ingressos esperados." };
+  const ticketIds = ticketRows.map((row) => String(row.ticket_id)).filter((id) => uuid.test(id));
+  if (ticketIds.length !== quantity) {
+    return { success: false as const, message: "A emissão não persistiu todos os ingressos esperados." };
+  }
 
+  const { data: issued, error: issuedError } = await supabase
+    .from("tickets")
+    .select("id, owner_user_id, intended_owner_contact_id, participant_id")
+    .in("id", ticketIds);
+  if (issuedError || (issued ?? []).length !== quantity) {
+    return { success: false as const, message: "A emissão não persistiu todos os ingressos esperados." };
+  }
+
+  const destinationUserId = contactResult.data.user_id ? String(contactResult.data.user_id) : null;
+  const destinationContactId = String(contactResult.data.id);
+  const ownerName = String(contactResult.data.full_name ?? "").trim() || "Conta de destino";
+  if (!assignHolder) {
+    const invalid = (issued ?? []).filter((row) => {
+      const intended = row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : "";
+      const owner = row.owner_user_id ? String(row.owner_user_id) : "";
+      if (intended !== destinationContactId) return true;
+      if (row.participant_id) return true;
+      if (destinationUserId && owner !== destinationUserId) return true;
+      return false;
+    });
+    if (invalid.length > 0) {
+      return { success: false as const, message: "O ingresso não ficou com o proprietário da conta de destino. Regularize antes de emitir outro." };
+    }
+  }
+
+  const holderLabel = assignHolder ? ownerName : "Não definido";
   return {
     success: true as const,
-    message: `${quantity} ingresso(s) emitido(s) com sucesso.`,
+    message: `Ingresso emitido com sucesso.\n\nProprietário:\n${ownerName}\n\nTitular:\n${holderLabel}`,
     ticketIds,
+    ownerName,
+    holderLabel,
   };
 }

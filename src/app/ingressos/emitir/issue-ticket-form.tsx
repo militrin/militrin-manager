@@ -33,7 +33,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const [limitToStock, setLimitToStock] = useState(false);
   const [notes, setNotes] = useState("");
   const [pending, startTransition] = useTransition();
-  const [result, setResult] = useState<{ success: boolean; message: string; ticketIds?: string[]; requiresHolderDecision?: boolean } | null>(null);
+  const [result, setResult] = useState<{ success: boolean; message: string; ticketIds?: string[]; ownerName?: string; holderLabel?: string; requiresHolderDecision?: boolean } | null>(null);
   const [contactLookup, setContactLookup] = useState<ContactLookup>(initialContact ? { status: "found", name: initialContact.name } : { status: "idle" });
 
   useEffect(() => {
@@ -119,12 +119,12 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
       {registrationContactId && contactLookup.status === "found" ? <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100"><span className="text-emerald-300">Emitindo para:</span> <strong>{contactLookup.name}</strong></div> : null}
       {result ? (
         <div className={`rounded-xl border p-3 text-sm ${result.success ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`} role="status">
-          <p>{result.message}</p>
+          <p className="whitespace-pre-line">{result.message}</p>
           {result.success && result.ticketIds?.length ? (
             <div className="mt-2 flex flex-wrap gap-2">
               {result.ticketIds.map((ticketId, index) => (
-                <Link key={ticketId} href={registrationContactId ? `/ingressos/${ticketId}?from=cadastro&contactId=${encodeURIComponent(registrationContactId)}` : `/ingressos/${ticketId}`} className="text-xs underline">
-                  Ver ingresso {index + 1}
+                <Link key={ticketId} href={registrationContactId ? `/ingressos/${ticketId}?from=cadastro&contactId=${encodeURIComponent(registrationContactId)}` : `/ingressos/${ticketId}`} className="rounded-lg bg-emerald-300 px-3 py-2 text-xs font-semibold text-slate-950">
+                  Abrir ingresso{result.ticketIds && result.ticketIds.length > 1 ? ` ${index + 1}` : ""}
                 </Link>
               ))}
               {registrationContactId ? <Link href={`/cadastros/${registrationContactId}`} className="text-xs font-semibold underline">Voltar para {contactLookup.name}</Link> : null}

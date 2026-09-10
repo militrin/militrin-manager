@@ -217,7 +217,7 @@ export default async function OrderDetailPage({
                       <p className="text-base font-semibold text-white">
                         Acesso {position}{item.category_name ? ` — ${item.category_name}` : ''}
                       </p>
-                      <p className="text-sm text-slate-300">{holderLabel ? `Titular: ${holderLabel}` : 'Titular ainda não definido'}</p>
+                      <p className="text-sm text-slate-300">{holderLabel ? `Titular: ${holderLabel}` : 'Titular: Não definido'}</p>
                       {shirtLabel ? (
                         <p className="text-sm text-slate-400">{shirtLabel}{item.shirt_size ? ` · ${item.shirt_size}` : ''}</p>
                       ) : null}

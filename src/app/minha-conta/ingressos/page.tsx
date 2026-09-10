@@ -178,7 +178,7 @@ export default async function IngressosPage({
           qrUrl = null;
         }
       }
-      const holderName = participant?.full_name || item.holder_full_name || 'Titular ainda nao definido';
+      const holderName = participant?.full_name || item.holder_full_name || 'Não definido';
       const ticketStatus = normalizeStatus(String(ticket?.status ?? item.status ?? 'pending'));
       const badgeStatus = situation === 'ativos' ? ticketStatus : ticketSituationBadgeStatus(situation);
       const badgeLabel = situation === 'ativos' ? undefined : ticketSituationLabel(situation);

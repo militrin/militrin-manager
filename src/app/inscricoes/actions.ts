@@ -251,7 +251,7 @@ export async function confirmParticipantPaymentAction(participantId: string) {
   const orderPaymentResult = orderId
     ? await supabase
         .from("payments")
-        .select("id, payment_method, payment_status, participant_id, order_id")
+        .select("id, payment_method, payment_status, participant_id, order_id, provider, gateway_payment_id")
         .eq("order_id", orderId)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -261,7 +261,7 @@ export async function confirmParticipantPaymentAction(participantId: string) {
 
   const participantPaymentResult = await supabase
     .from("payments")
-    .select("id, payment_method, payment_status, participant_id, order_id")
+    .select("id, payment_method, payment_status, participant_id, order_id, provider, gateway_payment_id")
     .eq("participant_id", participantId)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -270,6 +270,15 @@ export async function confirmParticipantPaymentAction(participantId: string) {
 
   const payment = orderPaymentResult.data ?? participantPaymentResult.data;
   if (!payment?.id) return { success: false, message: "Pagamento nao encontrado." };
+
+  const paymentMethod = String(payment.payment_method ?? "").toLowerCase();
+  const hasGatewayCharge = Boolean(payment.gateway_payment_id) || Boolean(String(payment.provider ?? "").trim());
+  if (paymentMethod === "pix" && !hasGatewayCharge && String(payment.payment_status ?? "pending") === "pending") {
+    return {
+      success: false,
+      message: "Este PIX não possui cobrança no gateway. Não confirme como pago. Se for cortesia ou patrocínio, use Emitir ingresso.",
+    };
+  }
 
   if (String(payment.payment_status ?? "pending") === "paid") {
     if (orderId) {

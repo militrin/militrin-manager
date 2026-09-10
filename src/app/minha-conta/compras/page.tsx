@@ -65,7 +65,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
     summaryLine = productItemCount > 0 ? `${productItemCount} produto${productItemCount === 1 ? '' : 's'}` : 'Sem itens';
   } else if (orderItems.length === 1) {
     const singleHolder = holderName(orderItems[0]);
-    summaryLine = `1 ingresso • Titular: ${singleHolder || 'Titular ainda não definido'}`;
+    summaryLine = `1 ingresso • Titular: ${singleHolder || 'Não definido'}`;
   } else {
     const definedCount = orderItems.filter((item) => Boolean(holderName(item))).length;
     summaryLine = `${orderItems.length} ingressos • ${titularSummary(orderItems.length, definedCount)}`;

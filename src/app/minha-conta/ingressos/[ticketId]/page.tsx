@@ -154,7 +154,7 @@ export default async function TicketDetailPage({
     }
   }
   const hasHolder = Boolean(participantId);
-  const holderName = hasHolder ? String(participant?.full_name ?? orderItem?.holder_full_name ?? 'Titular nao identificado') : 'Titular nao definido';
+  const holderName = hasHolder ? String(participant?.full_name ?? orderItem?.holder_full_name ?? 'Titular não identificado') : 'Não definido';
   const buyerProfileResult = order?.user_id
     ? await supabase.from('customer_profiles').select('full_name,email').eq('user_id', String(order.user_id)).maybeSingle()
     : { data: null };
