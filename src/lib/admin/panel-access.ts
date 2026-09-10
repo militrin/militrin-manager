@@ -29,6 +29,7 @@ export const ADMINISTRATIVE_PANEL_PERMISSION_CODES = [
   'finance.view',
   'reports.view',
   'imports.view',
+  'invites.view',
   'settings.manage',
   'team.view',
   'wristbands.view',

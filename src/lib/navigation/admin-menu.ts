@@ -23,6 +23,7 @@ import {
   Users,
   Wallet,
   Zap,
+  Mail,
 } from "lucide-react";
 import type { EventCapabilities } from "@/lib/admin/event-capabilities";
 
@@ -152,6 +153,13 @@ export const adminNavGroups: AdminNavGroup[] = [
         landingPriority: 30,
       },
       {
+        label: "Convites",
+        icon: Mail,
+        href: "/convites",
+        permissionAny: ["invites.view"],
+        landingPriority: 31,
+      },
+      {
         label: "Pedidos",
         icon: FileText,
         href: "/pedidos",
@@ -274,6 +282,7 @@ export const EVENT_SCOPED_HREFS = [
   "/operacoes",
   "/painel",
   "/cadastros",
+  "/convites",
   "/operacoes/pulseira",
   "/pedidos",
   "/financeiro",

@@ -128,6 +128,7 @@ export function ImportAccountInvites({ importBatchId, importedCount }: { importB
       {failures.length ? <div className="mt-3 rounded-xl bg-slate-950/60 p-3 text-xs"><p className="mb-2 font-semibold">Falhas para revisão</p>{failures.map((failure) => <p key={String(failure.id)} className="mt-1">Tentativas: {String(failure.attempt_count)} · Motivo: {String(failure.error_code ?? 'Falha no envio')}</p>)}</div> : null}
       <p className="mt-4 text-sm text-cyan-100/80">E-mails compartilhados precisam de uma conta principal antes do envio. Revise o bloco acima, confirme os titulares e so entao dispare os convites. Cada endereco recebe exatamente 1 convite.</p>
       <p className="mt-4 text-sm text-cyan-100/80">Para reenviar o convite de uma pessoa específica, abra a ficha no cadastro — o botão Reenviar convite usa o mesmo fluxo Auth, sem expor token.</p>
+      <Link href={`/convites?import_batch_id=${encodeURIComponent(importBatchId)}`} className="mt-2 inline-flex h-10 items-center rounded-xl border border-cyan-400/40 px-4 text-sm text-cyan-50">Ver na Central de Convites</Link>
       <Link href={`/cadastros?import_batch_id=${encodeURIComponent(importBatchId)}`} className="mt-2 inline-flex h-10 items-center rounded-xl border border-cyan-400/40 px-4 text-sm text-cyan-50">Abrir pessoas deste lote</Link>
       {message ? <p className="mt-3 text-sm text-rose-200">{message}</p> : null}
     </article>
