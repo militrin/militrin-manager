@@ -21,8 +21,10 @@ export function ConfirmFirstAccessForm({
     <form
       action={confirmFirstAccessOtpAction}
       onSubmit={() => setPending(true)}
-      referrerPolicy="no-referrer"
       className="mt-5"
+      ref={(el) => {
+        el?.setAttribute("referrerpolicy", "no-referrer");
+      }}
     >
       <input type="hidden" name="token_hash" value={tokenHash} />
       <input type="hidden" name="type" value={type} />
