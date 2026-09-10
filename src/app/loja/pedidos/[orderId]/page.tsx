@@ -138,7 +138,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
             </div>
             {canManage ? (
               <div className="mt-4">
-                <OrderPaymentActions storeOrderId={detail.order.id} status={detail.order.status} />
+                <OrderPaymentActions storeOrderId={detail.order.id} status={detail.order.status} gatewayPaymentId={detail.order.gateway_payment_id} />
               </div>
             ) : null}
           </AdminSection>
@@ -203,6 +203,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
             </div>
           </AdminSection>
 
+          <div id="pagamento">
           <AdminSection title="Pagamento">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
@@ -229,6 +230,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
               ) : null}
             </div>
           </AdminSection>
+          </div>
 
           <AdminSection title="Entrega e histórico">
             {detail.history.length === 0 ? (

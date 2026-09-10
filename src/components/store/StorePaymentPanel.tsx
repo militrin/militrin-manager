@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { MilitrinButton } from '@/components/militrin';
 import { cancelAccountStoreOrderAction, simulateStoreOrderPaymentAction } from '@/lib/store/actions';
+import { isSyntheticGatewayPayload } from '@/lib/payments/synthetic-gateway-payload';
 import { money } from './store-item-controls';
 import { orderDisplayReference } from '@/lib/display-reference';
 
@@ -16,6 +17,7 @@ export type StorePaymentState = {
   paymentMethod: 'pix' | 'credit_card';
   pixCode: string | null;
   pixQrCode: string | null;
+  checkoutUrl?: string | null;
   expiresAt: string | null;
   status: 'awaiting_payment' | 'paid';
 };
@@ -34,6 +36,7 @@ export function StorePaymentPanel({ state, onChange }: { state: StorePaymentStat
 
   const remainingSeconds = state.expiresAt ? Math.max(0, Math.floor((new Date(state.expiresAt).getTime() - now) / 1000)) : null;
   const orderReference = orderDisplayReference(null, state.orderNumber);
+  const syntheticPix = isSyntheticGatewayPayload({ pixCode: state.pixCode, pixQrCode: state.pixQrCode });
 
   function cancel() {
     startTransition(async () => {
@@ -67,7 +70,7 @@ export function StorePaymentPanel({ state, onChange }: { state: StorePaymentStat
     <div className="rounded-2xl border border-(--brand-400)/30 bg-(--brand-500)/10 p-4">
       <p className="text-sm font-semibold text-white">Pedido {orderReference} — {money(state.finalAmount)}</p>
 
-      {state.paymentMethod === 'pix' && state.pixCode ? (
+      {state.paymentMethod === 'pix' && state.pixCode && !syntheticPix ? (
         <div className="mt-3 space-y-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm text-slate-200">
           <p className="font-medium">Use o código PIX abaixo:</p>
           <textarea readOnly value={state.pixCode} className="h-24 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs" />
@@ -81,9 +84,25 @@ export function StorePaymentPanel({ state, onChange }: { state: StorePaymentStat
             </p>
           ) : null}
         </div>
-      ) : (
-        <p className="mt-2 text-xs text-slate-200">Pagamento pendente. Aguarde a confirmação da organização.</p>
-      )}
+      ) : null}
+
+      {state.paymentMethod === 'pix' && syntheticPix ? (
+        <p className="mt-2 text-xs text-rose-200">Pagamento indisponível no momento.</p>
+      ) : null}
+
+      {state.paymentMethod === 'credit_card' ? (
+        <div className="mt-3 space-y-2 text-sm text-slate-200">
+          <p>Você será levado à página segura do Asaas para informar o cartão. O Militrin não armazena número nem CVV.</p>
+          {state.checkoutUrl ? (
+            <a href={state.checkoutUrl} className="inline-flex h-9 items-center rounded-lg bg-emerald-500 px-3 text-xs font-semibold text-emerald-950">
+              Pagar com cartão
+            </a>
+          ) : (
+            <p className="text-xs text-rose-200">Pagamento indisponível no momento.</p>
+          )}
+          <p className="text-xs text-slate-400">O pedido só confirma depois do webhook do Asaas. Pendente não vira pago sozinho.</p>
+        </div>
+      ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {canSimulatePayment ? (

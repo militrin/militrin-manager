@@ -9,44 +9,66 @@ import {
   undoStoreOrderItemDeliveryAction,
 } from '../../actions';
 import { ReasonDialog } from '@/app/operacoes/components/ReasonDialog';
+import { isSyntheticGatewayPayload } from '@/lib/payments/synthetic-gateway-payload';
 
-export function OrderPaymentActions({ storeOrderId, status }: { storeOrderId: string; status: string }) {
+export function OrderPaymentActions({
+  storeOrderId,
+  status,
+  gatewayPaymentId,
+}: {
+  storeOrderId: string;
+  status: string;
+  gatewayPaymentId?: string | null;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const syntheticCharge = isSyntheticGatewayPayload({ gatewayPaymentId });
+  const hasGatewayCharge = Boolean(gatewayPaymentId) && !syntheticCharge;
+  const canConfirm = status === 'pending' && !hasGatewayCharge && !syntheticCharge;
+  const canCancelLocalCharge = (status === 'pending' || status === 'confirmed') && !hasGatewayCharge;
 
-  if (status !== 'pending') return null;
+  if (!canConfirm && !canCancelLocalCharge && !hasGatewayCharge) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() =>
-          startTransition(async () => {
-            const response = await confirmStoreOrderPaymentAction(storeOrderId);
-            setMessage(response.message);
-            if (response.success) router.refresh();
-          })
-        }
-        className="inline-flex h-9 items-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs text-emerald-200 disabled:opacity-50"
-      >
-        Confirmar pagamento
-      </button>
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() =>
-          startTransition(async () => {
-            const response = await cancelStoreOrderAction(storeOrderId, 'Cancelado pela administração');
-            setMessage(response.message);
-            if (response.success) router.refresh();
-          })
-        }
-        className="inline-flex h-9 items-center rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 text-xs text-rose-200 disabled:opacity-50"
-      >
-        Cancelar pedido
-      </button>
+      {canConfirm ? (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() =>
+            startTransition(async () => {
+              const response = await confirmStoreOrderPaymentAction(storeOrderId);
+              setMessage(response.message);
+              if (response.success) router.refresh();
+            })
+          }
+          className="inline-flex h-9 items-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs text-emerald-200 disabled:opacity-50"
+        >
+          Confirmar pagamento
+        </button>
+      ) : null}
+      {canCancelLocalCharge ? (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() =>
+            startTransition(async () => {
+              const response = await cancelStoreOrderAction(storeOrderId, 'Cancelado pela administração');
+              setMessage(response.message);
+              if (response.success) router.refresh();
+            })
+          }
+          className="inline-flex h-9 items-center rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 text-xs text-rose-200 disabled:opacity-50"
+        >
+          Cancelar pedido
+        </button>
+      ) : null}
+      {hasGatewayCharge && status !== 'cancelled' ? (
+        <p className="text-xs text-amber-200">
+          Esta cobrança passou por gateway. O cancelamento operacional do item não estorna o pagamento — trate o financeiro no registro correspondente.
+        </p>
+      ) : null}
       {message ? <p className="text-xs text-slate-400" role="status">{message}</p> : null}
     </div>
   );

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { assertPermission } from "@/lib/admin/permissions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isSyntheticGatewayPayload } from "@/lib/payments/synthetic-gateway-payload";
 
 export async function upsertStoreItemAction(input: {
   id: string | null;
@@ -178,6 +179,31 @@ export async function setStoreItemStockAction(input: { storeItemId: string; vari
 export async function confirmStoreOrderPaymentAction(storeOrderId: string) {
   await assertPermission("store.manage");
   const supabase = await createServerSupabaseClient();
+  const { data: order, error: loadError } = await supabase
+    .from("store_orders")
+    .select("provider, pix_code, pix_qrcode, gateway_payment_id")
+    .eq("id", storeOrderId)
+    .maybeSingle();
+  if (loadError) return { success: false as const, message: loadError.message };
+  if (
+    isSyntheticGatewayPayload({
+      provider: order?.provider,
+      pixCode: order?.pix_code,
+      pixQrCode: order?.pix_qrcode,
+      gatewayPaymentId: order?.gateway_payment_id,
+    })
+  ) {
+    return {
+      success: false as const,
+      message: "Este pedido da Loja usou PIX de teste. Não confirme como pago. Cancele ou deixe expirar.",
+    };
+  }
+  if (String(order?.provider ?? "") === "asaas") {
+    return {
+      success: false as const,
+      message: "Cobrança Asaas da Loja confirma só pelo webhook. Não marque como pago manualmente.",
+    };
+  }
   const { error } = await supabase.rpc("confirm_store_order_payment", { p_store_order_id: storeOrderId });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/loja");
@@ -190,6 +216,10 @@ export async function cancelStoreOrderAction(storeOrderId: string, reason: strin
   const { error } = await supabase.rpc("cancel_store_order", { p_store_order_id: storeOrderId, p_reason: reason });
   if (error) return { success: false as const, message: error.message };
   revalidatePath("/loja");
+  revalidatePath("/loja/pedidos");
+  revalidatePath(`/loja/pedidos/${storeOrderId}`);
+  revalidatePath("/cadastros");
+  revalidatePath("/camisetas");
   return { success: true as const, message: "Pedido cancelado." };
 }
 

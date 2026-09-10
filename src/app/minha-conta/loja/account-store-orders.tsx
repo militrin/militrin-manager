@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { MilitrinButton, MilitrinStatusBadge } from '@/components/militrin';
 import { cancelAccountStoreOrderAction, simulateStoreOrderPaymentAction } from './actions';
+import { isSyntheticGatewayPayload } from '@/lib/payments/synthetic-gateway-payload';
 import { orderDisplayReference } from '@/lib/display-reference';
 
 const canSimulatePayment = process.env.NODE_ENV === 'development';
@@ -42,7 +43,8 @@ function OrderRow({ order }: { order: Order }) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const showPix = order.status === 'pending' && order.payment_method === 'pix' && order.pix_code;
+  const showPix = order.status === 'pending' && order.payment_method === 'pix' && order.pix_code
+    && !isSyntheticGatewayPayload({ pixCode: order.pix_code, pixQrCode: order.pix_qrcode });
 
   useEffect(() => {
     if (!showPix || !order.expires_at) return;

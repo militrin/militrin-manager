@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { MilitrinButton } from '@/components/militrin';
 import {
   createAccountStoreOrderAction,
-  generateStoreOrderPixAction,
   type StoreCartLine,
 } from '@/lib/store/actions';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
@@ -95,32 +94,7 @@ export function StoreCart({ eventId, items }: { eventId: string; items: StoreIte
       setError(null);
       setCartOpen(false);
       router.refresh();
-
-      if (paymentMethod === 'pix' && response.finalAmount > 0) {
-        const pix = await generateStoreOrderPixAction(response.storeOrderId, response.finalAmount);
-        setPayment({
-          storeOrderId: response.storeOrderId,
-          orderNumber: response.orderNumber,
-          finalAmount: response.finalAmount,
-          paymentMethod,
-          pixCode: pix.success ? pix.pixCode : null,
-          pixQrCode: pix.success ? pix.pixQrCode : null,
-          expiresAt: pix.success ? pix.expiresAt : null,
-          status: 'awaiting_payment',
-        });
-        if (!pix.success) setError(pix.message);
-      } else {
-        setPayment({
-          storeOrderId: response.storeOrderId,
-          orderNumber: response.orderNumber,
-          finalAmount: response.finalAmount,
-          paymentMethod,
-          pixCode: null,
-          pixQrCode: null,
-          expiresAt: null,
-          status: 'awaiting_payment',
-        });
-      }
+      setPayment(response.payment);
     });
   }
 
@@ -128,7 +102,7 @@ export function StoreCart({ eventId, items }: { eventId: string; items: StoreIte
     return (
       <div className="space-y-4">
         <StorePaymentPanel state={payment} onChange={setPayment} />
-        {payment.status === 'paid' || payment.paymentMethod !== 'pix' ? (
+        {payment.status === 'paid' ? (
           <button type="button" onClick={() => setPayment(null)} className="text-xs text-slate-400 underline">
             Comprar mais itens
           </button>

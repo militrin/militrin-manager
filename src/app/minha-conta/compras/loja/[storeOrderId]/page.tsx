@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinSection, MilitrinStatusBadge } from '@/components/militrin';
 import { PixCodeBox } from '@/components/public/PixCodeBox';
+import { isSyntheticGatewayPayload } from '@/lib/payments/synthetic-gateway-payload';
 import { getStatusLabel } from '@/lib/status-labels';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { StoreOrderActions } from '../store-order-actions';
@@ -39,7 +40,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
 
   const { data: order, error } = await supabase
     .from('store_orders')
-    .select('id, order_number, display_number, status, payment_method, payment_status, base_amount, final_amount, pix_code, pix_qrcode, expires_at, created_at, confirmed_at, cancelled_at, events(name), store_order_items(id, quantity, unit_price, final_amount, status, delivered_at, store_items(name, description), store_item_variants(name, value))')
+    .select('id, order_number, display_number, status, payment_method, payment_status, base_amount, final_amount, pix_code, pix_qrcode, expires_at, created_at, confirmed_at, cancelled_at, gateway_checkout_url, gateway_payment_id, provider, last_gateway_attempt_status, events(name), store_order_items(id, quantity, unit_price, final_amount, status, delivered_at, store_items(name, description), store_item_variants(name, value))')
     .eq('id', storeOrderId)
     .eq('user_id', user?.id ?? '')
     .maybeSingle();
@@ -59,6 +60,14 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
   const status = normalizeStatus(order.status);
   const paymentStatus = normalizeStatus(order.payment_status);
   const isPixPending = status === 'pending' && order.payment_method === 'pix' && order.pix_code;
+  const syntheticPix = isSyntheticGatewayPayload({
+    pixCode: order.pix_code,
+    pixQrCode: order.pix_qrcode,
+    gatewayPaymentId: order.gateway_payment_id,
+    provider: order.provider,
+  });
+  const isCardPending = status === 'pending' && order.payment_method === 'credit_card';
+  const cardRefused = String(order.last_gateway_attempt_status ?? '') === 'refused';
 
   return (
     <div className="space-y-4">
@@ -102,7 +111,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
           </ul>
         </div>
 
-        {isPixPending ? (
+        {isPixPending && !syntheticPix ? (
           <div className="mt-4 space-y-3">
             <PixCodeBox code={String(order.pix_code)} />
             {order.pix_qrcode ? (
@@ -110,6 +119,21 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
               <img src={String(order.pix_qrcode)} alt="QR Code PIX" className="h-44 w-44 rounded-xl border border-slate-700 bg-white p-2" />
             ) : null}
             {order.expires_at ? <p className="text-xs text-slate-400">Expira em: {formatDateTimeBR(String(order.expires_at), ' às ')}</p> : null}
+          </div>
+        ) : null}
+
+        {isPixPending && syntheticPix ? (
+          <p className="mt-4 text-sm text-rose-200">Este PIX não é uma cobrança real. Cancele o pedido e tente novamente.</p>
+        ) : null}
+
+        {isCardPending ? (
+          <div className="mt-4 space-y-2 text-sm text-slate-200">
+            {cardRefused ? <p className="text-rose-200">Cartão recusado. Tente novamente na página segura do Asaas.</p> : <p>Pagamento com cartão pendente. O Militrin não armazena número nem CVV.</p>}
+            {order.gateway_checkout_url ? (
+              <a href={String(order.gateway_checkout_url)} className="inline-flex h-9 items-center rounded-lg bg-emerald-500 px-3 text-xs font-semibold text-emerald-950">
+                {cardRefused ? 'Tentar pagamento novamente' : 'Pagar com cartão'}
+              </a>
+            ) : null}
           </div>
         ) : null}
 

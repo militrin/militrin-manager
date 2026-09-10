@@ -110,6 +110,42 @@ export async function POST(request: Request) {
       const isUnknownPayment = applyError.message === "PAYMENT_NOT_FOUND";
       const isAccountMismatch = applyError.message === "GATEWAY_ACCOUNT_MISMATCH";
 
+      if (isUnknownPayment) {
+        const { data: storeData, error: storeError } = await supabase.rpc("apply_store_order_gateway_status", {
+          p_provider: "asaas",
+          p_provider_payment_id: event.providerPaymentId,
+          p_provider_status: event.providerStatus,
+          p_internal_status: event.status,
+          p_expected_gateway_account_key: accountKey,
+          p_event_type: event.eventType,
+        });
+
+        if (!storeError) {
+          const storeApplied = (Array.isArray(storeData) ? storeData[0] : storeData) as { organization_id: string | null } | null;
+          await supabase.rpc("mark_payment_gateway_event_processed", {
+            p_event_id: eventId,
+            p_status: "processed",
+            p_organization_id: storeApplied?.organization_id ?? null,
+          });
+          return NextResponse.json({ ok: true, store: true });
+        }
+
+        if (storeError.message === "GATEWAY_ACCOUNT_MISMATCH") {
+          await supabase.rpc("mark_payment_gateway_event_processed", {
+            p_event_id: eventId,
+            p_status: "ignored",
+            p_error: `GATEWAY_ACCOUNT_MISMATCH: webhook da conta ${accountKey} nao pode atualizar cobranca de outra conta.`,
+          });
+          console.error("[webhook:asaas] gateway_account_mismatch", {
+            provider_payment_id: event.providerPaymentId,
+            webhook_account_key: accountKey,
+            event_id: eventId,
+            scope: "store_order",
+          });
+          return NextResponse.json({ ok: true, ignored: true, account_mismatch: true });
+        }
+      }
+
       const isFinancialDivergence =
         isUnknownPayment &&
         (event.status === "paid" || event.status === "processing");

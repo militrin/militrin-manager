@@ -6,6 +6,7 @@ import {
   type AsaasCheckoutMethod,
 } from "@/lib/payments/asaas-account-registry";
 import { FakeGatewayProvider } from "@/lib/payments/fake-gateway-provider";
+import { isProductionPaymentRuntime } from "@/lib/payments/production-runtime";
 import type { PaymentGatewayProvider, PaymentProviderName } from "@/lib/payments/provider";
 export { canUseCurrentGatewayForCharge, getPaymentGatewayAccountKey } from "@/lib/payments/gateway-account-key";
 export { getPaymentGatewayAccountKeyForMethod } from "@/lib/payments/asaas-account-registry";
@@ -43,6 +44,9 @@ function asaasProviderFromCredentials(accountKey: string): PaymentGatewayProvide
 
 export function getPaymentGatewayProviderForMethod(method: AsaasCheckoutMethod): PaymentGatewayProvider {
   if (getPaymentGatewayProviderName() !== "asaas") {
+    if (isProductionPaymentRuntime()) {
+      throw new Error(`PAYMENT_PROVIDER=asaas e obrigatorio em producao para o metodo ${method}.`);
+    }
     return new FakeGatewayProvider({ webhookToken: process.env.ASAAS_WEBHOOK_TOKEN ?? null });
   }
 
@@ -94,6 +98,9 @@ export function getPaymentGatewayProvider(
   void _organizationId;
   if (providerName === "asaas") {
     return getPaymentGatewayProviderForMethod("pix");
+  }
+  if (isProductionPaymentRuntime()) {
+    throw new Error("PAYMENT_PROVIDER=asaas e obrigatorio em producao.");
   }
   return new FakeGatewayProvider({ webhookToken: process.env.ASAAS_WEBHOOK_TOKEN ?? null });
 }
