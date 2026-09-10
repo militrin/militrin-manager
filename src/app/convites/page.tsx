@@ -4,6 +4,7 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { AdminEmptyState, AdminFilterBar, AdminStatCard } from "@/components/admin";
 import { getCurrentPermissionMap } from "@/lib/admin/permissions";
 import {
+  INVITE_CENTER_CARD_HELP,
   INVITE_CENTER_PERMISSIONS,
   inviteCenterEmptyCopy,
 } from "@/lib/invites/invite-center-status";
@@ -28,6 +29,31 @@ const emptyCounts = {
   total: 0, concluido: 0, pendente: 0, expirado: 0, falha: 0,
   cadastro_pendente: 0, admin_action: 0, nao_enviado: 0, pulado: 0, shared_groups: 0,
 };
+
+function InviteCenterSecondaryStat({
+  label,
+  value,
+  href,
+  emphasize = false,
+}: {
+  label: string;
+  value: number;
+  href: string;
+  emphasize?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`inline-flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-sm transition hover:border-emerald-400/50 ${
+        emphasize ? "border-rose-500/40 bg-rose-500/10 text-rose-100" : "border-slate-800 bg-slate-950/40 text-slate-300"
+      }`}
+    >
+      <span className={emphasize ? "text-rose-200" : "text-slate-400"}>{label}</span>
+      <span className="font-semibold text-white">{value}</span>
+      <span className="text-[11px] font-semibold text-emerald-300">Ver detalhes →</span>
+    </Link>
+  );
+}
 
 export default async function ConvitesPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
@@ -61,6 +87,8 @@ export default async function ConvitesPage({ searchParams }: { searchParams: Pro
     sort: query.sort,
     pageSize: query.pageSize,
   };
+  const problemCount = counts.falha + counts.admin_action;
+  const completionPercent = Math.max(0, Math.min(100, Number(completion.percent) || 0));
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100">
@@ -76,20 +104,37 @@ export default async function ConvitesPage({ searchParams }: { searchParams: Pro
 
           {!result.success ? <p className="text-sm text-rose-200">{result.message}</p> : null}
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <AdminStatCard compact label="Total" value={counts.total} href={inviteCenterHref({ ...baseQuery, status: "all" })} />
             <AdminStatCard compact label="Concluídos" value={counts.concluido} tone="success" href={inviteCenterHref({ ...baseQuery, status: "concluidos" })} />
-            <AdminStatCard compact label="Pendentes" value={counts.pendente} href={inviteCenterHref({ ...baseQuery, status: "pendentes" })} />
-            <AdminStatCard compact label="Links expirados" value={counts.expirado} tone="warning" href={inviteCenterHref({ ...baseQuery, status: "expirados" })} />
-            <AdminStatCard compact label="Cadastro pendente" value={counts.cadastro_pendente} tone="warning" href={inviteCenterHref({ ...baseQuery, status: "cadastro_pendente" })} />
-            <AdminStatCard compact label="Com problema" value={counts.falha + counts.admin_action} tone={counts.falha + counts.admin_action > 0 ? "danger" : "default"} href={inviteCenterHref({ ...baseQuery, status: counts.admin_action ? "admin_action" : "falha" })} />
-            <AdminStatCard compact label="E-mails compartilhados" value={counts.shared_groups} href={inviteCenterHref({ ...baseQuery, shared: "yes" })} />
+            <AdminStatCard compact label="Aguardando acesso" value={counts.pendente} tooltip={INVITE_CENTER_CARD_HELP.pendente} href={inviteCenterHref({ ...baseQuery, status: "pendentes" })} />
+            <AdminStatCard compact label="Cadastro incompleto" value={counts.cadastro_pendente} tone="warning" tooltip={INVITE_CENTER_CARD_HELP.cadastro_pendente} href={inviteCenterHref({ ...baseQuery, status: "cadastro_pendente" })} />
+            <AdminStatCard compact label="Links expirados" value={counts.expirado} tone="warning" tooltip={INVITE_CENTER_CARD_HELP.expirado} href={inviteCenterHref({ ...baseQuery, status: "expirados" })} />
           </div>
 
-          <p className="text-sm text-slate-300">
-            Primeiro acesso concluído: {completion.done} / {completion.total} · {completion.percent}%
-            <span className="ml-2 text-slate-500">Enviado não significa concluído.</span>
-          </p>
+          <div className="flex flex-wrap gap-2">
+            <InviteCenterSecondaryStat
+              label="E-mails compartilhados"
+              value={counts.shared_groups}
+              href={inviteCenterHref({ ...baseQuery, shared: "yes" })}
+            />
+            <InviteCenterSecondaryStat
+              label="Ação necessária"
+              value={problemCount}
+              emphasize={problemCount > 0}
+              href={inviteCenterHref({ ...baseQuery, status: counts.admin_action ? "admin_action" : "falha" })}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm text-slate-300">
+              Primeiro acesso concluído: {completion.done} / {completion.total} · {completion.percent}%
+              <span className="ml-2 text-slate-500">Enviado não significa concluído.</span>
+            </p>
+            <div className="h-1.5 overflow-hidden rounded-full bg-slate-800" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent} aria-label="Primeiro acesso concluído">
+              <div className="h-full rounded-full bg-emerald-400" style={{ width: `${completionPercent}%` }} />
+            </div>
+          </div>
 
           <AdminFilterBar>
             <InviteCenterFilters

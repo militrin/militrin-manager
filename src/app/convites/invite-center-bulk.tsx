@@ -87,12 +87,18 @@ export function InviteCenterBulkPanel({
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-base font-semibold text-white">Envio em massa</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Reenviar links Auth expirados não dispara sozinho. Preview não envia e-mail.
-            Lote de {INVITE_CENTER_BULK_BATCH_SIZE} · intervalo de {INVITE_CENTER_BULK_DELAY_MS / 1000}s · enviados nas últimas 24h: {sentLast24h}.
+            Cria novos links somente para acessos expirados elegíveis.
+            O preview não envia e-mails.
           </p>
+          <details className="mt-2 text-xs text-slate-500">
+            <summary className="cursor-pointer select-none text-slate-400 hover:text-slate-300">Detalhes do envio</summary>
+            <p className="mt-1">
+              Lote de {INVITE_CENTER_BULK_BATCH_SIZE} · intervalo de {INVITE_CENTER_BULK_DELAY_MS / 1000}s · enviados nas últimas 24h: {sentLast24h}.
+            </p>
+          </details>
         </div>
         <button type="button" onClick={loadPreview} disabled={pending} className="h-10 rounded-xl border border-amber-400/40 px-4 text-sm text-amber-100 disabled:opacity-50">
           {pending ? "Carregando..." : "Reenviar links expirados"}
@@ -125,7 +131,7 @@ export function InviteCenterBulkPanel({
           <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5">
             <h3 className="text-lg font-semibold text-white">Confirmar reenvio em massa</h3>
             <p className="mt-2 text-sm text-slate-300">
-              {preview?.expired_or_failed ?? 0} links Auth expirados/falhos serão enfileirados. Concluídos, cadastro pendente e ação administrativa ficam de fora. O envio segue em lotes de {preview?.batch_size ?? INVITE_CENTER_BULK_BATCH_SIZE}, sem disparo simultâneo.
+              {preview?.expired_or_failed ?? 0} links Auth expirados/falhos serão enfileirados. Concluídos, cadastro incompleto e ação necessária ficam de fora. O envio segue em lotes de {preview?.batch_size ?? INVITE_CENTER_BULK_BATCH_SIZE}, sem disparo simultâneo.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={() => setConfirmOpen(false)} className="rounded-xl border border-slate-700 px-3 py-2 text-sm">Cancelar</button>

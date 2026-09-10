@@ -84,7 +84,7 @@ test('/auth/confirmar não é indexável, não guarda cache e não manda Referer
   assert.match(config, /Referrer-Policy/);
   assert.match(config, /no-store/);
   assert.match(config, /noindex/);
-  assert.match(form, /referrerPolicy="no-referrer"/);
+  assert.match(form, /setAttribute\("referrerpolicy", "no-referrer"\)/);
   assert.match(page, /StripConfirmQuery/);
   assert.match(strip, /replaceState/);
   assert.doesNotMatch(strip, /verifyOtp/);

@@ -15,14 +15,30 @@ export type InviteCenterStatus = (typeof INVITE_CENTER_STATUSES)[number];
 
 export const INVITE_CENTER_STATUS_LABEL: Record<InviteCenterStatus, string> = {
   concluido: 'Concluído',
-  pendente: 'Pendente',
+  pendente: 'Aguardando acesso',
   expirado: 'Link expirado',
-  falha: 'Falha de envio',
-  cadastro_pendente: 'Cadastro pendente',
-  admin_action: 'Ação administrativa',
+  falha: 'Falha',
+  cadastro_pendente: 'Cadastro incompleto',
+  admin_action: 'Ação necessária',
   nao_enviado: 'Não enviado',
   pulado: 'Pulado intencionalmente',
 };
+
+export const INVITE_CENTER_CARD_HELP: Partial<Record<InviteCenterStatus, string>> = {
+  pendente: 'Recebeu o convite, mas ainda não iniciou o primeiro acesso.',
+  cadastro_pendente: 'Iniciou o primeiro acesso, mas ainda precisa concluir o cadastro.',
+  expirado: 'O link de acesso venceu antes da conclusão.',
+};
+
+export function compactInviteCenterMaskedEmail(value: string | null | undefined) {
+  const masked = String(value ?? '').trim();
+  const at = masked.indexOf('@');
+  if (at < 1) return masked;
+  const local = masked.slice(0, at).replace(/\*+$/, '');
+  const prefix = (local || masked.slice(0, at)).slice(0, 2);
+  if (!prefix) return masked;
+  return `${prefix}***@${masked.slice(at + 1)}`;
+}
 
 export const INVITE_CENTER_STATUS_TONE: Record<InviteCenterStatus, 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
   concluido: 'success',
@@ -155,7 +171,7 @@ export function inviteCenterEmptyCopy(statusFilter: string, hasAnyRows: boolean,
     };
   }
   if (statusFilter === 'pendentes') {
-    return { title: 'Nenhum convite pendente.', description: 'Ninguém nesta seleção está aguardando o primeiro acesso.' };
+    return { title: 'Ninguém aguardando acesso.', description: 'Ninguém nesta seleção está com o convite válido ainda não iniciado.' };
   }
   if (statusFilter === 'expirados') {
     return { title: 'Nenhum link de acesso expirado.', description: 'Nenhum convite nesta seleção está com a janela Auth de 24h encerrada.' };

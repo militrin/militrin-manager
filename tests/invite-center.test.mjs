@@ -5,10 +5,13 @@ import {
   canBulkResendInviteCenter,
   canResendInviteCenter,
   classifyInviteCenterRow,
+  compactInviteCenterMaskedEmail,
+  INVITE_CENTER_STATUS_LABEL,
   inviteCenterAdminActionReason,
   inviteCenterEmptyCopy,
   inviteCenterFirstAccessLabel,
 } from '../src/lib/invites/invite-center-status.ts';
+import { formatStackedDateTimeBR } from '../src/lib/utils/date.ts';
 import { ROBERTO_ADMIN_CORRECTION, shouldBlockEmailFromInviteJob } from '../src/lib/account/gate8-invite-precheck.ts';
 
 async function readUtf8(relativePath) {
@@ -210,7 +213,7 @@ test('pendente não é erro visual; pulado não vira falha', async () => {
   assert.match(status, /pendente: 'default'/);
   assert.equal(classifyInviteCenterRow(base({ jobStatus: 'skipped' })), 'pulado');
   const empty = inviteCenterEmptyCopy('pendentes', false);
-  assert.equal(empty.title, 'Nenhum convite pendente.');
+  assert.equal(empty.title, 'Ninguém aguardando acesso.');
 });
 
 test('canBulkResend só expirado/falha; SQL de reenvio em massa usa o mesmo recorte', async () => {
@@ -265,4 +268,46 @@ test('24h pendente / 24h+ expirado; reenvio é nova janela; Auth confirmado inco
     now: after24h,
   })), 'cadastro_pendente');
 });
+
+test('copy da Central usa nomes operacionais sem mudar códigos internos', async () => {
+  assert.equal(INVITE_CENTER_STATUS_LABEL.pendente, 'Aguardando acesso');
+  assert.equal(INVITE_CENTER_STATUS_LABEL.cadastro_pendente, 'Cadastro incompleto');
+  assert.equal(INVITE_CENTER_STATUS_LABEL.expirado, 'Link expirado');
+  assert.equal(INVITE_CENTER_STATUS_LABEL.concluido, 'Concluído');
+  assert.equal(INVITE_CENTER_STATUS_LABEL.falha, 'Falha');
+  assert.equal(INVITE_CENTER_STATUS_LABEL.admin_action, 'Ação necessária');
+  assert.equal(compactInviteCenterMaskedEmail('al*************@gmail.com'), 'al***@gmail.com');
+  assert.equal(compactInviteCenterMaskedEmail('al***@gmail.com'), 'al***@gmail.com');
+  const page = await readUtf8('../src/app/convites/page.tsx');
+  const list = await readUtf8('../src/app/convites/invite-center-list.tsx');
+  const filters = await readUtf8('../src/app/convites/invite-center-filters.tsx');
+  const bulk = await readUtf8('../src/app/convites/invite-center-bulk.tsx');
+  assert.match(page, /Aguardando acesso/);
+  assert.match(page, /Cadastro incompleto/);
+  assert.match(page, /Links expirados/);
+  assert.match(page, /Ação necessária/);
+  assert.match(page, /xl:grid-cols-5/);
+  assert.doesNotMatch(page, /label="Pendentes"/);
+  assert.doesNotMatch(page, /label="Cadastro pendente"/);
+  assert.doesNotMatch(list, />Primeiro acesso</);
+  assert.match(list, />Situação</);
+  assert.match(filters, />Aguardando acesso</);
+  assert.match(filters, />Cadastro incompleto</);
+  assert.match(filters, />Ação necessária</);
+  assert.match(bulk, /Cria novos links somente para acessos expirados elegíveis/);
+  assert.match(bulk, /Detalhes do envio/);
+  assert.equal(classifyInviteCenterRow(base({ inviteStatus: 'pending', expiresAt: future })), 'pendente');
+});
+
+test('datas da Central empilham em America/Sao_Paulo e usam Hoje na validade', () => {
+  const instant = new Date('2026-09-10T20:41:00.000Z');
+  const stacked = formatStackedDateTimeBR(instant, { now: instant, todayLabel: true });
+  assert.equal(stacked.line1, 'Hoje');
+  assert.equal(stacked.line2, '17:41');
+  assert.match(stacked.title, /10\/09\/2026 17:41/);
+  const otherDay = formatStackedDateTimeBR(instant, { now: new Date('2026-09-11T20:41:00.000Z'), todayLabel: true });
+  assert.equal(otherDay.line1, '10/09/26');
+  assert.equal(otherDay.line2, '17:41');
+});
+
 

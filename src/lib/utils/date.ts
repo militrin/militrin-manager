@@ -68,6 +68,46 @@ export function formatDateTimeCompactBR(value: string | Date | null | undefined)
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function dateTimePartsInSaoPaulo(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: EVENT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return {
+    day: map.day ?? '',
+    month: map.month ?? '',
+    year: map.year ?? '',
+    hour: pad(Number(map.hour || 0)),
+    minute: pad(Number(map.minute || 0)),
+  };
+}
+
+export function formatStackedDateTimeBR(
+  value: string | Date | null | undefined,
+  options?: { now?: Date; todayLabel?: boolean },
+) {
+  const date = parseDateInput(value);
+  if (!date) return { line1: '—', line2: null as string | null, title: '—', isToday: false };
+  const parts = dateTimePartsInSaoPaulo(date);
+  const dateLine = `${parts.day}/${parts.month}/${parts.year.slice(-2)}`;
+  const timeLine = `${parts.hour}:${parts.minute}`;
+  const title = `${parts.day}/${parts.month}/${parts.year} ${timeLine}`;
+  const nowParts = dateTimePartsInSaoPaulo(options?.now ?? new Date());
+  const isToday = parts.year === nowParts.year && parts.month === nowParts.month && parts.day === nowParts.day;
+  return {
+    line1: options?.todayLabel && isToday ? 'Hoje' : dateLine,
+    line2: timeLine,
+    title,
+    isToday,
+  };
+}
+
 export function formatDateLongBR(value: string | Date | null | undefined) {
   const date = parseDateInput(value);
   if (!date) return '-';

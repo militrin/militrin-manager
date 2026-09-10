@@ -9,6 +9,7 @@ import {
   INVITE_CENTER_PERMISSIONS,
   INVITE_CENTER_STATUS_LABEL,
   canResendInviteCenter,
+  compactInviteCenterMaskedEmail,
   inviteCenterAdminActionReason,
   inviteCenterFirstAccessLabel,
   inviteCenterResendLabel,
@@ -72,12 +73,12 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
           ) : null}
           {status === "admin_action" ? (
             <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-              AÇÃO ADMINISTRATIVA · {inviteCenterAdminActionReason(Boolean(summary?.mixed_intended_owners))}
+              AÇÃO NECESSÁRIA · {inviteCenterAdminActionReason(Boolean(summary?.mixed_intended_owners))}
             </p>
           ) : null}
           {status === "pendente" ? (
             <p className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
-              Convite enviado. O link de acesso vale por 24 horas após o envio. Ainda não concluiu o primeiro acesso.
+              Convite enviado. O link de acesso vale por 24 horas após o envio. Ainda não iniciou o primeiro acesso.
             </p>
           ) : null}
           {status === "expirado" ? (
@@ -87,7 +88,7 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
           ) : null}
           {status === "cadastro_pendente" ? (
             <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-              Primeiro acesso iniciado. A conta Auth já confirmou o e-mail, mas o fluxo obrigatório ainda não terminou.
+              Cadastro incompleto. A conta Auth já confirmou o e-mail, mas o fluxo obrigatório ainda não terminou.
             </p>
           ) : null}
 
@@ -115,7 +116,7 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
             <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
               <div><dt className="text-xs text-slate-500">Pessoa principal</dt><dd>{summary?.principal_name ?? "—"}</dd></div>
               <div><dt className="text-xs text-slate-500">PIN</dt><dd>{summary?.principal_pin ?? "—"}</dd></div>
-              <div><dt className="text-xs text-slate-500">E-mail</dt><dd>{String(payload.email_masked ?? summary?.email_masked ?? "—")}</dd></div>
+              <div><dt className="text-xs text-slate-500">E-mail</dt><dd>{compactInviteCenterMaskedEmail(String(payload.email_masked ?? summary?.email_masked ?? "—"))}</dd></div>
               <div><dt className="text-xs text-slate-500">Auth vinculado?</dt><dd>{summary?.auth_linked ? "Sim" : "Não"}</dd></div>
               <div><dt className="text-xs text-slate-500">Account status</dt><dd>{String(profile?.account_status ?? "—")}</dd></div>
               <div><dt className="text-xs text-slate-500">Profile completo?</dt><dd>{profile?.must_complete_profile ? "Não" : profile ? "Sim" : "—"}</dd></div>
