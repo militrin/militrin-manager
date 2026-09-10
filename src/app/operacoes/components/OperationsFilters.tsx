@@ -81,7 +81,7 @@ export function OperationsFilters({
     if (filters.paymentStatus !== "all") {
       chips.push({
         key: "paymentStatus",
-        label: `Pagamento: ${filters.paymentStatus === "paid" ? "Confirmado" : "Pendente"}`,
+        label: `Pagamento: ${filters.paymentStatus === "paid" ? "Pago" : "Pendente"}`,
       });
     }
 
@@ -250,7 +250,7 @@ export function OperationsFilters({
               className={selectClass}
             >
               <option value="all">Pagamento: todos</option>
-              <option value="paid">Confirmado</option>
+              <option value="paid">Pago</option>
               <option value="pending">Pendente</option>
             </select>
 

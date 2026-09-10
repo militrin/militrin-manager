@@ -179,7 +179,13 @@ export function OperationRow({
 
       <div>
         <span className="text-slate-500 lg:hidden">Pagamento: </span>
-        {item.payment_status === "paid" ? <Badge tone="green">Confirmado</Badge> : <Badge tone="yellow">Pendente</Badge>}
+        {item.payment_kind === "pending" ? (
+          <Badge tone="yellow">{item.payment_label || "Pendente"}</Badge>
+        ) : item.payment_kind === "refunded" || item.payment_kind === "cancelled" ? (
+          <Badge tone="red">{item.payment_label || "Bloqueado"}</Badge>
+        ) : (
+          <Badge tone="green">{item.payment_label || "Pago"}</Badge>
+        )}
       </div>
 
       {selectedEvent?.has_kit ? (

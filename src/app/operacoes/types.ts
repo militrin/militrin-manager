@@ -1,4 +1,5 @@
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
+import type { OperationalPaymentKind } from "@/lib/operations/payment-operational-state";
 
 /** Shape comum devolvido pelos handlers de acao (page.tsx, via runAction) --
  * usado pelos componentes pra decidir se abrem o modal obrigatorio de
@@ -96,6 +97,8 @@ export type OperationRow = {
   shirt_size: string;
   payment_status: string;
   payment_method: string;
+  payment_kind?: OperationalPaymentKind;
+  payment_label?: string;
   registration_status: string;
   kit_status: 'none' | 'configuration_pending' | 'error' | 'pending' | 'partial' | 'delivered';
   checkin_status: 'pending' | 'done';
@@ -213,6 +216,9 @@ type OperationEntryBase = {
   import_batch_id?: string | null;
   payment_status: string;
   payment_method: string;
+  payment_kind: OperationalPaymentKind;
+  payment_label: string;
+  price_origin?: string | null;
   shirt_type: string;
   shirt_size: string;
   kit_status: 'none' | 'configuration_pending' | 'error' | 'pending' | 'partial' | 'delivered';

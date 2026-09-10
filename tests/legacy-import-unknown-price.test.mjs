@@ -31,8 +31,9 @@ assert.equal(isValidCpf(leadingZeroCpf), true);
 
 const actions = await readFile(new URL('../src/app/importacoes/actions.ts', import.meta.url), 'utf8');
 const migration = await readFile(new URL('../supabase/migrations/20260957000000_legacy_import_unknown_price.sql', import.meta.url), 'utf8');
+const settlement = await readFile(new URL('../supabase/migrations/20261017000000_legacy_paid_operational_payment.sql', import.meta.url), 'utf8');
 const importRpc = migration.match(/create or replace function public\.import_current_event_contact_first[\s\S]*?end; \$\$;/)?.[0] ?? '';
-const finalizer = migration.match(/create or replace function public\.finalize_imported_ticket_after_issue_resolution[\s\S]*?end; \$\$;/)?.[0] ?? '';
+const finalizer = settlement.match(/create or replace function public\.finalize_imported_ticket_after_issue_resolution[\s\S]*?end; \$\$;/)?.[0] ?? '';
 const confirmer = migration.match(/create or replace function public\.confirm_order_item_and_issue_ticket[\s\S]*?end; \$\$;/)?.[0] ?? '';
 const reevaluate = migration.match(/create or replace function public\.reevaluate_participant_data_issues[\s\S]*?end; \$_\$;/)?.[0] ?? '';
 const resolveIssues = migration.match(/create or replace function public\.resolve_ticket_data_issues[\s\S]*?end; \$\$;/)?.[0] ?? '';
@@ -73,7 +74,10 @@ test('import legado nao cria cobranca Asaas nem receita financeira', () => {
   assert.doesNotMatch(finalizer, /asaas/i);
   assert.match(finalizer, /legacy_unknown_ticket_issued/);
   const unknownBranch = finalizer.slice(finalizer.indexOf('elsif v_legacy_unknown then'), finalizer.indexOf("v_finalization:='payment_pending'"));
-  assert.doesNotMatch(unknownBranch, /payment_status='paid'/);
+  assert.match(unknownBranch, /payment_status='paid'/);
+  assert.doesNotMatch(unknownBranch, /payment_method=/);
+  assert.doesNotMatch(unknownBranch, /amount=/);
+  assert.doesNotMatch(unknownBranch, /gateway_payment_id=/);
 });
 
 test('import legado sem blocker real pode emitir ticket sem pagamento pago', () => {
@@ -83,21 +87,20 @@ test('import legado sem blocker real pode emitir ticket sem pagamento pago', () 
   assert.match(actions, /if \(!hasBlockingDataIssues\) \{/);
 });
 
-test('underage continua bloqueando ticket e preserva a compra', () => {
+test('underage evidente/invalido no import legado nao bloqueia ticket', () => {
   const age = calculateAgeAtEventDate('2026-07-25', '2026-10-10T12:00:00-03:00');
   assert.equal(age, 0);
-  assert.match(actions, /underage_at_event/);
-  assert.match(reevaluate, /underage_at_event/);
+  assert.match(actions, /collectLegacyImportPersonalIssues/);
   const issues = [{
     field_code: 'birth_date',
-    issue_type: 'underage_at_event',
-    message: 'Pessoa menor de 18 anos na data do evento.',
+    issue_type: 'implausible_birth_date',
+    message: 'Data de nascimento importada e evidentemente invalida.',
     blocks_payment: false,
-    blocks_ticket_issuance: true,
+    blocks_ticket_issuance: false,
     blocks_checkin: false,
     blocks_kit_delivery: false,
   }];
-  assert.equal(hasTicketBlockingIssues(issues), true);
+  assert.equal(hasTicketBlockingIssues(issues), false);
 });
 
 test('CPF invalido preserva compra e segue review/identidade existente', () => {
@@ -118,7 +121,7 @@ test('CPF invalido preserva compra e segue review/identidade existente', () => {
   assert.equal(classified.identityIssues[0].blocks_ticket_issuance, false);
 });
 
-test('excel leading zero continua em review e nao inventa identidade', () => {
+test('excel leading zero sem colisao preserva compra e nao inventa identidade', () => {
   const classified = classifyCurrentEventPurchase({
     cpfInput: leadingZeroCpf.slice(1),
     cpfCellKind: 'number',
@@ -130,8 +133,10 @@ test('excel leading zero continua em review e nao inventa identidade', () => {
     occurrenceIndex: 1,
     existingSameEventPurchases: [],
   });
-  assert.equal(classified.status, 'review_required');
-  assert.equal(classified.identityMatchDetails.reason, 'excel_leading_zero');
+  assert.equal(classified.status, 'data_pending');
+  assert.equal(classified.resolution, 'create_new');
+  assert.equal(classified.identityIssues[0].issue_type, 'excel_leading_zero');
+  assert.equal(classified.identityIssues[0].blocks_ticket_issuance, false);
 });
 
 test('reevaluate e resolucao nao recriam pricing de genero nem sobrescrevem preco legado', () => {

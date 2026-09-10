@@ -220,6 +220,10 @@ export function ExpandedTicketDetails({
             <p>{detail.city || "Não informado"}</p>
           </div>
           <div>
+            <p className="text-slate-500">Pagamento</p>
+            <p>{detail.payment_label || detail.payment_status}</p>
+          </div>
+          <div>
             <p className="text-slate-500">Método de pagamento</p>
             <p>{detail.payment_method || "—"}</p>
           </div>
@@ -269,7 +273,7 @@ export function ExpandedTicketDetails({
           ) : null}
         </div>
 
-        {(detail.issues.length > 0 || detail.payment_status !== "paid") && detail.participant_id ? (
+        {(detail.issues.length > 0 || detail.payment_kind === "pending") && detail.participant_id ? (
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {detail.issues.length > 0 ? (
               <ParticipantIssuesDialog
@@ -282,7 +286,7 @@ export function ExpandedTicketDetails({
                 onResolved={onIssueResolved}
               />
             ) : null}
-            {detail.payment_status !== "paid" ? (
+            {detail.payment_kind === "pending" ? (
               detail.can_finalize_ticket ? (
                 <div>
                   <button

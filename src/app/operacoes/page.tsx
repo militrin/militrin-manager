@@ -199,7 +199,7 @@ function compareByField(
 
 function isPending(item: PickupListItem) {
   if (item.kind !== "ticket") return false;
-  if (item.payment_status !== "paid") return true;
+  if (item.payment_kind === "pending") return true;
   if (item.checkin_status !== "done") return true;
   if (item.event_has_kit && item.kit_status !== "delivered" && item.kit_status !== "none") return true;
   if (item.event_wristband_enabled && item.wristband?.status !== "active") return true;
@@ -249,6 +249,9 @@ function detailToListItem(detail: PickupDetails): PickupListItem {
     birth_date: detail.birth_date,
     payment_status: detail.payment_status,
     payment_method: detail.payment_method,
+    payment_kind: detail.payment_kind,
+    payment_label: detail.payment_label,
+    price_origin: detail.price_origin,
     registration_status: detail.registration_status,
     shirt_type: detail.shirt_type,
     shirt_size: detail.shirt_size,

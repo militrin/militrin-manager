@@ -54,7 +54,7 @@ export function ExpandedParticipantDetails({
           <div><p className="text-slate-500">CPF</p><p>{detail.cpf || "—"}</p></div>
           <div><p className="text-slate-500">Contato</p><p>{detail.phone || detail.participant_email || "—"}</p></div>
           <div><p className="text-slate-500">Categoria</p><p>{detail.category_name}</p></div>
-          <div><p className="text-slate-500">Pagamento</p><p>{detail.payment_status} · {detail.payment_method}</p></div>
+          <div><p className="text-slate-500">Pagamento</p><p>{detail.payment_label || detail.payment_status} · {detail.payment_method}</p></div>
           <div><p className="text-slate-500">Origem</p><p>{detail.origin === "import" ? "Importação" : "Cadastro"}</p></div>
         </div>
         <div className="mt-3"><CopyableId label="PIN do cadastro" value={detail.registration_contact_pin} /></div>

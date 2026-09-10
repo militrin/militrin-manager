@@ -24,7 +24,7 @@ export function getOperationalErrorTitle(code: string | undefined, message: stri
   if (normalized.includes("ja possui uma pulseira") || normalized.includes("já possui uma pulseira")) return "Pulseira já vinculada";
   if (normalized.includes("sem permissao") || normalized.includes("sem permissão")) return "Permissão negada";
   if (normalized.includes("invalido") || normalized.includes("inválido") || normalized.includes("nao encontrado") || normalized.includes("não encontrado")) return "Ingresso inválido";
-  if (normalized.includes("pagamento pendente")) return "Pagamento pendente";
+  if (normalized.includes("pagamento pendente") || normalized.includes("pagamento ainda não confirmado") || normalized.includes("pagamento ainda nao confirmado")) return "Pagamento pendente";
 
   return "Não foi possível concluir a operação";
 }

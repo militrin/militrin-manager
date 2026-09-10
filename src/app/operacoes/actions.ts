@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/admin/permissions";
 import { revalidatePath } from "next/cache";
 import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
 import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
+import { resolveOperationalPaymentState } from "@/lib/operations/payment-operational-state";
 import type {
   OperationGroup,
   OperationOrderTicketSummary,
@@ -142,9 +143,11 @@ function paymentRank(status: string) {
   return 3;
 }
 
-function choosePayment(rows: Array<Record<string, unknown>>): { paymentStatus: string; paymentMethod: string } {
+type PaymentChoice = { paymentStatus: string; paymentMethod: string | null; priceOrigin: string | null };
+
+function choosePayment(rows: Array<Record<string, unknown>>): PaymentChoice {
   if (!rows.length) {
-    return { paymentStatus: "pending", paymentMethod: "-" };
+    return { paymentStatus: "pending", paymentMethod: null, priceOrigin: null };
   }
 
   const sorted = rows
@@ -160,9 +163,12 @@ function choosePayment(rows: Array<Record<string, unknown>>): { paymentStatus: s
       return bDate - aDate;
     });
 
+  const method = sorted[0]?.payment_method;
+  const origin = sorted[0]?.price_origin;
   return {
     paymentStatus: String(sorted[0]?.payment_status ?? "pending"),
-    paymentMethod: String(sorted[0]?.payment_method ?? "-"),
+    paymentMethod: method == null || method === "" ? null : String(method),
+    priceOrigin: origin == null || origin === "" ? null : String(origin),
   };
 }
 
@@ -319,7 +325,7 @@ function mapTicketRow(params: {
   eventHasShirt: boolean;
   applicableKitItemCount: number;
   kitQueryFailed?: boolean;
-  paymentByOrder: Map<string, { paymentStatus: string; paymentMethod: string }>;
+  paymentByOrder: Map<string, PaymentChoice>;
   kitMap: Map<string, string[]>;
   wristbandByTicket: Map<string, RawWristband>;
   orderTicketIndex: Map<string, { position: number; count: number }>;
@@ -427,7 +433,7 @@ function mapTicketRow(params: {
   const orderId = row.order_id ? String(row.order_id) : null;
   const payment = orderId ? paymentByOrder.get(orderId) : undefined;
   const paymentStatus = payment?.paymentStatus ?? "pending";
-  const paymentMethod = payment?.paymentMethod ?? "-";
+  const paymentMethod = payment?.paymentMethod ?? null;
 
   const ticketStatus = row.status ? String(row.status) : "pending";
   const ticketUsedAt = row.used_at ? String(row.used_at) : null;
@@ -437,9 +443,15 @@ function mapTicketRow(params: {
   const kitStatus = resolveKitStatus(ticketId, kitMap, applicableKitItemCount, kitQueryFailed);
   const wristband = wristbandByTicket.get(ticketId) ?? null;
 
+  const paymentState = resolveOperationalPaymentState({
+    paymentStatus,
+    paymentMethod,
+    priceOrigin: payment?.priceOrigin,
+    ticketStatus,
+  });
   const blockReason =
-    paymentStatus !== "paid"
-      ? "Pagamento pendente."
+    !paymentState.operational
+      ? paymentState.blockReason
       : registrationStatus === "cancelled"
         ? "Inscrição cancelada."
         : null;
@@ -479,7 +491,10 @@ function mapTicketRow(params: {
     buyer_type: buyerType,
     import_batch_id: orderRelation?.import_batch_id ? String(orderRelation.import_batch_id) : null,
     payment_status: paymentStatus,
-    payment_method: paymentMethod,
+    payment_method: paymentState.methodLabel,
+    payment_kind: paymentState.kind,
+    payment_label: paymentState.label,
+    price_origin: payment?.priceOrigin ?? null,
     shirt_type: shirtType,
     shirt_size: shirtSize,
     kit_status: kitStatus,
@@ -969,7 +984,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
         ? supabase.from("participant_kit_items").select("ticket_id, kit_item_id, status").in("ticket_id", ticketIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
       orderIds.length
-        ? supabase.from("payments").select("order_id, payment_status, payment_method, created_at").in("order_id", orderIds)
+        ? supabase.from("payments").select("order_id, payment_status, payment_method, price_origin, created_at").in("order_id", orderIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
       ticketIds.length
         ? supabase.from("participant_wristbands").select("id, ticket_id, code, status, linked_at").in("ticket_id", ticketIds).eq("status", "active")
@@ -1003,7 +1018,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     paymentsByOrder.set(orderId, list);
   }
 
-  const paymentByOrder = new Map<string, { paymentStatus: string; paymentMethod: string }>();
+  const paymentByOrder = new Map<string, PaymentChoice>();
   for (const [orderId, rowsByOrder] of paymentsByOrder) {
     paymentByOrder.set(orderId, choosePayment(rowsByOrder));
   }
@@ -1022,11 +1037,11 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
 
   const orderTicketIndex = buildOrderTicketIndex((orderTickets ?? []) as Array<Record<string, unknown>>);
 
-  const fallbackPaymentMap = new Map<string, { paymentStatus: string; paymentMethod: string }>();
+  const fallbackPaymentMap = new Map<string, PaymentChoice>();
   if (fallbackParticipantIds.length > 0) {
     const { data: fallbackPayments, error: fallbackPaymentsError } = await supabase
       .from("payments")
-      .select("participant_id, payment_status, payment_method, created_at")
+      .select("participant_id, payment_status, payment_method, price_origin, created_at")
       .in("participant_id", fallbackParticipantIds);
 
     if (fallbackPaymentsError) {
@@ -1068,6 +1083,11 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
   const fallbackRows: OperationTicketRow[] = fallbackParticipants.map((row) => {
     const participantId = String(row.id ?? "");
     const payment = fallbackPaymentMap.get(participantId);
+    const fallbackPaymentState = resolveOperationalPaymentState({
+      paymentStatus: payment?.paymentStatus,
+      paymentMethod: payment?.paymentMethod,
+      priceOrigin: payment?.priceOrigin,
+    });
     const ticketCategory = getRelation(
       row.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null,
     );
@@ -1106,7 +1126,10 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
       buyer_type: isImportTagged ? "imported_holder" : "account",
       import_batch_id: null,
       payment_status: payment?.paymentStatus ?? "pending",
-      payment_method: payment?.paymentMethod ?? "-",
+      payment_method: fallbackPaymentState.methodLabel,
+      payment_kind: fallbackPaymentState.kind,
+      payment_label: fallbackPaymentState.label,
+      price_origin: payment?.priceOrigin ?? null,
       shirt_type: String(row.shirt_type ?? ""),
       shirt_size: String(row.shirt_size ?? ""),
       kit_status: applicableKitItemCount > 0 ? "configuration_pending" : "none",
@@ -1296,7 +1319,7 @@ async function buildTicketDetails(
       orderId
         ? supabase
             .from("payments")
-            .select("order_id, payment_status, payment_method, created_at")
+            .select("order_id, payment_status, payment_method, price_origin, created_at")
             .eq("order_id", orderId)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
       orderId
@@ -1409,7 +1432,7 @@ async function buildTicketDetails(
     const paymentRow = (Array.isArray(paymentResult.data) ? paymentResult.data[0] : paymentResult.data) as Record<string, unknown> | null;
     paymentStatus = String(paymentRow?.payment_status ?? paymentStatus);
   }
-  const payment = { paymentStatus, paymentMethod: tablePayment.paymentMethod };
+  const payment = { paymentStatus, paymentMethod: tablePayment.paymentMethod, priceOrigin: tablePayment.priceOrigin };
 
   const kitMap = new Map<string, string[]>();
   if (participantId) {
@@ -1762,7 +1785,7 @@ export async function getOperationParticipantDetailsAction(participantId: string
 
   const [{ data: tickets }, { data: payments, error: paymentError }, { data: history, error: historyError }, { data: issues, error: issuesError }, { data: legacyItems, error: legacyError }, { data: orders, error: ordersError }, { data: shirtKitItemsForOptions2, error: shirtKitItemsForOptions2Error }, { data: eventCategories, error: eventCategoriesError }, { data: eventBatches, error: eventBatchesError }] = await Promise.all([
     supabase.from("tickets").select("id").eq("participant_id", participantId).limit(1),
-    supabase.from("payments").select("id,payment_status,payment_method,amount,final_amount,created_at").eq("participant_id", participantId),
+    supabase.from("payments").select("id,payment_status,payment_method,amount,final_amount,price_origin,created_at").eq("participant_id", participantId),
     supabase.from("participation_history").select("source,import_batch_id,status").eq("participant_id", participantId).eq("event_id", String(participant.event_id)),
     supabase.from("participant_data_issues").select("id,field_code,issue_type,message,blocks_payment,blocks_ticket_issuance,blocks_checkin,blocks_kit_delivery").eq("participant_id", participantId).eq("status", "open"),
     supabase.from("participant_kit_items").select("id,status,delivered_at,legacy_unresolved,event_kit_items(name)").eq("participant_id", participantId),
@@ -1790,6 +1813,11 @@ export async function getOperationParticipantDetailsAction(participantId: string
   const importBatchIds = Array.from(new Set(((history ?? []) as Array<Record<string, unknown>>).flatMap((item) => item.import_batch_id ? [String(item.import_batch_id)] : [])));
   const openIssues = ((issues ?? []) as Array<Record<string, unknown>>).map((item) => ({ id: String(item.id), field_code: String(item.field_code), issue_type: String(item.issue_type), message: String(item.message), blocks_payment: Boolean(item.blocks_payment), blocks_ticket_issuance: Boolean(item.blocks_ticket_issuance), blocks_checkin: Boolean(item.blocks_checkin), blocks_kit_delivery: Boolean(item.blocks_kit_delivery) }));
   const onlyPayment = (payments ?? []).length === 1 ? (payments?.[0] as Record<string, unknown>) : null;
+  const paymentState = resolveOperationalPaymentState({
+    paymentStatus: payment.paymentStatus,
+    paymentMethod: payment.paymentMethod,
+    priceOrigin: payment.priceOrigin,
+  });
   const canRegularize = importBatchIds.length === 1 && row.ticket_category_id != null && row.batch_id != null
     && onlyPayment?.amount != null && onlyPayment.final_amount != null && (orders ?? []).length <= 1
     && !openIssues.some((issue) => issue.blocks_ticket_issuance);
@@ -1837,7 +1865,7 @@ export async function getOperationParticipantDetailsAction(participantId: string
     cpf: String(row.cpf ?? ""), phone: String(row.phone ?? ""), city: String(row.city ?? ""), gender: row.gender ? String(row.gender) : null, birth_date: row.birth_date ? String(row.birth_date) : null,
     registration_status: String(row.registration_status ?? "pending"), event_id: String(row.event_id), event_name: String(event?.name ?? "Evento"), category_id: row.ticket_category_id ? String(row.ticket_category_id) : null,
     category_name: String(category?.name ?? "Ingresso único"), order_id: null, order_number: null, order_created_at: null, buyer_user_id: null, buyer_name: "", buyer_cpf: "", buyer_phone: "", buyer_email: "",
-    buyer_type: importBatchIds.length ? "imported_holder" : "account", import_batch_id: importBatchIds[0] ?? null, payment_status: payment.paymentStatus, payment_method: payment.paymentMethod,
+    buyer_type: importBatchIds.length ? "imported_holder" : "account", import_batch_id: importBatchIds[0] ?? null, payment_status: payment.paymentStatus, payment_method: paymentState.methodLabel, payment_kind: paymentState.kind, payment_label: paymentState.label, price_origin: payment.priceOrigin,
     shirt_type: String(row.shirt_type ?? ""), shirt_size: String(row.shirt_size ?? ""), kit_status: (legacyItems ?? []).length ? "pending" : "configuration_pending", checkin_status: "pending",
     wristband_id: null, wristband_code: null, wristband_status: null, can_operate: false, block_reason: "Esta inscrição não possui vínculo comprovável com um ingresso.", order_ticket_count: 0, order_ticket_position: 0,
     event_has_kit: Boolean(event?.kit_enabled), event_has_shirt: Boolean(row.shirt_type || row.shirt_size), event_wristband_enabled: Boolean(event?.wristband_enabled),
