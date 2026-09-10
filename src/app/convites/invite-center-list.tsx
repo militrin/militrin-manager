@@ -12,7 +12,7 @@ import { ADMIN_LIST_HEADER_CLASS, ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, 
 import type { InviteCenterListRow } from "@/lib/invites/invite-center-types";
 
 const actionClass = "inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-lg border border-slate-700 px-2.5 text-xs";
-const DESKTOP_GRID = "lg:grid-cols-[minmax(0,1.7fr)_minmax(9.5rem,1fr)_minmax(0,0.9fr)_48px_4.5rem_4.5rem_minmax(9.75rem,0.95fr)_3.5rem]";
+const DESKTOP_GRID = "lg:grid-cols-[minmax(0,1.7fr)_minmax(8.75rem,1fr)_minmax(0,0.75fr)_4.75rem_4.5rem_4.5rem_minmax(9.5rem,0.95fr)_3.5rem]";
 
 function StatusBadge({ status }: { status: InviteCenterListRow["status"] }) {
   const tone = INVITE_CENTER_STATUS_TONE[status];
