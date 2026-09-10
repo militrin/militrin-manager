@@ -48,10 +48,11 @@ export default async function AdministrativeTicketDetailPage({ params, searchPar
   const intendedOwner = data.intended_owner_contact_id
     ? await supabase.from("registration_contacts").select("full_name,user_id").eq("id", data.intended_owner_contact_id).maybeSingle()
     : null;
+  const awaitingFirstAccess = !data.owner_user_id && Boolean(intendedOwner?.data?.full_name);
   const ownerName = data.owner_user_id
     ? await resolveLinkedAccountLabel(String(data.owner_user_id))
-    : intendedOwner?.data?.full_name
-      ? `${String(intendedOwner.data.full_name)} (conta ainda não ativada)`
+    : awaitingFirstAccess
+      ? String(intendedOwner?.data?.full_name)
       : "Conta proprietária não definida";
-  return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6"><TopBar title="Ficha administrativa do ingresso" subtitle={ticketLabel} breadcrumbs={breadcrumbs} backHref={listHref} fallbackHref="/ingressos"/><ChangeTicketAccountOwnerCard ticketId={resolved.ticketId} holderName={holderName} currentOwnerName={ownerName} canManage={canManageAccountOwner}/><TicketDetailPage params={Promise.resolve(resolved)} showTimeline={false} adminEditHref={editHref}/><TicketCancellationRegularization ticketId={resolved.ticketId} status={String(data.status ?? "")} replacementRequired={data.cancellation_replacement_required as boolean | null} reasonText={data.cancellation_reason_text as string | null} canRegularize={canRegularizeCancellation}/><AdministrativeTicketTimeline result={timeline} filters={{...filters,from:filters.from}}/></div></div></main>;
+  return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6"><TopBar title="Ficha administrativa do ingresso" subtitle={ticketLabel} breadcrumbs={breadcrumbs} backHref={listHref} fallbackHref="/ingressos"/><ChangeTicketAccountOwnerCard ticketId={resolved.ticketId} holderName={holderName} currentOwnerName={ownerName} awaitingFirstAccess={awaitingFirstAccess} intendedOwnerName={awaitingFirstAccess ? String(intendedOwner?.data?.full_name) : null} canManage={canManageAccountOwner}/><TicketDetailPage params={Promise.resolve(resolved)} showTimeline={false} adminEditHref={editHref}/><TicketCancellationRegularization ticketId={resolved.ticketId} status={String(data.status ?? "")} replacementRequired={data.cancellation_replacement_required as boolean | null} reasonText={data.cancellation_reason_text as string | null} canRegularize={canRegularizeCancellation}/><AdministrativeTicketTimeline result={timeline} filters={{...filters,from:filters.from}}/></div></div></main>;
 }

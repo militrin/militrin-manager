@@ -18,6 +18,8 @@ export function ChangeTicketAccountOwnerCard(props: {
   holderName: string;
   currentOwnerName: string;
   canManage: boolean;
+  awaitingFirstAccess?: boolean;
+  intendedOwnerName?: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -30,8 +32,6 @@ export function ChangeTicketAccountOwnerCard(props: {
   const [pending, start] = useTransition();
   const canSubmit = Boolean(selected && reasonCode && (reasonCode !== "other" || reasonText.trim()));
 
-  if (!props.canManage) return null;
-
   return (
     <section className="rounded-3xl border border-violet-500/30 bg-violet-500/5 p-5">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-200">Conta proprietária</p>
@@ -41,17 +41,20 @@ export function ChangeTicketAccountOwnerCard(props: {
           <p className="font-medium">{props.holderName}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Conta proprietária atual</p>
-          <p className="font-medium">{props.currentOwnerName}</p>
+          <p className="text-xs text-slate-500">{props.awaitingFirstAccess ? "Proprietário pretendido" : "Conta proprietária atual"}</p>
+          <p className="font-medium">{props.awaitingFirstAccess ? (props.intendedOwnerName ?? props.currentOwnerName) : props.currentOwnerName}</p>
+          {props.awaitingFirstAccess ? <p className="mt-1 text-xs text-amber-200">Conta: Aguardando primeiro acesso</p> : null}
         </div>
       </div>
       <p className="mt-3 text-sm text-slate-400">Quem vê o ingresso em Minha Conta. O titular do ingresso não será alterado.</p>
+      {props.canManage ? (
       <button type="button" onClick={() => { setOpen(true); setMessage(null); }} className="mt-4 rounded-xl bg-violet-400 px-4 py-2 text-sm font-semibold text-slate-950">
         Alterar conta proprietária
       </button>
+      ) : null}
       {message && !open ? <p className="mt-3 text-sm text-emerald-200">{message}</p> : null}
 
-      {open ? (
+      {props.canManage && open ? (
         <div role="dialog" aria-modal="true" aria-labelledby="change-owner-title" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-3">

@@ -23,6 +23,10 @@ test('ficha deduplica papeis owner e holder e preserva owner sem titular',()=>{
   assert.equal(contactTicketRoleLabel(['owner','holder']),'Proprietário e titular');
   const noAccountHolder={...base,ownerUserId:'other',orderItemContactId:'contact-bruna'};
   assert.deepEqual(rolesForContactTicket(noAccountHolder,'contact-bruna',[]),['holder']);
+  const pendingOwner={ticketId:'t2',eventId:'e1',eventName:'Evento',ownerUserId:null,intendedOwnerContactId:'contact-jordan',orderItemContactId:'contact-jordan',participantContactId:'contact-jordan'};
+  assert.deepEqual(rolesForContactTicket(pendingOwner,'contact-jordan',[]),['intended_owner','holder']);
+  assert.equal(contactTicketRoleLabel(['intended_owner','holder']),'Titular · aguardando primeiro acesso');
+  assert.equal(contactTicketRoleLabel(['intended_owner']),'Proprietário pretendido · aguardando primeiro acesso');
 });
 
 test('preflight 139 e somente leitura e classifica todas as origens',async()=>{

@@ -5,9 +5,10 @@ export type ContactTicketLink = {
   participantContactId?: string | null;
   orderItemContactId?: string | null;
   ownerUserId?: string | null;
+  intendedOwnerContactId?: string | null;
 };
 
-export type ContactTicketRole = "owner" | "holder";
+export type ContactTicketRole = "owner" | "holder" | "intended_owner";
 
 export type ContactTicketGroup<T extends ContactTicketLink = ContactTicketLink> = {
   eventId: string;
@@ -23,6 +24,7 @@ export function rolesForContactTicket(ticket: ContactTicketLink, contactId: stri
   const roles: ContactTicketRole[] = [];
   const users = linkedUserIds instanceof Set ? linkedUserIds : new Set(linkedUserIds);
   if (ticket.ownerUserId && users.has(ticket.ownerUserId)) roles.push("owner");
+  else if (ticket.intendedOwnerContactId === contactId) roles.push("intended_owner");
   if (contactIdForTicket(ticket) === contactId) roles.push("holder");
   return roles;
 }
@@ -30,7 +32,13 @@ export function rolesForContactTicket(ticket: ContactTicketLink, contactId: stri
 export function contactTicketRoleLabel(roles: ContactTicketRole[]) {
   if (roles.includes("owner") && roles.includes("holder")) return "Proprietário e titular";
   if (roles.includes("owner")) return "Proprietário";
+  if (roles.includes("intended_owner") && roles.includes("holder")) return "Titular · aguardando primeiro acesso";
+  if (roles.includes("intended_owner")) return "Proprietário pretendido · aguardando primeiro acesso";
   return "Titular";
+}
+
+export function ticketAwaitsFirstAccess(ticket: Pick<ContactTicketLink, "ownerUserId" | "intendedOwnerContactId">, contactId: string) {
+  return !ticket.ownerUserId && ticket.intendedOwnerContactId === contactId;
 }
 
 export function ticketsForContact<T extends ContactTicketLink>(tickets: T[], contactId: string) {

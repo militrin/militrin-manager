@@ -55,18 +55,21 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
   for (const row of tickets ?? []) {
     const orderItem = relation(row.order_items);
     const participant = relation(row.participants);
-    const contactId = contactIdForTicket({
+    const holderContactId = contactIdForTicket({
       ticketId: String(row.id),
       eventId: String(row.event_id),
       eventName: String(relation(row.events)?.name ?? "Evento"),
       orderItemContactId: orderItem?.registration_contact_id ? String(orderItem.registration_contact_id) : null,
       participantContactId: participant?.registration_contact_id ? String(participant.registration_contact_id) : null,
     });
-    if (!contactId) continue;
-    const current = stats.get(contactId) ?? { ticketIds: new Set<string>(), eventIds: new Set<string>() };
-    current.ticketIds.add(String(row.id));
-    current.eventIds.add(String(row.event_id));
-    stats.set(contactId, current);
+    const intendedOwnerContactId = row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null;
+    const contactIds = new Set([holderContactId, intendedOwnerContactId].filter(Boolean) as string[]);
+    for (const contactId of contactIds) {
+      const current = stats.get(contactId) ?? { ticketIds: new Set<string>(), eventIds: new Set<string>() };
+      current.ticketIds.add(String(row.id));
+      current.eventIds.add(String(row.event_id));
+      stats.set(contactId, current);
+    }
   }
 
   const importedContactIds = new Set<string>();

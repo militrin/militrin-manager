@@ -53,7 +53,7 @@ test('páginas e actions mantêm a arquitetura contact-first e ticket-first', as
   assert.match(list, /from\("registration_contacts"\)/);
   assert.doesNotMatch(list, /Todos os eventos|name="eventId"/);
   assert.match(detail, /groupContactTickets/);
-  assert.doesNotMatch(detail, /limit\(1\).*issued_at/s);
+  assert.doesNotMatch(detail, /\.order\("issued_at"[\s\S]{0,100}\.limit\(1\)/);
   assert.doesNotMatch(edit, /from\("participants"\)/);
   assert.match(editAction, /rpc\("update_registration_contact_basic_info"/);
   assert.doesNotMatch(editAction, /from\("registration_contacts"\)[\s\S]*\.update/);
