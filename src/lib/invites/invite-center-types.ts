@@ -22,6 +22,8 @@ export type InviteCenterListRow = {
   sent_at: string | null;
   invite_created_at: string | null;
   expires_at: string | null;
+  record_expires_at?: string | null;
+  auth_confirmed_at?: string | null;
   claimed_at: string | null;
   status: InviteCenterStatus;
   cadastral_incomplete: boolean;

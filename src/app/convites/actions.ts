@@ -124,7 +124,7 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
 
   const { data: currentInvite } = await supabase
     .from('participant_account_invites')
-    .select('id,status,expires_at,claimed_at,auth_user_id,claimed_user_id')
+    .select('id,status,expires_at,claimed_at,auth_user_id,claimed_user_id,auth_link_expires_at,auth_confirmed_at,password_setup_completed_at')
     .eq('registration_contact_id', contactId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -133,6 +133,9 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
   const classified = classifyInviteCenterRow({
     mixedIntendedOwners: String(row.reason_code ?? '') === 'mixed_intended_owner_single_login',
     inviteStatus: (currentInvite?.status as 'pending' | 'claimed' | 'revoked' | 'expired' | null) ?? null,
+    authLinkExpiresAt: currentInvite?.auth_link_expires_at ?? null,
+    authConfirmedAt: currentInvite?.auth_confirmed_at ?? null,
+    passwordSetupCompletedAt: currentInvite?.password_setup_completed_at ?? null,
     expiresAt: currentInvite?.expires_at ?? null,
     accountStatus: null,
     mustCompleteProfile: false,
@@ -142,7 +145,7 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
     jobStatus: null,
   });
 
-  if (classified === 'concluido' || classified === 'cadastro_pendente' || classified === 'admin_action') {
+  if (classified === 'concluido' || classified === 'admin_action') {
     return { success: false as const, message: 'Reenvio bloqueado para este estado.' };
   }
   if (!canResendInviteCenter(classified)) {

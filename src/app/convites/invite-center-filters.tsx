@@ -35,7 +35,7 @@ export function InviteCenterFilters({
           <option value="all">Todos</option>
           <option value="pendentes">Pendentes</option>
           <option value="concluidos">Concluídos</option>
-          <option value="expirados">Expirados</option>
+          <option value="expirados">Links expirados</option>
           <option value="cadastro_pendente">Cadastro pendente</option>
           <option value="falha">Falha</option>
           <option value="admin_action">Ação administrativa</option>

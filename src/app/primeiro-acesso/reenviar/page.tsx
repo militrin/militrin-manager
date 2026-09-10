@@ -6,7 +6,7 @@ export default function ResendFirstAccessInvitePage() {
       <section className="mx-auto max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-6 text-center">
         <h1 className="text-xl font-semibold">Solicitar novo convite</h1>
         <p className="mt-2 text-sm text-slate-300">
-          Informe o e-mail para o qual o convite de primeiro acesso foi enviado. Se ainda estiver pendente, enviaremos um novo link.
+          Informe o e-mail do convite. Se ainda houver primeiro acesso pendente, enviaremos um novo link válido por 24 horas.
         </p>
         <ResendInviteForm />
       </section>

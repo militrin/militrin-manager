@@ -62,6 +62,12 @@ export function formatDateTimeBR(value: string | Date | null | undefined, connec
   return `${formatDateBR(date)}${connector}${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+export function formatDateTimeCompactBR(value: string | Date | null | undefined) {
+  const date = parseDateInput(value);
+  if (!date) return '—';
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export function formatDateLongBR(value: string | Date | null | undefined) {
   const date = parseDateInput(value);
   if (!date) return '-';
@@ -150,6 +156,15 @@ function calendarPartsInEventTimeZone(value: string | Date | null | undefined): 
   const day = Number(parts.find((part) => part.type === 'day')?.value);
   if (!year || !month || !day) return null;
   return { year, month, day };
+}
+
+// Idade abaixo disso, na data de referência, é dado cadastral implausível
+// para um perfil de inscrito (ex.: DOB com ano = ano do evento). Não é
+// evidência de menor real e não deve ser usada como regra de maioridade.
+export const MIN_PLAUSIBLE_PERSON_AGE_YEARS = 5;
+
+export function isPlausiblePersonAge(ageYears: number | null | undefined) {
+  return ageYears != null && ageYears >= MIN_PLAUSIBLE_PERSON_AGE_YEARS;
 }
 
 // Fonte canônica única de idade-na-data-do-evento (contact-first: consumida

@@ -83,6 +83,15 @@ export function sharedEmailResolvedAccountLabel(name: string | null | undefined)
   return value ? `Conta: ${value} ✓` : null;
 }
 
+export function sharedEmailCompactMeta(count: number) {
+  return `${count} cadastros · Compartilhado`;
+}
+
+export function sharedEmailPrincipalCompactLabel(name: string | null | undefined) {
+  const value = String(name ?? '').trim();
+  return value ? `${value} ✓` : null;
+}
+
 export function sharedEmailCountersLabel(pending: number, resolved: number) {
   return `Pendentes: ${pending} · Resolvidos: ${resolved}`;
 }

@@ -650,7 +650,7 @@ test('tema de relatorio tem pagina branca contraste e destaque Militrin acessive
 
 test('UUID completo quebra com seguranca sem perder rastreabilidade',()=>{const uuid='86825375-30c1-4e82-83ac-be080b2b1a5c';const lines=splitTechnicalIdentifier(uuid,18);assert.equal(lines.join(''),uuid);assert.ok(lines.every(line=>line.length<=18));});
 
-test('historico PDF CSV e print usam o tema compartilhado e paginacao A4',async()=>{const timeline=await readFile(new URL('../src/lib/admin/ticket-timeline.ts',import.meta.url),'utf8');const panel=await readFile(new URL('../src/app/ingressos/[ticketId]/timeline-panel.tsx',import.meta.url),'utf8');const ticket=await readFile(new URL('../src/components/public/TicketPdfButton.tsx',import.meta.url),'utf8');const receipt=await readFile(new URL('../src/components/public/PaymentReceiptPdfButton.tsx',import.meta.url),'utf8');for(const source of [timeline,ticket,receipt]){assert.match(source,/applyReportPage/);assert.match(source,/finalizeReportPages/);}assert.match(timeline,/formatReportDateTime\(item\.occurredAt\)/);assert.match(timeline,/if \(y \+ height > page\.height - page\.bottom - 12\) addPage\(\)/);assert.match(timeline,/Data\/hora ISO/);assert.match(timeline,/Código do tipo/);assert.match(timeline,/\\uFEFF/);assert.doesNotMatch(timeline,/setFillColor\(9, 16, 33\)|setFillColor\(15, 23, 42\)/);assert.match(panel,/@page \{ size:A4/);assert.match(panel,/page-break-inside:avoid/);assert.match(panel,/report-technical-id/);assert.match(panel,/America\/Sao_Paulo/);});
+test('historico PDF CSV e print usam o tema compartilhado e paginacao A4',async()=>{const timeline=await readFile(new URL('../src/lib/admin/ticket-timeline.ts',import.meta.url),'utf8');const panel=await readFile(new URL('../src/app/ingressos/[ticketId]/timeline-panel.tsx',import.meta.url),'utf8');const receipt=await readFile(new URL('../src/components/public/PaymentReceiptPdfButton.tsx',import.meta.url),'utf8');for(const source of [timeline,receipt]){assert.match(source,/applyReportPage/);assert.match(source,/finalizeReportPages/);}assert.match(timeline,/formatReportDateTime\(item\.occurredAt\)/);assert.match(timeline,/if \(y \+ height > page\.height - page\.bottom - 12\) addPage\(\)/);assert.match(timeline,/Data\/hora ISO/);assert.match(timeline,/Código do tipo/);assert.match(timeline,/\\uFEFF/);assert.doesNotMatch(timeline,/setFillColor\(9, 16, 33\)|setFillColor\(15, 23, 42\)/);assert.match(panel,/@page \{ size:A4/);assert.match(panel,/page-break-inside:avoid/);assert.match(panel,/report-technical-id/);assert.match(panel,/America\/Sao_Paulo/);});
 
 test('relatorio preserva acentos e separa operador motivo e alteracao',async()=>{const timeline=await readFile(new URL('../src/lib/admin/ticket-timeline.ts',import.meta.url),'utf8');const panel=await readFile(new URL('../src/app/ingressos/[ticketId]/timeline-panel.tsx',import.meta.url),'utf8');for(const label of ['Descrição','Alteração','Responsável','Código do tipo'])assert.match(timeline,new RegExp(label));assert.match(panel,/>Realizado por:<\/span>/);assert.match(panel,/>Motivo:<\/span>/);assert.match(panel,/>Alteração:<\/span>/);assert.doesNotMatch(timeline,/Operador:.*\|.*Motivo:/);});
 
@@ -1456,12 +1456,11 @@ test('callback de convite sempre termina com sessao, erro ou timeout visivel', a
     'credenciais devem sair da URL antes da primeira chamada de autenticação',
   );
   assert.match(callback, /router\.replace\(destination\)/);
-  // Copy de erro (inclusive "Solicitar novo convite") foi centralizada em
-  // src/lib/auth/invite-error-copy.ts (auditoria PKCE/regularizacao de
-  // convite) -- reusada tambem por /auth/confirm (servidor), nunca mais
-  // hardcoded so no callback cliente.
+  // Copy de erro (CTA "Receber novo link") foi centralizada em
+  // src/lib/auth/invite-error-copy.ts -- reusada por /auth/callback e
+  // /auth/confirmar, nunca mais hardcoded so no callback cliente.
   const errorCopyLib = await readFile(new URL('../src/lib/auth/invite-error-copy.ts', import.meta.url), 'utf8');
-  assert.match(errorCopyLib, /Solicitar novo convite/);
+  assert.match(errorCopyLib, /Receber novo link/);
   assert.doesNotMatch(callback, /console\.(info|error)\([^\n]*(code|tokenHash|accessToken|refreshToken)\b/);
   assert.doesNotMatch(callback, /router\.(push|replace)\(['"]\/entrar/);
 });

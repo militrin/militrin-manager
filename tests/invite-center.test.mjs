@@ -51,9 +51,10 @@ test('T2 claimed + conta ativa → CONCLUÍDO', () => {
   })), 'concluido');
 });
 
-test('T3 expirado → EXPIRADO', () => {
-  assert.equal(classifyInviteCenterRow(base({ inviteStatus: 'pending', expiresAt: past })), 'expirado');
-  assert.equal(classifyInviteCenterRow(base({ inviteStatus: 'expired', expiresAt: past })), 'expirado');
+test('T3 link Auth expirado → LINK EXPIRADO; expires_at interno de 7 dias NÃO classifica', () => {
+  assert.equal(classifyInviteCenterRow(base({ inviteStatus: 'pending', authLinkExpiresAt: past })), 'expirado');
+  assert.equal(classifyInviteCenterRow(base({ inviteStatus: 'pending', expiresAt: past, authLinkExpiresAt: future })), 'pendente');
+  assert.equal(classifyInviteCenterRow(base({ inviteStatus: 'expired', authLinkExpiresAt: past })), 'expirado');
 });
 
 test('T4 falha real → FALHA', () => {
@@ -65,8 +66,8 @@ test('T5 cadastro iniciado/incompleto → CADASTRO PENDENTE', () => {
     inviteStatus: 'claimed',
     mustCompleteProfile: true,
   })), 'cadastro_pendente');
-  assert.equal(inviteCenterFirstAccessLabel('pendente', true), 'Pendente de correção no primeiro acesso');
-  assert.equal(inviteCenterFirstAccessLabel('cadastro_pendente', true), 'Cadastro pendente');
+  assert.equal(inviteCenterFirstAccessLabel('pendente', true), 'Pendente de correção');
+  assert.equal(inviteCenterFirstAccessLabel('cadastro_pendente', true), 'Primeiro acesso iniciado');
 });
 
 test('T6/T7/T8 shared email: uma linha, holders distintos, principal não recalculada', async () => {
@@ -76,7 +77,8 @@ test('T6/T7/T8 shared email: uma linha, holders distintos, principal não recalc
   assert.match(sql, /md5\(v_org::text \|\| chr\(1\) \|\| g\.email_norm\) as row_key/);
   assert.match(sql, /intended_owner_contact_id = c\.id/);
   assert.doesNotMatch(sql, /chooseSharedEmailPrincipal/);
-  assert.match(list, /is_principal \? "principal" : "titular"/);
+  assert.match(list, /sharedEmailCompactMeta\(row\.person_count\)/);
+  assert.match(list, /lg:hidden/);
   const app = await readUtf8('../src/app/convites/[rowKey]/page.tsx');
   assert.doesNotMatch(app, /chooseSharedEmailPrincipal/);
   assert.match(app, /Holder:/);
@@ -94,9 +96,10 @@ test('T9 Roberto → AÇÃO ADMIN, sem envio automático', () => {
   assert.equal(canResendInviteCenter('admin_action'), false);
 });
 
-test('T10 concluído não permite reenvio', () => {
+test('T10 concluído não permite reenvio; cadastro pendente permite novo link, não entra no bulk', () => {
   assert.equal(canResendInviteCenter('concluido'), false);
-  assert.equal(canResendInviteCenter('cadastro_pendente'), false);
+  assert.equal(canResendInviteCenter('cadastro_pendente'), true);
+  assert.equal(canBulkResendInviteCenter('cadastro_pendente'), false);
 });
 
 test('T11/T12 reenvio reusa Auth e um pending por e-mail', async () => {
@@ -187,9 +190,9 @@ test('T22 erro de Auth/SMTP fica fail-safe', async () => {
 
 test('T23 claim atualiza status via estado derivado + revalidate', async () => {
   const actions = await readUtf8('../src/app/convites/actions.ts');
-  const sql = await readUtf8('../supabase/migrations/20261015000000_invite_center.sql');
+  const sql = await readUtf8('../supabase/migrations/20261016000000_invite_center_auth_link_ttl.sql');
   assert.match(actions, /revalidatePath\('\/convites'\)/);
-  assert.match(sql, /when p_invite_status = 'claimed'/);
+  assert.match(sql, /p_invite_status = 'claimed' or p_auth_confirmed_at is not null then 'cadastro_pendente'/);
   assert.doesNotMatch(sql, /create table.*invite_center_status/i);
 });
 
@@ -226,8 +229,40 @@ test('menu, importações e permissões do painel expõem a Central', async () =
 
 test('migration própria, sem tocar 20261008000000 e sem fan-out', async () => {
   const sql = await readUtf8('../supabase/migrations/20261015000000_invite_center.sql');
+  const ttl = await readUtf8('../supabase/migrations/20261016000000_invite_center_auth_link_ttl.sql');
   assert.doesNotMatch(sql, /alter table public\.import_rows|legacy_import_ticket_vs_cadastral/);
-  assert.match(sql, /create or replace function public\.list_invite_center/);
-  assert.match(sql, /p_limit integer default 25/);
-  assert.doesNotMatch(sql, /for v_row in[\s\S]*auth\.admin/);
+  assert.doesNotMatch(ttl, /alter table public\.import_rows|legacy_import_ticket_vs_cadastral/);
+  assert.match(ttl, /create or replace function public\.list_invite_center/);
+  assert.match(ttl, /auth_link_expires_at = auth_email_sent_at \+ interval '24 hours'/);
+  assert.doesNotMatch(ttl, /for v_row in[\s\S]*auth\.admin/);
+  assert.doesNotMatch(ttl, /auth\.admin\.getUser/);
 });
+
+test('24h pendente / 24h+ expirado; reenvio é nova janela; Auth confirmado incompleto não é link expirado', () => {
+  const sent = new Date('2026-09-09T18:12:00.000Z');
+  const almost24h = new Date(sent.getTime() + (24 * 3600 * 1000) - 60_000);
+  const after24h = new Date(sent.getTime() + (24 * 3600 * 1000) + 1000);
+  const resent = new Date('2026-09-10T16:00:00.000Z');
+  assert.equal(classifyInviteCenterRow(base({
+    inviteStatus: 'pending',
+    authLinkExpiresAt: new Date(sent.getTime() + 24 * 3600 * 1000).toISOString(),
+    now: almost24h,
+  })), 'pendente');
+  assert.equal(classifyInviteCenterRow(base({
+    inviteStatus: 'pending',
+    authLinkExpiresAt: new Date(sent.getTime() + 24 * 3600 * 1000).toISOString(),
+    now: after24h,
+  })), 'expirado');
+  assert.equal(classifyInviteCenterRow(base({
+    inviteStatus: 'pending',
+    authLinkExpiresAt: new Date(resent.getTime() + 24 * 3600 * 1000).toISOString(),
+    now: after24h,
+  })), 'pendente');
+  assert.equal(classifyInviteCenterRow(base({
+    inviteStatus: 'pending',
+    authConfirmedAt: '2026-09-09T20:00:00.000Z',
+    authLinkExpiresAt: past,
+    now: after24h,
+  })), 'cadastro_pendente');
+});
+

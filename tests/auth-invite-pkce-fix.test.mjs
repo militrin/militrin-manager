@@ -25,6 +25,8 @@ import test from 'node:test';
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 const confirmRoute = await read('src/app/auth/confirm/route.ts');
+const confirmAction = await read('src/app/auth/confirmar/actions.ts');
+const confirmPage = await read('src/app/auth/confirmar/page.tsx');
 const callbackClient = await read('src/app/auth/callback/AuthCallbackClient.tsx');
 const errorCopy = await read('src/lib/auth/invite-error-copy.ts');
 const destinations = await read('src/lib/auth/callback-destinations.ts');
@@ -35,24 +37,33 @@ const cadastrosActions = await read('src/app/cadastros/actions.ts');
 
 // -------------------- causa raiz / /auth/confirm --------------------
 
-test('1/4) /auth/confirm usa verifyOtp com token_hash+type (nunca exchangeCodeForSession) -- caminho que nunca depende de PKCE verifier local', () => {
-  assert.match(confirmRoute, /supabase\.auth\.verifyOtp\(\{ type: typeParam as EmailOtpType, token_hash: tokenHash \}\)/);
-  assert.doesNotMatch(confirmRoute, /\.exchangeCodeForSession\(/);
+test('1/4) POST /auth/confirmar usa verifyOtp com token_hash+type (nunca exchangeCodeForSession) -- caminho que nunca depende de PKCE verifier local', () => {
+  assert.match(confirmAction, /supabase\.auth\.verifyOtp\(\{\s*type: typeParam as EmailOtpType,\s*token_hash: tokenHash,\s*\}\)/s);
+  assert.doesNotMatch(confirmAction, /\.exchangeCodeForSession\(/);
+  assert.doesNotMatch(confirmRoute, /verifyOtp/);
+  assert.doesNotMatch(confirmPage, /verifyOtp/);
 });
 
-test('/auth/confirm roda inteiramente no servidor (createServerSupabaseClient, cookies SSR) -- nunca client-only', () => {
-  assert.match(confirmRoute, /import \{ createServerSupabaseClient \} from "@\/lib\/supabase\/server"/);
-  assert.match(confirmRoute, /const supabase = await createServerSupabaseClient\(\);/);
-  assert.doesNotMatch(confirmRoute, /"use client"/);
+test('GET /auth/confirm e /auth/confirmar NÃO consomem o token -- só redirecionam/exibem o POST explícito', () => {
+  assert.match(confirmRoute, /NextResponse\.redirect/);
+  assert.match(confirmRoute, /\/auth\/confirmar/);
+  assert.doesNotMatch(confirmRoute, /verifyOtp/);
+  assert.doesNotMatch(confirmPage, /verifyOtp/);
 });
 
-test('16) token_hash nunca aparece em nenhuma chamada de log (console\\.*) em /auth/confirm', () => {
-  const logCalls = confirmRoute.match(/console\.\w+\([^)]*\)/gs) ?? [];
+test('/auth/confirmar POST roda inteiramente no servidor (createServerSupabaseClient, cookies SSR) -- nunca client-only', () => {
+  assert.match(confirmAction, /import \{ createServerSupabaseClient \} from "@\/lib\/supabase\/server"/);
+  assert.match(confirmAction, /const supabase = await createServerSupabaseClient\(\);/);
+  assert.doesNotMatch(confirmAction, /"use client"/);
+});
+
+test('16) token_hash nunca aparece em nenhuma chamada de log (console\\.*) em /auth/confirmar', () => {
+  const logCalls = [...(confirmAction.match(/console\.\w+\([^)]*\)/gs) ?? []), ...(confirmPage.match(/console\.\w+\([^)]*\)/gs) ?? [])];
   for (const call of logCalls) assert.doesNotMatch(call, /tokenHash/, `chamada de log nao deve referenciar tokenHash: ${call}`);
 });
 
 test('15) callback/confirm nunca aceita redirect externo -- next sempre passa por safeAuthDestination/allowlist', () => {
-  assert.match(confirmRoute, /safeAuthDestination\(nextParam, fallbackDestination\)/);
+  assert.match(confirmAction, /safeAuthDestination\(nextParam \|\| null, fallbackDestination\)/);
   assert.match(destinations, /export const ALLOWED_AUTH_DESTINATION_PREFIXES = \['\/primeiro-acesso', '\/redefinir-senha'\];/);
   assert.match(destinations, /sanitizeInternalNextPath/);
 });
@@ -97,6 +108,8 @@ test('14) Magic Link/recovery/signup mantem sua propria categoria e CTA -- nunca
   assert.match(errorCopy, /recovery: '\/esqueci-minha-senha'/);
   assert.match(errorCopy, /signup: '\/verifique-seu-email'/);
   assert.match(errorCopy, /invite: '\/primeiro-acesso\/reenviar'/);
+  assert.match(errorCopy, /invite: 'Receber novo link'/);
+  assert.match(errorCopy, /Este link não é mais válido\./);
   assert.match(errorCopy, /magiclink: '\/primeiro-acesso\/reenviar'/);
 });
 
@@ -132,8 +145,8 @@ test('resend self-service preserva requires_password_setup (via requireFirstAcce
   assert.match(dispatchLib, /requires_password_setup: true/);
 });
 
-test('resend self-service so considera convite ainda PENDENTE (status=pending, password_setup_completed_at nulo) -- nunca reusa convite ja concluido', () => {
-  assert.match(resendAction, /\.eq\("status", "pending"\)/);
+test('resend self-service so considera convite ainda pendente de senha -- pending ou claimed incompleto, nunca reusa convite ja concluido', () => {
+  assert.match(resendAction, /\.in\("status", \["pending", "claimed"\]\)/);
   assert.match(resendAction, /\.is\("password_setup_completed_at", null\)/);
   assert.match(resendAction, /\.eq\("email", email\)/);
   assert.doesNotMatch(resendAction, /\.ilike\("email"/);

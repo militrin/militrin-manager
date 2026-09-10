@@ -70,7 +70,7 @@ test('P1-2 nao inventa token paralelo nem copia link Auth', () => {
   assert.doesNotMatch(inviteButton, /generateLink|navigator\.clipboard/i);
   assert.match(inviteButton, /não copia nem exibe token/);
   assert.match(inviteButton, /Reenviar convite/);
-  assert.match(inviteButton, /Validade/);
+  assert.match(inviteButton, /válido por 24 horas após o envio/);
   assert.match(middleware, /pathname === '\/primeiro-acesso\/reenviar'/);
   assert.match(firstAccessPage, /failureCopy\.actionHref/);
   assert.match(participantInvite, /actionHref: '\/primeiro-acesso\/reenviar'/);
@@ -129,6 +129,7 @@ test('2) demais rotas de primeiro acesso continuam protegidas e callback nao ent
   assert.equal(middlewareRequiresAuth('/primeiro-acesso/reenviar/extra'), true);
   assert.equal(middlewareRequiresAuth('/auth/callback'), false);
   assert.equal(middlewareRequiresAuth('/auth/confirm'), false);
+  assert.equal(middlewareRequiresAuth('/auth/confirmar'), false);
   const protectedList = middleware.slice(middleware.indexOf('const protectedPrefixes'), middleware.indexOf('const isPublicFirstAccessResend'));
   assert.match(protectedList, /'\/primeiro-acesso'/);
   assert.doesNotMatch(protectedList, /'\/auth\/callback'/);
@@ -138,7 +139,7 @@ test('reenvio publico anti-enumeracao, sem conta nova, sem token e sem wildcard 
   assert.match(resendAction, /GENERIC_MESSAGE/);
   assert.match(resendAction, /\.eq\("email", email\)/);
   assert.doesNotMatch(resendAction, /\.ilike\("email"/);
-  assert.match(resendAction, /\.eq\("status", "pending"\)/);
+  assert.match(resendAction, /\.in\("status", \["pending", "claimed"\]\)/);
   assert.match(resendAction, /\.is\("password_setup_completed_at", null\)/);
   assert.match(dispatchLib, /shouldCreateUser: false/);
   assert.doesNotMatch(resendAction, /\.inviteUserByEmail\(/);

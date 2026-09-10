@@ -11,6 +11,7 @@ import {
   canResendInviteCenter,
   inviteCenterAdminActionReason,
   inviteCenterFirstAccessLabel,
+  inviteCenterResendLabel,
   type InviteCenterStatus,
 } from "@/lib/invites/invite-center-status";
 import { formatDateTimeBR } from "@/lib/utils/date";
@@ -76,7 +77,17 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
           ) : null}
           {status === "pendente" ? (
             <p className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
-              Convite enviado. Ainda não concluiu o primeiro acesso.
+              Convite enviado. O link de acesso vale por 24 horas após o envio. Ainda não concluiu o primeiro acesso.
+            </p>
+          ) : null}
+          {status === "expirado" ? (
+            <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              Link de acesso expirado. A janela Auth de 24 horas terminou. Reenvie para gerar um novo link.
+            </p>
+          ) : null}
+          {status === "cadastro_pendente" ? (
+            <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              Primeiro acesso iniciado. A conta Auth já confirmou o e-mail, mas o fluxo obrigatório ainda não terminou.
             </p>
           ) : null}
 
@@ -95,6 +106,7 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
                 lastSentAt={summary?.sent_at ?? summary?.invite_created_at ?? null}
                 statusLabel={INVITE_CENTER_STATUS_LABEL[status]}
                 ticketCount={ticketCount}
+                actionLabel={inviteCenterResendLabel(status)}
               />
             ) : null}
           </div>
@@ -116,8 +128,10 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
           <AdminSection title="Convite">
             <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
               <div><dt className="text-xs text-slate-500">Status</dt><dd>{INVITE_CENTER_STATUS_LABEL[status]}</dd></div>
-              <div><dt className="text-xs text-slate-500">Enviado em</dt><dd>{invite?.created_at ? formatDateTimeBR(String(invite.created_at)) : "—"}</dd></div>
-              <div><dt className="text-xs text-slate-500">Válido até</dt><dd>{invite?.expires_at ? formatDateTimeBR(String(invite.expires_at)) : "—"}</dd></div>
+              <div><dt className="text-xs text-slate-500">Enviado em</dt><dd>{invite?.auth_email_sent_at ? formatDateTimeBR(String(invite.auth_email_sent_at)) : invite?.created_at ? formatDateTimeBR(String(invite.created_at)) : "—"}</dd></div>
+              <div><dt className="text-xs text-slate-500">Link válido até</dt><dd>{invite?.auth_link_expires_at ? formatDateTimeBR(String(invite.auth_link_expires_at)) : "—"}</dd></div>
+              <div><dt className="text-xs text-slate-500">Registro interno até</dt><dd>{invite?.expires_at ? formatDateTimeBR(String(invite.expires_at)) : "—"}</dd></div>
+              <div><dt className="text-xs text-slate-500">Auth confirmado em</dt><dd>{invite?.auth_confirmed_at ? formatDateTimeBR(String(invite.auth_confirmed_at)) : "—"}</dd></div>
               <div><dt className="text-xs text-slate-500">claimed_at</dt><dd>{invite?.claimed_at ? formatDateTimeBR(String(invite.claimed_at)) : "—"}</dd></div>
               <div><dt className="text-xs text-slate-500">Tentativas</dt><dd>{String(invite?.attempt_count ?? 0)}</dd></div>
               <div><dt className="text-xs text-slate-500">Último erro</dt><dd>{String(invite?.last_error_safe ?? "—")}</dd></div>

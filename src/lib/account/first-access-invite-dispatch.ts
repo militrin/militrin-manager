@@ -1,5 +1,6 @@
 import 'server-only';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
+import { authLinkExpiresAtFromSend } from '@/lib/auth/email-otp-ttl';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 
 // Nucleo reutilizavel do envio/reenvio de convite de primeiro acesso --
@@ -71,6 +72,10 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
       email: input.email,
       options: { shouldCreateUser: false, emailRedirectTo: redirectTo },
     });
+    if (!result.error) {
+      const stampError = await stampInviteAuthEmailSent(input.inviteId);
+      if (stampError) return { error: stampError, authUserId: null as string | null, resent: true };
+    }
     if (!result.error && invitePerson?.auth_user_id) {
       const pendingError = await markInvitedAccountPending(
         String(invitePerson.auth_user_id),
@@ -85,5 +90,40 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
     redirectTo,
     data: { participant_invite_id: input.inviteId, ...(canonicalFullName ? { full_name: canonicalFullName } : {}) },
   });
+  if (!result.error) {
+    const stampError = await stampInviteAuthEmailSent(input.inviteId);
+    if (stampError) return { error: stampError, authUserId: result.data.user?.id ?? null, resent: false };
+  }
   return { error: result.error, authUserId: result.data.user?.id ?? null, resent: false };
+}
+
+export async function stampInviteAuthEmailSent(inviteId: string) {
+  const admin = createServiceRoleSupabaseClient();
+  const sentAt = new Date();
+  const expiresAt = authLinkExpiresAtFromSend(sentAt);
+  const result = await admin.from('participant_account_invites')
+    .update({
+      auth_email_sent_at: sentAt.toISOString(),
+      auth_link_expires_at: expiresAt ? expiresAt.toISOString() : null,
+      updated_at: sentAt.toISOString(),
+    })
+    .eq('id', inviteId);
+  return result.error;
+}
+
+export async function markFirstAccessAuthConfirmed(userId: string, inviteId?: string | null) {
+  if (!userId) return null;
+  const admin = createServiceRoleSupabaseClient();
+  const now = new Date().toISOString();
+  let query = admin.from('participant_account_invites')
+    .update({ auth_confirmed_at: now, updated_at: now })
+    .is('auth_confirmed_at', null)
+    .is('password_setup_completed_at', null);
+  if (inviteId) {
+    query = query.eq('id', inviteId);
+  } else {
+    query = query.or(`auth_user_id.eq.${userId},claimed_user_id.eq.${userId}`);
+  }
+  const result = await query;
+  return result.error;
 }

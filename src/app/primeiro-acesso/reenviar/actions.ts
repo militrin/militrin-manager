@@ -46,7 +46,7 @@ export async function requestFirstAccessInviteResendAction(rawEmail: string): Pr
     .from("participant_account_invites")
     .select("id,email")
     .eq("email", email)
-    .eq("status", "pending")
+    .in("status", ["pending", "claimed"])
     .is("password_setup_completed_at", null)
     .order("created_at", { ascending: false })
     .limit(1)

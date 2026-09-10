@@ -76,12 +76,13 @@ export default async function ConvitesPage({ searchParams }: { searchParams: Pro
 
           {!result.success ? <p className="text-sm text-rose-200">{result.message}</p> : null}
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
             <AdminStatCard compact label="Total" value={counts.total} href={inviteCenterHref({ ...baseQuery, status: "all" })} />
             <AdminStatCard compact label="Concluídos" value={counts.concluido} tone="success" href={inviteCenterHref({ ...baseQuery, status: "concluidos" })} />
             <AdminStatCard compact label="Pendentes" value={counts.pendente} href={inviteCenterHref({ ...baseQuery, status: "pendentes" })} />
-            <AdminStatCard compact label="Expirados" value={counts.expirado} tone="warning" href={inviteCenterHref({ ...baseQuery, status: "expirados" })} />
-            <AdminStatCard compact label="Com problema" value={counts.falha + counts.cadastro_pendente + counts.admin_action} tone={counts.falha + counts.admin_action > 0 ? "danger" : "default"} href={inviteCenterHref({ ...baseQuery, status: counts.admin_action ? "admin_action" : "falha" })} />
+            <AdminStatCard compact label="Links expirados" value={counts.expirado} tone="warning" href={inviteCenterHref({ ...baseQuery, status: "expirados" })} />
+            <AdminStatCard compact label="Cadastro pendente" value={counts.cadastro_pendente} tone="warning" href={inviteCenterHref({ ...baseQuery, status: "cadastro_pendente" })} />
+            <AdminStatCard compact label="Com problema" value={counts.falha + counts.admin_action} tone={counts.falha + counts.admin_action > 0 ? "danger" : "default"} href={inviteCenterHref({ ...baseQuery, status: counts.admin_action ? "admin_action" : "falha" })} />
             <AdminStatCard compact label="E-mails compartilhados" value={counts.shared_groups} href={inviteCenterHref({ ...baseQuery, shared: "yes" })} />
           </div>
 

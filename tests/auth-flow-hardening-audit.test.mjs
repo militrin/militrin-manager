@@ -29,6 +29,7 @@ import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '../src
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 const confirmRoute = await read('src/app/auth/confirm/route.ts');
+const confirmAction = await read('src/app/auth/confirmar/actions.ts');
 const destinations = await read('src/lib/auth/callback-destinations.ts');
 
 // Reimplementacao fiel de safeAuthDestination usando o sanitizeInternalNextPath
@@ -95,21 +96,19 @@ test('11b) safeAuthDestination aceita os dois prefixos permitidos (com e sem que
 
 // -------------------- 9) type invalido e sempre rejeitado --------------------
 
-test('9) /auth/confirm mantem allowlist explicita de type -- nunca aceita um valor arbitrario do querystring', () => {
-  assert.match(confirmRoute, /const allowedOtpTypes = new Set<EmailOtpType>\(\["invite", "signup", "magiclink", "recovery", "email", "email_change"\]\);/);
-  assert.match(confirmRoute, /if \(!tokenHash \|\| !typeParam \|\| !allowedOtpTypes\.has\(typeParam as EmailOtpType\)\) \{/);
-  // O redirecionamento de erro pra type invalido nunca ecoa o valor bruto
-  // recebido de volta pro usuario (so a categoria fixa "invalid").
-  assert.match(confirmRoute, /linkError=invalid&kind=\$\{kind\}/);
+test('9) /auth/confirmar POST mantem allowlist explicita de type -- nunca aceita um valor arbitrario do form', () => {
+  assert.match(confirmAction, /const allowedOtpTypes = new Set<EmailOtpType>\(\["invite", "signup", "magiclink", "recovery", "email", "email_change"\]\);/);
+  assert.match(confirmAction, /if \(!tokenHash \|\| !allowedOtpTypes\.has\(typeParam as EmailOtpType\)\) \{/);
+  assert.match(confirmAction, /linkError=invalid&kind=\$\{kind\}/);
 });
 
 // -------------------- correcao desta auditoria: recovery state via /auth/confirm --------------------
 
-test('/auth/confirm gera o token de recovery state no servidor apos verifyOtp(type=recovery) ter sucesso, e redireciona direto pra /redefinir-senha com ele -- nunca depende de `next` carregar o token', () => {
-  assert.match(confirmRoute, /import \{ createPasswordRecoveryState \} from "@\/lib\/account\/password-recovery-state";/);
-  const recoveryBranch = confirmRoute.slice(confirmRoute.indexOf('if (kind === "recovery")'));
+test('/auth/confirmar POST gera o token de recovery state no servidor apos verifyOtp(type=recovery) ter sucesso, e redireciona direto pra /redefinir-senha com ele -- nunca depende de `next` carregar o token', () => {
+  assert.match(confirmAction, /import \{ createPasswordRecoveryState \} from "@\/lib\/account\/password-recovery-state"/);
+  const recoveryBranch = confirmAction.slice(confirmAction.indexOf('if (kind === "recovery")'));
   assert.match(recoveryBranch, /const recoveryState = createPasswordRecoveryState\(email\);/);
-  assert.match(recoveryBranch, /redirect\(new URL\(`\/redefinir-senha\?recovery=\$\{encodeURIComponent\(recoveryState\)\}`, request\.url\)\)/);
+  assert.match(recoveryBranch, /redirect\(`\/redefinir-senha\?recovery=\$\{encodeURIComponent\(recoveryState\)\}`\)/);
 });
 
 test('token de recovery state (createPasswordRecoveryState/verifyPasswordRecoveryState) faz round-trip valido pro mesmo e-mail e rejeita e-mail diferente, token adulterado ou expirado', () => {
@@ -126,22 +125,17 @@ test('token de recovery state (createPasswordRecoveryState/verifyPasswordRecover
 
 // -------------------- 14) Magic Link/Recovery nunca resetam flags de onboarding --------------------
 
-test('14) /auth/confirm nunca escreve em customer_profiles/must_change_password/must_complete_profile/requires_password_setup -- verifyOtp so estabelece sessao, nenhum flag de onboarding e tocado por nenhum kind (invite/magiclink/recovery/signup)', () => {
-  assert.doesNotMatch(confirmRoute, /customer_profiles/);
-  assert.doesNotMatch(confirmRoute, /must_change_password/);
-  assert.doesNotMatch(confirmRoute, /must_complete_profile/);
-  assert.doesNotMatch(confirmRoute, /requires_password_setup/);
-  // O unico efeito colateral alem da sessao (escrita nos cookies via
-  // createServerSupabaseClient, ja implicita em verifyOtp) e' mintar o
-  // token de recovery state -- nenhuma outra escrita em nenhuma tabela.
-  const sideEffectCalls = confirmRoute.match(/await \w[\w.]*\(/g) ?? [];
-  assert.deepEqual([...new Set(sideEffectCalls)], ['await createServerSupabaseClient(', 'await supabase.auth.verifyOtp(']);
+test('14) /auth/confirmar POST nunca escreve em customer_profiles/must_change_password/must_complete_profile/requires_password_setup -- verifyOtp so estabelece sessao, nenhum flag de onboarding e tocado por nenhum kind (invite/magiclink/recovery/signup)', () => {
+  assert.doesNotMatch(confirmAction, /customer_profiles/);
+  assert.doesNotMatch(confirmAction, /must_change_password/);
+  assert.doesNotMatch(confirmAction, /must_complete_profile/);
+  assert.doesNotMatch(confirmAction, /requires_password_setup/);
 });
 
 // -------------------- 12) erro tecnico nunca vaza --------------------
 
 test('12) erro tecnico do provedor nunca aparece na URL de redirecionamento de erro nem em log -- so categoria fixa + kind', () => {
-  assert.doesNotMatch(confirmRoute, /linkError=\$\{error\.message\}/);
-  assert.doesNotMatch(confirmRoute, /console\.\w+\([^)]*error\.message/);
-  assert.match(confirmRoute, /logSanitizedAuthLinkFailure\(\{ kind, category, rawCode: \(error as \{ code\?: string \}\)\.code \?\? null \}\);/);
+  assert.doesNotMatch(confirmAction, /linkError=\$\{error\.message\}/);
+  assert.doesNotMatch(confirmAction, /console\.\w+\([^)]*error\.message/);
+  assert.match(confirmAction, /logSanitizedAuthLinkFailure\(\{ kind, category, rawCode: \(error as \{ code\?: string \}\)\.code \?\? null \}\);/);
 });

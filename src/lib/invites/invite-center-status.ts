@@ -1,3 +1,5 @@
+import { isAuthLinkExpired } from '../auth/email-otp-ttl.ts';
+
 export const INVITE_CENTER_STATUSES = [
   'admin_action',
   'falha',
@@ -14,7 +16,7 @@ export type InviteCenterStatus = (typeof INVITE_CENTER_STATUSES)[number];
 export const INVITE_CENTER_STATUS_LABEL: Record<InviteCenterStatus, string> = {
   concluido: 'Concluído',
   pendente: 'Pendente',
-  expirado: 'Expirado',
+  expirado: 'Link expirado',
   falha: 'Falha de envio',
   cadastro_pendente: 'Cadastro pendente',
   admin_action: 'Ação administrativa',
@@ -47,7 +49,10 @@ export const INVITE_CENTER_ATTENTION_ORDER: Record<InviteCenterStatus, number> =
 export type InviteCenterClassifyInput = {
   mixedIntendedOwners: boolean;
   inviteStatus: 'pending' | 'claimed' | 'revoked' | 'expired' | null;
-  expiresAt: string | Date | null;
+  expiresAt?: string | Date | null;
+  authLinkExpiresAt?: string | Date | null;
+  authConfirmedAt?: string | Date | null;
+  passwordSetupCompletedAt?: string | Date | null;
   now?: Date;
   accountStatus: string | null;
   mustCompleteProfile: boolean;
@@ -58,27 +63,34 @@ export type InviteCenterClassifyInput = {
   skipReason?: string | null;
 };
 
-function isExpired(expiresAt: string | Date | null, now: Date) {
-  if (!expiresAt) return false;
-  const value = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
-  return !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
+function hasTimestamp(value: string | Date | null | undefined) {
+  if (!value) return false;
+  const date = value instanceof Date ? value : new Date(value);
+  return !Number.isNaN(date.getTime());
 }
 
-function isClaimedComplete(input: InviteCenterClassifyInput) {
-  if (input.mustCompleteProfile || input.mustChangePassword || input.cadastralIncomplete) return false;
+function isFirstAccessComplete(input: InviteCenterClassifyInput) {
+  if (input.mustCompleteProfile || input.mustChangePassword) return false;
+  if (input.cadastralIncomplete && input.inviteStatus === 'claimed') return false;
   if (input.activationCompletedAt) return true;
-  return String(input.accountStatus ?? '') === 'active';
+  if (String(input.accountStatus ?? '') === 'active') return true;
+  return input.inviteStatus === 'claimed' && hasTimestamp(input.passwordSetupCompletedAt);
+}
+
+function isFirstAccessStarted(input: InviteCenterClassifyInput) {
+  if (input.inviteStatus === 'claimed') return true;
+  return hasTimestamp(input.authConfirmedAt);
 }
 
 export function classifyInviteCenterRow(input: InviteCenterClassifyInput): InviteCenterStatus {
   const now = input.now ?? new Date();
   if (input.mixedIntendedOwners) return 'admin_action';
 
-  if (input.inviteStatus === 'claimed') {
-    return isClaimedComplete(input) ? 'concluido' : 'cadastro_pendente';
-  }
+  if (isFirstAccessComplete(input)) return 'concluido';
+  if (isFirstAccessStarted(input)) return 'cadastro_pendente';
 
-  if (input.inviteStatus === 'pending' && isExpired(input.expiresAt, now)) return 'expirado';
+  const linkExpiresAt = input.authLinkExpiresAt ?? null;
+  if (input.inviteStatus === 'pending' && isAuthLinkExpired(linkExpiresAt, now)) return 'expirado';
   if (input.inviteStatus === 'expired') return 'expirado';
   if (input.inviteStatus === 'pending') return 'pendente';
 
@@ -89,14 +101,13 @@ export function classifyInviteCenterRow(input: InviteCenterClassifyInput): Invit
 
 export function inviteCenterFirstAccessLabel(status: InviteCenterStatus, cadastralIncompleteBeforeClaim: boolean) {
   if (status === 'concluido') return 'Concluído';
-  if (status === 'cadastro_pendente') return 'Cadastro pendente';
-  if (status === 'pendente' || status === 'expirado') {
-    return cadastralIncompleteBeforeClaim
-      ? 'Pendente de correção no primeiro acesso'
-      : 'Ainda não acessou';
+  if (status === 'cadastro_pendente') return 'Primeiro acesso iniciado';
+  if (status === 'expirado') return 'Link expirado';
+  if (status === 'pendente') {
+    return cadastralIncompleteBeforeClaim ? 'Pendente de correção' : 'Ainda não acessou';
   }
   if (status === 'nao_enviado' && cadastralIncompleteBeforeClaim) {
-    return 'Pendente de correção no primeiro acesso';
+    return 'Pendente de correção';
   }
   if (status === 'admin_action') return 'Exige intervenção';
   if (status === 'falha') return 'Envio não concluído';
@@ -105,11 +116,17 @@ export function inviteCenterFirstAccessLabel(status: InviteCenterStatus, cadastr
 }
 
 export function canResendInviteCenter(status: InviteCenterStatus) {
-  return status === 'pendente' || status === 'expirado' || status === 'falha' || status === 'nao_enviado';
+  return status === 'pendente' || status === 'expirado' || status === 'falha' || status === 'nao_enviado' || status === 'cadastro_pendente';
 }
 
 export function canBulkResendInviteCenter(status: InviteCenterStatus) {
   return status === 'expirado' || status === 'falha';
+}
+
+export function inviteCenterResendLabel(status: InviteCenterStatus) {
+  if (status === 'cadastro_pendente') return 'Enviar novo link de acesso';
+  if (status === 'expirado') return 'Reenviar convite';
+  return 'Reenviar convite';
 }
 
 export function inviteCenterAdminActionReason(mixedIntendedOwners: boolean) {
@@ -139,6 +156,9 @@ export function inviteCenterEmptyCopy(statusFilter: string, hasAnyRows: boolean,
   }
   if (statusFilter === 'pendentes') {
     return { title: 'Nenhum convite pendente.', description: 'Ninguém nesta seleção está aguardando o primeiro acesso.' };
+  }
+  if (statusFilter === 'expirados') {
+    return { title: 'Nenhum link de acesso expirado.', description: 'Nenhum convite nesta seleção está com a janela Auth de 24h encerrada.' };
   }
   return { title: 'Nenhum convite encontrado.', description: 'Ajuste os filtros ou a busca para ver outros registros.' };
 }

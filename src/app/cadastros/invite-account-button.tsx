@@ -42,7 +42,7 @@ export function InviteAccountButton({ contactId, canInvite, inviteStatus, reason
       {inviteRecord ? (
         <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
           <p>Status do convite: <strong>{inviteRecord.status}</strong></p>
-          {expiryLabel ? <p className="mt-1">Validade interna: {expiryLabel}. Se venceu, reenvie para o e-mail cadastrado gerar um novo link Auth.</p> : <p className="mt-1">Validade: definida pelo provedor de autenticação (7 dias no cadastro interno).</p>}
+          {expiryLabel ? <p className="mt-1">Link de acesso: válido por 24 horas após o envio. Última validade interna do cadastro: {expiryLabel}.</p> : <p className="mt-1">Link de acesso: válido por 24 horas após o envio.</p>}
           <p className="mt-1 text-slate-400">O link de primeiro acesso é enviado por e-mail pelo Supabase Auth. Esta tela não copia nem exibe token.</p>
         </div>
       ) : null}
