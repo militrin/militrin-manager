@@ -22,6 +22,7 @@ test('1. production sem credencial falha fechada e nao cria pedido que pareca re
   assert.match(runtime, /Pagamento indisponível no momento/);
   assert.match(storeActions, /assertStoreLiveGateway/);
   assert.match(storeActions, /assertStoreLiveGateway\(input\.paymentMethod\)/);
+  assert.doesNotMatch(storeActions, /export function assertStoreLiveGateway/);
   assert.match(storeActions, /rollbackStoreOrder/);
   assert.match(gatewayProvider, /PAYMENT_PROVIDER=asaas e obrigatorio em producao/);
 });

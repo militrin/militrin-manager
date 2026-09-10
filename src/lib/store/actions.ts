@@ -37,7 +37,7 @@ function digits(value: string | null | undefined) {
   return String(value ?? "").replace(/\D/g, "");
 }
 
-export function assertStoreLiveGateway(method: AsaasCheckoutMethod): PaymentGatewayProvider {
+function assertStoreLiveGateway(method: AsaasCheckoutMethod): PaymentGatewayProvider {
   if (isProductionPaymentRuntime() && getPaymentGatewayProviderName() !== "asaas") {
     throw new Error(UNAVAILABLE);
   }
