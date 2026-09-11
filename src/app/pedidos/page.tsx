@@ -273,7 +273,7 @@ export default async function PedidosPage({
 
                       <div className="mt-3 flex gap-3">
                         <Link
-                          href={`/inscricoes/${order.id}`}
+                          href={`/inscricoes/pedido/${order.id}`}
                           className="text-xs text-slate-400 underline hover:text-slate-200"
                         >
                           Abrir ficha →
