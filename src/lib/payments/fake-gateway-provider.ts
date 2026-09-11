@@ -73,6 +73,7 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
       paidAt: null,
       feeAmount: null,
       netAmount: null,
+      checkoutUrl: `https://checkout.invalid/asaas/${input.providerPaymentId}`,
     };
   }
 

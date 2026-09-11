@@ -118,6 +118,7 @@ export type GatewayPaymentSnapshot = {
   paidAt: string | null;
   feeAmount: number | null;
   netAmount: number | null;
+  checkoutUrl?: string | null;
 };
 
 export type CancelPaymentInput = {

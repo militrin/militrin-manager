@@ -35,10 +35,17 @@ type AsaasPayment = {
   netValue: number | null;
   paymentDate: string | null;
   dueDate: string;
+  billingType?: string | null;
   invoiceUrl?: string | null;
   installment?: string | null;
   installmentNumber?: number | null;
 };
+
+const OPEN_CARD_STATUSES = new Set([
+  "PENDING",
+  "AWAITING_RISK_ANALYSIS",
+  "AWAITING_CHARGEBACK_REVERSAL",
+]);
 
 function readAsaasAccountId(payload: Record<string, unknown>): string | null {
   const account = payload.account;
@@ -204,43 +211,70 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
     const customerId = await this.findOrCreateCustomer(input.payer, input.organizationId);
     const installments = Math.max(1, Math.floor(input.installments ?? 1));
 
-    const body: Record<string, unknown> = {
-      customer: customerId,
-      billingType: "CREDIT_CARD",
-      value: input.amount,
-      dueDate: input.dueDate,
-      description: input.description,
-      externalReference: input.orderId,
-    };
-
-    if (installments >= 2) {
-      body.installmentCount = installments;
-      body.installmentValue = installmentValue(input.amount, installments);
-    }
-
-    const successUrl = String(input.successUrl ?? "").trim();
-    if (successUrl) {
-      body.callback = {
-        successUrl,
-        autoRedirect: true,
+    const existing = await this.findOpenCardPaymentByOrderId(input.orderId);
+    let payment = existing;
+    if (!payment) {
+      const body: Record<string, unknown> = {
+        customer: customerId,
+        billingType: "CREDIT_CARD",
+        value: input.amount,
+        dueDate: input.dueDate,
+        description: input.description,
+        externalReference: input.orderId,
       };
+
+      if (installments >= 2) {
+        body.installmentCount = installments;
+        body.installmentValue = installmentValue(input.amount, installments);
+      }
+
+      const successUrl = String(input.successUrl ?? "").trim();
+      if (successUrl) {
+        body.callback = {
+          successUrl,
+          autoRedirect: true,
+        };
+      }
+
+      try {
+        payment = await this.request<AsaasPayment>("/payments", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        const recovered = await this.findOpenCardPaymentByOrderId(input.orderId);
+        if (!recovered?.id) throw error;
+        payment = recovered;
+      }
     }
 
-    const payment = await this.request<AsaasPayment>("/payments", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-
-    const checkoutUrl = String(payment.invoiceUrl ?? "").trim();
-    if (!checkoutUrl) {
-      throw new Error("Asaas API error (/payments): invoiceUrl ausente na cobranca de cartao.");
+    if (!payment?.id) {
+      throw new Error("Asaas API error (/payments): cobranca de cartao sem id.");
     }
 
-    const installmentId = payment.installment ? String(payment.installment) : null;
+    const checkoutUrl = await this.resolveInvoiceUrl(payment);
+    let installmentId = payment.installment ? String(payment.installment) : null;
     if (installments >= 2 && !installmentId) {
-      throw new Error("Asaas API error (/payments): cobranca parcelada sem installment id.");
+      try {
+        const refreshed = await this.request<AsaasPayment>(`/payments/${payment.id}`);
+        installmentId = refreshed.installment ? String(refreshed.installment) : null;
+      } catch {
+        installmentId = null;
+      }
     }
-    const charges = await this.listCardCharges(payment, installmentId, installments, input.amount);
+
+    let charges;
+    try {
+      charges = await this.listCardCharges(payment, installmentId, installments, input.amount);
+    } catch {
+      charges = [{
+        providerPaymentId: payment.id,
+        gatewayInstallmentId: installmentId,
+        installmentNumber: 1,
+        installmentCount: 1,
+        amount: Number(payment.value ?? input.amount),
+      }];
+    }
 
     return {
       providerPaymentId: payment.id,
@@ -251,6 +285,43 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       gatewayInstallmentId: installmentId,
       charges,
     };
+  }
+
+  private invoiceUrlOf(payment: AsaasPayment | null | undefined) {
+    return String(payment?.invoiceUrl ?? "").trim();
+  }
+
+  private async resolveInvoiceUrl(payment: AsaasPayment): Promise<string> {
+    const fromCreate = this.invoiceUrlOf(payment);
+    if (fromCreate) return fromCreate;
+    try {
+      const fresh = await this.request<AsaasPayment>(`/payments/${payment.id}`);
+      return this.invoiceUrlOf(fresh);
+    } catch {
+      return "";
+    }
+  }
+
+  private async findOpenCardPaymentByOrderId(orderId: string): Promise<AsaasPayment | null> {
+    const reference = String(orderId ?? "").trim();
+    if (!reference) return null;
+    try {
+      const listed = await this.request<AsaasPayment[] | { data?: AsaasPayment[] }>(
+        `/payments?externalReference=${encodeURIComponent(reference)}&limit=20`,
+      );
+      const rows = Array.isArray(listed)
+        ? listed
+        : (Array.isArray(listed.data) ? listed.data : []);
+      const openCards = rows.filter((row) => {
+        if (!row?.id) return false;
+        if (String(row.billingType ?? "").trim().toUpperCase() !== "CREDIT_CARD") return false;
+        const status = String(row.status ?? "").trim().toUpperCase();
+        return OPEN_CARD_STATUSES.has(status);
+      });
+      return openCards[0] ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async listCardCharges(
@@ -302,6 +373,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       paidAt: payment.paymentDate,
       feeAmount: payment.netValue != null ? Number((payment.value - payment.netValue).toFixed(2)) : null,
       netAmount: payment.netValue,
+      checkoutUrl: this.invoiceUrlOf(payment) || null,
     };
   }
 
