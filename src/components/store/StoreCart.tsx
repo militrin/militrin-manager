@@ -7,9 +7,9 @@ import {
   createAccountStoreOrderAction,
   type StoreCartLine,
 } from '@/lib/store/actions';
+import { accountStoreOrderHref } from '@/lib/store/get-account-store-orders';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
 import { resolveStoreItemLinePrice } from '@/lib/store/pricing';
-import { StorePaymentPanel, type StorePaymentState } from './StorePaymentPanel';
 import { ItemDetailModal, ItemVariantSelect, QuantityStepper, isSoldOut, money, StoreItemPrice, type Selection } from './store-item-controls';
 
 type CartLine = { variantId: string | null; quantity: number };
@@ -25,7 +25,6 @@ export function StoreCart({ eventId, items }: { eventId: string; items: StoreIte
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credit_card'>('pix');
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [payment, setPayment] = useState<StorePaymentState | null>(null);
 
   const lines = useMemo(() => {
     return items
@@ -86,29 +85,22 @@ export function StoreCart({ eventId, items }: { eventId: string; items: StoreIte
     const cartItems: StoreCartLine[] = lines.map((line) => ({ storeItemId: line.item.id, variantId: line.variant?.id ?? null, quantity: line.quantity }));
     startTransition(async () => {
       const response = await createAccountStoreOrderAction({ eventId, items: cartItems, paymentMethod });
-      if (!response.success) {
+      if (!('storeOrderId' in response) || !response.storeOrderId) {
         setError(response.message);
         return;
       }
-      setCart({});
       setError(null);
+      const orderHref = accountStoreOrderHref(response.storeOrderId);
+      if (response.success && paymentMethod === 'credit_card' && response.payment?.checkoutUrl) {
+        window.location.assign(response.payment.checkoutUrl);
+        setCart({});
+        setCartOpen(false);
+        return;
+      }
+      router.replace(orderHref);
+      setCart({});
       setCartOpen(false);
-      router.refresh();
-      setPayment(response.payment);
     });
-  }
-
-  if (payment) {
-    return (
-      <div className="space-y-4">
-        <StorePaymentPanel state={payment} onChange={setPayment} />
-        {payment.status === 'paid' ? (
-          <button type="button" onClick={() => setPayment(null)} className="text-xs text-slate-400 underline">
-            Comprar mais itens
-          </button>
-        ) : null}
-      </div>
-    );
   }
 
   const openItem = openItemId ? items.find((item) => item.id === openItemId) ?? null : null;

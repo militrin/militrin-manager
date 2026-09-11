@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAccountOrders, getAccessibleTicketScope } from '@/lib/account/portal-orders-and-tickets';
 import { getStoreItemsForEvent, getStoreItemsForEvents } from '@/lib/store/get-store-items';
+import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
 import { MilitrinEmptyState, MilitrinSection } from '@/components/militrin';
 import { AccountStoreShop } from '@/components/store/AccountStoreShop';
 import { AccountStoreOrders } from './account-store-orders';
@@ -47,16 +48,7 @@ export default async function AccountStorePage({ searchParams }: { searchParams:
   const selectedEventName = selectedEventId ? events.find((event) => event.id === selectedEventId)?.name ?? 'Evento' : 'Todos os eventos';
   const hasAnyItem = globalItems.length > 0 || eventOnlyItems.length > 0;
 
-  const ordersQuery = supabase
-    .from('store_orders')
-    .select('id, order_number, display_number, status, payment_method, payment_status, final_amount, pix_code, pix_qrcode, expires_at, created_at, store_order_items(id, quantity, final_amount, status, store_items(name), store_item_variants(name, value))')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
-  const { data: myOrders } = selectedEventId
-    ? await ordersQuery.eq('event_id', selectedEventId)
-    : events.length > 0
-      ? await ordersQuery.or(`event_id.is.null,event_id.in.(${events.map((event) => event.id).join(',')})`)
-      : await ordersQuery.is('event_id', null);
+  const { data: myOrders } = await getAccountStoreOrders(supabase, user.id);
 
   return (
     <div className="space-y-5">

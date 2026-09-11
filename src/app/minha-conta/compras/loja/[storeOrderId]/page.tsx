@@ -59,21 +59,28 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
   const items = Array.isArray(order.store_order_items) ? order.store_order_items as Array<Record<string, unknown>> : [];
   const status = normalizeStatus(order.status);
   const paymentStatus = normalizeStatus(order.payment_status);
-  const isPixPending = status === 'pending' && order.payment_method === 'pix' && order.pix_code;
+  const paymentMethod = order.payment_method === 'credit_card' ? 'credit_card' : order.payment_method === 'pix' ? 'pix' : null;
+  const isPixPending = status === 'pending' && paymentMethod === 'pix';
   const syntheticPix = isSyntheticGatewayPayload({
     pixCode: order.pix_code,
     pixQrCode: order.pix_qrcode,
     gatewayPaymentId: order.gateway_payment_id,
     provider: order.provider,
   });
-  const isCardPending = status === 'pending' && order.payment_method === 'credit_card';
+  const isCardPending = status === 'pending' && paymentMethod === 'credit_card';
   const cardRefused = String(order.last_gateway_attempt_status ?? '') === 'refused';
+  const needsPaymentRetry = (isPixPending && !order.pix_code) || (isCardPending && !order.gateway_checkout_url);
 
   return (
     <div className="space-y-4">
-      <Link href="/minha-conta/compras" className="text-xs text-slate-400 underline">
-        Voltar para minhas compras
-      </Link>
+      <div className="flex flex-wrap gap-3">
+        <Link href="/minha-conta/loja" className="text-xs text-slate-400 underline">
+          Voltar para Loja
+        </Link>
+        <Link href="/minha-conta/compras" className="text-xs text-slate-400 underline">
+          Voltar para minhas compras
+        </Link>
+      </div>
 
       <MilitrinSection
         eyebrow="Pedido da loja"
@@ -111,7 +118,7 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
           </ul>
         </div>
 
-        {isPixPending && !syntheticPix ? (
+        {isPixPending && order.pix_code && !syntheticPix ? (
           <div className="mt-4 space-y-3">
             <PixCodeBox code={String(order.pix_code)} />
             {order.pix_qrcode ? (
@@ -122,18 +129,24 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
           </div>
         ) : null}
 
-        {isPixPending && syntheticPix ? (
+        {isPixPending && !order.pix_code ? (
+          <p className="mt-4 text-sm text-amber-200">O pedido foi criado, mas o PIX ainda não está disponível. Tente gerar o pagamento novamente.</p>
+        ) : null}
+
+        {isPixPending && order.pix_code && syntheticPix ? (
           <p className="mt-4 text-sm text-rose-200">Este PIX não é uma cobrança real. Cancele o pedido e tente novamente.</p>
         ) : null}
 
         {isCardPending ? (
           <div className="mt-4 space-y-2 text-sm text-slate-200">
-            {cardRefused ? <p className="text-rose-200">Cartão recusado. Tente novamente na página segura do Asaas.</p> : <p>Pagamento com cartão pendente. O Militrin não armazena número nem CVV.</p>}
+            {cardRefused ? <p className="text-rose-200">Cartão recusado. Tente novamente na página segura do Asaas.</p> : <p>Pagamento com cartão pendente ou em processamento. O Militrin não armazena número nem CVV.</p>}
             {order.gateway_checkout_url ? (
               <a href={String(order.gateway_checkout_url)} className="inline-flex h-9 items-center rounded-lg bg-emerald-500 px-3 text-xs font-semibold text-emerald-950">
                 {cardRefused ? 'Tentar pagamento novamente' : 'Pagar com cartão'}
               </a>
-            ) : null}
+            ) : (
+              <p className="text-amber-200">O pedido existe, mas a página do cartão ainda não foi gerada. Tente iniciar o pagamento novamente.</p>
+            )}
           </div>
         ) : null}
 
@@ -183,9 +196,11 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
 
         {status === 'cancelled' ? (
           <p className="mt-4 text-sm text-rose-300">Este pedido foi cancelado.</p>
-        ) : status === 'pending' ? (
+        ) : status === 'expired' ? (
+          <p className="mt-4 text-sm text-amber-200">Este pedido expirou.</p>
+        ) : status === 'pending' && paymentMethod ? (
           <div className="mt-4">
-            <StoreOrderActions storeOrderId={String(order.id)} canCancel />
+            <StoreOrderActions storeOrderId={String(order.id)} canCancel paymentMethod={paymentMethod} needsPaymentRetry={needsPaymentRetry} />
           </div>
         ) : null}
       </MilitrinSection>

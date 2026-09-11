@@ -53,9 +53,10 @@ test('/minha-conta/loja: "Nenhum evento disponivel" nunca e mais o estado vazio 
   assert.match(accountLojaPage, /hasAnyItem[\s\S]{0,200}Nenhum item dispon[íi]vel/);
 });
 
-test('/minha-conta/loja: "Meus pedidos da loja" inclui pedidos de produto global (event_id null), nao so os do(s) evento(s) do usuario', () => {
-  assert.match(accountLojaPage, /await ordersQuery\.or\(`event_id\.is\.null,event_id\.in\.\(\$\{events\.map/);
-  assert.match(accountLojaPage, /await ordersQuery\.is\('event_id', null\)/);
+test('/minha-conta/loja: "Meus pedidos da loja" lista todos os store_orders do usuario, inclusive event_id null e pendentes', () => {
+  assert.match(accountLojaPage, /getAccountStoreOrders\(supabase, user\.id\)/);
+  assert.doesNotMatch(accountLojaPage, /ordersQuery\.eq\('event_id'/);
+  assert.doesNotMatch(accountLojaPage, /payment_status['"]\s*,\s*['"]paid/);
 });
 
 test('AccountStoreShop: produto global nunca exige escolher evento -- so produto vinculado a evento especifico exige', () => {

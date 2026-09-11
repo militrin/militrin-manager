@@ -3,24 +3,51 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { MilitrinButton } from '@/components/militrin';
-import { cancelAccountStoreOrderAction, simulateStoreOrderPaymentAction } from '@/lib/store/actions';
+import { cancelAccountStoreOrderAction, simulateStoreOrderPaymentAction, startAccountStoreOrderPaymentAction } from '@/lib/store/actions';
 
 const canSimulatePayment = process.env.NODE_ENV === 'development';
 
-export function StoreOrderActions({ storeOrderId, canCancel }: { storeOrderId: string; canCancel: boolean }) {
+export function StoreOrderActions({
+  storeOrderId,
+  canCancel,
+  paymentMethod,
+  needsPaymentRetry,
+}: {
+  storeOrderId: string;
+  canCancel: boolean;
+  paymentMethod: 'pix' | 'credit_card';
+  needsPaymentRetry?: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {needsPaymentRetry ? (
+        <MilitrinButton
+          size="sm"
+          disabled={pending}
+          onClick={() => startTransition(async () => {
+            const response = await startAccountStoreOrderPaymentAction(storeOrderId, paymentMethod);
+            setMessage(response.message ?? (response.success ? 'Pagamento atualizado.' : 'Não foi possível iniciar o pagamento.'));
+            if (response.success && paymentMethod === 'credit_card' && response.checkoutUrl) {
+              window.location.assign(response.checkoutUrl);
+              return;
+            }
+            if (response.success) router.refresh();
+          })}
+        >
+          {pending ? 'Processando...' : paymentMethod === 'credit_card' ? 'Tentar pagamento do cartão' : 'Gerar PIX novamente'}
+        </MilitrinButton>
+      ) : null}
       {canSimulatePayment ? (
         <MilitrinButton
           size="sm"
           variant="success"
           disabled={pending}
           onClick={() => startTransition(async () => {
-            const response = await simulateStoreOrderPaymentAction(storeOrderId, 'pix');
+            const response = await simulateStoreOrderPaymentAction(storeOrderId, paymentMethod);
             setMessage(response.message);
             if (response.success) router.refresh();
           })}

@@ -375,13 +375,20 @@ export async function createAccountStoreOrderAction(input: {
     amount: finalAmount,
     paymentMethod: input.paymentMethod,
   });
+  revalidatePath("/minha-conta/loja");
+  revalidatePath("/minha-conta/compras");
+  revalidatePath(`/minha-conta/compras/loja/${storeOrderId}`);
+
   if (!started.success) {
-    await rollbackStoreOrder(storeOrderId);
-    revalidatePath("/minha-conta/loja");
-    return { success: false as const, message: started.message };
+    return {
+      success: false as const,
+      message: started.message,
+      storeOrderId,
+      orderNumber,
+      finalAmount,
+    };
   }
 
-  revalidatePath("/minha-conta/loja");
   return {
     success: true as const,
     message: "Pedido criado.",
@@ -393,6 +400,14 @@ export async function createAccountStoreOrderAction(input: {
 }
 
 export async function generateStoreOrderPixAction(storeOrderId: string, amount: number) {
+  return startAccountStoreOrderPaymentAction(storeOrderId, "pix", amount);
+}
+
+export async function startAccountStoreOrderPaymentAction(
+  storeOrderId: string,
+  paymentMethod: "pix" | "credit_card",
+  amount?: number,
+) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -408,16 +423,20 @@ export async function generateStoreOrderPixAction(storeOrderId: string, amount: 
   const started = await startStoreGatewayPayment({
     storeOrderId,
     orderNumber: String(order.order_number ?? ""),
-    amount: Number(order.final_amount ?? amount),
-    paymentMethod: "pix",
+    amount: Number(order.final_amount ?? amount ?? 0),
+    paymentMethod,
   });
   if (!started.success) return started;
+  revalidatePath("/minha-conta/loja");
+  revalidatePath(`/minha-conta/compras/loja/${storeOrderId}`);
   return {
     success: true as const,
+    message: "Pagamento atualizado.",
     pixCode: started.payment.pixCode ?? "",
     pixQrCode: started.payment.pixQrCode ?? "",
     expiresAt: started.payment.expiresAt,
     checkoutUrl: started.payment.checkoutUrl,
+    payment: started.payment,
   };
 }
 
