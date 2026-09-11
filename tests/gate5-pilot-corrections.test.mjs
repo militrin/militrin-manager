@@ -70,9 +70,35 @@ test('3. cortesia real continua Cortesia', () => {
     paymentMethod: 'courtesy',
   });
   assert.equal(courtesy.isCourtesy, true);
+  assert.equal(courtesy.label, 'Destinatário');
   assert.match(courtesy.name, /Cortesia/);
   assert.equal(formatImportedPaymentMethod('courtesy'), 'Cortesia');
   assert.equal(normalizeImportedPaymentMethod('Cortesia'), 'courtesy');
+});
+
+test('3b. administrative sem payment_method courtesy não é Cortesia', () => {
+  const paidByOperator = resolveBuyerPresentation({
+    buyerType: 'administrative',
+    holderName: 'João Operador',
+    paymentMethod: 'pix',
+  });
+  assert.equal(paidByOperator.isCourtesy, false);
+  assert.equal(paidByOperator.label, 'Destinatário');
+  assert.equal(paidByOperator.name, 'João Operador');
+  assert.doesNotMatch(paidByOperator.name, /Cortesia/);
+
+  const cash = resolveBuyerPresentation({
+    buyerType: 'administrative',
+    holderName: 'Ana Dinheiro',
+    paymentMethod: 'cash',
+  });
+  assert.equal(cash.isCourtesy, false);
+  assert.doesNotMatch(cash.name, /Cortesia/);
+
+  const unnamed = resolveBuyerPresentation({ buyerType: 'administrative', paymentMethod: 'pix' });
+  assert.equal(unnamed.isCourtesy, false);
+  assert.equal(unnamed.label, 'Destinatário');
+  assert.doesNotMatch(unnamed.name, /Cortesia/);
 });
 
 test('4. imported_holder não implica Cortesia', () => {

@@ -14,6 +14,7 @@ type SearchParams = {
   eventId?: string;
   paymentStatus?: string;
   orderStatus?: string;
+  origin?: string;
   q?: string;
   page?: string;
 };
@@ -26,6 +27,12 @@ const paymentStatusLabel: Record<string, string> = {
 const orderStatusLabel: Record<string, string> = {
   pending: "Pendente", confirmed: "Confirmado", expired: "Expirado",
   cancelled: "Cancelado", refunded: "Estornado",
+};
+
+const originLabel: Record<string, string> = {
+  imported_holder: "Importado",
+  administrative: "Emitido pelo operador",
+  account: "Compra pelo site",
 };
 
 function money(value: number, priceOrigin?: string | null) {
@@ -110,15 +117,25 @@ export default async function PedidosPage({
                   <option key={v} value={v}>{l}</option>
                 ))}
               </select>
+              <select
+                name="origin"
+                defaultValue={params.origin ?? ""}
+                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="">Origem — todas</option>
+                {Object.entries(originLabel).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
               <button
                 type="submit"
                 className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/20 transition"
               >
                 Filtrar
               </button>
-              {(params.q || params.paymentStatus || params.orderStatus) && (
+              {(params.q || params.paymentStatus || params.orderStatus || params.origin) && (
                 <Link
-                  href={buildUrl({ q: "", paymentStatus: "", orderStatus: "", page: "1" })}
+                  href={buildUrl({ q: "", paymentStatus: "", orderStatus: "", origin: "", page: "1" })}
                   className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-400 hover:text-slate-200 transition"
                 >
                   Limpar

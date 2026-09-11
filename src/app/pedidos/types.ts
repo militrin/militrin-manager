@@ -43,12 +43,21 @@ export type OrderRow = {
   productItems: OrderProductItemRow[];
 };
 
+export const ORDER_ORIGIN_VALUES = ["imported_holder", "administrative", "account"] as const;
+
+export type OrderOrigin = (typeof ORDER_ORIGIN_VALUES)[number];
+
 export type OrdersFilterInput = {
   eventId?: string;
   paymentStatus?: string;
   orderStatus?: string;
+  origin?: string;
   q?: string;
   page?: string;
 };
 
 export const ORDER_PAGE_SIZE = 30;
+
+export function parseOrderOrigin(value?: string | null): OrderOrigin | undefined {
+  return ORDER_ORIGIN_VALUES.find((origin) => origin === value);
+}

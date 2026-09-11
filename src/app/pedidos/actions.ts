@@ -3,7 +3,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import type { OrderRow, OrderItemRow, OrderProductItemRow, OrdersFilterInput } from "./types";
-import { ORDER_PAGE_SIZE } from "./types";
+import { ORDER_PAGE_SIZE, parseOrderOrigin } from "./types";
 import { orderDisplayReference } from "@/lib/display-reference";
 import { countIssuedTickets } from "@/lib/imports/issuance-presentation";
 
@@ -52,15 +52,23 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
   const canViewAmounts = await hasPermission("finance.view_amounts");
 
   // ── 1. Pedidos com comprador ─────────────────────────────────────────
-  const { data: ordersRaw } = await supabase
+  // Origem e orders.buyer_type (CHECK orders_buyer_type_check), nunca
+  // price_origin / nome / e-mail / valor / data. O .eq entra na query
+  // antes do limit(500), no mesmo nivel do evento.
+  const origin = parseOrderOrigin(params.origin);
+  let ordersQuery = supabase
     .from("orders")
     .select(`
-      id, order_number, display_number, status, price_origin,
+      id, order_number, display_number, status, price_origin, buyer_type,
       base_amount, discount_amount, final_amount,
       created_at, confirmed_at,
       participants!inner(id, full_name, email, phone, cpf)
     `)
-    .eq("event_id", selectedEvent.id)
+    .eq("event_id", selectedEvent.id);
+  if (origin) {
+    ordersQuery = ordersQuery.eq("buyer_type", origin);
+  }
+  const { data: ordersRaw } = await ordersQuery
     .order("created_at", { ascending: false })
     .limit(500);
 

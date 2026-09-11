@@ -95,11 +95,10 @@ export function commercialStatusFriendlyReason(status: CommercialStatus, hasPaym
 
 // ── Comprador / destinatário ────────────────────────────────────────────────
 // orders.buyer_type distingue 'account' (comprador real, orders.user_id
-// preenchido) de 'administrative' (emissão manual, user_id SEMPRE null por
-// design -- ver CHECK orders_buyer_ownership_check) e 'imported_holder'
-// (importação em lote). Importação legada NÃO é cortesia.
-// "Cortesia" só com evidência real: payment_method='courtesy' ou
-// buyer_type='administrative'.
+// preenchido) de 'administrative' (pedido criado pelo operador, user_id
+// SEMPRE null por design -- ver CHECK orders_buyer_ownership_check) e
+// 'imported_holder' (importação em lote). Origem NÃO é cortesia.
+// Cortesia só com evidência financeira: payment_method='courtesy'.
 export type BuyerPresentation = {
   label: string; // "Comprador" ou "Destinatário"
   name: string; // nome resolvido, nunca "Comprador não identificado" quando já sabemos pra quem foi
@@ -114,7 +113,8 @@ export function resolveBuyerPresentation(input: {
 }): BuyerPresentation {
   const isImportedHolder = input.buyerType === "imported_holder";
   const isAdministrative = input.buyerType === "administrative";
-  const isCourtesy = isAdministrative || input.paymentMethod === "courtesy";
+  const isCourtesy = input.paymentMethod === "courtesy";
+  const isOperatorOrigin = isImportedHolder || isAdministrative;
 
   if (input.buyerName) {
     return { label: "Comprador", name: isCourtesy ? `${input.buyerName} (Cortesia)` : input.buyerName, isCourtesy };
@@ -122,11 +122,14 @@ export function resolveBuyerPresentation(input: {
   if (isCourtesy && input.holderName) {
     return { label: "Destinatário", name: `${input.holderName} (Cortesia)`, isCourtesy: true };
   }
-  if (isImportedHolder && input.holderName) {
+  if (isOperatorOrigin && input.holderName) {
     return { label: "Destinatário", name: input.holderName, isCourtesy: false };
   }
   if (isImportedHolder) {
     return { label: "Destinatário", name: "Titular importado", isCourtesy: false };
+  }
+  if (isAdministrative) {
+    return { label: "Destinatário", name: "Titular não definido", isCourtesy: false };
   }
   return { label: "Comprador", name: "Comprador não identificado", isCourtesy: false };
 }
