@@ -10,7 +10,8 @@ function metaLine(ticket: AccountHomeTicketCard) {
 }
 
 function shirtLine(ticket: AccountHomeTicketCard) {
-  const parts = [ticket.shirtLabel, ticket.batchLabel].filter(Boolean);
+  const shirt = ticket.shirtLabel ? ticket.shirtLabel.replace(/^camiseta\s+/i, '') : null;
+  const parts = [shirt, ticket.batchLabel].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
@@ -87,6 +88,17 @@ export function HomeTicketCarousel({
               Camiseta: <span className="font-medium text-slate-100">{details}</span>
             </p>
           ) : null}
+
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            {current.canShowTicket ? (
+              <MilitrinLinkButton href={qrHref} variant="success" size="md" iconLeft={<QrCode size={16} />} className="w-full min-w-0 sm:flex-1">
+                Abrir QR Code
+              </MilitrinLinkButton>
+            ) : null}
+            <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="secondary" size="md" className="w-full min-w-0 sm:flex-1">
+              Ver acesso
+            </MilitrinLinkButton>
+          </div>
         </div>
 
         {current.canShowTicket && current.token ? (
@@ -101,17 +113,6 @@ export function HomeTicketCarousel({
             </div>
           </div>
         ) : null}
-      </div>
-
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        {current.canShowTicket ? (
-          <MilitrinLinkButton href={qrHref} variant="success" size="md" iconLeft={<QrCode size={16} />} className="w-full sm:flex-1">
-            Abrir QR Code
-          </MilitrinLinkButton>
-        ) : null}
-        <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="secondary" size="md" className="w-full sm:flex-1">
-          Ver acesso
-        </MilitrinLinkButton>
       </div>
     </section>
   );
