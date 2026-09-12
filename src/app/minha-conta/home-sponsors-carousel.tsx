@@ -16,10 +16,10 @@ export function HomeSponsorsCarousel({
   if (sponsors.length === 0) return null;
 
   return (
-    <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 snap-x snap-mandatory [scrollbar-width:none] lg:mx-0 lg:grid lg:grid-cols-4 lg:overflow-visible lg:px-0 lg:pb-0 lg:snap-none [&::-webkit-scrollbar]:hidden">
+    <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 snap-x snap-mandatory [scrollbar-width:none] lg:mx-0 lg:flex lg:flex-wrap lg:overflow-visible lg:px-0 lg:pb-0 lg:snap-none [&::-webkit-scrollbar]:hidden">
       {sponsors.map((sponsor) => {
         const tile = (
-          <div className="flex h-20 w-[min(46vw,180px)] shrink-0 snap-start items-center justify-center overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 px-3 shadow-lg shadow-black/10 transition hover:border-emerald-500/30 lg:h-[5.5rem] lg:w-auto">
+          <div className="flex h-20 w-[min(46vw,180px)] shrink-0 snap-start items-center justify-center overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 px-3 shadow-lg shadow-black/10 transition hover:border-emerald-500/30 lg:h-[5.5rem] lg:w-44">
             <div className="relative h-12 w-full">
               <Image
                 src={sponsor.bannerUrl}

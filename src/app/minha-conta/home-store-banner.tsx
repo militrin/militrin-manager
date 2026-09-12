@@ -26,7 +26,7 @@ export function HomeStoreBanner({
         </span>
       </div>
       {imageUrls.length > 0 ? (
-        <div aria-hidden className="relative hidden w-[38%] max-w-xs items-center justify-end gap-2 pr-4 lg:flex">
+        <div aria-hidden className="relative hidden w-[38%] max-w-xs items-center justify-end gap-2 pr-4 sm:flex">
           {imageUrls.slice(0, 3).map((url, index) => (
             <div
               key={`${url}-${index}`}

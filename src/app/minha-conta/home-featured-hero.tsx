@@ -46,21 +46,17 @@ export function HomeFeaturedHero({
             <div aria-hidden className="mask-logo absolute inset-1.5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-300">Evento em destaque</p>
-              <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-200 lg:hidden">
-                Destaque
-              </span>
-            </div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-300">Evento em destaque</p>
             <h2 className="mt-1 truncate text-xl font-semibold tracking-tight text-white sm:text-2xl" title={title}>
               {title}
             </h2>
-            <p className="mt-1 hidden text-sm text-slate-200 lg:block">
+            <p className="mt-1 hidden truncate text-sm text-slate-200 lg:block">
               {dateLabel}
-              {hoursLabel ? <span className="text-slate-400"> · {hoursLabel}</span> : null}
+              {hoursLabel ? ` · ${hoursLabel}` : ''}
+              {event.location ? ` · ${event.location}` : ''}
             </p>
             <p className="mt-0.5 truncate text-sm text-slate-300 lg:hidden">{mobileWhen}</p>
-            <p className="mt-0.5 truncate text-sm text-slate-400">{event.location}</p>
+            <p className="truncate text-sm text-slate-400 lg:hidden">{event.location}</p>
           </div>
         </div>
 
