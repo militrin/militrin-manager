@@ -87,21 +87,25 @@ test("AccountMobileNav recebe o destino administrativo como prop -- layout.tsx r
   assert.match(layout, /<AccountMobileNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} \/>/);
 });
 
-test("home da Minha Conta e um painel compacto: evento, acesso, loja -- sem atalhos duplicados", () => {
+test("home da Minha Conta segue a hierarquia evento, acesso, eventos, loja -- sem atalhos duplicados", () => {
   const heroIdx = homePage.indexOf("<HomeFeaturedHero");
   const acessosIdx = homePage.indexOf("<HomeTicketCarousel");
+  const eventosIdx = homePage.indexOf("<HomeFeaturedEvents");
   const lojaIdx = homePage.indexOf("<HomeStoreBanner");
   assert.ok(heroIdx !== -1, "card de evento em destaque precisa existir");
   assert.ok(acessosIdx !== -1, "card Meu acesso precisa existir");
+  assert.ok(eventosIdx !== -1, "catalogo de eventos precisa existir");
   assert.ok(lojaIdx !== -1, "faixa da loja precisa existir");
-  assert.ok(heroIdx < acessosIdx && acessosIdx < lojaIdx, "ordem: evento, acesso, loja");
+  assert.ok(heroIdx < acessosIdx && acessosIdx < eventosIdx && eventosIdx < lojaIdx);
   assert.doesNotMatch(homePage, /HomeQuickActions/);
   assert.doesNotMatch(homePage, /Acessar meu QR Code/);
 });
 
-test("faixa da Loja na home e compacta e aponta para /minha-conta/loja", () => {
+test("faixa da Loja na home aponta para /minha-conta/loja e pode usar imagens reais do catalogo", () => {
+  assert.match(homePage, /import { getStoreItemsForEvents } from '@\/lib\/store\/get-store-items'/);
+  assert.match(homePage, /storeImageUrls/);
   assert.match(homeStoreBanner, /href="\/minha-conta\/loja"/);
   assert.match(homeStoreBanner, /Ver loja/);
   assert.match(homeStoreBanner, /Loja Militrin/);
-  assert.doesNotMatch(homeStoreBanner, /imageUrls/);
+  assert.match(homeStoreBanner, /imageUrls/);
 });

@@ -1,5 +1,5 @@
 import type { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatDateBR } from '@/lib/utils/date';
+import { formatCompactEventWhen, formatDateBR } from '@/lib/utils/date';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import { optionalDisplayValue } from '@/lib/optional-display';
 
@@ -11,6 +11,7 @@ export type AccountHomeTicketCard = {
   eventId: string | null;
   eventName: string;
   date: string | null;
+  compactDate: string | null;
   location: string | null;
   bannerUrl: string | null;
   status: string;
@@ -129,6 +130,7 @@ export async function buildAccountHomeTicketCards(
       eventId: eventId || null,
       eventName: eventObj?.name ? String(eventObj.name) : 'Evento Militrin',
       date: eventObj?.starts_at ? formatDateBR(eventObj.starts_at) : null,
+      compactDate: eventObj?.starts_at ? (formatCompactEventWhen(eventObj.starts_at, null)?.split(' · ')[0] ?? null) : null,
       location: optionalDisplayValue(eventObj?.location),
       bannerUrl: eventObj?.banner_card_url || eventObj?.banner_hero_url || null,
       status: String(ticket.status ?? 'pending'),

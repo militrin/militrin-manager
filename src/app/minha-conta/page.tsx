@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { CircleUserRound } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatDateBR } from '@/lib/utils/date';
+import { formatCompactEventWhen, formatDateBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
@@ -10,12 +10,14 @@ import { resolveParticipantFirstName, resolveParticipantFullName } from '@/lib/a
 import { canContinueCommercialPayment } from '@/lib/dashboard/commercial-status';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
+import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
 import { BetaFeedbackWidget } from '@/components/feedback/BetaFeedbackWidget';
 import { HomeTicketCarousel } from './home-ticket-carousel';
 import { HomeFeaturedEvents, type HomeFeaturedEvent } from './home-featured-events';
 import { HomeFeaturedHero } from './home-featured-hero';
 import { HomeStoreBanner } from './home-store-banner';
 import { HomePendingPurchase } from './home-pending-purchase';
+import { HomeSponsorsCarousel, type HomeSponsor } from './home-sponsors-carousel';
 import { classifyTicketOperationalSituation } from '@/lib/tickets/ticket-situation';
 
 function isEventOpen(event: { registration_enabled: boolean; registration_open_at: string | null; registration_close_at: string | null }) {
@@ -62,21 +64,28 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return (value ?? null) as T | null;
 }
 
+function compactDayMonth(startsAt: string | null) {
+  if (!startsAt) return 'Data a confirmar';
+  const line = formatCompactEventWhen(startsAt, null);
+  return line ? line.split(' · ')[0] : formatDateBR(startsAt);
+}
+
 export default async function MinhaContaPage() {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [profileResult, ordersResult, eventsResult, featuredEventsResult, headerEvent] = await Promise.all([
+  const [profileResult, ordersResult, eventsResult, featuredEventsResult, sponsorsResult, headerEvent] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     getAccountOrders(supabase, user?.id ?? ''),
     supabase
       .from('events')
-      .select('id, name, slug, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at')
+      .select('id, name, slug, year, starts_at, ends_at, location, registration_enabled, registration_open_at, registration_close_at')
       .eq('registration_enabled', true)
       .order('starts_at', { ascending: true, nullsFirst: false }),
     supabase.rpc('get_featured_events_for_dashboard'),
+    supabase.rpc('get_active_sponsors_for_home'),
     getPrimaryAccountHeaderEvent(supabase),
   ]);
 
@@ -100,6 +109,7 @@ export default async function MinhaContaPage() {
     sort_order: number;
     name: string;
     slug: string;
+    year?: number | null;
     starts_at: string | null;
     ends_at: string | null;
     location: string | null;
@@ -110,6 +120,7 @@ export default async function MinhaContaPage() {
     id: String(event.event_id),
     name: String(event.name ?? 'Evento'),
     slug: String(event.slug ?? ''),
+    year: event.year == null ? null : Number(event.year),
     starts_at: event.starts_at ? String(event.starts_at) : null,
     ends_at: event.ends_at ? String(event.ends_at) : null,
     location: event.location ? String(event.location) : null,
@@ -157,32 +168,62 @@ export default async function MinhaContaPage() {
     })
     : null;
 
-  const listedEvents = dashboardEvents
-    .filter((event) => String(event.id) !== String(headerEvent?.id ?? ''))
-    .slice(0, 2);
-  const categoryResults = await Promise.all(listedEvents.map((event) => (
-    event?.id
-      ? supabase.rpc('get_event_ticket_categories', { p_event_id: event.id })
-      : Promise.resolve({ data: null })
-  )));
+  const listedEvents = dashboardEvents.slice(0, 3);
+  const listedEventIds = listedEvents.map((event) => String(event.id)).filter(Boolean);
+  const storeEventIds = Array.from(new Set([
+    ...ticketScope.ownedEventIds,
+    ...listedEventIds,
+    headerEvent?.id ? String(headerEvent.id) : '',
+  ].filter(Boolean)));
+
+  const [bannerRowsResult, storeItems, ...categoryResults] = await Promise.all([
+    listedEventIds.length > 0
+      ? supabase.from('events').select('id, year, banner_card_url, banner_hero_url').in('id', listedEventIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; year: number | null; banner_card_url: string | null; banner_hero_url: string | null }> }),
+    storeEventIds.length > 0 ? getStoreItemsForEvents(supabase, storeEventIds) : Promise.resolve([]),
+    ...listedEvents.map((event) => (
+      event?.id
+        ? supabase.rpc('get_event_ticket_categories', { p_event_id: event.id })
+        : Promise.resolve({ data: null })
+    )),
+  ]);
+  const bannersById = new Map(
+    ((bannerRowsResult.data ?? []) as Array<{ id: string; year: number | null; banner_card_url: string | null; banner_hero_url: string | null }>).map((row) => [String(row.id), row]),
+  );
+  const storeImageUrls = storeItems.map((item) => item.imageUrl).filter((url): url is string => Boolean(url)).slice(0, 3);
+
+  const sponsorRows = (sponsorsResult.data ?? []) as Array<{ sponsor_id: string; name: string; banner_url: string | null; link_url: string | null }>;
+  const sponsors: HomeSponsor[] = sponsorRows
+    .filter((row) => Boolean(row.banner_url))
+    .map((row) => ({
+      id: String(row.sponsor_id),
+      name: String(row.name),
+      bannerUrl: String(row.banner_url),
+      linkUrl: row.link_url ? String(row.link_url) : null,
+    }));
+
   const cardEventsRaw = listedEvents.map((event, index) => {
     const categoriesData = (Array.isArray(categoryResults[index]?.data) ? categoryResults[index].data : []) as Array<{ confirmed_count?: number; capacity?: number | null }>;
     const lowestAmount = findInitialPrice(categoriesData as Array<Record<string, unknown>>);
     const totalCapacity = categoriesData.reduce((sum, row) => sum + (Number.isFinite(Number(row.capacity)) ? Number(row.capacity) : 0), 0);
     const totalConfirmed = categoriesData.reduce((sum, row) => sum + Number(row.confirmed_count ?? 0), 0);
     const soldPercent = totalCapacity > 0 ? Math.round((totalConfirmed / totalCapacity) * 100) : null;
+    const banner = bannersById.get(String(event.id));
+    const year = banner?.year ?? ('year' in event ? Number(event.year) || null : null);
 
     return {
       id: String(event.id),
       name: String(event.name),
+      year,
       date: event.starts_at ? formatDateBR(String(event.starts_at)) : 'Data a confirmar',
+      compactDate: compactDayMonth(event.starts_at ? String(event.starts_at) : null),
       location: event.location ? String(event.location) : 'Local a confirmar',
       registrationStatus: getRegistrationStatus(event),
       startingPrice: lowestAmount !== null ? money(lowestAmount) : null,
       soldPercent,
       isHot: soldPercent !== null && soldPercent >= 50,
-      bannerUrl: null,
-      buyHref: event.slug ? `/inscricao/${event.slug}` : '/minha-conta/comprar',
+      bannerUrl: banner?.banner_card_url || banner?.banner_hero_url || null,
+      eventHref: event.slug ? `/eventos/${event.slug}` : '/eventos',
     } satisfies HomeFeaturedEvent;
   });
 
@@ -215,15 +256,15 @@ export default async function MinhaContaPage() {
   })();
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-5">
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold tracking-tight text-white">Olá, {greetingName}!</h1>
-          <p className="mt-0.5 text-xs text-slate-400">Bem-vindo à sua conta Militrin.</p>
+          <h1 className="truncate text-2xl font-semibold tracking-tight text-white">Olá, {greetingName}!</h1>
+          <p className="mt-1 text-sm text-slate-400">Bem-vindo à sua conta Militrin.</p>
         </div>
         <Link
           href="/minha-conta/dados"
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 sm:w-auto sm:gap-2 sm:px-3"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/70 text-slate-100 transition hover:border-emerald-500/40 sm:w-auto sm:gap-2 sm:px-3"
           aria-label="Ver meu perfil"
         >
           <CircleUserRound size={16} />
@@ -233,7 +274,7 @@ export default async function MinhaContaPage() {
 
       {headerEvent ? <HomeFeaturedHero event={headerEvent} cta={featuredHeroCta} /> : null}
 
-      <div className={pendingOrder && pendingOrderDetail ? 'grid gap-3 lg:grid-cols-2' : undefined}>
+      <div className={pendingOrder && pendingOrderDetail ? 'grid gap-4 lg:grid-cols-2' : undefined}>
         <HomeTicketCarousel
           tickets={ticketCards}
           emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
@@ -254,17 +295,26 @@ export default async function MinhaContaPage() {
         ) : null}
       </div>
 
-      <HomeStoreBanner />
-
       {cardEventsRaw.length > 0 ? (
         <section>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-white">Eventos em destaque</h2>
-            <Link href="/eventos" className="text-xs font-semibold text-slate-400 hover:text-slate-200">
-              Ver todos
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-white">Eventos</h2>
+            <Link href="/eventos" className="text-sm font-semibold text-emerald-200 transition hover:text-emerald-100">
+              Ver todos →
             </Link>
           </div>
           <HomeFeaturedEvents events={cardEventsRaw} />
+        </section>
+      ) : null}
+
+      <HomeStoreBanner imageUrls={storeImageUrls} />
+
+      {sponsors.length > 0 ? (
+        <section>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-white">Parceiros do Militrin</h2>
+          </div>
+          <HomeSponsorsCarousel sponsors={sponsors} />
         </section>
       ) : null}
 
