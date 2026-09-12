@@ -10,6 +10,11 @@ import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
 import { getParticipantInviteContext, getParticipantInviteFailureCopy } from '@/lib/account/participant-invite';
 import { REQUIRED_PARTICIPANT_FIELD_CODES } from '@/lib/account/participant-issue-policy';
 import { validateFirstAccessProfile, type FirstAccessFieldErrors } from '@/lib/account/first-access-validation';
+import {
+  classifyPasswordUpdateError,
+  FIRST_ACCESS_SESSION_EXPIRED_MESSAGE,
+  sanitizedPasswordUpdateLog,
+} from '@/lib/auth/password-update-errors';
 
 export type CompleteFirstAccessResult = {
   success: boolean;
@@ -97,7 +102,11 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
   } = await supabase.auth.getUser();
 
   if (!user?.id) {
-    return { success: false, message: 'Sessao expirada. Entre novamente.' };
+    return {
+      success: false,
+      code: 'session_expired',
+      message: FIRST_ACCESS_SESSION_EXPIRED_MESSAGE,
+    };
   }
 
   console.info('[first-access:submit]', {
@@ -216,7 +225,14 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
   if (mustChangePassword) {
     const passwordUpdate = await supabase.auth.updateUser({ password: newPassword });
     if (passwordUpdate.error) {
-      return { success: false, message: 'Não foi possível atualizar a senha. Tente novamente.' };
+      const classified = classifyPasswordUpdateError(passwordUpdate.error);
+      console.warn('[first-access:password-update]', {
+        userIdPresent: Boolean(user.id),
+        ...sanitizedPasswordUpdateLog(passwordUpdate.error, classified),
+      });
+      if (!classified.alreadySet) {
+        return { success: false, code: classified.code, message: classified.userMessage };
+      }
     }
 
     if (inviteId) {

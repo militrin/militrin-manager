@@ -32,6 +32,7 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath, i
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [serverErrors, setServerErrors] = useState<NonNullable<CompleteFirstAccessResult['field_errors']>>({});
 
   const [fullName, setFullName] = useState(initialValues.full_name);
@@ -66,6 +67,7 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath, i
 
   function onSubmit() {
     setMessage(null);
+    setSessionExpired(false);
     setServerErrors({});
     if (!currentValidation.success) {
       setServerErrors(currentValidation.fieldErrors);
@@ -93,6 +95,7 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath, i
       if (!result.success) {
         setServerErrors(result.field_errors ?? {});
         setMessage(result.message);
+        setSessionExpired(result.code === 'session_expired');
         return;
       }
 
@@ -175,7 +178,16 @@ export function FirstAccessForm({ initialValues, mustChangePassword, nextPath, i
         <p className="text-xs text-slate-400">A senha precisa ter no mínimo 8 caracteres e não pode ser igual ao CPF.</p>
       ) : null}
 
-      {message ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{message}</p> : null}
+      {message ? (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+          <p>{message}</p>
+          {sessionExpired ? (
+            <a href="/primeiro-acesso/reenviar" className="mt-2 inline-flex text-sm font-medium text-amber-200 underline">
+              Solicitar novo acesso
+            </a>
+          ) : null}
+        </div>
+      ) : null}
 
       <button type="submit" disabled={isPending} className="h-11 rounded-xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 disabled:opacity-60">
         {isPending ? 'Salvando cadastro...' : 'Concluir cadastro'}
