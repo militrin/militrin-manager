@@ -41,6 +41,7 @@ import {
 } from '@/lib/validation/registration';
 import { calculateAgeAtEventDate, formatDateTimeBR, formatISOToDateBR, isMinimumAgeSatisfied } from '@/lib/utils/date';
 import { describeZeroPaymentReason, normalizePricingGenderInput, resolvePricingGender, resolvePricingPhase, resolvePricingPreviewGender, sumCheckoutItemTotals } from '@/lib/checkout/pricing';
+import { clampUiCardInstallments, eventOffersCardInstallments, filterInstallmentOptions, normalizeMaxCardInstallments } from '@/lib/payments/card-installments';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import {
   applyPricingResultsByClientId,
@@ -76,6 +77,7 @@ type EventData = {
   payment_pix_enabled: boolean;
   payment_credit_card_single_enabled: boolean;
   payment_credit_card_installments_enabled: boolean;
+  max_card_installments: number;
 };
 
 type CheckoutPaymentMethod = 'pix' | 'credit_card_single' | 'credit_card_installments';
@@ -313,7 +315,7 @@ type FormState = {
   city: string;
   category_id: string;
   payment_method: CheckoutPaymentMethod;
-  /** So relevante quando payment_method='credit_card_installments' (2-12, mesmo teto da grade de configuracao do organizador). Ignorado pelos demais metodos. */
+  /** So relevante quando payment_method='credit_card_installments' (2..max do evento). Ignorado pelos demais metodos. */
   installments: number;
   coupon_code: string;
   shirt_type: string;
@@ -355,20 +357,29 @@ function paymentMethodLabel(method: CheckoutPaymentMethod) {
   return 'PIX';
 }
 
+function eventAllowsCardInstallments(event: EventData): boolean {
+  return eventOffersCardInstallments(event.payment_credit_card_installments_enabled, event.max_card_installments);
+}
+
+function eventAllowsCardSingle(event: EventData): boolean {
+  return event.payment_credit_card_single_enabled
+    || (event.payment_credit_card_installments_enabled && normalizeMaxCardInstallments(event.max_card_installments) < 2);
+}
+
 function sanitizePaymentMethod(method: string | null | undefined, event: EventData): CheckoutPaymentMethod {
   const normalized = String(method ?? '').trim();
 
   if (normalized === 'pix' && event.payment_pix_enabled) return 'pix';
-  if (normalized === 'credit_card_single' && event.payment_credit_card_single_enabled) return 'credit_card_single';
-  if (normalized === 'credit_card_installments' && event.payment_credit_card_installments_enabled) return 'credit_card_installments';
+  if (normalized === 'credit_card_single' && eventAllowsCardSingle(event)) return 'credit_card_single';
+  if (normalized === 'credit_card_installments' && eventAllowsCardInstallments(event)) return 'credit_card_installments';
   if (normalized === 'credit_card') {
-    if (event.payment_credit_card_single_enabled) return 'credit_card_single';
-    if (event.payment_credit_card_installments_enabled) return 'credit_card_installments';
+    if (eventAllowsCardSingle(event)) return 'credit_card_single';
+    if (eventAllowsCardInstallments(event)) return 'credit_card_installments';
   }
 
   if (event.payment_pix_enabled) return 'pix';
-  if (event.payment_credit_card_single_enabled) return 'credit_card_single';
-  if (event.payment_credit_card_installments_enabled) return 'credit_card_installments';
+  if (eventAllowsCardSingle(event)) return 'credit_card_single';
+  if (eventAllowsCardInstallments(event)) return 'credit_card_installments';
   return 'pix';
 }
 
@@ -403,26 +414,31 @@ function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
 
+function installmentPreviewOptions(preview: FeePreview | null, event: EventData): FeeInstallmentOption[] {
+  if (!preview) return [];
+  return filterInstallmentOptions(preview.credit_card_installments.options, event.max_card_installments);
+}
+
 // Leitura pura do snapshot ja calculado pelo backend (FeePreview) -- nunca
 // reaplica fixed/percentage/share por conta propria. installments so
 // importa para credit_card_installments; ausencia de opcao pra aquele
-// numero de parcelas (fora do teto 2-12 ja coberto pela RPC) cai no
+// numero de parcelas (fora do teto do evento ja coberto pela RPC) cai no
 // primeiro option como fallback nunca-quebra, nao em 0 inventado.
-function feeMethodPreview(preview: FeePreview | null, method: CheckoutPaymentMethod, installments: number): FeeMethodPreview | null {
+function feeMethodPreview(preview: FeePreview | null, method: CheckoutPaymentMethod, installments: number, event: EventData): FeeMethodPreview | null {
   if (!preview) return null;
   if (method === 'pix') return preview.pix;
   if (method === 'credit_card_single') return preview.credit_card_single;
-  const options = preview.credit_card_installments.options;
+  const options = installmentPreviewOptions(preview, event);
   return options.find((option) => option.installments === installments) ?? options[0] ?? null;
 }
 
 // Texto curto pro <option> da forma de pagamento: taxa exata (pix/a vista)
 // ou "a partir de" o menor valor entre as parcelas configuradas (parcelado,
 // antes de o comprador escolher quantas parcelas).
-function feeOptionSuffix(preview: FeePreview | null, method: CheckoutPaymentMethod): string {
+function feeOptionSuffix(preview: FeePreview | null, method: CheckoutPaymentMethod, event: EventData): string {
   if (!preview) return '';
   if (method === 'credit_card_installments') {
-    const options = preview.credit_card_installments.options;
+    const options = installmentPreviewOptions(preview, event);
     if (options.length === 0) return '';
     const minFee = Math.min(...options.map((option) => option.customer_fee));
     return minFee <= 0 ? ' — Sem taxa' : ` — Taxa a partir de ${money(minFee)}`;
@@ -592,10 +608,19 @@ export function RegistrationWizard({
   const availablePaymentMethods = useMemo<CheckoutPaymentMethod[]>(() => {
     const methods: CheckoutPaymentMethod[] = [];
     if (event.payment_pix_enabled) methods.push('pix');
-    if (event.payment_credit_card_single_enabled) methods.push('credit_card_single');
-    if (event.payment_credit_card_installments_enabled) methods.push('credit_card_installments');
+    if (eventAllowsCardSingle(event)) methods.push('credit_card_single');
+    if (eventAllowsCardInstallments(event)) methods.push('credit_card_installments');
     return methods.length > 0 ? methods : ['pix'];
-  }, [event.payment_pix_enabled, event.payment_credit_card_single_enabled, event.payment_credit_card_installments_enabled]);
+  }, [event.payment_pix_enabled, event.payment_credit_card_single_enabled, event.payment_credit_card_installments_enabled, event.max_card_installments]);
+
+  useEffect(() => {
+    setForm((prev) => {
+      const nextMethod = sanitizePaymentMethod(prev.payment_method, event);
+      const nextInstallments = clampUiCardInstallments(prev.installments, event.max_card_installments);
+      if (nextMethod === prev.payment_method && nextInstallments === prev.installments) return prev;
+      return { ...prev, payment_method: nextMethod, installments: nextInstallments };
+    });
+  }, [event]);
 
   const activeShirtItems = useMemo(
     () => activeKitItems.filter((item) => item.item_type === 'shirt'),
@@ -889,7 +914,7 @@ export function RegistrationWizard({
                 ? parsed.form.category_id
                 : '',
             payment_method: sanitizePaymentMethod(parsed.form.payment_method, event),
-            installments: Math.max(2, Math.min(12, Number(parsed.form.installments) || 2)),
+            installments: clampUiCardInstallments(parsed.form.installments, event.max_card_installments),
             quantity: restoredQuantity,
           });
           syncItemCount(restoredQuantity, parsed.checkoutItems);
@@ -2205,7 +2230,7 @@ export function RegistrationWizard({
   // uma fracao de segundo, a taxa calculada sobre um total anterior --
   // ex.: acabou de aplicar cupom e o preview antigo ainda nao voltou).
   const activeFeePreview = feePreview && Math.round(feePreview.base_amount * 100) === Math.round(previewBaseAmount * 100)
-    ? feeMethodPreview(feePreview, form.payment_method, form.installments)
+    ? feeMethodPreview(feePreview, form.payment_method, form.installments, event)
     : null;
   const previewedCustomerFee = activeFeePreview?.customer_fee ?? 0;
 
@@ -2988,33 +3013,33 @@ export function RegistrationWizard({
                             PIX
                           </button>
                         ) : null}
-                        {event.payment_credit_card_single_enabled || event.payment_credit_card_installments_enabled ? (
+                        {eventAllowsCardSingle(event) || eventAllowsCardInstallments(event) ? (
                           <button
                             type="button"
-                            onClick={() => setField('payment_method', event.payment_credit_card_single_enabled ? 'credit_card_single' : 'credit_card_installments')}
+                            onClick={() => setField('payment_method', eventAllowsCardSingle(event) ? 'credit_card_single' : 'credit_card_installments')}
                             className={`h-11 rounded-xl border text-sm font-semibold ${isCardCheckoutMethod(form.payment_method) ? 'border-emerald-400 bg-emerald-500 text-emerald-950' : 'border-slate-700 bg-slate-900 text-slate-200'}`}
                           >
                             Cartao
                           </button>
                         ) : null}
                       </div>
-                      {isCardCheckoutMethod(form.payment_method) && event.payment_credit_card_single_enabled && event.payment_credit_card_installments_enabled ? (
+                      {isCardCheckoutMethod(form.payment_method) && eventAllowsCardSingle(event) && eventAllowsCardInstallments(event) ? (
                         <select
                           value={form.payment_method}
                           onChange={(event_) => setField('payment_method', event_.target.value as FormState['payment_method'])}
                           className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
                         >
-                          <option value="credit_card_single">{paymentMethodLabel('credit_card_single')}{feeOptionSuffix(feePreview, 'credit_card_single')}</option>
-                          <option value="credit_card_installments">{paymentMethodLabel('credit_card_installments')}{feeOptionSuffix(feePreview, 'credit_card_installments')}</option>
+                          <option value="credit_card_single">{paymentMethodLabel('credit_card_single')}{feeOptionSuffix(feePreview, 'credit_card_single', event)}</option>
+                          <option value="credit_card_installments">{paymentMethodLabel('credit_card_installments')}{feeOptionSuffix(feePreview, 'credit_card_installments', event)}</option>
                         </select>
                       ) : null}
-                      {form.payment_method === 'credit_card_installments' && feePreview && feePreview.credit_card_installments.options.length > 0 ? (
+                      {form.payment_method === 'credit_card_installments' && installmentPreviewOptions(feePreview, event).length > 0 ? (
                         <select
                           value={form.installments}
                           onChange={(event_) => setField('installments', Number(event_.target.value))}
                           className="h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm"
                         >
-                          {feePreview.credit_card_installments.options.map((option) => (
+                          {installmentPreviewOptions(feePreview, event).map((option) => (
                             <option key={option.installments} value={option.installments}>
                               {option.installments}x de {money((itemTotals.total + option.customer_fee) / option.installments)}
                               {option.customer_fee > 0 ? ` — Taxa: ${money(option.customer_fee)}` : ' — Sem taxa'}
@@ -3025,7 +3050,7 @@ export function RegistrationWizard({
                     </div>
                   ) : itemTotals.total > 0 ? (
                     <p className="sm:col-span-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-200">
-                      Forma de pagamento: <strong>{paymentMethodLabel(form.payment_method)}{feeOptionSuffix(feePreview, form.payment_method)}</strong>
+                      Forma de pagamento: <strong>{paymentMethodLabel(form.payment_method)}{feeOptionSuffix(feePreview, form.payment_method, event)}</strong>
                     </p>
                   ) : (
                     <p className="sm:col-span-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-100">

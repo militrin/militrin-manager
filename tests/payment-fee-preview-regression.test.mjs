@@ -46,7 +46,7 @@ async function resolveCurrentFunctionDefinition(functionName) {
 // ============================================================
 test('definicao VIGENTE de preview_event_payment_fees esta na migration do preview e reusa resolve_event_payment_fee_config + compute_payment_fee -- nenhuma formula paralela', async () => {
   const { source, definedInFile } = await resolveCurrentFunctionDefinition('preview_event_payment_fees');
-  assert.equal(definedInFile, '20260915000000_payment_fee_preview.sql');
+  assert.equal(definedInFile, '20261022000000_event_max_card_installments.sql');
   const resolveCalls = source.match(/public\.resolve_event_payment_fee_config\(/g) ?? [];
   const computeCalls = source.match(/public\.compute_payment_fee\(/g) ?? [];
   assert.ok(resolveCalls.length >= 3, 'deveria chamar resolve_event_payment_fee_config para pix, credit_card (1x) e credit_card (parcelado)');
@@ -61,11 +61,11 @@ test('preview_event_payment_fees nunca escreve em payments/orders/PIX -- so leit
   assert.doesNotMatch(fn, /\binsert into\b|\bupdate\s+public\.|\bdelete from\b/i);
 });
 
-test('preview_event_payment_fees cobre parcelas 2 a 12 (mesmo teto MAX_INSTALLMENTS da grade de configuracao do organizador) -- 1x usa credit_card_single, nunca entra no loop', async () => {
-  const sql = await fs.readFile(previewMigrationUrl, 'utf8');
-  const fn = extractFunction(sql, 'preview_event_payment_fees');
-  assert.match(fn, /for v_n in 2\.\.12 loop/);
-  assert.match(fn, /resolve_event_payment_fee_config\(p_event_id, 'credit_card', 1\)/);
+test('preview_event_payment_fees cobre parcelas 2 ate o teto do evento (max_card_installments, nunca acima de 12) -- 1x usa credit_card_single, nunca entra no loop', async () => {
+  const { source } = await resolveCurrentFunctionDefinition('preview_event_payment_fees');
+  assert.match(source, /for v_n in 2\.\.v_max loop/);
+  assert.match(source, /resolve_event_payment_fee_config\(p_event_id, 'credit_card', 1\)/);
+  assert.match(source, /max_card_installments/);
 });
 
 test('preview_event_payment_fees e publico como get_event_payment_methods_setup (config de taxa nao e sensivel) -- grant a anon, authenticated e service_role', async () => {
@@ -128,8 +128,8 @@ test('previewEventPaymentFeesAction chama o RPC preview_event_payment_fees e so 
 // ============================================================
 test('wizard.tsx: feeMethodPreview/feeOptionSuffix so leem o FeePreview ja calculado pelo backend -- nenhuma soma de fixed_fee/percentage_fee no componente', async () => {
   const source = await fs.readFile(wizardUrl, 'utf8');
-  assert.match(source, /function feeMethodPreview\(preview: FeePreview \| null, method: CheckoutPaymentMethod, installments: number\)/);
-  assert.match(source, /function feeOptionSuffix\(preview: FeePreview \| null, method: CheckoutPaymentMethod\): string/);
+  assert.match(source, /function feeMethodPreview\(preview: FeePreview \| null, method: CheckoutPaymentMethod, installments: number, event: EventData\)/);
+  assert.match(source, /function feeOptionSuffix\(preview: FeePreview \| null, method: CheckoutPaymentMethod, event: EventData\): string/);
   assert.doesNotMatch(source, /percentage_fee\s*\/\s*100/, 'nenhuma formula de taxa deveria ser reimplementada no frontend');
 });
 
@@ -142,8 +142,8 @@ test('wizard.tsx: preview e buscado via previewEventPaymentFeesAction (RPC canon
 
 test('wizard.tsx: <select> de forma de pagamento mostra a taxa por opcao (feeOptionSuffix) e o parcelado ganha um seletor de parcelas que atualiza form.installments', async () => {
   const source = await fs.readFile(wizardUrl, 'utf8');
-  assert.match(source, /\{paymentMethodLabel\(method\)\}\{feeOptionSuffix\(feePreview, method\)\}/);
-  assert.match(source, /form\.payment_method === 'credit_card_installments' && feePreview && feePreview\.credit_card_installments\.options\.length > 0/);
+  assert.match(source, /\{paymentMethodLabel\('credit_card_single'\)\}\{feeOptionSuffix\(feePreview, 'credit_card_single', event\)\}/);
+  assert.match(source, /form\.payment_method === 'credit_card_installments' && installmentPreviewOptions\(feePreview, event\)\.length > 0/);
   assert.match(source, /onChange=\{\(event_\) => setField\('installments', Number\(event_\.target\.value\)\)\}/);
 });
 
@@ -161,7 +161,7 @@ test('wizard.tsx: resumo lateral (sidebar) ganha a linha "Taxa de pagamento" e o
 test('wizard.tsx: STORAGE_VERSION foi incrementada (FormState ganhou installments) -- sessoes antigas persistidas nunca restauram um form incompleto', async () => {
   const source = await fs.readFile(wizardUrl, 'utf8');
   assert.match(source, /const STORAGE_VERSION = 'v6';/);
-  assert.match(source, /installments: Math\.max\(2, Math\.min\(12, Number\(parsed\.form\.installments\) \|\| 2\)\),/);
+  assert.match(source, /installments: clampUiCardInstallments\(parsed\.form\.installments, event\.max_card_installments\),/);
 });
 
 // ============================================================

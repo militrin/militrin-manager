@@ -224,6 +224,10 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       };
 
       if (installments >= 2) {
+        // Hosted card no Militrin usa POST /payments com installmentCount
+        // EXATO (nao Payment Link / maxInstallmentCount). O limite por
+        // evento e aplicado antes desta chamada; o Asaas so oferece o
+        // numero enviado aqui.
         body.installmentCount = installments;
         body.installmentValue = installmentValue(input.amount, installments);
       }

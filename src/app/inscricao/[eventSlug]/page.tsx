@@ -231,6 +231,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     pix_enabled: Boolean(paymentMethodsRow?.pix_enabled ?? true),
     credit_card_single_enabled: Boolean(paymentMethodsRow?.credit_card_single_enabled ?? true),
     credit_card_installments_enabled: Boolean(paymentMethodsRow?.credit_card_installments_enabled ?? true),
+    max_card_installments: Number(paymentMethodsRow?.max_card_installments ?? 12),
   };
 
   const categories = (categoriesData ?? []).map((row: CategoryRow) => ({
@@ -359,6 +360,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
         payment_pix_enabled: paymentMethods.pix_enabled,
         payment_credit_card_single_enabled: paymentMethods.credit_card_single_enabled,
         payment_credit_card_installments_enabled: paymentMethods.credit_card_installments_enabled,
+        max_card_installments: paymentMethods.max_card_installments,
       }}
       isOpen={isOpen}
       categories={categories}

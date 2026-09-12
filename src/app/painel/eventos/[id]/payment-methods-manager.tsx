@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { upsertEventPaymentMethodsAction } from "@/app/eventos/actions";
+import { GATEWAY_MAX_CARD_INSTALLMENTS, cardInstallmentChoices, normalizeMaxCardInstallments } from "@/lib/payments/card-installments";
 
 type FeeMode = "absorb" | "pass_through" | "split";
 
@@ -25,10 +26,11 @@ type EventPaymentMethodsManagerProps = {
     credit_card_installments_fee_mode: FeeMode;
     credit_card_installments_customer_fee_share_percent: number;
     installment_fees: InstallmentFee[];
+    max_card_installments: number;
   };
 };
 
-const MAX_INSTALLMENTS = 12;
+const MAX_INSTALLMENTS = GATEWAY_MAX_CARD_INSTALLMENTS;
 
 function emptyInstallmentSchedule(): InstallmentFee[] {
   return Array.from({ length: MAX_INSTALLMENTS }, (_, index) => ({ installments: index + 1, fixed_fee: 0, percentage_fee: 0 }));
@@ -152,6 +154,7 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
     credit_card_single_customer_fee_share_percent: initialConfig.credit_card_single_customer_fee_share_percent,
     credit_card_installments_fee_mode: initialConfig.credit_card_installments_fee_mode,
     credit_card_installments_customer_fee_share_percent: initialConfig.credit_card_installments_customer_fee_share_percent,
+    max_card_installments: normalizeMaxCardInstallments(initialConfig.max_card_installments),
   });
   const [installmentFees, setInstallmentFees] = useState<InstallmentFee[]>(mergeInstallmentSchedule(initialConfig.installment_fees));
 
@@ -182,7 +185,9 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
         return;
       }
 
+      setMessage({ type: "success", text: result.message || "Formas de pagamento salvas." });
       router.push(`/painel/eventos/${eventId}?etapa=6`);
+      router.refresh();
     });
   }
 
@@ -201,6 +206,27 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
         </p>
 
         <div className="mt-4 space-y-4 text-sm text-slate-200">
+          <div>
+            <label className="block text-sm font-medium text-slate-100" htmlFor="max-card-installments">
+              Máximo de parcelas no cartão
+            </label>
+            <select
+              id="max-card-installments"
+              value={form.max_card_installments}
+              onChange={(event) => setForm((prev) => ({ ...prev, max_card_installments: Number(event.target.value) }))}
+              className="mt-1 h-11 w-full max-w-xs rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm"
+            >
+              {cardInstallmentChoices(MAX_INSTALLMENTS).map((count) => (
+                <option key={count} value={count}>
+                  {count}x
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-400">
+              Define o número máximo de parcelas disponíveis no pagamento por cartão deste evento.
+            </p>
+          </div>
+
           <div>
             <label className="flex items-center gap-2">
               <input
@@ -276,7 +302,7 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
                     </thead>
                     <tbody>
                       {installmentFees.map((row) => (
-                        <tr key={row.installments}>
+                        <tr key={row.installments} className={row.installments > form.max_card_installments ? "opacity-40" : undefined}>
                           <td className="py-1 pr-2">{row.installments}x</td>
                           <td className="py-1 pr-2">
                             <input
@@ -303,7 +329,7 @@ export function EventPaymentMethodsManager({ eventId, initialConfig }: EventPaym
                       ))}
                     </tbody>
                   </table>
-                  <p className="mt-2 text-xs text-slate-500">Parcela sem taxa fixa nem percentual preenchidas nao cobra taxa adicional. Valores de exemplo -- ajuste conforme a taxa real negociada com o gateway.</p>
+                  <p className="mt-2 text-xs text-slate-500">Parcela sem taxa fixa nem percentual preenchidas nao cobra taxa adicional. Valores de exemplo -- ajuste conforme a taxa real negociada com o gateway. Linhas acima do máximo configurado ficam visíveis para preservação da taxa, mas o checkout não as oferece.</p>
                 </div>
               </>
             ) : null}

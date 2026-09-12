@@ -22,6 +22,11 @@ import { firstAccessRouteWithNext, signupConfirmationRedirect } from '@/lib/acco
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 import { cardPaymentReturnUrl } from '@/lib/payments/card-return-url';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
+import {
+  eventOffersCardInstallments,
+  normalizeMaxCardInstallments,
+  rejectCardInstallmentsIfOverLimit,
+} from '@/lib/payments/card-installments';
 
 type PricingPreview = {
   batch_id: string;
@@ -228,6 +233,7 @@ async function getEventPaymentMethodsConfig(
       pix_enabled: Boolean(row?.pix_enabled ?? true),
       credit_card_single_enabled: Boolean(row?.credit_card_single_enabled ?? true),
       credit_card_installments_enabled: Boolean(row?.credit_card_installments_enabled ?? true),
+      max_card_installments: normalizeMaxCardInstallments(row?.max_card_installments),
     },
   };
 }
@@ -260,11 +266,17 @@ function isMethodAllowedByConfig(
     pix_enabled: boolean;
     credit_card_single_enabled: boolean;
     credit_card_installments_enabled: boolean;
+    max_card_installments: number;
   },
 ) {
   if (method === 'pix') return config.pix_enabled;
-  if (method === 'credit_card_single') return config.credit_card_single_enabled;
-  if (method === 'credit_card_installments') return config.credit_card_installments_enabled;
+  if (method === 'credit_card_single') {
+    return config.credit_card_single_enabled
+      || (config.credit_card_installments_enabled && normalizeMaxCardInstallments(config.max_card_installments) < 2);
+  }
+  if (method === 'credit_card_installments') {
+    return eventOffersCardInstallments(config.credit_card_installments_enabled, config.max_card_installments);
+  }
   return false;
 }
 
@@ -1019,6 +1031,7 @@ function translateRegistrationErrorMessage(message: string) {
     return 'Você já possui um ingresso neste evento.';
   }
   if (normalized.includes('cupom')) return message;
+  if (normalized.includes('permite pagamento em')) return message;
   return message;
 }
 
@@ -2381,6 +2394,16 @@ export async function generatePublicOrderCardAction(orderId: string) {
   }
 
   const installments = Math.max(1, Math.floor(Number(payment.installments ?? 1) || 1));
+  const paymentConfig = await getEventPaymentMethodsConfig(supabase, snapshotResult.snapshot.event_id);
+  if (!paymentConfig.success) {
+    await supabase.rpc("release_order_pix_generation", { p_order_id: orderId });
+    return { success: false as const, message: paymentConfig.message };
+  }
+  const overLimit = rejectCardInstallmentsIfOverLimit(installments, paymentConfig.config.max_card_installments);
+  if (overLimit) {
+    await supabase.rpc("release_order_pix_generation", { p_order_id: orderId });
+    return { success: false as const, message: overLimit };
+  }
 
   let payload;
   try {
@@ -2738,6 +2761,28 @@ export async function finalizeCartOrderAction(orderId: string, paymentMethod: st
   const normalizedMethod = normalizeCheckoutPaymentMethod(paymentMethod) ?? 'pix';
   const dbPaymentMethod = toDbPaymentMethod(normalizedMethod);
   const resolvedInstallments = normalizedMethod === 'credit_card_installments' ? Math.max(1, Math.floor(installments || 1)) : 1;
+
+  if (dbPaymentMethod === 'credit_card') {
+    const { data: orderRow, error: orderError } = await supabase
+      .from('orders')
+      .select('event_id')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (orderError || !orderRow?.event_id) {
+      return { success: false as const, message: 'Pedido nao encontrado.' };
+    }
+    const paymentConfig = await getEventPaymentMethodsConfig(supabase, String(orderRow.event_id));
+    if (!paymentConfig.success) {
+      return { success: false as const, message: paymentConfig.message };
+    }
+    if (!isMethodAllowedByConfig(normalizedMethod, paymentConfig.config)) {
+      return { success: false as const, message: 'A forma de pagamento selecionada nao esta habilitada para este evento.' };
+    }
+    const overLimit = rejectCardInstallmentsIfOverLimit(resolvedInstallments, paymentConfig.config.max_card_installments);
+    if (overLimit) {
+      return { success: false as const, message: overLimit };
+    }
+  }
 
   const { error } = await supabase.rpc('finalize_cart_order_payment', {
     p_order_id: orderId,

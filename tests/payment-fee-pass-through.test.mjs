@@ -59,7 +59,7 @@ test('definicao VIGENTE de apply_cart_coupon esta na migration da taxa e chama _
 
 test('definicao VIGENTE de finalize_cart_order_payment ganhou p_installments, valida payment_method contra o dominio do banco, e recalcula a taxa antes de decidir pago x pendente', async () => {
   const { source, definedInFile } = await resolveCurrentFunctionDefinition('finalize_cart_order_payment');
-  assert.equal(definedInFile, '20260913000000_payment_fee_pass_through.sql');
+  assert.equal(definedInFile, '20261022000000_event_max_card_installments.sql');
   assert.match(source, /p_installments integer default 1/);
   assert.match(source, /lower\(v_method\) not in \('pix','credit_card','cash','courtesy'\)/);
   const recomputeIdx = source.indexOf('perform public._recompute_order_payment_fee(p_order_id);');
@@ -69,7 +69,7 @@ test('definicao VIGENTE de finalize_cart_order_payment ganhou p_installments, va
 
 test('definicao VIGENTE de get_cart_order_details devolve os campos de taxa no bloco payment (Etapa de Pagamento le so o snapshot canonico)', async () => {
   const { source, definedInFile } = await resolveCurrentFunctionDefinition('get_cart_order_details');
-  assert.equal(definedInFile, '20260913000000_payment_fee_pass_through.sql');
+  assert.equal(definedInFile, '20260952000000_asaas_card_blockers.sql');
   assert.match(source, /'payment_fee_mode', v_payment\.payment_fee_mode/);
   assert.match(source, /'payment_fee_calculated_amount', v_payment\.payment_fee_calculated_amount/);
   assert.match(source, /'payment_fee_customer_amount', v_payment\.payment_fee_customer_amount/);
@@ -81,7 +81,7 @@ test('definicao VIGENTE de get_cart_order_details devolve os campos de taxa no b
 
 test('definicao VIGENTE de get_event_payment_methods_setup devolve config de taxa completa por metodo + cronograma de parcelas (installment_fees)', async () => {
   const { source, definedInFile } = await resolveCurrentFunctionDefinition('get_event_payment_methods_setup');
-  assert.equal(definedInFile, '20260913000000_payment_fee_pass_through.sql');
+  assert.equal(definedInFile, '20261022000000_event_max_card_installments.sql');
   assert.match(source, /pix_fee_mode/);
   assert.match(source, /credit_card_single_fee_mode/);
   assert.match(source, /credit_card_installments_fee_mode/);
@@ -90,7 +90,7 @@ test('definicao VIGENTE de get_event_payment_methods_setup devolve config de tax
 
 test('definicao VIGENTE de upsert_event_payment_methods substitui o cronograma de parcelas por completo (delete + insert, nunca merge parcial)', async () => {
   const { source, definedInFile } = await resolveCurrentFunctionDefinition('upsert_event_payment_methods');
-  assert.equal(definedInFile, '20260913000000_payment_fee_pass_through.sql');
+  assert.equal(definedInFile, '20261022000000_event_max_card_installments.sql');
   assert.match(source, /delete from public\.event_payment_method_installment_fees where event_id = p_event_id;/);
   assert.match(source, /current_user_has_permission\('events\.edit'\)/);
   assert.match(source, /user_can_access_organization\(auth\.uid\(\), v_org\)/);

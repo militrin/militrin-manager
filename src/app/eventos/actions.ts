@@ -145,6 +145,7 @@ const eventPaymentMethodsSchema = z.object({
   pix_enabled: z.boolean().default(true),
   credit_card_single_enabled: z.boolean().default(true),
   credit_card_installments_enabled: z.boolean().default(true),
+  max_card_installments: z.number().int().min(1, 'Informe no minimo 1x.').max(12, 'O gateway atual aceita no maximo 12x.').default(12),
   pix_fee_mode: paymentFeeModeSchema.default('absorb'),
   pix_fee_fixed_amount: feeFixedAmountSchema,
   pix_fee_percentage: feePercentSchema,
@@ -510,6 +511,7 @@ export async function upsertEventPaymentMethodsAction(payload: z.infer<typeof ev
       p_credit_card_installments_fee_mode: parsed.data.credit_card_installments_fee_mode,
       p_credit_card_installments_customer_fee_share_percent: parsed.data.credit_card_installments_customer_fee_share_percent,
       p_installment_fees: parsed.data.installment_fees,
+      p_max_card_installments: parsed.data.max_card_installments,
     });
 
     if (error) throw error;

@@ -404,6 +404,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     credit_card_installments_fee_mode: String(paymentMethodsRow?.credit_card_installments_fee_mode ?? 'absorb') as 'absorb' | 'pass_through' | 'split',
     credit_card_installments_customer_fee_share_percent: Number(paymentMethodsRow?.credit_card_installments_customer_fee_share_percent ?? 0),
     installment_fees: (Array.isArray(paymentMethodsRow?.installment_fees) ? paymentMethodsRow.installment_fees : []) as Array<{ installments: number; fixed_fee: number; percentage_fee: number }>,
+    max_card_installments: Number(paymentMethodsRow?.max_card_installments ?? 12),
   };
 
   return (
