@@ -13,6 +13,8 @@ async function readFile(url, encoding) {
 const accountNav = await readFile(new URL("../src/app/minha-conta/account-nav.tsx", import.meta.url), "utf8");
 const layout = await readFile(new URL("../src/app/minha-conta/layout.tsx", import.meta.url), "utf8");
 const homePage = await readFile(new URL("../src/app/minha-conta/page.tsx", import.meta.url), "utf8");
+const homeQuickActions = await readFile(new URL("../src/app/minha-conta/home-quick-actions.tsx", import.meta.url), "utf8");
+const homeStoreBanner = await readFile(new URL("../src/app/minha-conta/home-store-banner.tsx", import.meta.url), "utf8");
 
 function slice(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -86,23 +88,23 @@ test("AccountMobileNav recebe o destino administrativo como prop -- layout.tsx r
   assert.match(layout, /<AccountMobileNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} \/>/);
 });
 
-test("home da Minha Conta destaca Eventos e Loja perto do topo (cards visuais com CTA), antes da secao 'Seus acessos'", () => {
-  const highlightIdx = homePage.indexOf('href="/minha-conta/comprar"');
-  const lojaHighlightIdx = homePage.indexOf('href="/minha-conta/loja"');
-  const seusAcessosIdx = homePage.indexOf("/>Seus acessos");
-  assert.ok(highlightIdx !== -1 && lojaHighlightIdx !== -1, "os 2 cards de destaque (Eventos e Loja) precisam existir na home");
-  assert.ok(highlightIdx < seusAcessosIdx && lojaHighlightIdx < seusAcessosIdx, "os cards de destaque precisam vir ANTES de 'Seus acessos', perto do topo");
-  assert.match(homePage, /Próximos eventos/);
-  assert.match(homePage, /Ver eventos/);
-  assert.match(homePage, /Loja Militrin/);
-  assert.match(homePage, /Ir para a loja/);
+test("home da Minha Conta destaca evento, QR e atalhos antes da secao 'Meus acessos'", () => {
+  const heroIdx = homePage.indexOf("<HomeFeaturedHero");
+  const qrIdx = homePage.indexOf("<HomeQuickActions");
+  const acessosIdx = homePage.indexOf("Meus acessos");
+  assert.ok(heroIdx !== -1, "card de evento em destaque precisa existir");
+  assert.ok(qrIdx !== -1, "atalhos rapidos (QR) precisam existir");
+  assert.ok(acessosIdx !== -1, "secao Meus acessos precisa existir");
+  assert.ok(heroIdx < acessosIdx && qrIdx < acessosIdx, "evento em destaque e QR precisam vir ANTES de Meus acessos");
+  assert.match(homePage, /HomeStoreBanner/);
+  assert.match(homeQuickActions, /Acessar meu QR Code/);
 });
 
-test("card de Loja na home usa imagem de um item REAL (mesma fonte que /minha-conta/loja: eventos aos quais o usuario tem ingresso), com fallback quando nao ha imagem -- nunca card vazio", () => {
+test("banner da Loja na home usa imagens reais do catalogo (mesma fonte que /minha-conta/loja), com fallback quando nao ha imagem", () => {
   assert.match(homePage, /import { getStoreItemsForEvents } from '@\/lib\/store\/get-store-items'/);
-  assert.match(homePage, /storeHighlightItem/);
+  assert.match(homePage, /storeImageUrls/);
   assert.match(homePage, /ticketScope\.ownedEventIds/);
-  const card = slice(homePage, 'href="/minha-conta/loja"', "</Link>");
-  assert.match(card, /storeHighlightItem\?\.imageUrl/);
-  assert.match(card, /bg-linear-to-br from-amber-500\/40/);
+  assert.match(homeStoreBanner, /href="\/minha-conta\/loja"/);
+  assert.match(homeStoreBanner, /Acessar loja/);
+  assert.match(homeStoreBanner, /imageUrls/);
 });

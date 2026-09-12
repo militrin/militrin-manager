@@ -1,5 +1,6 @@
-import { Calendar, MapPin, ShoppingBag, Star } from 'lucide-react';
-import { MilitrinEventArtwork, MilitrinLinkButton, cx, militrinType } from '@/components/militrin';
+import Link from 'next/link';
+import { Calendar, MapPin, Star } from 'lucide-react';
+import { MilitrinEventArtwork, cx, militrinType } from '@/components/militrin';
 
 export type HomeFeaturedEvent = {
   id: string;
@@ -11,21 +12,32 @@ export type HomeFeaturedEvent = {
   soldPercent: number | null;
   startingPrice: string | null;
   buyHref: string;
+  isHot: boolean;
 };
 
 export function HomeFeaturedEvents({ events }: { events: HomeFeaturedEvent[] }) {
   if (events.length === 0) {
-    return <p className={militrinType.bodyMuted}>Nenhum evento em destaque no momento.</p>;
+    return <p className={militrinType.bodyMuted}>Nenhum evento publicado no momento.</p>;
   }
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
-        <article key={event.id} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/60">
+        <Link
+          key={event.id}
+          href={event.buyHref}
+          className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/60 transition hover:border-slate-600"
+        >
           <MilitrinEventArtwork src={event.bannerUrl}>
-            <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-(--brand-500)/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow">
-              <Star size={10} fill="currentColor" />Em alta
-            </span>
+            {event.isHot ? (
+              <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-(--brand-500)/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow">
+                <Star size={10} fill="currentColor" />Em alta
+              </span>
+            ) : event.registrationStatus === 'abertas' ? (
+              <span className="absolute right-2.5 top-2.5 inline-flex items-center rounded-full bg-slate-950/80 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-200 shadow">
+                Vendas abertas
+              </span>
+            ) : null}
           </MilitrinEventArtwork>
 
           <div className="p-4">
@@ -34,28 +46,11 @@ export function HomeFeaturedEvents({ events }: { events: HomeFeaturedEvent[] }) 
               <span className="inline-flex items-center gap-1"><Calendar size={11} />{event.date}</span>
               <span className="inline-flex items-center gap-1"><MapPin size={11} />{event.location}</span>
             </div>
-
-            {event.soldPercent !== null ? (
-              <div className="mt-3">
-                <p className="text-[11px] font-medium text-emerald-300">{event.soldPercent}% vendidos</p>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(100, event.soldPercent)}%` }} />
-                </div>
-              </div>
-            ) : (
-              <p className="mt-3 text-[11px] uppercase tracking-wide text-slate-500">Vendas {event.registrationStatus}</p>
-            )}
-
-            <div className="mt-3 flex items-center justify-between gap-2">
-              {event.startingPrice ? (
-                <p className={militrinType.micro}>A partir de<br /><span className={cx('text-sm', militrinType.money)}>{event.startingPrice}</span></p>
-              ) : <span />}
-              <MilitrinLinkButton href={event.buyHref} variant="success" size="sm" iconLeft={<ShoppingBag size={13} />} className="rounded-xl">
-                Comprar ingresso
-              </MilitrinLinkButton>
-            </div>
+            {event.startingPrice ? (
+              <p className="mt-3 text-xs text-slate-400">A partir de <span className={cx('text-sm', militrinType.money)}>{event.startingPrice}</span></p>
+            ) : null}
           </div>
-        </article>
+        </Link>
       ))}
     </div>
   );

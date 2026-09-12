@@ -8,11 +8,15 @@ type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient
 export type AccountHomeTicketCard = {
   ticketId: string;
   orderId: string | null;
+  eventId: string | null;
   eventName: string;
   date: string | null;
   location: string | null;
   bannerUrl: string | null;
   status: string;
+  holderName: string | null;
+  /** Token operacional do ticket -- so preenchido quando o QR pode ser exibido. */
+  token: string | null;
   /** null quando resolveTicketPresentationMode manda esconder a categoria (0 ou 1 categoria ativa no evento). */
   categoryLabel: string | null;
   batchLabel: string | null;
@@ -40,6 +44,7 @@ export async function buildAccountHomeTicketCards(
   tickets: Array<{
     id: string;
     status: string | null;
+    token?: string | null;
     order_id: string | null;
     order_item_id: string | null;
     event_id: string | null;
@@ -53,7 +58,7 @@ export async function buildAccountHomeTicketCards(
 
   const [itemsResult, ordersResult, eventsResult] = await Promise.all([
     orderItemIds.length > 0
-      ? supabase.from('order_items').select('id, participant_id, ticket_category_id, batch_id, shirt_type, shirt_size').in('id', orderItemIds)
+      ? supabase.from('order_items').select('id, participant_id, ticket_category_id, batch_id, shirt_type, shirt_size, holder_full_name').in('id', orderItemIds)
       : resolved([]),
     orderIds.length > 0
       ? supabase.from('orders').select('id, status').in('id', orderIds)
@@ -63,7 +68,7 @@ export async function buildAccountHomeTicketCards(
       : resolved([]),
   ]);
 
-  const items = (itemsResult.data ?? []) as Array<{ id: string; participant_id: string | null; ticket_category_id: string | null; batch_id: string | null; shirt_type: string | null; shirt_size: string | null }>;
+  const items = (itemsResult.data ?? []) as Array<{ id: string; participant_id: string | null; ticket_category_id: string | null; batch_id: string | null; shirt_type: string | null; shirt_size: string | null; holder_full_name: string | null }>;
   const orders = (ordersResult.data ?? []) as Array<{ id: string; status: string | null }>;
   const events = (eventsResult.data ?? []) as Array<{ id: string; name: string | null; starts_at: string | null; location: string | null; banner_card_url: string | null; banner_hero_url: string | null }>;
 
@@ -116,15 +121,19 @@ export async function buildAccountHomeTicketCards(
     const shirtType = optionalDisplayValue(item?.shirt_type ?? null);
     const shirtSize = optionalDisplayValue(item?.shirt_size ?? null);
     const shirtLabel = shirtType && shirtSize ? `${shirtType} ${shirtSize}` : shirtType || shirtSize;
+    const canShowQr = canShowTicket && Boolean(String(ticket.token ?? '').trim());
 
     return {
       ticketId: ticket.id,
       orderId: order?.id ?? null,
+      eventId: eventId || null,
       eventName: eventObj?.name ? String(eventObj.name) : 'Evento Militrin',
       date: eventObj?.starts_at ? formatDateBR(eventObj.starts_at) : null,
       location: optionalDisplayValue(eventObj?.location),
       bannerUrl: eventObj?.banner_card_url || eventObj?.banner_hero_url || null,
       status: String(ticket.status ?? 'pending'),
+      holderName: optionalDisplayValue(item?.holder_full_name ?? null),
+      token: canShowQr ? String(ticket.token) : null,
       categoryLabel: presentationMode === 'category_visible' ? categoryName : null,
       batchLabel: presentationMode === 'single' ? null : batchName,
       shirtLabel: shirtLabel ?? null,

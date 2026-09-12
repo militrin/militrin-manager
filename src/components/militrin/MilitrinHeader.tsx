@@ -4,6 +4,8 @@ import { cx } from './utils';
 import { MilitrinLinkButton } from './MilitrinLinkButton';
 
 export type MilitrinHeaderEvent = {
+  id?: string | null;
+  slug?: string | null;
   name: string;
   date: string;
   schedule?: string | null;

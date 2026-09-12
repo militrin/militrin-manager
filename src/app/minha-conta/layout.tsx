@@ -78,7 +78,7 @@ export default async function MinhaContaLayout({ children }: { children: React.R
     <StoreCartProvider userId={user.id}>
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-1),_transparent_38%),radial-gradient(circle_at_bottom_right,_var(--brand-glow-2),_transparent_45%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 lg:flex-row">
-        <aside className="hidden rounded-[2rem] border border-slate-800/80 bg-slate-950/65 p-5 shadow-2xl shadow-black/20 lg:sticky lg:top-6 lg:block lg:h-[calc(100vh-3rem)] lg:w-80 lg:overflow-y-auto">
+        <aside className="hidden rounded-[2rem] border border-slate-800/80 bg-slate-950/80 p-5 shadow-2xl shadow-black/20 lg:sticky lg:top-6 lg:block lg:h-[calc(100vh-3rem)] lg:w-80 lg:overflow-y-auto">
           <div className="flex items-center gap-3 border-b border-slate-800/80 pb-4">
             <Link href="/" className="flex min-w-0 flex-1 items-center gap-3" title="Voltar ao início">
               <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-black ring-1 ring-(--brand-500)/40 shadow-lg shadow-(--brand-600)/20">

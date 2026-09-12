@@ -1,4 +1,5 @@
 export type AccountHeaderEventRow = {
+  id?: string | null;
   name?: string | null;
   slug?: string | null;
   year?: number | null;

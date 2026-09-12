@@ -62,7 +62,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
     <Link
       href={item.href}
-      className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm transition ${
+      className={`flex min-h-11 items-center justify-between rounded-xl px-3.5 py-2.5 text-sm transition ${
         active
           ? 'bg-(--brand-500) font-semibold text-white shadow-md shadow-(--brand-600)/30'
           : 'text-slate-300 hover:bg-slate-900/70 hover:text-slate-100'

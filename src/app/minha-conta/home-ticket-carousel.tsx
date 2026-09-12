@@ -1,16 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, MapPin, QrCode, Shirt, Ticket, Users } from 'lucide-react';
-import { MilitrinEventArtwork, MilitrinLinkButton, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
+import { Calendar, ChevronLeft, ChevronRight, MapPin, QrCode, Ticket, Users } from 'lucide-react';
+import { LocalQrImage } from '@/components/qr/LocalQrImage';
+import { MilitrinLinkButton, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
 import type { AccountHomeTicketCard } from '@/lib/account/home-ticket-cards';
 import { buildCarouselDotTargets, findActiveDotIndex } from '@/lib/account/carousel-dots';
 
-// 1 ingresso: card unico sem navegacao. 2+: carrossel com setas. Sempre
-// mostra exatamente 1 ingresso por vez (nunca todos empilhados), independente
-// da quantidade total -- os indicadores tambem nunca crescem 1:1 com a
-// quantidade: no maximo ~5, representando a posicao, nunca virando poluicao
-// visual com muitos ingressos (ver buildCarouselDotTargets).
 export function HomeTicketCarousel({
   tickets,
   emptyTitle,
@@ -34,7 +30,7 @@ export function HomeTicketCarousel({
         <p>{emptyTitle ?? 'Você ainda não possui ingressos. Assim que uma compra for confirmada, ele aparece aqui.'}</p>
         {emptyDescription ? <p className="mt-2 text-xs text-slate-400">{emptyDescription}</p> : null}
         {emptyHref && emptyLabel ? (
-          <MilitrinLinkButton href={emptyHref} variant="secondary" size="sm" className="mt-3">
+          <MilitrinLinkButton href={emptyHref} variant="secondary" size="lg" className="mt-3 w-full sm:w-auto">
             {emptyLabel}
           </MilitrinLinkButton>
         ) : null}
@@ -44,6 +40,7 @@ export function HomeTicketCarousel({
 
   const current = tickets[Math.min(index, tickets.length - 1)];
   const hasMultiple = tickets.length > 1;
+  const qrHref = `/minha-conta/ingressos/${current.ticketId}#qr`;
 
   function goTo(nextIndex: number) {
     setIndex(((nextIndex % tickets.length) + tickets.length) % tickets.length);
@@ -51,55 +48,73 @@ export function HomeTicketCarousel({
 
   return (
     <div>
-      <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-        <MilitrinEventArtwork src={current.bannerUrl}>
-          <span className="absolute right-2.5 top-2.5">
-            <MilitrinStatusBadge status={current.status} />
-          </span>
-        </MilitrinEventArtwork>
+      <div className="relative overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/80">
+        <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className={cx('truncate sm:text-lg', militrinType.cardTitle)} title={current.eventName}>{current.eventName}</h3>
+              <MilitrinStatusBadge status={current.status} label={current.status === 'used' ? 'Usado' : 'Ativo'} />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-300">
+              {current.date ? (
+                <span className="inline-flex items-center gap-1"><Calendar size={12} className="text-slate-500" />{current.date}</span>
+              ) : null}
+              {current.location ? (
+                <span className="inline-flex items-center gap-1"><MapPin size={12} className="text-slate-500" />{current.location}</span>
+              ) : null}
+            </div>
 
-        <div className="p-3.5 sm:p-4">
-          <h3 className={cx('truncate sm:text-lg', militrinType.cardTitle)} title={current.eventName}>{current.eventName}</h3>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-300">
-            {current.date ? (
-              <span className="inline-flex items-center gap-1"><Calendar size={12} className="text-slate-500" />{current.date}</span>
-            ) : null}
-            {current.location ? (
-              <span className="inline-flex items-center gap-1"><MapPin size={12} className="text-slate-500" />{current.location}</span>
-            ) : null}
-          </div>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:max-w-md">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2">
+                <dt className="uppercase tracking-[0.16em] text-slate-500">Titular</dt>
+                <dd className="mt-0.5 truncate font-medium text-slate-100">{current.holderName || 'Não definido'}</dd>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2">
+                <dt className="uppercase tracking-[0.16em] text-slate-500">Camiseta</dt>
+                <dd className="mt-0.5 truncate font-medium text-slate-100">{current.shirtLabel || '—'}</dd>
+              </div>
+            </dl>
 
-          {/* Categoria/lote/camiseta: os dados que importam pra quem vai ao
-              evento. Nenhum codigo/UUID tecnico aqui -- ver ficha completa do
-              ingresso (Ver ingresso) pra referencias tecnicas. */}
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {current.categoryLabel ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
-                <Users size={11} />{current.categoryLabel}
-              </span>
-            ) : null}
-            {current.batchLabel ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
-                <Ticket size={11} />{current.batchLabel}
-              </span>
-            ) : null}
-            {current.shirtLabel ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
-                <Shirt size={11} />{current.shirtLabel}
-              </span>
-            ) : null}
-          </div>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {current.categoryLabel ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
+                  <Users size={11} />{current.categoryLabel}
+                </span>
+              ) : null}
+              {current.batchLabel ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-200">
+                  <Ticket size={11} />{current.batchLabel}
+                </span>
+              ) : null}
+            </div>
 
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-dashed border-slate-800 pt-3">
-            <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
-              Ver acesso
-            </MilitrinLinkButton>
-            {current.canShowTicket ? (
-              <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
-                Abrir QR Code
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              {current.canShowTicket ? (
+                <MilitrinLinkButton href={qrHref} variant="success" size="lg" iconLeft={<QrCode size={16} />} className="w-full sm:flex-1">
+                  Abrir QR Code
+                </MilitrinLinkButton>
+              ) : null}
+              <MilitrinLinkButton href={`/minha-conta/ingressos/${current.ticketId}`} variant="secondary" size="lg" className="w-full sm:flex-1">
+                Ver acesso
               </MilitrinLinkButton>
-            ) : null}
+            </div>
           </div>
+
+          {current.canShowTicket && current.token ? (
+            <div className="hidden justify-self-end lg:block">
+              <div className="rounded-2xl bg-white p-2 shadow-lg">
+                <LocalQrImage
+                  value={current.token}
+                  alt="QR Code do acesso Militrin"
+                  size={168}
+                  className="h-[168px] w-[168px] bg-white"
+                />
+              </div>
+              <p className="mt-2 max-w-[168px] text-center text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                Apresente este QR Code no ponto de retirada do Militrin
+              </p>
+            </div>
+          ) : null}
         </div>
 
         {hasMultiple ? (
@@ -108,17 +123,17 @@ export function HomeTicketCarousel({
               type="button"
               onClick={() => goTo(index - 1)}
               aria-label="Ingresso anterior"
-              className="absolute left-2.5 top-14 flex h-8 w-8 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500 sm:top-16"
+              className="absolute left-2 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500"
             >
-              <ChevronLeft size={15} />
+              <ChevronLeft size={18} />
             </button>
             <button
               type="button"
               onClick={() => goTo(index + 1)}
               aria-label="Próximo ingresso"
-              className="absolute right-2.5 top-14 flex h-8 w-8 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500 sm:top-16"
+              className="absolute right-2 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-200 shadow-lg backdrop-blur transition hover:border-slate-500"
             >
-              <ChevronRight size={15} />
+              <ChevronRight size={18} />
             </button>
           </>
         ) : null}
@@ -141,7 +156,7 @@ export function HomeTicketCarousel({
               aria-selected={dotIndex === activeDotIndex}
               aria-label={`Ir para ingresso próximo da posição ${dotIndex + 1} de ${dotTargets.length}`}
               onClick={() => goTo(targetIndex)}
-              className={`h-1.5 rounded-full transition-all ${dotIndex === activeDotIndex ? 'w-6 bg-(--brand-400)' : 'w-1.5 bg-slate-700 hover:bg-slate-600'}`}
+              className={`h-2.5 min-w-2.5 rounded-full transition-all ${dotIndex === activeDotIndex ? 'w-7 bg-(--brand-400)' : 'w-2.5 bg-slate-700 hover:bg-slate-600'}`}
             />
           ))}
         </div>

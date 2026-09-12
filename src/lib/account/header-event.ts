@@ -44,6 +44,8 @@ export function formatEventSchedule(startsAt: string | null | undefined, endsAt:
 export function buildAccountHeaderEvent(event: AccountHeaderEventRow): MilitrinHeaderEvent {
   const cta = resolveAccountHeaderCta(event);
   return {
+    id: event.id ?? null,
+    slug: event.slug ?? null,
     name: event.name ?? 'Evento',
     year: event.year ?? null,
     imageUrl: event.banner_card_url || event.banner_hero_url || null,
@@ -64,7 +66,7 @@ export function buildAccountHeaderEvent(event: AccountHeaderEventRow): MilitrinH
 export async function getPrimaryAccountHeaderEvent(supabase: SupabaseClient): Promise<MilitrinHeaderEvent | null> {
   const { data } = await supabase
     .from('events')
-    .select('name, slug, year, starts_at, ends_at, location, banner_card_url, banner_hero_url, is_active, archived_at, featured_on_account, registration_enabled, registration_open_at, registration_close_at')
+    .select('id, name, slug, year, starts_at, ends_at, location, banner_card_url, banner_hero_url, is_active, archived_at, featured_on_account, registration_enabled, registration_open_at, registration_close_at')
     .eq('featured_on_account', true)
     .order('starts_at', { ascending: true, nullsFirst: false });
 
