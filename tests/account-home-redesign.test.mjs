@@ -14,7 +14,7 @@ test('home usa o evento em destaque canonico e some o card se nao houver elegive
 test('card de evento em destaque usa logo da marca, nunca o banner do evento como imagem principal', async () => {
   const hero = await read('src/app/minha-conta/home-featured-hero.tsx');
   assert.match(hero, /mask-logo/);
-  assert.match(hero, /Evento em destaque/);
+  assert.match(hero, /Destaque/);
   assert.doesNotMatch(hero, /event\.imageUrl/);
   assert.doesNotMatch(hero, /banner_card_url/);
   assert.doesNotMatch(hero, /banner_hero_url/);
@@ -27,15 +27,17 @@ test('compra pendente da home so renderiza com canContinueCommercialPayment', as
   assert.doesNotMatch(page, /Nenhuma compra pendente no momento/);
 });
 
-test('atalho de QR e secao de acessos reutilizam o token do ticket, sem gerar QR novo no servidor', async () => {
+test('QR da home usa o token do ticket, sem gerar QR novo no servidor', async () => {
   const cards = await read('src/lib/account/home-ticket-cards.ts');
   const carousel = await read('src/app/minha-conta/home-ticket-carousel.tsx');
   const page = await read('src/app/minha-conta/page.tsx');
   assert.match(cards, /token: canShowQr \? String\(ticket\.token\) : null/);
   assert.match(carousel, /LocalQrImage/);
   assert.match(carousel, /current\.token/);
-  assert.match(page, /resolveAccountHomeQrHref/);
+  assert.match(carousel, /#qr/);
   assert.doesNotMatch(page, /generateQrDataUrl/);
+  assert.doesNotMatch(page, /HomeQuickActions/);
+  assert.doesNotMatch(carousel, /lg:hidden[\s\S]*LocalQrImage/);
 });
 
 test('Eventos em destaque so marcam Em alta com dado real de ocupacao', async () => {
@@ -45,9 +47,14 @@ test('Eventos em destaque so marcam Em alta com dado real de ocupacao', async ()
   assert.match(list, /event\.isHot/);
 });
 
-test('novidades da home usam pedido real e omitem a secao se nao houver', async () => {
+test('home compacta remove atalhos, numeros e novidades sem conteudo dedicado', async () => {
   const page = await read('src/app/minha-conta/page.tsx');
-  assert.match(page, /latestOrder \? \(/);
-  assert.match(page, /Últimas novidades/);
-  assert.doesNotMatch(page, /Seu primeiro pedido aparecerá aqui/);
+  assert.doesNotMatch(page, /HomeQuickActions/);
+  assert.doesNotMatch(page, /HomeIndicators/);
+  assert.doesNotMatch(page, /Últimas novidades/);
+  assert.doesNotMatch(page, /Seus números/);
+  assert.doesNotMatch(page, /Acessar meu QR Code/);
+  assert.match(page, /HomeTicketCarousel/);
+  assert.match(page, /HomeStoreBanner/);
+  assert.match(page, /filter\(\(event\) => String\(event\.id\) !== String\(headerEvent\?\.id/);
 });

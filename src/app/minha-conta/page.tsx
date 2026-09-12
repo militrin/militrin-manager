@@ -1,30 +1,19 @@
 import Link from 'next/link';
-import { ChevronRight, CircleUserRound, Clock, ShieldCheck, Ticket as TicketIcon } from 'lucide-react';
+import { CircleUserRound } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
+import { formatDateBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus, accountTicketItemCount } from '@/lib/account/portal-orders-and-tickets';
-import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
+import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
-import { resolveAccountHomeQrHref, resolveAccountHomeTicketCta, resolveHomeFeaturedEventCta } from '@/lib/account/home-ticket-cta';
-import { getLoyaltyLevel, normalizeLoyaltyLevel, sortLoyaltyLevels } from '@/lib/account/levels';
-import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
-import {
-  resolveParticipantAvatarUrl,
-  resolveParticipantFirstName,
-  resolveParticipantFullName,
-  resolveParticipantInitials,
-} from '@/lib/account/participant-identity';
+import { resolveHomeFeaturedEventCta } from '@/lib/account/home-ticket-cta';
+import { resolveParticipantFirstName, resolveParticipantFullName } from '@/lib/account/participant-identity';
 import { canContinueCommercialPayment } from '@/lib/dashboard/commercial-status';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
-import { MilitrinAvatar, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
+import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import { BetaFeedbackWidget } from '@/components/feedback/BetaFeedbackWidget';
 import { HomeTicketCarousel } from './home-ticket-carousel';
-import { HomeSponsorsCarousel, type HomeSponsor } from './home-sponsors-carousel';
-import { HomeIndicators } from './home-indicators';
 import { HomeFeaturedEvents, type HomeFeaturedEvent } from './home-featured-events';
 import { HomeFeaturedHero } from './home-featured-hero';
-import { HomeQuickActions } from './home-quick-actions';
 import { HomeStoreBanner } from './home-store-banner';
 import { HomePendingPurchase } from './home-pending-purchase';
 import { classifyTicketOperationalSituation } from '@/lib/tickets/ticket-situation';
@@ -79,7 +68,7 @@ export default async function MinhaContaPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [profileResult, ordersResult, eventsResult, featuredEventsResult, loyaltyTiersResult, confirmedOrdersCountResult, sponsorsResult, headerEvent] = await Promise.all([
+  const [profileResult, ordersResult, eventsResult, featuredEventsResult, headerEvent] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     getAccountOrders(supabase, user?.id ?? ''),
     supabase
@@ -88,9 +77,6 @@ export default async function MinhaContaPage() {
       .eq('registration_enabled', true)
       .order('starts_at', { ascending: true, nullsFirst: false }),
     supabase.rpc('get_featured_events_for_dashboard'),
-    supabase.from('loyalty_tiers').select('id, slug, name, badge, min_confirmed_participations, sort_order').order('min_confirmed_participations', { ascending: true }).order('sort_order', { ascending: true }),
-    supabase.from('orders').select('id', { count: 'exact', head: true }).eq('user_id', user?.id ?? '').eq('status', 'confirmed'),
-    supabase.rpc('get_active_sponsors_for_home'),
     getPrimaryAccountHeaderEvent(supabase),
   ]);
 
@@ -159,67 +145,32 @@ export default async function MinhaContaPage() {
 
   const displayName = resolveParticipantFullName({ profile, userMetadata, email: user?.email });
   const greetingName = resolveParticipantFirstName(displayName);
-  const greetingInitials = resolveParticipantInitials(displayName);
-  const profilePhotoUrl = resolveParticipantAvatarUrl({ profile, userMetadata });
-
-  const loyaltyLevels = sortLoyaltyLevels((loyaltyTiersResult.data ?? []).map((level) => normalizeLoyaltyLevel(level as Record<string, unknown>)));
-  const confirmedParticipations = Number(confirmedOrdersCountResult.count ?? 0);
-  const currentLoyaltyLevel = getLoyaltyLevel(confirmedParticipations, loyaltyLevels);
-
-  const sponsorRows = (sponsorsResult.data ?? []) as Array<{ sponsor_id: string; name: string; banner_url: string | null; link_url: string | null; carousel_interval_seconds: number | null }>;
-  const sponsors: HomeSponsor[] = sponsorRows
-    .filter((row) => Boolean(row.banner_url))
-    .map((row) => ({ id: String(row.sponsor_id), name: String(row.name), bannerUrl: String(row.banner_url), linkUrl: row.link_url ? String(row.link_url) : null }));
-  const sponsorCarouselIntervalSeconds = Number(sponsorRows[0]?.carousel_interval_seconds ?? 4);
 
   const pendingOrder = orders.find((order) => canContinueCommercialPayment(resolveAccountOrderStatus(order))) ?? null;
-  const latestOrder = orders[0] ?? null;
-  const latestOrderEvent = latestOrder
-    ? firstRelation(latestOrder.events as Record<string, unknown> | Record<string, unknown>[] | null | undefined)
-    : null;
-  const latestOrderItemCount = latestOrder ? accountTicketItemCount(latestOrder) : 0;
-  const latestOrderStatus = latestOrder ? resolveAccountOrderStatus(latestOrder) : null;
-  const latestOrderActivityTitle = latestOrderStatus === 'confirmed' ? 'Compra realizada' : 'Pedido criado';
 
   const ticketCards = await buildAccountHomeTicketCards(supabase, activeTickets);
-  const ticketCta = resolveAccountHomeTicketCta(ticketCards);
-  const qrHref = resolveAccountHomeQrHref(ticketCta);
   const featuredHeroCta = headerEvent
     ? resolveHomeFeaturedEventCta({
-      featuredEventId: headerEvent.id,
       showBuyButton: Boolean(headerEvent.showBuyButton),
       buyHref: headerEvent.buyHref ?? '/minha-conta/comprar',
-      tickets: ticketCards,
+      eventHref: headerEvent.slug ? `/eventos/${headerEvent.slug}` : null,
     })
     : null;
 
-  const storeItems = ticketScope.ownedEventIds.length > 0
-    ? await getStoreItemsForEvents(supabase, ticketScope.ownedEventIds)
-    : [];
-  const storeImageUrls = storeItems.map((item) => item.imageUrl).filter((url): url is string => Boolean(url)).slice(0, 3);
-
-  const listedEvents = dashboardEvents.slice(0, 2);
-  const listedEventIds = listedEvents.map((event) => String(event.id)).filter(Boolean);
-  const [bannerRowsResult, ...categoryResults] = await Promise.all([
-    listedEventIds.length > 0
-      ? supabase.from('events').select('id, banner_card_url, banner_hero_url').in('id', listedEventIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; banner_card_url: string | null; banner_hero_url: string | null }> }),
-    ...listedEvents.map((event) => (
-      event?.id
-        ? supabase.rpc('get_event_ticket_categories', { p_event_id: event.id })
-        : Promise.resolve({ data: null })
-    )),
-  ]);
-  const bannersById = new Map(
-    ((bannerRowsResult.data ?? []) as Array<{ id: string; banner_card_url: string | null; banner_hero_url: string | null }>).map((row) => [String(row.id), row]),
-  );
+  const listedEvents = dashboardEvents
+    .filter((event) => String(event.id) !== String(headerEvent?.id ?? ''))
+    .slice(0, 2);
+  const categoryResults = await Promise.all(listedEvents.map((event) => (
+    event?.id
+      ? supabase.rpc('get_event_ticket_categories', { p_event_id: event.id })
+      : Promise.resolve({ data: null })
+  )));
   const cardEventsRaw = listedEvents.map((event, index) => {
     const categoriesData = (Array.isArray(categoryResults[index]?.data) ? categoryResults[index].data : []) as Array<{ confirmed_count?: number; capacity?: number | null }>;
     const lowestAmount = findInitialPrice(categoriesData as Array<Record<string, unknown>>);
     const totalCapacity = categoriesData.reduce((sum, row) => sum + (Number.isFinite(Number(row.capacity)) ? Number(row.capacity) : 0), 0);
     const totalConfirmed = categoriesData.reduce((sum, row) => sum + Number(row.confirmed_count ?? 0), 0);
     const soldPercent = totalCapacity > 0 ? Math.round((totalConfirmed / totalCapacity) * 100) : null;
-    const banner = bannersById.get(String(event.id));
 
     return {
       id: String(event.id),
@@ -230,7 +181,7 @@ export default async function MinhaContaPage() {
       startingPrice: lowestAmount !== null ? money(lowestAmount) : null,
       soldPercent,
       isHot: soldPercent !== null && soldPercent >= 50,
-      bannerUrl: banner?.banner_card_url || banner?.banner_hero_url || null,
+      bannerUrl: null,
       buyHref: event.slug ? `/inscricao/${event.slug}` : '/minha-conta/comprar',
     } satisfies HomeFeaturedEvent;
   });
@@ -257,8 +208,6 @@ export default async function MinhaContaPage() {
 
     return {
       eventName: eventObj?.name ? String(eventObj.name) : 'Evento',
-      date: eventObj?.starts_at ? formatDateBR(String(eventObj.starts_at)) : null,
-      location: optionalDisplayValue(eventObj?.location),
       quantity: items.length,
       categoryLabel: presentationMode === 'category_visible' ? optionalDisplayValue((categoryNameResult.data as { name: string | null } | null)?.name) : null,
       batchLabel: presentationMode === 'single' ? null : optionalDisplayValue((batchNameResult.data as { name: string | null } | null)?.name),
@@ -266,126 +215,56 @@ export default async function MinhaContaPage() {
   })();
 
   return (
-    <section className="space-y-5">
-      <header className="flex items-start justify-between gap-3">
+    <section className="space-y-3">
+      <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2.5 lg:hidden">
-            <MilitrinAvatar src={profilePhotoUrl} alt={`Foto do usuário ${displayName}`} initials={greetingInitials} size="sm" />
-            <p className="min-w-0 truncate text-xs text-slate-400">{String(user?.email ?? '')}</p>
-          </div>
-          <h1 className={cx('mt-2 lg:mt-0', militrinType.pageTitle)}>Olá, {greetingName}!</h1>
-          <p className={cx('mt-1', militrinType.bodyMuted)}>Bem-vindo à sua conta Militrin.</p>
+          <h1 className="truncate text-lg font-semibold tracking-tight text-white">Olá, {greetingName}!</h1>
+          <p className="mt-0.5 text-xs text-slate-400">Bem-vindo à sua conta Militrin.</p>
         </div>
         <Link
           href="/minha-conta/dados"
-          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950/70 px-3 text-sm font-semibold text-slate-100 hover:border-slate-500"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 sm:w-auto sm:gap-2 sm:px-3"
+          aria-label="Ver meu perfil"
         >
           <CircleUserRound size={16} />
-          <span className="hidden sm:inline">Ver meu perfil</span>
+          <span className="hidden sm:inline text-sm font-semibold">Perfil</span>
         </Link>
       </header>
 
       {headerEvent ? <HomeFeaturedHero event={headerEvent} cta={featuredHeroCta} /> : null}
 
-      <HomeQuickActions
-        qrHref={qrHref}
-        hasAccessibleTicket={Boolean(ticketCta)}
-        purchaseCount={orders.length}
-        activeTicketCount={activeTickets.length}
-      />
+      <div className={pendingOrder && pendingOrderDetail ? 'grid gap-3 lg:grid-cols-2' : undefined}>
+        <HomeTicketCarousel
+          tickets={ticketCards}
+          emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
+          emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
+          emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
+          emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
+        />
 
-      <div className={sponsors.length > 0 ? 'grid gap-5 xl:grid-cols-[1.4fr_1fr]' : 'grid gap-5'}>
-        <section className="rounded-[1.75rem] border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg shadow-black/10 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
-              <TicketIcon size={18} className="text-(--brand-300)" />Meus acessos
-            </h2>
-            {ticketCards.length > 0 || archivedTicketCount > 0 ? (
-              <Link href="/minha-conta/ingressos" className="inline-flex min-h-11 items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
-                Ver todos<ChevronRight size={13} />
-              </Link>
-            ) : null}
-          </div>
-          <div className="mt-4">
-            <HomeTicketCarousel
-              tickets={ticketCards}
-              emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
-              emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
-              emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
-              emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
-            />
-          </div>
-        </section>
-
-        {sponsors.length > 0 ? (
-          <section className="rounded-[1.75rem] border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg shadow-black/10 sm:p-5">
-            <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
-              <ShieldCheck size={17} className="text-(--brand-300)" />Patrocinadores
-            </h2>
-            <div className="mt-4">
-              <HomeSponsorsCarousel sponsors={sponsors} intervalSeconds={sponsorCarouselIntervalSeconds} />
-            </div>
-          </section>
+        {pendingOrder && pendingOrderDetail ? (
+          <HomePendingPurchase
+            orderId={String(pendingOrder.id)}
+            eventName={pendingOrderDetail.eventName}
+            quantity={pendingOrderDetail.quantity}
+            categoryLabel={pendingOrderDetail.categoryLabel}
+            batchLabel={pendingOrderDetail.batchLabel}
+            amount={Number(pendingOrder.final_amount ?? 0)}
+          />
         ) : null}
       </div>
 
-      {pendingOrder && pendingOrderDetail ? (
-        <HomePendingPurchase
-          orderId={String(pendingOrder.id)}
-          eventName={pendingOrderDetail.eventName}
-          quantity={pendingOrderDetail.quantity}
-          categoryLabel={pendingOrderDetail.categoryLabel}
-          batchLabel={pendingOrderDetail.batchLabel}
-          date={pendingOrderDetail.date}
-          location={pendingOrderDetail.location}
-          amount={Number(pendingOrder.final_amount ?? 0)}
-        />
-      ) : null}
+      <HomeStoreBanner />
 
-      <HomeStoreBanner imageUrls={storeImageUrls} />
-
-      <section className="rounded-[1.75rem] border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg shadow-black/10 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className={militrinType.sectionTitle}>Eventos em destaque</h2>
-          <Link href="/eventos" className="inline-flex min-h-11 items-center gap-1 rounded-full border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
-            Ver todos<ChevronRight size={13} />
-          </Link>
-        </div>
-        <div className="mt-4">
+      {cardEventsRaw.length > 0 ? (
+        <section>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-white">Eventos em destaque</h2>
+            <Link href="/eventos" className="text-xs font-semibold text-slate-400 hover:text-slate-200">
+              Ver todos
+            </Link>
+          </div>
           <HomeFeaturedEvents events={cardEventsRaw} />
-        </div>
-      </section>
-
-      <HomeIndicators
-        purchaseCount={orders.length}
-        activeTicketCount={activeTickets.length}
-        categoryName={String(currentLoyaltyLevel.name)}
-      />
-
-      {latestOrder ? (
-        <section className="rounded-[1.75rem] border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg shadow-black/10 sm:p-5">
-          <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>
-            <Clock size={17} className="text-(--brand-300)" />Últimas novidades
-          </h2>
-          <Link
-            href={`/minha-conta/compras/${latestOrder.id}`}
-            className="mt-4 flex flex-col gap-2 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 transition hover:border-slate-600 sm:flex-row sm:items-center sm:gap-3"
-          >
-            <span className="flex min-w-0 items-center gap-3 sm:flex-1">
-              <span className="min-w-0 flex-1">
-                <span className={cx('block', militrinType.cardTitle)}>{latestOrderActivityTitle}</span>
-                <span className={cx('block truncate', militrinType.micro)}>
-                  {latestOrderEvent?.name ? String(latestOrderEvent.name) : 'Evento'}
-                  {latestOrderItemCount > 0 ? ` - ${latestOrderItemCount} ingresso${latestOrderItemCount === 1 ? '' : 's'}` : ''}
-                </span>
-              </span>
-            </span>
-            <span className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
-              <MilitrinStatusBadge status={String(latestOrderStatus)} />
-              <span className={cx('shrink-0', militrinType.micro)}>{formatDateTimeBR(String(latestOrder.confirmed_at ?? latestOrder.created_at ?? ''), ' ')}</span>
-              <ChevronRight size={16} className="shrink-0 text-slate-500" />
-            </span>
-          </Link>
         </section>
       ) : null}
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveAccountHomeQrHref, resolveAccountHomeTicketCta, resolveHomeFeaturedEventCta } from '../src/lib/account/home-ticket-cta.ts';
+import { formatCompactEventWhen } from '../src/lib/utils/date.ts';
 
 function card(ticketId, canShowTicket) {
   return { ticketId, canShowTicket };
@@ -41,34 +42,26 @@ test('atalho de QR: 1 ingresso vai ao QR canonico; varios ou nenhum vao para Meu
   assert.equal(resolveAccountHomeQrHref(null), '/minha-conta/ingressos');
 });
 
-test('CTA do evento em destaque prefere Ver acesso quando ja ha ingresso daquele evento', () => {
-  const tickets = [
-    { ticketId: 't1', eventId: 'ev-1', canShowTicket: true },
-    { ticketId: 't2', eventId: 'ev-2', canShowTicket: true },
-  ];
+test('CTA do evento em destaque compra quando a venda esta aberta, sem apontar para QR/acesso', () => {
   assert.deepEqual(resolveHomeFeaturedEventCta({
-    featuredEventId: 'ev-1',
     showBuyButton: true,
     buyHref: '/inscricao/militrin',
-    tickets,
-  }), { label: 'Ver acesso', href: '/minha-conta/ingressos/t1' });
-});
-
-test('CTA do evento em destaque usa Comprar ingresso quando nao ha acesso daquele evento e a venda esta aberta', () => {
-  assert.deepEqual(resolveHomeFeaturedEventCta({
-    featuredEventId: 'ev-9',
-    showBuyButton: true,
-    buyHref: '/inscricao/militrin',
-    tickets: [{ ticketId: 't1', eventId: 'ev-1', canShowTicket: true }],
+    eventHref: '/eventos/militrin',
   }), { label: 'Comprar ingresso', href: '/inscricao/militrin' });
 });
 
-test('CTA do evento em destaque some quando nao ha acesso nem venda aberta', () => {
-  assert.equal(resolveHomeFeaturedEventCta({
-    featuredEventId: 'ev-9',
+test('CTA do evento em destaque usa Ver evento quando a venda nao esta aberta', () => {
+  assert.deepEqual(resolveHomeFeaturedEventCta({
     showBuyButton: false,
     buyHref: '/minha-conta/comprar',
-    tickets: [],
+    eventHref: '/eventos/militrin',
+  }), { label: 'Ver evento', href: '/eventos/militrin' });
+});
+
+test('CTA do evento em destaque some quando nao ha venda aberta nem pagina do evento', () => {
+  assert.equal(resolveHomeFeaturedEventCta({
+    showBuyButton: false,
+    buyHref: '/minha-conta/comprar',
   }), null);
 });
 
@@ -82,4 +75,11 @@ test('ordem dos cards nunca importa -- decisao depende so da CONTAGEM de acessiv
   const emZAcessivel = [card('a', false), card('b', false), card('c', true)];
   assert.deepEqual(resolveAccountHomeTicketCta(emAAcessivel), { type: 'ticket', ticketId: 'a' });
   assert.deepEqual(resolveAccountHomeTicketCta(emZAcessivel), { type: 'ticket', ticketId: 'c' });
+});
+
+test('faixa compacta do evento usa dia, mes curto e horario em America/Sao_Paulo', () => {
+  assert.equal(
+    formatCompactEventWhen('2026-10-10T16:00:00.000Z', '2026-10-10T22:30:00.000Z'),
+    '10 OUT · 13h–19h30',
+  );
 });

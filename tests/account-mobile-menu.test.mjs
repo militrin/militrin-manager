@@ -13,7 +13,6 @@ async function readFile(url, encoding) {
 const accountNav = await readFile(new URL("../src/app/minha-conta/account-nav.tsx", import.meta.url), "utf8");
 const layout = await readFile(new URL("../src/app/minha-conta/layout.tsx", import.meta.url), "utf8");
 const homePage = await readFile(new URL("../src/app/minha-conta/page.tsx", import.meta.url), "utf8");
-const homeQuickActions = await readFile(new URL("../src/app/minha-conta/home-quick-actions.tsx", import.meta.url), "utf8");
 const homeStoreBanner = await readFile(new URL("../src/app/minha-conta/home-store-banner.tsx", import.meta.url), "utf8");
 
 function slice(source, startMarker, endMarker) {
@@ -88,23 +87,21 @@ test("AccountMobileNav recebe o destino administrativo como prop -- layout.tsx r
   assert.match(layout, /<AccountMobileNav administrativeLandingPage={administrativeLandingPage} isSponsorUser={isSponsorUser} \/>/);
 });
 
-test("home da Minha Conta destaca evento, QR e atalhos antes da secao 'Meus acessos'", () => {
+test("home da Minha Conta e um painel compacto: evento, acesso, loja -- sem atalhos duplicados", () => {
   const heroIdx = homePage.indexOf("<HomeFeaturedHero");
-  const qrIdx = homePage.indexOf("<HomeQuickActions");
-  const acessosIdx = homePage.indexOf("Meus acessos");
+  const acessosIdx = homePage.indexOf("<HomeTicketCarousel");
+  const lojaIdx = homePage.indexOf("<HomeStoreBanner");
   assert.ok(heroIdx !== -1, "card de evento em destaque precisa existir");
-  assert.ok(qrIdx !== -1, "atalhos rapidos (QR) precisam existir");
-  assert.ok(acessosIdx !== -1, "secao Meus acessos precisa existir");
-  assert.ok(heroIdx < acessosIdx && qrIdx < acessosIdx, "evento em destaque e QR precisam vir ANTES de Meus acessos");
-  assert.match(homePage, /HomeStoreBanner/);
-  assert.match(homeQuickActions, /Acessar meu QR Code/);
+  assert.ok(acessosIdx !== -1, "card Meu acesso precisa existir");
+  assert.ok(lojaIdx !== -1, "faixa da loja precisa existir");
+  assert.ok(heroIdx < acessosIdx && acessosIdx < lojaIdx, "ordem: evento, acesso, loja");
+  assert.doesNotMatch(homePage, /HomeQuickActions/);
+  assert.doesNotMatch(homePage, /Acessar meu QR Code/);
 });
 
-test("banner da Loja na home usa imagens reais do catalogo (mesma fonte que /minha-conta/loja), com fallback quando nao ha imagem", () => {
-  assert.match(homePage, /import { getStoreItemsForEvents } from '@\/lib\/store\/get-store-items'/);
-  assert.match(homePage, /storeImageUrls/);
-  assert.match(homePage, /ticketScope\.ownedEventIds/);
+test("faixa da Loja na home e compacta e aponta para /minha-conta/loja", () => {
   assert.match(homeStoreBanner, /href="\/minha-conta\/loja"/);
-  assert.match(homeStoreBanner, /Acessar loja/);
-  assert.match(homeStoreBanner, /imageUrls/);
+  assert.match(homeStoreBanner, /Ver loja/);
+  assert.match(homeStoreBanner, /Loja Militrin/);
+  assert.doesNotMatch(homeStoreBanner, /imageUrls/);
 });

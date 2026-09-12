@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { formatDateLongBR, dateTimePartsInEventTimeZone, EVENT_TIMEZONE } from '@/lib/utils/date';
+import { formatCompactEventWhen, formatDateLongBR, dateTimePartsInEventTimeZone, EVENT_TIMEZONE } from '@/lib/utils/date';
 import type { MilitrinHeaderEvent } from '@/components/militrin/MilitrinHeader';
 import {
   isAccountHeaderEventEligible,
@@ -51,6 +51,7 @@ export function buildAccountHeaderEvent(event: AccountHeaderEventRow): MilitrinH
     imageUrl: event.banner_card_url || event.banner_hero_url || null,
     date: event.starts_at ? formatDateLongBR(event.starts_at) : 'Data a confirmar',
     schedule: formatEventSchedule(event.starts_at, event.ends_at),
+    compactWhen: formatCompactEventWhen(event.starts_at, event.ends_at),
     location: event.location ?? 'Local a confirmar',
     showBuyButton: cta.showBuyButton,
     buyHref: cta.buyHref,

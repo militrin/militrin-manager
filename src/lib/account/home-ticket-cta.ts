@@ -30,29 +30,19 @@ export function resolveAccountHomeQrHref(cta: AccountHomeTicketCtaTarget | null)
 }
 
 /**
- * CTA do card de evento em destaque da Home. Prefere "Ver acesso(s)" quando o
- * participante ja tem ingresso acessivel daquele evento; senao reusa a regra
- * de venda aberta (Comprar ingresso). Nao inventa destino.
+ * CTA do card de evento em destaque da Home: compra se a venda estiver
+ * aberta, senao "Ver evento" na pagina publica. Nao aponta para QR/acesso
+ * -- isso fica so no card Meu acesso.
  */
 export function resolveHomeFeaturedEventCta(input: {
-  featuredEventId?: string | null;
   showBuyButton: boolean;
   buyHref: string;
-  tickets: Array<{ ticketId: string; eventId?: string | null; canShowTicket: boolean }>;
+  eventHref?: string | null;
 }): HomeFeaturedEventCta | null {
-  const featuredEventId = String(input.featuredEventId ?? '').trim();
-  const accessibleForEvent = featuredEventId
-    ? input.tickets.filter((ticket) => ticket.canShowTicket && String(ticket.eventId ?? '') === featuredEventId)
-    : [];
-
-  if (accessibleForEvent.length === 1) {
-    return { label: 'Ver acesso', href: `/minha-conta/ingressos/${accessibleForEvent[0].ticketId}` };
-  }
-  if (accessibleForEvent.length > 1) {
-    return { label: 'Ver acessos', href: '/minha-conta/ingressos' };
-  }
   if (input.showBuyButton && input.buyHref) {
     return { label: 'Comprar ingresso', href: input.buyHref };
   }
+  const eventHref = String(input.eventHref ?? '').trim();
+  if (eventHref) return { label: 'Ver evento', href: eventHref };
   return null;
 }

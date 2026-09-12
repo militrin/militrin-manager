@@ -1,4 +1,5 @@
-import { MilitrinLinkButton, MilitrinStatusBadge, cx, militrinType } from '@/components/militrin';
+import Link from 'next/link';
+import { MilitrinLinkButton, cx, militrinType } from '@/components/militrin';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -10,8 +11,6 @@ export function HomePendingPurchase({
   quantity,
   categoryLabel,
   batchLabel,
-  date,
-  location,
   amount,
 }: {
   orderId: string;
@@ -19,37 +18,24 @@ export function HomePendingPurchase({
   quantity: number;
   categoryLabel: string | null;
   batchLabel: string | null;
-  date: string | null;
-  location: string | null;
   amount: number;
 }) {
+  const subtitle = [eventName, batchLabel || categoryLabel].filter(Boolean).join(' · ');
+
   return (
-    <section className="rounded-[1.75rem] border border-amber-500/25 bg-slate-900/70 p-4 shadow-lg shadow-black/10 sm:p-5">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className={cx('flex items-center gap-2', militrinType.sectionTitle)}>Compra pendente</h2>
-        <MilitrinStatusBadge status="pending" label="Pendente" />
-      </div>
-      <div className="mt-4 space-y-2">
-        <p className={militrinType.cardTitle}>{eventName}</p>
-        <div className={cx('flex flex-wrap gap-x-4 gap-y-1', militrinType.micro)}>
-          {date ? <span>{date}</span> : null}
-          {location ? <span>{location}</span> : null}
-        </div>
-        <p className={militrinType.body}>
-          {quantity} ingresso{quantity === 1 ? '' : 's'}
-          {categoryLabel ? ` • ${categoryLabel}` : ''}
-        </p>
-        {batchLabel ? <p className={militrinType.micro}>{batchLabel}</p> : null}
-        <p className={cx('pt-1 text-2xl', militrinType.money)}>{money(amount)}</p>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <MilitrinLinkButton href={`/minha-conta/compras/${orderId}`} size="lg" className="w-full sm:flex-1">
-            Continuar pagamento
-          </MilitrinLinkButton>
-          <MilitrinLinkButton href={`/minha-conta/compras/${orderId}`} variant="secondary" size="lg" className="w-full sm:flex-1">
-            Ver detalhes
-          </MilitrinLinkButton>
-        </div>
-      </div>
+    <section className="rounded-2xl border border-amber-500/25 bg-slate-900/70 p-3">
+      <p className={cx('uppercase tracking-[0.16em]', militrinType.label)}>Compra pendente</p>
+      <p className="mt-2 truncate text-sm font-semibold text-white" title={subtitle}>
+        {subtitle}
+        {quantity > 1 ? ` · ${quantity} ingressos` : ''}
+      </p>
+      <p className={cx('mt-1 text-base', militrinType.money)}>{money(amount)}</p>
+      <MilitrinLinkButton href={`/minha-conta/compras/${orderId}`} size="md" className="mt-3 w-full">
+        Continuar pagamento
+      </MilitrinLinkButton>
+      <Link href={`/minha-conta/compras/${orderId}`} className="mt-2 inline-block text-xs font-medium text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline">
+        Ver detalhes
+      </Link>
     </section>
   );
 }

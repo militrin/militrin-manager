@@ -81,6 +81,27 @@ function isCalendarDateOnly(value: string) {
   return ISO_DATE_ONLY_REGEX.test(text) || BR_DATE_REGEX.test(text);
 }
 
+function formatHourParts(hour: string, minute: string) {
+  return Number(minute) ? `${hour}h${minute}` : `${hour}h`;
+}
+
+/** Faixa compacta da Home: "10 OUT · 13h–19h30", sempre em America/Sao_Paulo. */
+export function formatCompactEventWhen(startsAt: string | Date | null | undefined, endsAt: string | Date | null | undefined): string | null {
+  const start = parseDateInput(startsAt);
+  if (!start) return null;
+  const startParts = dateTimePartsInEventTimeZone(start);
+  const month = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: EVENT_TIMEZONE,
+    month: 'short',
+  }).format(start).replace('.', '').toUpperCase();
+  const day = Number(startParts.day);
+  const startHour = formatHourParts(startParts.hour, startParts.minute);
+  const end = parseDateInput(endsAt);
+  if (!end) return `${day} ${month} · ${startHour}`;
+  const endParts = dateTimePartsInEventTimeZone(end);
+  return `${day} ${month} · ${startHour}–${formatHourParts(endParts.hour, endParts.minute)}`;
+}
+
 export function formatDateBR(value: string | Date | null | undefined) {
   const parts = calendarPartsInEventTimeZone(value);
   if (!parts) return '-';

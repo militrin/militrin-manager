@@ -9,6 +9,7 @@ export type MilitrinHeaderEvent = {
   name: string;
   date: string;
   schedule?: string | null;
+  compactWhen?: string | null;
   location: string;
   year?: number | null;
   imageUrl?: string | null;
