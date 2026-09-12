@@ -18,8 +18,10 @@ test('canonical dashboard separates people, commercial items and tickets', async
   const source = await read('src/lib/dashboard/admin-dashboard-data.ts');
   assert.match(source, /put\('people', 'Pessoas no evento', people\.size/);
   assert.match(source, /put\('registrations', 'Inscrições comerciais', items\.length/);
+  assert.match(source, /put\('confirmed', 'Ingressos ativos', activeTickets\.length/);
+  assert.match(source, /put\('cancelled', 'Cancelados', cancelledTickets\.length/);
   assert.match(source, /put\('tickets', 'Ingressos emitidos', tickets\.length/);
-  assert.match(source, /registration_contacts\(full_name\)/);
+  assert.match(source, /registration_contacts\(id,full_name\)/);
   assert.match(source, /participant_data_issues'\)\.select\('id,event_id,participant_id/);
   assert.doesNotMatch(source, /participant_data_issues'\)\.select\([^']*order_item_id/);
 });
@@ -31,21 +33,20 @@ test('canonical dashboard separates people, commercial items and tickets', async
 // -- nao uma heuristica por metrica.
 test('dashboard filtra order_items por item_kind=ticket antes de calcular qualquer metrica de inscricao', async () => {
   const source = await read('src/lib/dashboard/admin-dashboard-data.ts');
-  const itemsDeclarationIndex = source.indexOf('const items = ((itemsResult.data ?? []) as Row[]).filter((item) => (item.item_kind ?? \'ticket\') === \'ticket\');');
+  const itemsDeclarationIndex = source.indexOf("const items = allOrderItems.filter((item) => (item.item_kind ?? 'ticket') === 'ticket');");
   assert.ok(itemsDeclarationIndex >= 0, 'items deve ser filtrado por item_kind logo na leitura de itemsResult');
   const firstPutIndex = source.indexOf("put('registrations'");
   assert.ok(firstPutIndex > itemsDeclarationIndex, 'o filtro por item_kind precisa vir ANTES de qualquer metrica usar items');
-  // order_items select precisa trazer item_kind -- sem ele o filtro seria
-  // sempre um no-op (item.item_kind sempre undefined).
   assert.match(source, /supabase\.from\('order_items'\)\.select\('id,event_id,status,item_kind,/);
 });
 
-test('shirt stock and consistency follow physical and ticket-first semantics', async () => {
+test('shirt stock follows canonical reserved demand and free-to-reserve semantics', async () => {
   const source = await read('src/lib/dashboard/admin-dashboard-data.ts');
-  assert.match(source, /total_quantity \?\? 0\) - Number\(row\.delivered_quantity/);
   assert.match(source, /kit\.variant_data\?\.variant_id/);
   assert.match(source, /kitsByTicket/);
-  assert.doesNotMatch(source, /total_quantity \?\? 0\) - Number\(row\.reserved_quantity[^\n]+row\.delivered_quantity/);
+  assert.match(source, /reservedShirtTotal\(kitPendingReserved, additionalReserved\)/);
+  assert.match(source, /freeToReserveQuantity\(received, delivered, reserved\)/);
+  assert.match(source, /put\('shirts_additional', 'Camisetas adicionais'/);
 });
 
 test('cards are traceable and sensitive actions keep RBAC', async () => {

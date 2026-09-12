@@ -98,17 +98,17 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             {sectionAccess.people ? <AdminSection compact title="Pessoas e inscrições">
               {!data.hasData ? <AdminEmptyState title="Sem dados no período" description="Os indicadores aparecerão quando houver inscrições, pagamentos ou ingressos." /> : <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
                 <AdminStatCard compact label="Pessoas no evento" value={metric('people').value} href={href('people')} icon={Users} hint="Cadastros globais vinculados" />
-                <AdminStatCard compact label="Inscrições comerciais" value={metric('registrations').value} href={href('registrations')} icon={ClipboardList} hint="Itens de ingresso no evento" />
-                <AdminStatCard compact label="Confirmadas" value={metric('confirmed').value} href={href('confirmed')} icon={CheckCircle2} tone="success" />
-                <AdminStatCard compact label="Pendentes" value={metric('pending').value} href={href('pending')} icon={Clock3} tone="warning" hint="Dentro do prazo de pagamento" />
-                <AdminStatCard compact label="Expiradas" value={metric('expired').value} href={href('expired')} icon={TriangleAlert} tone="danger" hint="Prazo de pagamento vencido" />
-                <AdminStatCard compact label="Canceladas" value={metric('cancelled').value} href={href('cancelled')} icon={Ban} />
+                <AdminStatCard compact label="Inscrições comerciais" value={metric('registrations').value} href={href('registrations')} icon={ClipboardList} hint="Itens de ingresso no pedido. Não é o mesmo que ingresso ativo." />
+                <AdminStatCard compact label="Ingressos ativos" value={metric('confirmed').value} href={href('confirmed')} icon={CheckCircle2} tone="success" hint="Tickets operacionais (active ou used). Cancelados ficam de fora." tooltip="Ingressos atualmente válidos. Ticket cancelado não entra, mesmo se o pedido comercial continuar confirmed." />
+                <AdminStatCard compact label="Pendentes" value={metric('pending').value} href={href('pending')} icon={Clock3} tone="warning" hint="Inscrições comerciais dentro do prazo de pagamento" />
+                <AdminStatCard compact label="Expiradas" value={metric('expired').value} href={href('expired')} icon={TriangleAlert} tone="danger" hint="Inscrições comerciais com prazo vencido" />
+                <AdminStatCard compact label="Cancelados" value={metric('cancelled').value} href={href('cancelled')} icon={Ban} hint="Ingressos com tickets.status = cancelled no evento selecionado" tooltip="Conta tickets cancelados, inclusive históricos. Não usa o status comercial do pedido." />
               </div>}
             </AdminSection> : null}
 
             {sectionAccess.operations && data.hasData ? <AdminSection compact title="Ingressos e operação">
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                <AdminStatCard compact label="Ingressos emitidos" value={metric('tickets').value} href={href('tickets')} icon={Ticket} />
+                <AdminStatCard compact label="Ingressos emitidos" value={metric('tickets').value} href={href('tickets')} icon={Ticket} hint="Total histórico, inclui cancelados" />
                 <AdminStatCard compact label="Check-ins realizados" value={metric('checkins').value} href={href('checkins')} icon={ScanLine} tone="info" />
                 <AdminStatCard compact label="Kits completos entregues" value={metric('complete_kits').value} href={href('complete_kits')} icon={PackageCheck} tone="success" />
                 <div className="sm:col-span-2 xl:col-span-2">
@@ -118,14 +118,16 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             </AdminSection> : null}
 
             {sectionAccess.inventory && data.hasData ? <AdminSection compact title="Estoque de camisetas">
-              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
-                <AdminStatCard compact label="Recebidas" value={metric('shirts_received').value} href={href('shirts_received')} icon={Boxes} />
-                <AdminStatCard compact label="Reservadas" value={metric('shirts_reserved').value} href={href('shirts_reserved')} icon={Shirt} />
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                <AdminStatCard compact label="Recebidas" value={metric('shirts_received').value} href={href('shirts_received')} icon={Boxes} hint="Estoque físico recebido" />
+                <AdminStatCard compact label="Reservadas" value={metric('shirts_reserved').value} href={href('shirts_reserved')} icon={Shirt} hint={`${metric('shirts_kit_reserved').value} de kits de ingressos + ${metric('shirts_additional').value} adicional${metric('shirts_additional').value === 1 ? '' : 'is'}`} tooltip="Reservadas = kits ainda não entregues + camisetas adicionais reservadas." />
+                <AdminStatCard compact label="De kits pendentes" value={metric('shirts_kit_reserved').value} href={href('shirts_kit_reserved')} icon={PackageCheck} hint="Ingresso active ou used, camiseta ainda não entregue" tooltip="Check-in não libera a reserva. Só entrega ou cancelamento do kit." />
+                <AdminStatCard compact label="Camisetas adicionais" value={metric('shirts_additional').value} href={href('shirts_additional')} icon={Gift} hint="Loja, concessão admin ou produto extra. Sem kit de ingresso." />
                 <AdminStatCard compact label="Entregues" value={metric('shirts_delivered').value} href={href('shirts_delivered')} icon={Truck} />
-                <AdminStatCard compact label="Disponíveis" value={metric('shirts_available').value} href={href('shirts_available')} icon={Warehouse} tone="success" />
+                <AdminStatCard compact label="Livres para nova reserva" value={metric('shirts_available').value} href={href('shirts_available')} icon={Warehouse} tone="success" hint="Estoque físico restante − reservas pendentes" tooltip="livres = (recebidas − entregues) − reservadas" />
                 <AdminStatCard compact label="Faltam encomendar" value={metric('shirts_deficit').value} href={href('shirts_deficit')} icon={TriangleAlert} tone={metric('shirts_deficit').value ? 'danger' : 'default'} />
               </div>
-              <p className="mt-2 text-[11px] leading-4 text-slate-400">Disponibilidade física = recebidas − entregues. Reservas representam demanda, não saída física.</p>
+              <p className="mt-2 text-[11px] leading-4 text-slate-400">Reservadas = kits ainda não entregues de ingressos válidos (active ou used) + camisetas adicionais reservadas. Check-in não libera reserva. Entregar ou cancelar o kit tira a peça de Reservadas. Nenhuma destas métricas altera estoque físico.</p>
             </AdminSection> : null}
 
             {canViewFinanceSection ? <AdminSection compact title="Financeiro" actions={<AdminStatusBadge status="confirmed" />}>

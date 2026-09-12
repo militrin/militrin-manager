@@ -8,7 +8,7 @@ import { DASHBOARD_METRIC_SECTIONS, DASHBOARD_SECTION_PERMISSIONS } from '@/lib/
 
 const metricKeys = new Set<DashboardMetricKey>([
   'people', 'registrations', 'confirmed', 'pending', 'expired', 'cancelled', 'tickets', 'checkins', 'complete_kits', 'shirt_coherence',
-  'shirts_received', 'shirts_reserved', 'shirts_delivered', 'shirts_available', 'shirts_deficit',
+  'shirts_received', 'shirts_reserved', 'shirts_kit_reserved', 'shirts_additional', 'shirts_delivered', 'shirts_available', 'shirts_deficit',
   'revenue_confirmed', 'revenue_pending', 'revenue_refunded', 'pix', 'card', 'courtesy',
 ]);
 function money(value: number) {

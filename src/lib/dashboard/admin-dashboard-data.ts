@@ -19,11 +19,22 @@ import {
 } from '@/lib/finance/confirmed-revenue';
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from '@/lib/payments/gateway-environment';
 import { resolveShirtVariant } from '@/lib/imports/shirt-variant';
+import {
+  additionalCartReservationQuantity,
+  additionalStoreReservationQuantity,
+  freeToReserveQuantity,
+  isCancelledTicketStatus,
+  isOperationalTicketStatus,
+  pendingKitReservationQuantity,
+  reservedShirtTotal,
+  shirtDeficitQuantity,
+} from '@/lib/dashboard/operational-shirt-demand';
 
 export type DashboardMetricKey =
   | 'people' | 'registrations' | 'confirmed' | 'pending' | 'expired' | 'cancelled'
   | 'tickets' | 'checkins' | 'complete_kits' | 'shirt_coherence'
-  | 'shirts_received' | 'shirts_reserved' | 'shirts_delivered' | 'shirts_available' | 'shirts_deficit'
+  | 'shirts_received' | 'shirts_reserved' | 'shirts_kit_reserved' | 'shirts_additional'
+  | 'shirts_delivered' | 'shirts_available' | 'shirts_deficit'
   | 'revenue_confirmed' | 'revenue_pending' | 'revenue_refunded' | 'pix' | 'card' | 'courtesy';
 
 export type DashboardDetailRow = {
@@ -82,12 +93,25 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     }
     return { data: rows, error: null };
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function fetchAllQuery(build: () => any) {
+    const rows: Row[] = [];
+    let from = 0;
+    for (;;) {
+      const { data, error } = await build().range(from, from + DASHBOARD_PAGE_SIZE - 1);
+      if (error) return { data: rows, error };
+      rows.push(...((data ?? []) as Row[]));
+      if ((data ?? []).length < DASHBOARD_PAGE_SIZE) break;
+      from += DASHBOARD_PAGE_SIZE;
+    }
+    return { data: rows, error: null };
+  }
   const enabled = new Set(authorizedSections);
   const emptyResult = { data: [], error: null };
-  const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult] = await Promise.all([
+  const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult] = await Promise.all([
     enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
-    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
-    enabled.has('operations') || enabled.has('finance') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,store_item_id,store_item_variant_id,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') || enabled.has('finance') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
     enabled.has('finance') ? fetchAllScoped(() => supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
     // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
@@ -101,24 +125,50 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     // inventar uma segunda forma de reconciliar as duas tabelas.
     enabled.has('inventory') ? fetchAllScoped(() => supabase.from('event_kit_item_variant_inventory').select('event_id,reserved_quantity,delivered_quantity,event_kit_item_variants(id,name,value)')) : emptyResult,
     enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('participant_kit_items').select('id,event_id,ticket_id,order_item_id,kit_item_id,status,quantity,variant_data,delivered_at')) : emptyResult,
-    enabled.has('operations') ? fetchAllScoped(() => supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant,event_kit_item_variants(id,name,value,is_active)')) : emptyResult,
+    enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('event_kit_items').select('id,event_id,name,item_type,is_required,is_active,requires_variant,event_kit_item_variants(id,name,value,is_active)')) : emptyResult,
     // Compatibilidade com o baseline remoto: as pendencias antigas sao ligadas
     // ao participant. A migration contact-first adiciona order_item_id/ticket_id,
     // mas o Dashboard nao pode exigir essas colunas antes de ela ser publicada.
     enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participant_data_issues').select('id,event_id,participant_id,field_code,message,status,resolution_scope').eq('status', 'open')) : emptyResult,
     enabled.has('inventory') ? fetchAllScoped(() => supabase.from('inventory_movements').select('id,event_id,inventory_id,movement_type,quantity,notes,created_at')) : emptyResult,
+    enabled.has('inventory')
+      ? supabase.from('store_items').select('id,name,linked_event_kit_item_id').eq('organization_id', organization.id)
+      : emptyResult,
   ]);
-  for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult]) if (result.error) throw result.error;
+  for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult]) if (result.error) throw result.error;
   const participants = (participantsResult.data ?? []) as Row[];
   // Fonte canonica ticket x produto: order_items.item_kind (nunca nome/preco/
   // lote/QR). Metricas e listas desta secao ("Inscricoes comerciais" etc.) sao
   // semanticamente sobre INGRESSO -- produto "compre junto" (item_kind=
   // 'product') e filtrado aqui, uma unica vez, pra nenhum consumidor abaixo
   // precisar reaplicar a regra (auditoria da Central de Integridade).
-  const items = ((itemsResult.data ?? []) as Row[]).filter((item) => (item.item_kind ?? 'ticket') === 'ticket');
+  const allOrderItems = (itemsResult.data ?? []) as Row[];
+  const items = allOrderItems.filter((item) => (item.item_kind ?? 'ticket') === 'ticket');
+  const productItems = allOrderItems.filter((item) => item.item_kind === 'product');
   const tickets = (ticketsResult.data ?? []) as Row[];
   const payments = (paymentsResult.data ?? []) as Row[]; const rawInventory = (inventoryResult.data ?? []) as Row[]; const kits = (kitsResult.data ?? []) as Row[];
   const kitDefinitions = (kitDefinitionsResult.data ?? []) as Row[]; const issues = (issuesResult.data ?? []) as Row[]; const movements = (movementsResult.data ?? []) as Row[];
+  const storeItems = ((storeItemsResult.data ?? []) as Row[]).filter((item) => kitDefinitions.some((definition) => definition.item_type === 'shirt' && String(definition.id) === String(item.linked_event_kit_item_id)));
+  const shirtKitIds = new Set(kitDefinitions.filter((definition) => definition.item_type === 'shirt').map((definition) => String(definition.id)));
+  const kitEventById = new Map(kitDefinitions.map((definition) => [String(definition.id), String(definition.event_id)]));
+  let storeVariants: Row[] = [];
+  let storeLines: Row[] = [];
+  let storeOrders: Row[] = [];
+  if (enabled.has('inventory') && storeItems.length) {
+    const storeItemIds = storeItems.map((item) => String(item.id));
+    const variantsResult = await fetchAllQuery(() => supabase.from('store_item_variants').select('id,store_item_id,name,value,linked_event_kit_item_variant_id').in('store_item_id', storeItemIds));
+    if (variantsResult.error) throw variantsResult.error;
+    storeVariants = variantsResult.data;
+    const linesResult = await fetchAllQuery(() => supabase.from('store_order_items').select('id,store_order_id,store_item_id,variant_id,quantity,status').in('store_item_id', storeItemIds));
+    if (linesResult.error) throw linesResult.error;
+    storeLines = linesResult.data;
+    const storeOrderIds = [...new Set(storeLines.map((line) => String(line.store_order_id ?? '')).filter(Boolean))];
+    if (storeOrderIds.length) {
+      const ordersResult = await fetchAllQuery(() => supabase.from('store_orders').select('id,status,display_number,order_number,event_id').in('id', storeOrderIds));
+      if (ordersResult.error) throw ordersResult.error;
+      storeOrders = ordersResult.data;
+    }
+  }
 
   // Reconcilia reserved_quantity/delivered_quantity com a fonte canonica por
   // variante+evento. shirt_inventory.total_quantity segue confiavel (espelhado
@@ -314,7 +364,8 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       href: `/camisetas?eventId=${row.event_id}`, actionLabel: 'Ver estoque' };
   };
 
-  const activeTickets = tickets.filter((ticket) => !cancelled(ticket.status));
+  const activeTickets = tickets.filter((ticket) => isOperationalTicketStatus(ticket.status));
+  const cancelledTickets = tickets.filter((ticket) => isCancelledTicketStatus(ticket.status));
   const requiredKitByEvent = new Map<string, string[]>(); const shirtKitByEvent = new Map<string, string[]>();
   const variantsByKit = new Map<string, { id: string; name: string; value: string; is_active: boolean }[]>();
   for (const definition of kitDefinitions.filter((row) => row.is_active)) {
@@ -348,30 +399,112 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       reservationExpiresAt: item.reservation_expires_at,
     });
   };
-  const confirmedItems = items.filter((item) => itemCommercialStatus(item) === 'confirmed');
   const pendingItems = items.filter((item) => itemCommercialStatus(item) === 'pending');
   const expiredItems = items.filter((item) => itemCommercialStatus(item) === 'expired');
-  const cancelledItems = items.filter((item) => itemCommercialStatus(item) === 'cancelled');
+  const ticketById = new Map(tickets.map((ticket) => [String(ticket.id), ticket]));
+  const storeItemById = new Map(storeItems.map((item) => [String(item.id), item]));
+  const storeVariantById = new Map(storeVariants.map((variant) => [String(variant.id), variant]));
+  const storeOrderById = new Map(storeOrders.map((order) => [String(order.id), order]));
+
+  const kitReservedRows: DashboardDetailRow[] = [];
+  let kitPendingReserved = 0;
+  for (const kit of kits) {
+    if (!shirtKitIds.has(String(kit.kit_item_id ?? ''))) continue;
+    const ticket = ticketById.get(String(kit.ticket_id ?? ''));
+    if (!ticket) continue;
+    const quantity = pendingKitReservationQuantity({
+      ticketStatus: ticket.status,
+      kitStatus: kit.status,
+      variantId: kit.variant_data?.variant_id,
+      quantity: kit.quantity,
+    });
+    if (!quantity) continue;
+    kitPendingReserved += quantity;
+    kitReservedRows.push({ ...ticketRow(ticket), value: quantity, status: String(kit.status ?? 'reserved'), issue: 'Kit de ingresso pendente de entrega' });
+  }
+
+  const additionalRows: DashboardDetailRow[] = [];
+  let additionalReserved = 0;
+  for (const line of storeLines) {
+    const storeItem = storeItemById.get(String(line.store_item_id ?? ''));
+    const kitEventId = kitEventById.get(String(storeItem?.linked_event_kit_item_id ?? ''));
+    if (!kitEventId || !eventIds.includes(kitEventId)) continue;
+    const storeOrder = storeOrderById.get(String(line.store_order_id ?? ''));
+    const storeVariant = storeVariantById.get(String(line.variant_id ?? ''));
+    const quantity = additionalStoreReservationQuantity({
+      storeOrderStatus: storeOrder?.status,
+      lineStatus: line.status,
+      linkedVariantId: storeVariant?.linked_event_kit_item_variant_id,
+      quantity: line.quantity,
+    });
+    if (!quantity) continue;
+    additionalReserved += quantity;
+    additionalRows.push({
+      id: String(line.id),
+      primary: `${storeItem?.name ?? 'Camiseta'} ${[storeVariant?.name, storeVariant?.value].filter(Boolean).join(' ')}`.trim(),
+      secondary: ['Loja / concessão administrativa', storeOrder ? orderDisplayReference(storeOrder.display_number, storeOrder.order_number) : null].filter(Boolean).join(' · '),
+      status: String(line.status),
+      value: quantity,
+      href: `/loja/pedidos/${line.store_order_id}`,
+      actionLabel: 'Ver pedido da loja',
+    });
+  }
+  for (const line of productItems) {
+    const storeItem = storeItemById.get(String(line.store_item_id ?? ''));
+    const kitEventId = kitEventById.get(String(storeItem?.linked_event_kit_item_id ?? ''));
+    if (!kitEventId || !eventIds.includes(kitEventId)) continue;
+    const order = one(line.orders);
+    const storeVariant = storeVariantById.get(String(line.store_item_variant_id ?? ''));
+    const quantity = additionalCartReservationQuantity({
+      itemKind: line.item_kind,
+      orderStatus: order?.status,
+      lineStatus: line.status,
+      linkedVariantId: storeVariant?.linked_event_kit_item_variant_id,
+      quantity: line.quantity,
+    });
+    if (!quantity) continue;
+    additionalReserved += quantity;
+    additionalRows.push({
+      id: String(line.id),
+      primary: `${storeItem?.name ?? 'Camiseta'} ${[storeVariant?.name, storeVariant?.value].filter(Boolean).join(' ')}`.trim(),
+      secondary: ['Produto no pedido de ingresso', order?.id ? orderDisplayReference(order.display_number, order.order_number) : null].filter(Boolean).join(' · '),
+      status: String(line.status),
+      value: quantity,
+      href: order?.id ? `/inscricoes/pedido/${order.id}` : '/inscricoes',
+      actionLabel: 'Ver pedido',
+    });
+  }
+
   const paid = payments.filter((payment) => payment.payment_status === 'paid');
   const pendingPayments = payments.filter((payment) => shouldIncludeInPendingRevenue(payment));
   const refundedPayments = payments.filter((payment) => shouldIncludeInRefundedRevenue(payment));
   const confirmedPayments = paid.filter((payment) => shouldIncludeInConfirmedRevenue(payment));
-  const received = inventory.reduce((sum, row) => sum + Number(row.total_quantity ?? 0), 0); const reserved = inventory.reduce((sum, row) => sum + Number(row.reserved_quantity ?? 0), 0);
-  const delivered = inventory.reduce((sum, row) => sum + Number(row.delivered_quantity ?? 0), 0); const available = inventory.reduce((sum, row) => sum + Math.max(0, Number(row.total_quantity ?? 0) - Number(row.delivered_quantity ?? 0)), 0);
-  const deficit = inventory.reduce((sum, row) => sum + Math.max(0, Number(row.reserved_quantity ?? 0) - Math.max(0, Number(row.total_quantity ?? 0) - Number(row.delivered_quantity ?? 0))), 0);
+  const received = inventory.reduce((sum, row) => sum + Number(row.total_quantity ?? 0), 0);
+  const reserved = inventory.reduce((sum, row) => sum + Number(row.reserved_quantity ?? 0), 0);
+  const delivered = inventory.reduce((sum, row) => sum + Number(row.delivered_quantity ?? 0), 0);
+  const sourceReserved = reservedShirtTotal(kitPendingReserved, additionalReserved);
+  const available = freeToReserveQuantity(received, delivered, reserved);
+  const deficit = shirtDeficitQuantity(received, delivered, reserved);
   const movementRows = movements.filter((movement) => ['purchase', 'adjustment', 'return'].includes(String(movement.movement_type))).map((movement) => ({ id: String(movement.id), primary: String(movement.movement_type), secondary: String(movement.notes ?? 'Movimento de estoque'), status: 'received', value: Number(movement.quantity ?? 0), href: `/camisetas?eventId=${movement.event_id}`, actionLabel: 'Ver estoque' }));
+  const reservedBreakdownRows: DashboardDetailRow[] = [
+    { id: 'kit-pending', primary: 'Kits de ingressos pendentes de entrega', secondary: `Ingresso active ou used, camiseta ainda não entregue nem cancelada · fontes ${sourceReserved} · inventory ${reserved}`, status: 'kit', value: kitPendingReserved, href: dashboardDetailHref('shirts_kit_reserved', selectedEvent?.id ?? 'all'), actionLabel: 'Ver kits' },
+    { id: 'additional', primary: 'Camisetas adicionais', secondary: 'Loja, concessão administrativa ou produto extra no pedido', status: 'additional', value: additionalReserved, href: dashboardDetailHref('shirts_additional', selectedEvent?.id ?? 'all'), actionLabel: 'Ver adicionais' },
+    ...inventory.filter((row) => Number(row.reserved_quantity) > 0).map((row) => inventoryRow(row, 'reserved', Number(row.reserved_quantity))),
+  ];
   const metrics = new Map<DashboardMetricKey, DashboardMetric>(); const put = (key: DashboardMetricKey, label: string, value: number, rows: DashboardDetailRow[]) => metrics.set(key, { key, label, value, rows });
   put('people', 'Pessoas no evento', people.size, peopleRows); put('registrations', 'Inscrições comerciais', items.length, items.map(itemRow));
-  put('confirmed', 'Inscrições confirmadas', confirmedItems.length, confirmedItems.map(itemRow)); put('pending', 'Inscrições pendentes', pendingItems.length, pendingItems.map(itemRow));
+  put('confirmed', 'Ingressos ativos', activeTickets.length, activeTickets.map(ticketRow)); put('pending', 'Inscrições pendentes', pendingItems.length, pendingItems.map(itemRow));
   put('expired', 'Inscrições expiradas', expiredItems.length, expiredItems.map(itemRow));
-  put('cancelled', 'Inscrições canceladas', cancelledItems.length, cancelledItems.map(itemRow)); put('tickets', 'Ingressos emitidos', tickets.length, tickets.map(ticketRow));
+  put('cancelled', 'Cancelados', cancelledTickets.length, cancelledTickets.map(ticketRow)); put('tickets', 'Ingressos emitidos', tickets.length, tickets.map(ticketRow));
   put('checkins', 'Check-ins realizados', tickets.filter((ticket) => ticket.used_at || ticket.status === 'used').length, tickets.filter((ticket) => ticket.used_at || ticket.status === 'used').map(checkinRow));
   put('complete_kits', 'Kits completos entregues', completeTickets.length, completeTickets.map(ticketRow)); put('shirt_coherence', 'Ingressos com camiseta pendente', shirtAttention.length, shirtAttention.map(shirtAttentionRow));
   put('shirts_received', 'Camisetas recebidas', received, movementRows.length ? movementRows : inventory.map((row) => inventoryRow(row, 'received', Number(row.total_quantity ?? 0))));
-  put('shirts_reserved', 'Camisetas reservadas', reserved, inventory.filter((row) => Number(row.reserved_quantity) > 0).map((row) => inventoryRow(row, 'reserved', Number(row.reserved_quantity))));
+  put('shirts_reserved', 'Camisetas reservadas', reserved, reservedBreakdownRows);
+  put('shirts_kit_reserved', 'Camisetas de kits pendentes', kitPendingReserved, kitReservedRows);
+  put('shirts_additional', 'Camisetas adicionais', additionalReserved, additionalRows);
   put('shirts_delivered', 'Camisetas entregues', delivered, inventory.filter((row) => Number(row.delivered_quantity) > 0).map((row) => inventoryRow(row, 'delivered', Number(row.delivered_quantity))));
-  put('shirts_available', 'Disponíveis em estoque', available, inventory.map((row) => inventoryRow(row, 'available', Math.max(0, Number(row.total_quantity) - Number(row.delivered_quantity)))));
-  put('shirts_deficit', 'Faltam encomendar', deficit, inventory.filter((row) => Number(row.reserved_quantity) > Number(row.total_quantity) - Number(row.delivered_quantity)).map((row) => inventoryRow(row, 'deficit', Math.max(0, Number(row.reserved_quantity) - (Number(row.total_quantity) - Number(row.delivered_quantity))))));
+  put('shirts_available', 'Livres para nova reserva', available, inventory.map((row) => inventoryRow(row, 'available', freeToReserveQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)))));
+  put('shirts_deficit', 'Faltam encomendar', deficit, inventory.filter((row) => shirtDeficitQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)) > 0).map((row) => inventoryRow(row, 'deficit', shirtDeficitQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)))));
   put('revenue_confirmed', 'Receita confirmada', confirmedPayments.reduce((sum, row) => sum + confirmedRevenueAmount(row), 0), confirmedPayments.map(paymentRow));
   put('revenue_pending', 'Receita pendente', pendingPayments.reduce((sum, row) => sum + pendingRevenueAmount(row), 0), pendingPayments.map(paymentRow));
   put('revenue_refunded', 'Receita estornada', refundedPayments.reduce((sum, row) => sum + refundedRevenueAmount(row), 0), refundedPayments.map(paymentRow));

@@ -27,9 +27,9 @@ test('cada secao renderiza somente sob sua permissao efetiva', () => {
 
 test('dados de blocos nao autorizados nao sao consultados no servidor', () => {
   assert.match(dashboard, /loadAdminDashboard\(eventId, authorizedSections\)/);
-  assert.match(loader, /enabled\.has\('finance'\) \? scope\(supabase\.from\('payments'\)/);
-  assert.match(loader, /enabled\.has\('inventory'\) \? scope\(supabase\.from\('shirt_inventory'\)/);
-  assert.match(loader, /enabled\.has\('operations'\) \? scope\(supabase\.from\('tickets'\)/);
+  assert.match(loader, /enabled\.has\('finance'\) \? fetchAllScoped\(\(\) => supabase\.from\('payments'\)/);
+  assert.match(loader, /enabled\.has\('inventory'\) \? fetchAllScoped\(\(\) => supabase\.from\('shirt_inventory'\)/);
+  assert.match(loader, /enabled\.has\('people'\) \|\| enabled\.has\('operations'\) \|\| enabled\.has\('finance'\) \|\| enabled\.has\('inventory'\) \? fetchAllScoped\(\(\) => supabase\.from\('tickets'\)/);
   assert.match(dashboard, /canViewIntegritySection[\s\S]*getIntegrityReportAction/);
 });
 
