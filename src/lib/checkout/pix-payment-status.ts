@@ -104,6 +104,21 @@ export function canReuseCardCheckout(payment: {
   return expiresAt > (payment.now ?? new Date()).getTime();
 }
 
+/** Minhas compras: so continua cartao se o pedido ainda estiver pending e a reserva vigente. */
+export function canContinuePendingCardCheckout(payment: {
+  payment_method?: string | null;
+  payment_status?: string | null;
+  expires_at?: string | null;
+  now?: Date;
+}): boolean {
+  if (String(payment.payment_method ?? "").trim().toLowerCase() !== "credit_card") return false;
+  if (normalizePaymentStatus(payment.payment_status) !== "pending") return false;
+  if (!payment.expires_at) return true;
+  const expiresAt = new Date(payment.expires_at).getTime();
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt > (payment.now ?? new Date()).getTime();
+}
+
 export function formatPixCountdown(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;

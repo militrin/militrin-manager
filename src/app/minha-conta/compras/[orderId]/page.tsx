@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { resendTicketEmailAction } from '@/app/minha-conta/actions';
 import { generatePublicOrderPixAction } from '@/app/inscricao/actions';
 import { PendingPixPaymentWatcher } from './pending-pix-payment-watcher';
+import { ContinueCardPaymentButton } from './continue-card-payment-button';
 import { TicketViewer } from '@/components/public/TicketViewer';
 import { PixCodeBox } from '@/components/public/PixCodeBox';
 import { PaymentReceiptPdfButton } from '@/components/public/PaymentReceiptPdfButton';
@@ -13,6 +14,7 @@ import { getStatusLabel } from '@/lib/status-labels';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { shirtDisplayLabel } from '@/lib/constants/shirts';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
+import { canContinuePendingCardCheckout } from '@/lib/checkout/pix-payment-status';
 import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
 
 function money(value: number) {
@@ -65,6 +67,9 @@ type CartOrderPayment = {
   pix_code: string | null;
   expires_at: string | null;
   paid_at: string | null;
+  gateway_payment_id: string | null;
+  checkout_url: string | null;
+  gateway_charge_reusable?: boolean;
 } | null;
 
 type CartOrderDetails = {
@@ -127,6 +132,13 @@ export default async function OrderDetailPage({
   const editHref = eventRow?.slug ? `/inscricao/${eventRow.slug}?editOrder=${orderId}` : null;
 
   const normalizedPaymentStatus = order.payment?.payment_status ?? 'pending';
+  const paymentMethod = String(order.payment?.payment_method ?? '').trim().toLowerCase();
+  const isCreditCardPending = paymentMethod === 'credit_card' && normalizedPaymentStatus === 'pending';
+  const canContinueCard = canContinuePendingCardCheckout({
+    payment_method: order.payment?.payment_method,
+    payment_status: order.payment?.payment_status,
+    expires_at: order.payment?.expires_at,
+  });
   const canShowTicket = order.order_status === 'confirmed' && ticketItems.some((item) => item.ticket_token);
   // Produto pode existir sem nenhum ingresso no mesmo pedido (loja standalone
   // nunca chega aqui, mas "compre junto" com item_kind=product isolado sim)
@@ -156,10 +168,9 @@ export default async function OrderDetailPage({
     await resendTicketEmailAction(orderId);
   }
 
-  // Gera (ou, se o total mudou desde a ultima geracao, REGENERA -- a RPC
-  // apply_cart_coupon ja invalida pix_code/pix_qrcode nesse caso) o PIX pelo
-  // mesmo caminho canonico do checkout publico. Nunca cria um mecanismo de
-  // pagamento paralelo pra esta pagina.
+  // PIX desta pagina reusa o caminho canonico do checkout publico.
+  // Cartao NAO passa por aqui -- ContinueCardPaymentButton chama
+  // generatePublicOrderCardAction (mesma recuperacao/idempotencia do wizard).
   async function continuePaymentAction() {
     'use server';
     await generatePublicOrderPixAction(orderId);
@@ -313,6 +324,18 @@ export default async function OrderDetailPage({
                 </p>
               )
             ) : null}
+
+            {isCreditCardPending ? (
+              canContinueCard ? (
+                <p className="mt-3 text-sm text-slate-300">
+                  Clique em &quot;Continuar pagamento&quot; para voltar à página segura do Asaas. O Militrin não pede número nem CVV nesta tela.
+                </p>
+              ) : (
+                <p className="mt-3 text-sm text-amber-200">
+                  A reserva deste pedido expirou. Não é possível continuar esta cobrança.
+                </p>
+              )
+            ) : null}
           </article>
 
           {kitItemsData.length > 0 ? (
@@ -370,10 +393,13 @@ export default async function OrderDetailPage({
           itemsSummary={receiptItemsSummary}
           className="rounded-2xl border border-slate-600 px-4 py-2 text-sm text-slate-100"
         />
-        {normalizedPaymentStatus === 'pending' ? (
+        {normalizedPaymentStatus === 'pending' && paymentMethod === 'pix' ? (
           <form action={continuePaymentAction}>
             <MilitrinButton type="submit">Continuar pagamento</MilitrinButton>
           </form>
+        ) : null}
+        {isCreditCardPending && canContinueCard ? (
+          <ContinueCardPaymentButton orderId={orderId} />
         ) : null}
         {canShowTicket ? (
           <form action={resendAction}>

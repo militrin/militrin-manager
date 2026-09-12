@@ -13,6 +13,7 @@ import {
 } from '../src/lib/checkout/card-checkout-redirect.ts';
 import {
   canReuseCardCheckout,
+  canContinuePendingCardCheckout,
   isReusableLiveGatewayCharge,
 } from '../src/lib/checkout/pix-payment-status.ts';
 
@@ -182,6 +183,46 @@ test('auto-redirect falhou cai na fase pending_retry', () => {
     autoRedirectFailed: true,
     paymentStatus: 'pending',
   }), 'pending_retry');
+});
+
+test('pedido credit_card pendente com reserva vigente pode continuar pagamento', () => {
+  assert.equal(canContinuePendingCardCheckout({
+    payment_method: 'credit_card',
+    payment_status: 'pending',
+    expires_at: future,
+    now,
+  }), true);
+  assert.equal(canContinuePendingCardCheckout({
+    payment_method: 'credit_card',
+    payment_status: 'pending',
+    expires_at: null,
+    now,
+  }), true);
+});
+
+test('pedido expirado, pago ou PIX nao abre checkout antigo de cartao', () => {
+  assert.equal(canContinuePendingCardCheckout({
+    payment_method: 'credit_card',
+    payment_status: 'pending',
+    expires_at: past,
+    now,
+  }), false);
+  assert.equal(canContinuePendingCardCheckout({
+    payment_method: 'credit_card',
+    payment_status: 'paid',
+    expires_at: future,
+    now,
+  }), false);
+  assert.equal(canContinuePendingCardCheckout({
+    payment_method: 'pix',
+    payment_status: 'pending',
+    expires_at: future,
+    now,
+  }), false);
+  assert.equal(canReuseCardCheckout({
+    ...liveInvoice,
+    expires_at: past,
+  }), false);
 });
 
 test('chave de sessao e por pedido', () => {
