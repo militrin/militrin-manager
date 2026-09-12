@@ -84,6 +84,34 @@ export function resolveCommercialStatus(input: CommercialStatusInput): Commercia
   return "pending";
 }
 
+export function isClosedCommercialPurchase(status: CommercialStatus): boolean {
+  return status === "expired" || status === "cancelled";
+}
+
+export function canContinueCommercialPayment(status: CommercialStatus): boolean {
+  return status === "pending";
+}
+
+/**
+ * Status de pagamento para a UI do participante. Deriva do estado comercial
+ * (cancelado/expirado nunca aparecem como "pendente acionavel") sem reescrever
+ * o payment_status tecnico do gateway.
+ */
+export function resolvePaymentDisplayStatus(input: {
+  commercialStatus: CommercialStatus;
+  paymentStatus?: string | null;
+}): string {
+  if (input.commercialStatus === "cancelled") return "cancelled";
+  if (input.commercialStatus === "expired") return "expired";
+  if (input.commercialStatus === "confirmed") {
+    const raw = String(input.paymentStatus ?? "").toLowerCase();
+    return raw === "paid" ? "paid" : "confirmed";
+  }
+  const raw = String(input.paymentStatus ?? "pending").toLowerCase();
+  if (raw === "paid") return "paid";
+  return raw || "pending";
+}
+
 export function commercialStatusFriendlyReason(status: CommercialStatus, hasPaymentAttempt: boolean): string | undefined {
   if (status === "expired") {
     return hasPaymentAttempt

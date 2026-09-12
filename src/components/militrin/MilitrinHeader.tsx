@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { CalendarDays, MapPin, ShoppingCart, Ticket as TicketIcon } from 'lucide-react';
 import { cx } from './utils';
 import { MilitrinLinkButton } from './MilitrinLinkButton';
@@ -7,6 +8,10 @@ export type MilitrinHeaderEvent = {
   date: string;
   schedule?: string | null;
   location: string;
+  year?: number | null;
+  imageUrl?: string | null;
+  showBuyButton?: boolean;
+  buyHref?: string;
 };
 
 type MilitrinHeaderProps = {
@@ -25,19 +30,14 @@ function HopWatermark({ className }: { className: string }) {
 }
 
 /**
- * Cabecalho global de marca (Militrin + evento em destaque), reutilizavel nas
- * paginas de Minha conta que precisam do mesmo contexto comercial (evento,
- * data, local, CTA de compra) -- fonte unica pra nao divergir estilo entre
- * Pedidos, Ingressos (listagem) e Detalhe do ingresso.
- *
- * Paleta: nada hardcoded -- reutiliza exatamente os tokens que o resto da
- * area logada ja usa (militrinTokens.surface/slate para o fundo/bordas,
- * var(--brand-*) pra marca, que e dinamica por organizacao via [data-brand]
- * em globals.css -- hoje verde neste projeto). Trocar o tema de marca da
- * plataforma atualiza este cabecalho automaticamente, sem editar este
- * arquivo.
+ * Cabecalho da Minha Conta para o evento em destaque da organizacao.
+ * Identidade vem do evento (imagem, nome, ano, data, horario, local, CTA)
+ * -- nunca de um nome/ano hardcoded.
  */
-export function MilitrinHeader({ event, showBuyButton = true, buyHref = '/minha-conta/comprar', className }: MilitrinHeaderProps) {
+export function MilitrinHeader({ event, showBuyButton, buyHref, className }: MilitrinHeaderProps) {
+  const canBuy = showBuyButton ?? event.showBuyButton ?? false;
+  const href = buyHref ?? event.buyHref ?? '/minha-conta/comprar';
+
   return (
     <header
       className={cx(
@@ -53,19 +53,18 @@ export function MilitrinHeader({ event, showBuyButton = true, buyHref = '/minha-
         <div className="flex flex-col divide-y divide-dotted divide-slate-700/70 sm:flex-row sm:items-center sm:divide-x sm:divide-y-0">
           <div className="flex items-center gap-3 pb-4 sm:pb-0 sm:pr-5">
             <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-black ring-1 ring-(--brand-500)/40 shadow-lg shadow-(--brand-600)/20">
-              <div aria-hidden className="mask-logo absolute inset-0.5" />
+              {event.imageUrl ? (
+                <Image src={event.imageUrl} alt="" fill unoptimized className="object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-(--brand-300)">
+                  <TicketIcon size={22} />
+                </div>
+              )}
             </div>
-            <div className="min-w-0">
-              <p className="text-lg font-bold leading-tight text-white">Militrin</p>
-              <p className="text-xs font-semibold tracking-[0.3em] text-(--brand-300)">2026</p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 py-4 sm:items-center sm:py-0 sm:px-5">
-            <TicketIcon size={16} className="mt-0.5 shrink-0 text-(--brand-300) sm:mt-0" />
             <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Evento</p>
               <p className="truncate text-sm font-semibold text-white">{event.name}</p>
+              {event.year ? <p className="text-xs font-semibold tracking-[0.3em] text-(--brand-300)">{event.year}</p> : null}
             </div>
           </div>
 
@@ -87,8 +86,8 @@ export function MilitrinHeader({ event, showBuyButton = true, buyHref = '/minha-
           </div>
         </div>
 
-        {showBuyButton ? (
-          <MilitrinLinkButton href={buyHref} variant="primary" size="md" iconLeft={<ShoppingCart size={16} />} className="shrink-0">
+        {canBuy ? (
+          <MilitrinLinkButton href={href} variant="primary" size="md" iconLeft={<ShoppingCart size={16} />} className="shrink-0">
             Comprar ingresso
           </MilitrinLinkButton>
         ) : null}

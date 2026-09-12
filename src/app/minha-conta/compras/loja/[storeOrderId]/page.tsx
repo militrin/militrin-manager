@@ -10,15 +10,10 @@ import { optionalDisplayValue } from '@/lib/optional-display';
 import { StoreOrderActions } from '../store-order-actions';
 import { StoreOrderReceiptButtons } from '@/components/store/StoreOrderReceiptButtons';
 import { orderDisplayReference } from '@/lib/display-reference';
+import { canContinueCommercialPayment, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
-}
-
-function normalizeStatus(status: string | null | undefined) {
-  const normalized = String(status ?? 'pending').toLowerCase();
-  if (normalized === 'paid') return 'confirmed';
-  return normalized;
 }
 
 function isUuid(value: string) {
@@ -57,17 +52,26 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
 
   const eventObj = one(order.events as Record<string, unknown> | Record<string, unknown>[] | null);
   const items = Array.isArray(order.store_order_items) ? order.store_order_items as Array<Record<string, unknown>> : [];
-  const status = normalizeStatus(order.status);
-  const paymentStatus = normalizeStatus(order.payment_status);
+  const commercialStatus = resolveCommercialStatus({
+    orderStatus: order.status,
+    paymentStatus: order.payment_status,
+    reservationExpiresAt: order.expires_at,
+  });
+  const status = commercialStatus;
+  const paymentStatus = resolvePaymentDisplayStatus({
+    commercialStatus,
+    paymentStatus: order.payment_status,
+  });
   const paymentMethod = order.payment_method === 'credit_card' ? 'credit_card' : order.payment_method === 'pix' ? 'pix' : null;
-  const isPixPending = status === 'pending' && paymentMethod === 'pix';
+  const canContinuePayment = canContinueCommercialPayment(commercialStatus);
+  const isPixPending = canContinuePayment && paymentMethod === 'pix';
   const syntheticPix = isSyntheticGatewayPayload({
     pixCode: order.pix_code,
     pixQrCode: order.pix_qrcode,
     gatewayPaymentId: order.gateway_payment_id,
     provider: order.provider,
   });
-  const isCardPending = status === 'pending' && paymentMethod === 'credit_card';
+  const isCardPending = canContinuePayment && paymentMethod === 'credit_card';
   const cardRefused = String(order.last_gateway_attempt_status ?? '') === 'refused';
   const needsPaymentRetry = (isPixPending && !order.pix_code) || (isCardPending && !order.gateway_checkout_url);
 
@@ -197,8 +201,8 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
         {status === 'cancelled' ? (
           <p className="mt-4 text-sm text-rose-300">Este pedido foi cancelado.</p>
         ) : status === 'expired' ? (
-          <p className="mt-4 text-sm text-amber-200">Este pedido expirou.</p>
-        ) : status === 'pending' && paymentMethod ? (
+          <p className="mt-4 text-sm text-amber-200">Este pedido expirou. Não é possível continuar esta cobrança.</p>
+        ) : canContinuePayment && paymentMethod ? (
           <div className="mt-4">
             <StoreOrderActions storeOrderId={String(order.id)} canCancel paymentMethod={paymentMethod} needsPaymentRetry={needsPaymentRetry} />
           </div>

@@ -16,6 +16,7 @@ import { shirtDisplayLabel } from '@/lib/constants/shirts';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
 import { canContinuePendingCardCheckout } from '@/lib/checkout/pix-payment-status';
 import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
+import { canContinueCommercialPayment, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -131,10 +132,20 @@ export default async function OrderDetailPage({
   });
   const editHref = eventRow?.slug ? `/inscricao/${eventRow.slug}?editOrder=${orderId}` : null;
 
+  const commercialStatus = resolveCommercialStatus({
+    orderStatus: order.order_status,
+    paymentStatus: order.payment?.payment_status,
+    reservationExpiresAt: order.payment?.expires_at,
+  });
+  const displayPaymentStatus = resolvePaymentDisplayStatus({
+    commercialStatus,
+    paymentStatus: order.payment?.payment_status,
+  });
   const normalizedPaymentStatus = order.payment?.payment_status ?? 'pending';
   const paymentMethod = String(order.payment?.payment_method ?? '').trim().toLowerCase();
-  const isCreditCardPending = paymentMethod === 'credit_card' && normalizedPaymentStatus === 'pending';
-  const canContinueCard = canContinuePendingCardCheckout({
+  const canContinuePayment = canContinueCommercialPayment(commercialStatus);
+  const isCreditCardPending = paymentMethod === 'credit_card' && canContinuePayment;
+  const canContinueCard = isCreditCardPending && canContinuePendingCardCheckout({
     payment_method: order.payment?.payment_method,
     payment_status: order.payment?.payment_status,
     expires_at: order.payment?.expires_at,
@@ -178,7 +189,7 @@ export default async function OrderDetailPage({
 
   return (
     <section className="space-y-4">
-      <PendingPixPaymentWatcher orderId={orderId} paymentStatus={normalizedPaymentStatus} />
+      <PendingPixPaymentWatcher orderId={orderId} paymentStatus={canContinuePayment ? normalizedPaymentStatus : displayPaymentStatus} />
       <MilitrinSection eyebrow="Minha compra" title="Detalhe do pedido" description={`Pedido ${orderReference}`}>
         {cannotEdit ? (
           <div className="mb-4 rounded-2xl border border-amber-600/40 bg-amber-950/20 p-3 text-sm text-amber-100">
@@ -196,8 +207,8 @@ export default async function OrderDetailPage({
               <p>Desconto: {money(order.discount_amount)}</p>
               <p>Cupom: {order.applied_coupon_code ?? 'Sem cupom'}</p>
               <p>Valor final: {money(order.final_amount)}</p>
-              <p className="inline-flex items-center gap-2">Pedido: <MilitrinStatusBadge status={order.order_status} /></p>
-              <p className="inline-flex items-center gap-2">Pagamento: <MilitrinStatusBadge status={normalizedPaymentStatus} /></p>
+              <p className="inline-flex items-center gap-2">Pedido: <MilitrinStatusBadge status={commercialStatus} /></p>
+              <p className="inline-flex items-center gap-2">Pagamento: <MilitrinStatusBadge status={displayPaymentStatus} /></p>
             </div>
           </article>
 
@@ -313,7 +324,7 @@ export default async function OrderDetailPage({
               </p>
             ) : null}
 
-            {normalizedPaymentStatus === 'pending' && order.payment?.payment_method === 'pix' ? (
+            {canContinuePayment && normalizedPaymentStatus === 'pending' && order.payment?.payment_method === 'pix' ? (
               order.payment?.pix_code ? (
                 <div className="mt-3">
                   <PixCodeBox code={String(order.payment.pix_code)} />
@@ -325,7 +336,11 @@ export default async function OrderDetailPage({
               )
             ) : null}
 
-            {isCreditCardPending ? (
+            {paymentMethod === 'credit_card' && commercialStatus === 'expired' ? (
+              <p className="mt-3 text-sm text-amber-200">
+                A reserva deste pedido expirou. Não é possível continuar esta cobrança.
+              </p>
+            ) : isCreditCardPending ? (
               canContinueCard ? (
                 <p className="mt-3 text-sm text-slate-300">
                   Clique em &quot;Continuar pagamento&quot; para voltar à página segura do Asaas. O Militrin não pede número nem CVV nesta tela.
@@ -393,7 +408,7 @@ export default async function OrderDetailPage({
           itemsSummary={receiptItemsSummary}
           className="rounded-2xl border border-slate-600 px-4 py-2 text-sm text-slate-100"
         />
-        {normalizedPaymentStatus === 'pending' && paymentMethod === 'pix' ? (
+        {canContinuePayment && paymentMethod === 'pix' ? (
           <form action={continuePaymentAction}>
             <MilitrinButton type="submit">Continuar pagamento</MilitrinButton>
           </form>

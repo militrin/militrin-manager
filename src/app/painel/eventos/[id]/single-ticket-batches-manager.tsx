@@ -10,6 +10,7 @@ import {
 } from "@/app/eventos/actions";
 import { DateTimeField } from "@/components/forms/DateTimeField";
 import { SlideOverPanel } from "@/components/admin/SlideOverPanel";
+import { toDatetimeLocalValue } from "@/lib/utils/date";
 
 export type SingleTicketBatchRow = {
   batchId: string;
@@ -51,10 +52,7 @@ function periodLabel(startsAt: string | null, endsAt: string | null) {
 }
 
 function toDatetimeLocal(value: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  const tzOffset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+  return toDatetimeLocalValue(value);
 }
 
 const STATUS_LABEL: Record<SingleTicketBatchRow["maleStatus"], string> = {

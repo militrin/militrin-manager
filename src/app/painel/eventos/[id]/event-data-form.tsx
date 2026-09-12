@@ -167,10 +167,10 @@ export function EventDataForm({
           <textarea value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} rows={3} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" />
         </label>
 
-        <DateTimeField label="Início" value={form.starts_at} onChange={(next) => setForm((prev) => ({ ...prev, starts_at: next }))} />
-        <DateTimeField label="Fim" value={form.ends_at} onChange={(next) => setForm((prev) => ({ ...prev, ends_at: next }))} />
-        <DateTimeField label="Abertura das vendas" value={form.registration_open_at} onChange={(next) => setForm((prev) => ({ ...prev, registration_open_at: next }))} />
-        <DateTimeField label="Encerramento das vendas" value={form.registration_close_at} onChange={(next) => setForm((prev) => ({ ...prev, registration_close_at: next }))} />
+        <DateTimeField label="Início" value={form.starts_at} onChange={(next) => setForm((prev) => ({ ...prev, starts_at: next }))} hint="Horário de Brasília (America/Sao_Paulo). O mesmo horário aparece na página pública, na Minha Conta e no ingresso." />
+        <DateTimeField label="Fim" value={form.ends_at} onChange={(next) => setForm((prev) => ({ ...prev, ends_at: next }))} hint="Horário de Brasília (America/Sao_Paulo)." />
+        <DateTimeField label="Abertura das vendas" value={form.registration_open_at} onChange={(next) => setForm((prev) => ({ ...prev, registration_open_at: next }))} hint="Horário de Brasília (America/Sao_Paulo)." />
+        <DateTimeField label="Encerramento das vendas" value={form.registration_close_at} onChange={(next) => setForm((prev) => ({ ...prev, registration_close_at: next }))} hint="Horário de Brasília (America/Sao_Paulo)." />
       </div>
 
       <label className="flex items-center gap-2 text-sm text-slate-300">

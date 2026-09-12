@@ -1,34 +1,39 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { formatDateLongBR } from '@/lib/utils/date';
+import { formatDateLongBR, dateTimePartsInEventTimeZone, EVENT_TIMEZONE } from '@/lib/utils/date';
 import type { MilitrinHeaderEvent } from '@/components/militrin/MilitrinHeader';
+import {
+  isAccountHeaderEventEligible,
+  resolveAccountHeaderCta,
+  type AccountHeaderEventRow,
+} from './account-header-rules';
 
-const WEEKDAY_LABELS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+export {
+  isAccountHeaderEventEligible,
+  resolveAccountHeaderCta,
+  type AccountHeaderEventRow,
+} from './account-header-rules';
 
-function pad(value: number) {
-  return String(value).padStart(2, '0');
+function formatHourParts(hour: string, minute: string) {
+  return Number(minute) ? `${hour}h${minute}` : `${hour}h`;
 }
 
-function formatHour(date: Date) {
-  return date.getMinutes() ? `${pad(date.getHours())}h${pad(date.getMinutes())}` : `${pad(date.getHours())}h`;
-}
-
-function formatEventSchedule(startsAt: string | null | undefined, endsAt: string | null | undefined): string | null {
+export function formatEventSchedule(startsAt: string | null | undefined, endsAt: string | null | undefined): string | null {
   if (!startsAt) return null;
   const start = new Date(startsAt);
   if (Number.isNaN(start.getTime())) return null;
 
-  const weekday = WEEKDAY_LABELS[start.getDay()];
+  const weekday = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: EVENT_TIMEZONE,
+    weekday: 'long',
+  }).format(start);
+  const weekdayLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  const startParts = dateTimePartsInEventTimeZone(start);
   const end = endsAt ? new Date(endsAt) : null;
   const endValid = end && !Number.isNaN(end.getTime());
-  return endValid ? `${weekday} • ${formatHour(start)} às ${formatHour(end)}` : `${weekday} • ${formatHour(start)}`;
+  if (!endValid) return `${weekdayLabel} • ${formatHourParts(startParts.hour, startParts.minute)}`;
+  const endParts = dateTimePartsInEventTimeZone(end);
+  return `${weekdayLabel} • ${formatHourParts(startParts.hour, startParts.minute)} às ${formatHourParts(endParts.hour, endParts.minute)}`;
 }
-
-type EventRow = {
-  name: string | null;
-  starts_at: string | null;
-  ends_at?: string | null;
-  location: string | null;
-};
 
 /**
  * Monta o shape esperado por <MilitrinHeader event={...} /> a partir de uma
@@ -36,30 +41,35 @@ type EventRow = {
  * listagem (evento "em destaque" da conta) e o detalhe do ingresso (evento
  * do proprio ingresso).
  */
-export function buildAccountHeaderEvent(event: EventRow): MilitrinHeaderEvent {
+export function buildAccountHeaderEvent(event: AccountHeaderEventRow): MilitrinHeaderEvent {
+  const cta = resolveAccountHeaderCta(event);
   return {
     name: event.name ?? 'Evento',
+    year: event.year ?? null,
+    imageUrl: event.banner_card_url || event.banner_hero_url || null,
     date: event.starts_at ? formatDateLongBR(event.starts_at) : 'Data a confirmar',
     schedule: formatEventSchedule(event.starts_at, event.ends_at),
     location: event.location ?? 'Local a confirmar',
+    showBuyButton: cta.showBuyButton,
+    buyHref: cta.buyHref,
   };
 }
 
 /**
- * Evento "em destaque" pra header global de paginas que listam varios
- * pedidos/ingressos (podem cobrir eventos diferentes): o proximo evento com
- * inscricoes habilitadas. Retorna null quando nao ha nenhum -- quem chama
- * decide o fallback (ex.: nao renderizar o header).
+ * Evento em destaque da Minha Conta: o unico evento da organizacao marcado
+ * em events.featured_on_account, e so se ainda estiver ativo/elegivel.
+ * Sem elegivel, o cabecalho nao renderiza -- nunca fallback para um evento
+ * hardcoded ou para o proximo com inscricao aberta.
  */
 export async function getPrimaryAccountHeaderEvent(supabase: SupabaseClient): Promise<MilitrinHeaderEvent | null> {
   const { data } = await supabase
     .from('events')
-    .select('name, starts_at, ends_at, location')
-    .eq('registration_enabled', true)
-    .order('starts_at', { ascending: true, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
+    .select('name, slug, year, starts_at, ends_at, location, banner_card_url, banner_hero_url, is_active, archived_at, featured_on_account, registration_enabled, registration_open_at, registration_close_at')
+    .eq('featured_on_account', true)
+    .order('starts_at', { ascending: true, nullsFirst: false });
 
-  if (!data) return null;
-  return buildAccountHeaderEvent(data as EventRow);
+  const now = new Date();
+  const eligible = ((data ?? []) as AccountHeaderEventRow[]).find((event) => isAccountHeaderEventEligible(event, now));
+  if (!eligible) return null;
+  return buildAccountHeaderEvent(eligible);
 }

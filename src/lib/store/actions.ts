@@ -16,6 +16,7 @@ import { isSyntheticGatewayPayload } from "@/lib/payments/synthetic-gateway-payl
 import { appBaseUrl } from "@/lib/urls/app-base-url";
 import type { PaymentGatewayProvider } from "@/lib/payments/provider";
 import type { AsaasCheckoutMethod } from "@/lib/payments/asaas-account-registry";
+import { canContinueCommercialPayment, resolveCommercialStatus } from "@/lib/dashboard/commercial-status";
 
 export type StoreCartLine = { storeItemId: string; variantId: string | null; quantity: number };
 
@@ -415,11 +416,21 @@ export async function startAccountStoreOrderPaymentAction(
   if (!user) return { success: false as const, message: "Entre na sua conta para continuar." };
   const { data: order } = await supabase
     .from("store_orders")
-    .select("id, order_number, final_amount")
+    .select("id, order_number, final_amount, status, payment_status, expires_at")
     .eq("id", storeOrderId)
     .eq("user_id", user.id)
     .maybeSingle();
   if (!order) return { success: false as const, message: "Pedido não encontrado." };
+  const commercialStatus = resolveCommercialStatus({
+    orderStatus: order.status,
+    paymentStatus: order.payment_status,
+    reservationExpiresAt: order.expires_at,
+  });
+  if (!canContinueCommercialPayment(commercialStatus)) {
+    return { success: false as const, message: commercialStatus === "cancelled"
+      ? "Este pedido foi cancelado. Não é possível continuar o pagamento."
+      : "A reserva deste pedido expirou. Não é possível continuar esta cobrança." };
+  }
   const started = await startStoreGatewayPayment({
     storeOrderId,
     orderNumber: String(order.order_number ?? ""),

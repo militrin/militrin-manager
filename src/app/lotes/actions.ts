@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
+import { datetimeLocalInEventTimeZoneToIso } from "@/lib/utils/date";
 
 const batchSchema = z.object({
   id: z.string().uuid().optional(),
@@ -82,7 +83,7 @@ function actionErrorMessage(error: unknown, fallback: string) {
 function parseTimestamp(value: string | null | undefined) {
   if (!value) return null;
   const trimmed = value.trim();
-  return trimmed ? new Date(trimmed).toISOString() : null;
+  return trimmed ? datetimeLocalInEventTimeZoneToIso(trimmed) : null;
 }
 
 export async function createBatchAction(payload: BatchPayload): Promise<ActionResult> {

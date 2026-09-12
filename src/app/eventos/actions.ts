@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
+import { datetimeLocalInEventTimeZoneToIso } from "@/lib/utils/date";
 
 const eventSchema = z.object({
   id: z.string().uuid().optional(),
@@ -161,7 +162,7 @@ const eventPaymentMethodsSchema = z.object({
 
 function parseTs(value?: string | null) {
   if (!value?.trim()) return null;
-  return new Date(value).toISOString();
+  return datetimeLocalInEventTimeZoneToIso(value);
 }
 
 function resolveActionErrorMessage(error: unknown, fallback: string) {
@@ -222,6 +223,30 @@ export async function removeEventHighlightAction(eventId: string) {
     return { success: true, message: 'Evento removido dos destaques.' };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : 'Falha ao remover destaque do evento.' };
+  }
+}
+
+export async function setEventFeaturedOnAccountAction(eventId: string, featured: boolean) {
+  await assertPermission("events.edit");
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc('set_event_featured_on_account', {
+      p_event_id: eventId,
+      p_featured: featured,
+    });
+    if (error) throw error;
+    await revalidateEventsPages();
+    revalidatePath(`/painel/eventos/${eventId}`);
+    revalidatePath('/minha-conta/compras');
+    revalidatePath('/minha-conta/ingressos');
+    return {
+      success: true,
+      message: featured
+        ? 'Este evento passa a ser o destaque da Minha Conta. Se havia outro, ele deixou de ser o destaque.'
+        : 'Evento removido do destaque da Minha Conta.',
+    };
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'Falha ao atualizar o destaque da Minha Conta.' };
   }
 }
 
@@ -608,8 +633,8 @@ export async function createSingleTicketBatchAction(payload: z.infer<typeof sing
       p_female_price: parsed.data.female_price,
       p_male_max: parsed.data.male_max,
       p_female_max: parsed.data.female_max,
-      p_starts_at: parsed.data.starts_at || null,
-      p_ends_at: parsed.data.ends_at || null,
+      p_starts_at: parseTs(parsed.data.starts_at),
+      p_ends_at: parseTs(parsed.data.ends_at),
       p_male_closed: parsed.data.male_closed,
       p_female_closed: parsed.data.female_closed,
     });
@@ -639,8 +664,8 @@ export async function updateSingleTicketBatchAction(eventId: string, payload: z.
       p_female_price: parsed.data.female_price,
       p_male_max: parsed.data.male_max,
       p_female_max: parsed.data.female_max,
-      p_starts_at: parsed.data.starts_at || null,
-      p_ends_at: parsed.data.ends_at || null,
+      p_starts_at: parseTs(parsed.data.starts_at),
+      p_ends_at: parseTs(parsed.data.ends_at),
     });
     if (error) throw error;
     await revalidateEventsPages();
@@ -694,8 +719,8 @@ export async function createSingleTicketUnisexBatchAction(payload: z.infer<typeo
       p_sequence_number: parsed.data.sequence_number,
       p_price: parsed.data.price,
       p_max: parsed.data.max,
-      p_starts_at: parsed.data.starts_at || null,
-      p_ends_at: parsed.data.ends_at || null,
+      p_starts_at: parseTs(parsed.data.starts_at),
+      p_ends_at: parseTs(parsed.data.ends_at),
       p_closed: parsed.data.closed,
     });
     if (error) throw error;
@@ -722,8 +747,8 @@ export async function updateSingleTicketUnisexBatchAction(eventId: string, paylo
       p_name: parsed.data.name,
       p_price: parsed.data.price,
       p_max: parsed.data.max,
-      p_starts_at: parsed.data.starts_at || null,
-      p_ends_at: parsed.data.ends_at || null,
+      p_starts_at: parseTs(parsed.data.starts_at),
+      p_ends_at: parseTs(parsed.data.ends_at),
     });
     if (error) throw error;
     await revalidateEventsPages();

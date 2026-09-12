@@ -20,6 +20,7 @@ import { ItemChangeRules } from "./item-change-rules";
 import { TicketRules } from "./ticket-rules";
 import { DeliveryScheduleManager, type EventScheduleRow } from "./delivery-schedule-manager";
 import { EventDataForm } from "./event-data-form";
+import { AccountHeaderFeaturedToggle } from "./account-header-featured-toggle";
 import { TicketSaleModelPicker } from "./ticket-sale-model-picker";
 import { AttractionsManager } from "./attractions-manager";
 import { EventWristbandSettings } from "./wristband-settings";
@@ -57,7 +58,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
   const currentStep = Number.isFinite(etapaValue) ? Math.min(9, Math.max(1, Math.trunc(etapaValue))) : 1;
 
   const [{ data: eventData, error: eventError }, { data: kitData, error: kitError }, { data: categoriesData, error: categoriesError }, { data: addonsData, error: addonsError }, { data: paymentMethodsData, error: paymentMethodsError }, { data: itemRulesData }, { data: scheduleData, error: scheduleError }, { data: attractionsData, error: attractionsError }, { count: ticketsCount, error: ticketsCountError }, { data: shirtConfigData, error: shirtConfigError }] = await Promise.all([
-    supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer, wristband_enabled, wristband_required_for_checkin, wristband_required_for_kit").eq("id", id).maybeSingle(),
+    supabase.from("events").select("id, name, slug, year, description, starts_at, ends_at, registration_open_at, registration_close_at, location, min_age, banner_hero_url, banner_card_url, kit_enabled, registration_enabled, is_active, featured_on_account, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer, wristband_enabled, wristband_required_for_checkin, wristband_required_for_kit").eq("id", id).maybeSingle(),
     supabase.rpc("get_event_kit_items", { p_event_id: id }),
     supabase.rpc("get_event_ticket_categories", { p_event_id: id }),
     supabase.rpc("get_event_addons_dynamic_setup", { p_event_id: id }),
@@ -97,6 +98,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
     kit_enabled: Boolean(eventData.kit_enabled),
     registration_enabled: Boolean(eventData.registration_enabled),
     is_active: Boolean(eventData.is_active),
+    featured_on_account: Boolean((eventData as { featured_on_account?: boolean }).featured_on_account),
     allow_participant_item_changes: Boolean(eventData.allow_participant_item_changes),
     allow_holder_change: Boolean(eventData.allow_holder_change),
     allow_ticket_transfer: Boolean(eventData.allow_ticket_transfer),
@@ -424,6 +426,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
               ends_at: event.ends_at,
               location: event.location,
               is_active: event.is_active,
+              featured_on_account: event.featured_on_account,
               registration_enabled: event.registration_enabled,
               banner_card_url: event.banner_card_url,
               banner_hero_url: event.banner_hero_url,
@@ -477,6 +480,7 @@ export default async function AdminEventDetailsPage({ params, searchParams }: { 
           {currentStep === 1 ? (
             <SectionCard title="Etapa 1: Dados básicos" description="Nome, data, descrição, local, banners e regras do ingresso deste evento.">
               <div className="space-y-4">
+                <AccountHeaderFeaturedToggle eventId={event.id} featured={event.featured_on_account} isActive={event.is_active} />
                 <EventDataForm mode="edit" event={event} />
                 <TicketSaleModelPicker eventId={event.id} activeCategoryCount={activeCategoryCount} />
                 <TicketRules eventId={event.id} initialHolderChange={event.allow_holder_change} initialTicketTransfer={event.allow_ticket_transfer} />

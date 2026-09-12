@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { MilitrinEventArtwork } from '@/components/militrin';
 import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
-import { formatDateBR } from '@/lib/utils/date';
+import { formatDateTimeBR } from '@/lib/utils/date';
 import type { PublicAttraction, PublicBenefit, PublicCategory, PublicKitItem } from '@/lib/public/events';
 import { getPublicEventDetails, isEventOpen } from '@/lib/public/events';
 
@@ -56,7 +56,7 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
           <h1 className="mt-2 text-3xl font-semibold text-white">{event.name}</h1>
           <p className="mt-3 text-sm text-slate-300">{event.description ?? 'Detalhes completos deste evento serao publicados em breve.'}</p>
           <div className="mt-4 grid gap-2 text-sm text-slate-300 sm:grid-cols-3">
-            <p>{event.startsAt ? formatDateBR(event.startsAt) : 'Data a confirmar'}</p>
+            <p>{event.startsAt ? formatDateTimeBR(event.startsAt, ' às ') : 'Data a confirmar'}</p>
             <p>{event.location ?? 'Local a confirmar'}</p>
             <p>{open ? 'Inscricoes abertas' : 'Inscricoes fechadas'}</p>
           </div>

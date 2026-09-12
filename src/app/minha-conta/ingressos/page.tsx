@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinTicketCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
+import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import {
@@ -73,6 +73,9 @@ export default async function IngressosPage({
     return <section className="rounded-3xl border border-rose-700/40 bg-rose-950/20 p-5 text-sm text-rose-100">Erro ao carregar ingressos. Tente novamente em instantes.</section>;
   }
 
+  const commercialByOrderId = new Map(
+    ((purchasedOrdersResult.data ?? []) as Array<Record<string, unknown>>).map((order) => [String(order.id), resolveAccountOrderStatus(order)]),
+  );
   const orders = ticketScope.orders as Array<{ id: string; order_number: string | null; status: string | null; event_id: string | null; user_id: string | null; buyer_type: 'account' | 'imported_holder' | 'transferred_owner' }>;
   const orderItems = ticketScope.orderItems as Array<{
     id: string;
@@ -166,9 +169,12 @@ export default async function IngressosPage({
       const shirtType = optionalDisplayValue(shirtVariant.shirt_type ?? item.shirt_type);
       const shirtSize = optionalDisplayValue(shirtVariant.shirt_size ?? item.shirt_size);
       const orderStatus = normalizeStatus(String(order?.status ?? 'pending'));
-      const paymentStatus = ticket?.id
-        ? normalizeOwnedTicketPaymentChipStatus(chipStatusForOwnedTicketPayment(ticket.id, paymentStatusLoad))
-        : 'unavailable';
+      const commercialStatus = order?.id ? commercialByOrderId.get(String(order.id)) : undefined;
+      const paymentStatus = commercialStatus === 'expired' || commercialStatus === 'cancelled'
+        ? commercialStatus
+        : ticket?.id
+          ? normalizeOwnedTicketPaymentChipStatus(chipStatusForOwnedTicketPayment(ticket.id, paymentStatusLoad))
+          : 'unavailable';
       const canShowTicket = situation === 'ativos' && !ticketIssuanceBlocked && Boolean(ticket?.id) && orderStatus === 'confirmed' && (ticket?.status === 'active' || ticket?.status === 'used');
       let qrUrl: string | null = null;
       if (canShowTicket && ticket?.token) {
@@ -207,6 +213,7 @@ export default async function IngressosPage({
         ticketId: ticket?.id ? String(ticket.id) : null,
         orderId: order?.id ? String(order.id) : null,
         isBuyer: order?.buyer_type === 'account' && String(order?.user_id ?? '') === user.id,
+        canContinuePayment: commercialStatus === 'pending',
       };
     }),
   );
@@ -219,7 +226,7 @@ export default async function IngressosPage({
 
   return (
     <section className="space-y-4">
-      {headerEvent ? <MilitrinHeader event={headerEvent} /> : null}
+      {headerEvent ? <MilitrinHeader event={headerEvent} showBuyButton={headerEvent.showBuyButton} buyHref={headerEvent.buyHref} /> : null}
 
       <section className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-4 sm:p-5')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -301,7 +308,7 @@ export default async function IngressosPage({
                       Ver compra
                     </MilitrinLinkButton>
                   ) : null}
-                  {!item.canShowTicket && item.situation === 'ativos' && item.paymentStatus === 'pending' && item.orderId && item.isBuyer ? (
+                  {!item.canShowTicket && item.situation === 'ativos' && item.canContinuePayment && item.orderId && item.isBuyer ? (
                     <MilitrinLinkButton href={`/minha-conta/compras/${item.orderId}`} variant="warning" size="sm" className="flex-1 sm:flex-none">
                       Continuar pagamento
                     </MilitrinLinkButton>

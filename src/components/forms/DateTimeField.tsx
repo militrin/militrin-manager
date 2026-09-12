@@ -19,11 +19,13 @@ export function DateTimeField({
   value,
   onChange,
   className,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   className?: string;
+  hint?: string;
 }) {
   const parts = splitDateTimeLocal(value);
   return (
@@ -45,6 +47,7 @@ export function DateTimeField({
           className={timeInputClass}
         />
       </div>
+      {hint ? <span className="block text-xs text-slate-500">{hint}</span> : null}
     </div>
   );
 }

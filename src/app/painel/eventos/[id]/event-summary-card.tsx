@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Calendar, MapPin, PencilLine, Users } from "lucide-react";
 import { MilitrinEventArtwork } from "@/components/militrin";
-import { formatDateBR } from "@/lib/utils/date";
+import { formatDateTimeBR } from "@/lib/utils/date";
 
 export type EventSummaryCardData = {
   id: string;
@@ -15,6 +15,7 @@ export type EventSummaryCardData = {
   ends_at: string | null;
   location: string | null;
   is_active: boolean;
+  featured_on_account?: boolean;
   registration_enabled: boolean;
   banner_card_url: string | null;
   banner_hero_url: string | null;
@@ -50,6 +51,9 @@ export function EventSummaryCard({ event }: { event: EventSummaryCardData }) {
                 <span className={`rounded-full border px-2.5 py-0.5 text-[11px] ${event.registration_enabled ? "border-emerald-500/40 text-emerald-300" : "border-slate-700 text-slate-400"}`}>
                   {event.registration_enabled ? "Vendas abertas" : "Vendas fechadas"}
                 </span>
+                {event.featured_on_account ? (
+                  <span className="rounded-full border border-sky-500/40 px-2.5 py-0.5 text-[11px] text-sky-200">Destaque na Minha Conta</span>
+                ) : null}
               </div>
             </div>
             <Link
@@ -64,7 +68,7 @@ export function EventSummaryCard({ event }: { event: EventSummaryCardData }) {
           <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-400">
             <span className="inline-flex items-center gap-1.5">
               <Calendar size={14} className="text-slate-500" />
-              {event.starts_at ? formatDateBR(event.starts_at) : "Data a definir"}
+              {event.starts_at ? formatDateTimeBR(event.starts_at, " às ") : "Data a definir"}
             </span>
             {event.location ? (
               <span className="inline-flex items-center gap-1.5">
@@ -95,8 +99,8 @@ export function EventSummaryCard({ event }: { event: EventSummaryCardData }) {
 
           {expanded ? (
             <div className="mt-4 grid gap-1.5 border-t border-slate-800 pt-4 text-xs text-slate-400 sm:grid-cols-2">
-              <p><strong className="text-slate-300">Início:</strong> {event.starts_at ? formatDateBR(event.starts_at) : "-"}</p>
-              <p><strong className="text-slate-300">Fim:</strong> {event.ends_at ? formatDateBR(event.ends_at) : "-"}</p>
+              <p><strong className="text-slate-300">Início:</strong> {event.starts_at ? formatDateTimeBR(event.starts_at, " às ") : "-"}</p>
+              <p><strong className="text-slate-300">Fim:</strong> {event.ends_at ? formatDateTimeBR(event.ends_at, " às ") : "-"}</p>
               <p><strong className="text-slate-300">Local:</strong> {event.location || "-"}</p>
               <p><strong className="text-slate-300">Inscritos:</strong> {event.participants_count ?? "-"}</p>
             </div>

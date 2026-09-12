@@ -7,7 +7,8 @@ import { getAccountOrders, resolveAccountOrderStatus, accountTicketItems } from 
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { orderDisplayReference } from '@/lib/display-reference';
-import { resolveCommercialStatus } from '@/lib/dashboard/commercial-status';
+import { canContinueCommercialPayment, isClosedCommercialPurchase, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
+import { ClosedPurchasesSection } from './closed-purchases-section';
 
 function one<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -15,12 +16,6 @@ function one<T>(value: T | T[] | null | undefined): T | null {
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
-}
-
-function normalizeOrderStatus(status: string) {
-  const s = status.toLowerCase();
-  if (s === 'paid') return 'confirmed';
-  return s;
 }
 
 // Resumo compacto de titularidade (nao despeja titulares individuais no
@@ -46,7 +41,10 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
   // order.status cru, que pode ficar preso em "pending" quando o pagamento
   // ja expirou mas a varredura de expiracao ainda nao converteu o pedido.
   const commercialStatus = resolveAccountOrderStatus(order);
-  const normalizedPaymentStatus = normalizeOrderStatus(String((payment as Record<string, unknown> | null)?.payment_status ?? 'pending'));
+  const normalizedPaymentStatus = resolvePaymentDisplayStatus({
+    commercialStatus,
+    paymentStatus: (payment as Record<string, unknown> | null)?.payment_status as string | null,
+  });
   const firstTicketFromItems = orderItems
     .map((item) => one(item.tickets as Record<string, unknown> | Record<string, unknown>[] | null))
     .find((itemTicket) => itemTicket?.id) ?? null;
@@ -100,7 +98,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
       expirationValue={showExpiration && paymentExpiresAt ? formatDateTimeBR(String(paymentExpiresAt), ' às ') : null}
       expirationTone={commercialStatus === 'expired' ? 'danger' : 'warning'}
       primaryAction={
-        commercialStatus === 'pending' ? (
+        canContinueCommercialPayment(commercialStatus) ? (
           <MilitrinLinkButton href={`/minha-conta/compras/${order.id}`} variant="warning" size="md" iconLeft={<CreditCard size={16} />} className="w-full">
             Continuar pagamento
           </MilitrinLinkButton>
@@ -115,7 +113,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
         )
       }
       secondaryAction={
-        commercialStatus === 'pending' ? (
+        canContinueCommercialPayment(commercialStatus) ? (
           <MilitrinLinkButton href={`/minha-conta/compras/${order.id}`} variant="secondary" size="md" iconLeft={<ClipboardList size={16} />} className="w-full">
             Ver detalhes
           </MilitrinLinkButton>
@@ -151,7 +149,10 @@ function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
     paymentStatus: order.payment_status as string | null,
     reservationExpiresAt: order.expires_at as string | null,
   });
-  const normalizedPaymentStatus = normalizeOrderStatus(String(order.payment_status ?? 'pending'));
+  const normalizedPaymentStatus = resolvePaymentDisplayStatus({
+    commercialStatus,
+    paymentStatus: order.payment_status as string | null,
+  });
   const itemSummary = items
     .slice(0, 3)
     .map((item) => {
@@ -178,7 +179,7 @@ function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
       expirationValue={showExpiration && order.expires_at ? formatDateTimeBR(String(order.expires_at), ' às ') : null}
       expirationTone={commercialStatus === 'expired' ? 'danger' : 'warning'}
       primaryAction={
-        commercialStatus === 'pending' ? (
+        canContinueCommercialPayment(commercialStatus) ? (
           <MilitrinLinkButton href={`/minha-conta/compras/loja/${order.id}`} variant="warning" size="md" iconLeft={<CreditCard size={16} />} className="w-full">
             Continuar pagamento
           </MilitrinLinkButton>
@@ -193,7 +194,7 @@ function StoreOrderCard({ order }: { order: Record<string, unknown> }) {
           <MilitrinLinkButton href={`/minha-conta/compras/loja/${order.id}`} variant="secondary" size="md" iconLeft={<QrCode size={16} />} className="w-full">
             Ver QR Code
           </MilitrinLinkButton>
-        ) : commercialStatus === 'pending' ? (
+        ) : canContinueCommercialPayment(commercialStatus) ? (
           <MilitrinLinkButton href={`/minha-conta/compras/loja/${order.id}`} variant="secondary" size="md" iconLeft={<ClipboardList size={16} />} className="w-full">
             Ver detalhes
           </MilitrinLinkButton>
@@ -235,9 +236,27 @@ export default async function MinhasComprasPage() {
     ...(storeOrders ?? []).map((order) => ({ kind: 'store' as const, order: order as Record<string, unknown>, createdAt: String(order.created_at) })),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  const commercialOf = (row: (typeof rows)[number]) => (
+    row.kind === 'ticket'
+      ? resolveAccountOrderStatus(row.order)
+      : resolveCommercialStatus({
+        orderStatus: row.order.status as string | null,
+        paymentStatus: row.order.payment_status as string | null,
+        reservationExpiresAt: row.order.expires_at as string | null,
+      })
+  );
+  const openRows = rows.filter((row) => !isClosedCommercialPurchase(commercialOf(row)));
+  const closedRows = rows.filter((row) => isClosedCommercialPurchase(commercialOf(row)));
+
+  function renderRow(row: (typeof rows)[number]) {
+    return row.kind === 'ticket'
+      ? <TicketOrderCard key={`ticket-${row.order.id}`} order={row.order} />
+      : <StoreOrderCard key={`store-${row.order.id}`} order={row.order} />;
+  }
+
   return (
     <section className="space-y-4">
-      {headerEvent ? <MilitrinHeader event={headerEvent} /> : null}
+      {headerEvent ? <MilitrinHeader event={headerEvent} showBuyButton={headerEvent.showBuyButton} buyHref={headerEvent.buyHref} /> : null}
 
       <section className={cx(militrinTokens.radius, militrinTokens.surface, militrinTokens.shadow, 'p-4 sm:p-5')}>
         <h2 className={militrinType.sectionTitle}>Pedidos e pagamentos</h2>
@@ -252,13 +271,18 @@ export default async function MinhasComprasPage() {
               actionLabel="Ver eventos"
             />
           ) : (
-            <div className="space-y-3">
-              {rows.map((row) => (
-                row.kind === 'ticket'
-                  ? <TicketOrderCard key={`ticket-${row.order.id}`} order={row.order} />
-                  : <StoreOrderCard key={`store-${row.order.id}`} order={row.order} />
-              ))}
-            </div>
+            <>
+              {openRows.length === 0 ? (
+                <p className={militrinType.bodyMuted}>Nenhuma compra ativa no momento. Pedidos pagos e pendências ainda válidas aparecem aqui.</p>
+              ) : (
+                <div className="space-y-3">
+                  {openRows.map(renderRow)}
+                </div>
+              )}
+              <ClosedPurchasesSection count={closedRows.length}>
+                {closedRows.map(renderRow)}
+              </ClosedPurchasesSection>
+            </>
           )}
         </div>
       </section>

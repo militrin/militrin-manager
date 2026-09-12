@@ -5,7 +5,7 @@ import { MilitrinStatusBadge, resolveStatusTone } from './MilitrinStatusBadge';
 import { paymentStatusChip } from './status-chips';
 import { cx } from './utils';
 import { militrinTokens, militrinType } from './tokens';
-import { parseDateInput } from '@/lib/utils/date';
+import { parseDateInput, dateTimePartsInEventTimeZone, formatDateLongBR } from '@/lib/utils/date';
 
 const DATE_BADGE_TONE_CLASS = {
   success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
@@ -19,12 +19,14 @@ const DATE_BADGE_TONE_CLASS = {
 // principal (resolveStatusTone), pra nunca contar uma historia diferente da
 // badge ao lado. So aparece quando ha uma data valida pra mostrar.
 function OrderDateBadge({ date, tone }: { date: Date; tone: keyof typeof DATE_BADGE_TONE_CLASS }) {
-  const month = new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(date).replace('.', '').toUpperCase();
+  const parts = dateTimePartsInEventTimeZone(date);
+  const monthDate = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 15, 0, 0));
+  const month = new Intl.DateTimeFormat('pt-BR', { month: 'short', timeZone: 'UTC' }).format(monthDate).replace('.', '').toUpperCase();
   return (
     <div className={cx('flex h-16 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border text-center', DATE_BADGE_TONE_CLASS[tone])}>
       <span className="text-[10px] font-bold uppercase tracking-wide">{month}</span>
-      <span className="text-lg font-bold leading-none">{date.getDate()}</span>
-      <span className="text-[10px] opacity-80">{date.getFullYear()}</span>
+      <span className="text-lg font-bold leading-none">{Number(parts.day)}</span>
+      <span className="text-[10px] opacity-80">{parts.year}</span>
     </div>
   );
 }
@@ -73,7 +75,7 @@ export function MilitrinPurchaseCard({
   const date = parseDateInput(dateValue);
   const tone = resolveStatusTone(status);
   const chip = paymentStatusChip(paymentStatus);
-  const dateText = date ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }).format(date) : null;
+  const dateText = date ? formatDateLongBR(dateValue) : null;
 
   return (
     <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'overflow-hidden')}>

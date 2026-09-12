@@ -5,6 +5,12 @@ function pad(value: number) {
   return String(value).padStart(2, '0');
 }
 
+// Fuso canônico dos eventos brasileiros atuais. Nunca compensar com +3h/-3h:
+// gravar datetime-local como parede neste fuso e exibir com Intl neste fuso.
+export const EVENT_TIMEZONE = 'America/Sao_Paulo';
+
+const DATETIME_LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/;
+
 export function parseDateInput(value: string | Date | null | undefined): Date | null {
   if (!value) return null;
   if (value instanceof Date) {
@@ -50,27 +56,9 @@ export function parseDateInput(value: string | Date | null | undefined): Date | 
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatDateBR(value: string | Date | null | undefined) {
-  const date = parseDateInput(value);
-  if (!date) return '-';
-  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
-}
-
-export function formatDateTimeBR(value: string | Date | null | undefined, connector = ' ') {
-  const date = parseDateInput(value);
-  if (!date) return '-';
-  return `${formatDateBR(date)}${connector}${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-export function formatDateTimeCompactBR(value: string | Date | null | undefined) {
-  const date = parseDateInput(value);
-  if (!date) return '—';
-  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function dateTimePartsInSaoPaulo(date: Date) {
+export function dateTimePartsInEventTimeZone(date: Date, timeZone: string = EVENT_TIMEZONE) {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: EVENT_TIMEZONE,
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -88,17 +76,50 @@ function dateTimePartsInSaoPaulo(date: Date) {
   };
 }
 
+function isCalendarDateOnly(value: string) {
+  const text = value.trim();
+  return ISO_DATE_ONLY_REGEX.test(text) || BR_DATE_REGEX.test(text);
+}
+
+export function formatDateBR(value: string | Date | null | undefined) {
+  const parts = calendarPartsInEventTimeZone(value);
+  if (!parts) return '-';
+  return `${pad(parts.day)}/${pad(parts.month)}/${parts.year}`;
+}
+
+export function formatDateTimeBR(value: string | Date | null | undefined, connector = ' ') {
+  if (typeof value === 'string' && isCalendarDateOnly(value)) {
+    return `${formatDateBR(value)}${connector}00:00`;
+  }
+  const date = parseDateInput(value);
+  if (!date) return '-';
+  const parts = dateTimePartsInEventTimeZone(date);
+  return `${parts.day}/${parts.month}/${parts.year}${connector}${parts.hour}:${parts.minute}`;
+}
+
+export function formatDateTimeCompactBR(value: string | Date | null | undefined) {
+  if (typeof value === 'string' && isCalendarDateOnly(value)) {
+    const parts = calendarPartsFromDateOnly(value);
+    if (!parts) return '—';
+    return `${pad(parts.day)}/${pad(parts.month)}/${String(parts.year).slice(-2)} 00:00`;
+  }
+  const date = parseDateInput(value);
+  if (!date) return '—';
+  const parts = dateTimePartsInEventTimeZone(date);
+  return `${parts.day}/${parts.month}/${parts.year.slice(-2)} ${parts.hour}:${parts.minute}`;
+}
+
 export function formatStackedDateTimeBR(
   value: string | Date | null | undefined,
   options?: { now?: Date; todayLabel?: boolean },
 ) {
   const date = parseDateInput(value);
   if (!date) return { line1: '—', line2: null as string | null, title: '—', isToday: false };
-  const parts = dateTimePartsInSaoPaulo(date);
+  const parts = dateTimePartsInEventTimeZone(date);
   const dateLine = `${parts.day}/${parts.month}/${parts.year.slice(-2)}`;
   const timeLine = `${parts.hour}:${parts.minute}`;
   const title = `${parts.day}/${parts.month}/${parts.year} ${timeLine}`;
-  const nowParts = dateTimePartsInSaoPaulo(options?.now ?? new Date());
+  const nowParts = dateTimePartsInEventTimeZone(options?.now ?? new Date());
   const isToday = parts.year === nowParts.year && parts.month === nowParts.month && parts.day === nowParts.day;
   return {
     line1: options?.todayLabel && isToday ? 'Hoje' : dateLine,
@@ -111,7 +132,15 @@ export function formatStackedDateTimeBR(
 export function formatDateLongBR(value: string | Date | null | undefined) {
   const date = parseDateInput(value);
   if (!date) return '-';
+  if (typeof value === 'string' && isCalendarDateOnly(value)) {
+    return new Intl.DateTimeFormat('pt-BR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    }).format(date);
+  }
   return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: EVENT_TIMEZONE,
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -145,15 +174,6 @@ export function formatISOToDateBR(value: string | null | undefined) {
   if (!value) return '';
   return formatDateBR(value) === '-' ? '' : formatDateBR(value);
 }
-
-// Fuso fixo do evento -- o Militrin so opera eventos no Brasil, entao o
-// "dia do evento" e sempre o dia de calendario em America/Sao_Paulo,
-// independentemente de onde o processo (servidor, CI, maquina do dev) esta
-// rodando. Sem isso, um starts_at perto da meia-noite UTC poderia cair num
-// dia diferente dependendo se quem le e um servidor em UTC ou um navegador
-// no Brasil -- exatamente o tipo de dependencia de timezone que a regra de
-// maioridade nao pode ter.
-const EVENT_TIMEZONE = 'America/Sao_Paulo';
 
 // birth_date e sempre date-only (sem hora, sem timezone) -- extrai
 // ano/mes/dia via parseDateInput (que ja constroi e le com getters locais
@@ -248,6 +268,58 @@ export function isMinimumAgeSatisfied(
 export function toDatetimeLocalValue(value: string | Date | null | undefined) {
   const date = parseDateInput(value);
   if (!date) return '';
-  const tzOffset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+  if (typeof value === 'string' && isCalendarDateOnly(value)) {
+    const parts = calendarPartsFromDateOnly(value);
+    if (!parts) return '';
+    return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T00:00`;
+  }
+  const parts = dateTimePartsInEventTimeZone(date);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/**
+ * Interpreta um valor de <input type="datetime-local"> (parede, sem offset)
+ * como horário no fuso do evento e devolve o instante ISO. Instants já
+ * gravados (com Z ou ±HH:MM) passam direto -- nunca aplica offset fixo.
+ */
+export function datetimeLocalInEventTimeZoneToIso(value: string, timeZone: string = EVENT_TIMEZONE): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (/[zZ]$/.test(trimmed) || /[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    const date = new Date(trimmed);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  const match = trimmed.match(DATETIME_LOCAL_RE);
+  if (!match) {
+    const date = new Date(trimmed);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] ?? 0);
+  const desiredAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  let utcMs = desiredAsUtc;
+
+  for (let i = 0; i < 3; i += 1) {
+    const parts = dateTimePartsInEventTimeZone(new Date(utcMs), timeZone);
+    const gotAsUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      second,
+    );
+    const diff = desiredAsUtc - gotAsUtc;
+    if (diff === 0) break;
+    utcMs += diff;
+  }
+
+  return new Date(utcMs).toISOString();
 }
