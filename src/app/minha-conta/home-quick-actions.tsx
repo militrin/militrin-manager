@@ -42,10 +42,10 @@ export function HomeQuickActions({
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[1.7fr_repeat(3,minmax(0,1fr))]">
       <Link
         href={qrHref}
-        className="col-span-2 flex min-h-20 items-center gap-3 rounded-[1.5rem] border border-emerald-400/30 bg-emerald-500/12 px-4 py-3.5 shadow-lg shadow-black/20 transition hover:border-emerald-300/50 active:bg-emerald-500/18 sm:min-h-24"
+        className="flex min-h-20 items-center gap-3 rounded-[1.5rem] border border-emerald-400/30 bg-emerald-500/12 px-4 py-3.5 shadow-lg shadow-black/20 transition hover:border-emerald-300/50 active:bg-emerald-500/18 sm:min-h-[5.5rem]"
       >
         <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-slate-950 text-emerald-300 sm:h-16 sm:w-16">
           <QrCode size={28} />
@@ -59,24 +59,26 @@ export function HomeQuickActions({
         <ChevronRight size={18} className="shrink-0 text-emerald-200" />
       </Link>
 
-      {secondary.map((action) => {
-        const Icon = action.icon;
-        return (
-          <Link
-            key={action.href}
-            href={action.href}
-            className="flex min-h-20 flex-col justify-center gap-2 rounded-[1.5rem] border border-slate-800/80 bg-slate-900/70 px-3.5 py-3 transition hover:border-slate-600 active:bg-slate-900 sm:min-h-24"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-emerald-300">
-              <Icon size={18} />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold text-white">{action.label}</span>
-              <span className={cx('block truncate', militrinType.micro)}>{action.hint}</span>
-            </span>
-          </Link>
-        );
-      })}
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3 lg:contents">
+        {secondary.map((action) => {
+          const Icon = action.icon;
+          return (
+            <Link
+              key={action.href}
+              href={action.href}
+              className="flex min-h-20 flex-col justify-center gap-2 rounded-[1.5rem] border border-slate-800/80 bg-slate-900/70 px-2.5 py-3 transition hover:border-slate-600 active:bg-slate-900 sm:min-h-[5.5rem] sm:px-3.5"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-emerald-300">
+                <Icon size={18} />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-semibold text-white sm:text-sm">{action.label}</span>
+                <span className={cx('block truncate', militrinType.micro)}>{action.hint}</span>
+              </span>
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
 }

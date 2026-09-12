@@ -49,7 +49,7 @@ export function HomeTicketCarousel({
   return (
     <div>
       <div className="relative overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/80">
-        <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-start">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className={cx('truncate sm:text-lg', militrinType.cardTitle)} title={current.eventName}>{current.eventName}</h3>
@@ -101,7 +101,7 @@ export function HomeTicketCarousel({
           </div>
 
           {current.canShowTicket && current.token ? (
-            <div className="hidden justify-self-end lg:block">
+            <div className="hidden w-[180px] shrink-0 flex-col items-center lg:flex">
               <div className="rounded-2xl bg-white p-2 shadow-lg">
                 <LocalQrImage
                   value={current.token}
@@ -110,8 +110,8 @@ export function HomeTicketCarousel({
                   className="h-[168px] w-[168px] bg-white"
                 />
               </div>
-              <p className="mt-2 max-w-[168px] text-center text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                Apresente este QR Code no ponto de retirada do Militrin
+              <p className="mt-2 text-center text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                Apresente este QR Code no ponto de retirada
               </p>
             </div>
           ) : null}
