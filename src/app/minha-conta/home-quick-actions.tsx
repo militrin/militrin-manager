@@ -5,6 +5,7 @@ import { cx, militrinType } from '@/components/militrin';
 type QuickAction = {
   href: string;
   label: string;
+  shortLabel: string;
   hint: string;
   icon: typeof QrCode;
 };
@@ -24,18 +25,21 @@ export function HomeQuickActions({
     {
       href: '/minha-conta/ingressos',
       label: 'Meus acessos',
+      shortLabel: 'Acessos',
       hint: activeTicketCount === 1 ? '1 ingresso ativo' : `${activeTicketCount} ingressos ativos`,
       icon: Ticket,
     },
     {
       href: '/minha-conta/compras',
       label: 'Minhas compras',
+      shortLabel: 'Compras',
       hint: purchaseCount === 1 ? '1 compra' : `${purchaseCount} compras`,
       icon: ShoppingBag,
     },
     {
       href: '/minha-conta/loja',
       label: 'Ir para a loja',
+      shortLabel: 'Loja',
       hint: 'Produtos e adicionais',
       icon: Store,
     },
@@ -72,8 +76,11 @@ export function HomeQuickActions({
                 <Icon size={18} />
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-xs font-semibold text-white sm:text-sm">{action.label}</span>
-                <span className={cx('block truncate', militrinType.micro)}>{action.hint}</span>
+                <span className="block text-[11px] font-semibold leading-tight text-white sm:text-sm">
+                  <span className="sm:hidden">{action.shortLabel}</span>
+                  <span className="hidden sm:inline">{action.label}</span>
+                </span>
+                <span className={cx('mt-0.5 block leading-tight', militrinType.micro)}>{action.hint}</span>
               </span>
             </Link>
           );

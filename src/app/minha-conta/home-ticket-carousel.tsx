@@ -110,8 +110,8 @@ export function HomeTicketCarousel({
                   className="h-[168px] w-[168px] bg-white"
                 />
               </div>
-              <p className="mt-2 text-center text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                Apresente este QR Code no ponto de retirada
+              <p className="mt-2 hidden text-center text-[10px] uppercase tracking-[0.14em] text-slate-500 xl:block">
+                Apresente no ponto de retirada
               </p>
             </div>
           ) : null}
