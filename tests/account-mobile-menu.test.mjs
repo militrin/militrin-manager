@@ -90,13 +90,14 @@ test("AccountMobileNav recebe o destino administrativo como prop -- layout.tsx r
 test("home da Minha Conta segue a hierarquia evento, acesso, eventos, loja -- sem atalhos duplicados", () => {
   const heroIdx = homePage.indexOf("<HomeFeaturedHero");
   const acessosIdx = homePage.indexOf("<HomeTicketCarousel");
+  const sponsorsIdx = homePage.indexOf("<HomeSponsorsCarousel");
   const eventosIdx = homePage.indexOf("<HomeFeaturedEvents");
   const lojaIdx = homePage.indexOf("<HomeStoreBanner");
   assert.ok(heroIdx !== -1, "card de evento em destaque precisa existir");
   assert.ok(acessosIdx !== -1, "card Meu acesso precisa existir");
   assert.ok(eventosIdx !== -1, "catalogo de eventos precisa existir");
   assert.ok(lojaIdx !== -1, "faixa da loja precisa existir");
-  assert.ok(heroIdx < acessosIdx && acessosIdx < eventosIdx && eventosIdx < lojaIdx);
+  assert.ok(heroIdx < acessosIdx && acessosIdx < sponsorsIdx && sponsorsIdx < eventosIdx && eventosIdx < lojaIdx);
   assert.doesNotMatch(homePage, /HomeQuickActions/);
   assert.doesNotMatch(homePage, /Acessar meu QR Code/);
 });

@@ -11,11 +11,15 @@ test('home usa o evento em destaque canonico e some o card se nao houver elegive
   assert.match(page, /resolveHomeFeaturedEventCta/);
 });
 
-test('card de evento em destaque usa logo da marca, nunca o banner do evento como imagem principal', async () => {
+test('hero preserva o brasao oficial e mostra a arte completa com contain', async () => {
   const hero = await read('src/app/minha-conta/home-featured-hero.tsx');
   assert.match(hero, /mask-logo/);
   assert.match(hero, /Evento em destaque/);
-  assert.doesNotMatch(hero, /event\.imageUrl/);
+  assert.match(hero, /event\.imageUrl/);
+  assert.match(hero, /h-\[168px\]/);
+  assert.match(hero, /blur-2xl/);
+  assert.match(hero, /object-contain object-center/);
+  assert.match(hero, /scale-125 object-cover blur-2xl/);
   assert.doesNotMatch(hero, /banner_card_url/);
   assert.doesNotMatch(hero, /banner_hero_url/);
 });
@@ -23,7 +27,7 @@ test('card de evento em destaque usa logo da marca, nunca o banner do evento com
 test('compra pendente da home so renderiza com canContinueCommercialPayment', async () => {
   const page = await read('src/app/minha-conta/page.tsx');
   assert.match(page, /canContinueCommercialPayment/);
-  assert.match(page, /pendingOrder && pendingOrderDetail \? \(/);
+  assert.match(page, /hasPendingPurchase && pendingOrder && pendingOrderDetail \? \(/);
   assert.doesNotMatch(page, /Nenhuma compra pendente no momento/);
 });
 
@@ -35,20 +39,27 @@ test('QR da home usa o token do ticket, sem gerar QR novo no servidor', async ()
   assert.match(carousel, /LocalQrImage/);
   assert.match(carousel, /current\.token/);
   assert.match(carousel, /#qr/);
-  assert.match(carousel, /hidden w-\[104px\][\s\S]*LocalQrImage/);
+  assert.doesNotMatch(carousel, /hidden w-\[104px\]/);
   assert.doesNotMatch(page, /generateQrDataUrl/);
   assert.doesNotMatch(page, /HomeQuickActions/);
 });
 
-test('Eventos da home usam arte real e marcam Em alta so com ocupacao real', async () => {
+test('Eventos da home usam arte real sem crop e marcam Em alta so com ocupacao real', async () => {
   const page = await read('src/app/minha-conta/page.tsx');
   const list = await read('src/app/minha-conta/home-featured-events.tsx');
+  const sponsors = await read('src/app/minha-conta/home-sponsors-carousel.tsx');
   assert.match(page, /isHot: soldPercent !== null && soldPercent >= 50/);
   assert.match(page, /banner_card_url/);
   assert.match(page, /banner_hero_url/);
   assert.match(list, /event\.isHot/);
-  assert.match(list, /MilitrinEventArtwork/);
+  assert.match(list, /object-contain/);
+  assert.doesNotMatch(list, /object-cover/);
   assert.match(list, /Ver evento/);
+  assert.match(list, /overflow-x-auto/);
+  assert.match(sponsors, /object-contain object-center/);
+  assert.match(sponsors, /\[aspect-ratio:var\(--sponsor-ratio\)\]/);
+  assert.doesNotMatch(sponsors, /object-cover/);
+  assert.doesNotMatch(sponsors, /inset-1\.5/);
 });
 
 test('home nao restaura atalhos, numeros nem novidades', async () => {
@@ -64,13 +75,23 @@ test('home nao restaura atalhos, numeros nem novidades', async () => {
   assert.match(page, /get_active_sponsors_for_home/);
 });
 
-test('hierarquia da home: evento, acesso, eventos, loja, patrocinadores', async () => {
+test('hierarquia da home: evento, acesso, patrocinadores, eventos, loja', async () => {
   const page = await read('src/app/minha-conta/page.tsx');
   const heroIdx = page.indexOf('<HomeFeaturedHero');
   const accessIdx = page.indexOf('<HomeTicketCarousel');
-  const eventsIdx = page.indexOf('<HomeFeaturedEvents');
-  const storeIdx = page.indexOf('<HomeStoreBanner');
   const sponsorsIdx = page.indexOf('<HomeSponsorsCarousel');
+  const eventsIdx = page.indexOf('<HomeFeaturedEvents');
+  const pendingIdx = page.indexOf('<HomePendingPurchase');
+  const storeIdx = page.indexOf('<HomeStoreBanner');
   const betaIdx = page.indexOf('<BetaFeedbackWidget');
-  assert.ok(heroIdx < accessIdx && accessIdx < eventsIdx && eventsIdx < storeIdx && storeIdx < sponsorsIdx && sponsorsIdx < betaIdx);
+  assert.ok(heroIdx < accessIdx && accessIdx < sponsorsIdx && sponsorsIdx < eventsIdx && eventsIdx < pendingIdx && pendingIdx < storeIdx && storeIdx < betaIdx);
+});
+
+test('compra pendente no mobile vem antes da loja, sem reimplementar pagamento', async () => {
+  const page = await read('src/app/minha-conta/page.tsx');
+  const pending = await read('src/app/minha-conta/home-pending-purchase.tsx');
+  assert.match(page, /order-1 lg:order-2/);
+  assert.match(page, /order-2 lg:order-1/);
+  assert.match(pending, /\/minha-conta\/compras\/\$\{orderId\}/);
+  assert.match(pending, /Continuar pagamento/);
 });

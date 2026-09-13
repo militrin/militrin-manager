@@ -1,12 +1,11 @@
 import Link from 'next/link';
-import { CircleUserRound } from 'lucide-react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { formatCompactEventWhen, formatDateBR } from '@/lib/utils/date';
+import { EVENT_TIMEZONE, formatCompactEventWhen, formatDateBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
+import { accountTicketItemCount, getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
 import { resolveHomeFeaturedEventCta } from '@/lib/account/home-ticket-cta';
-import { resolveParticipantFirstName, resolveParticipantFullName } from '@/lib/account/participant-identity';
+import { resolveParticipantFirstName, resolveParticipantFullName, resolveParticipantInitials } from '@/lib/account/participant-identity';
 import { canContinueCommercialPayment } from '@/lib/dashboard/commercial-status';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
@@ -68,6 +67,14 @@ function compactDayMonth(startsAt: string | null) {
   if (!startsAt) return 'Data a confirmar';
   const line = formatCompactEventWhen(startsAt, null);
   return line ? line.split(' · ')[0] : formatDateBR(startsAt);
+}
+
+function eventWeekday(startsAt: string | null) {
+  if (!startsAt) return null;
+  const start = new Date(startsAt);
+  if (Number.isNaN(start.getTime())) return null;
+  const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: EVENT_TIMEZONE, weekday: 'long' }).format(start);
+  return weekday.charAt(0).toUpperCase() + weekday.slice(1);
 }
 
 export default async function MinhaContaPage() {
@@ -156,6 +163,7 @@ export default async function MinhaContaPage() {
 
   const displayName = resolveParticipantFullName({ profile, userMetadata, email: user?.email });
   const greetingName = resolveParticipantFirstName(displayName);
+  const greetingInitials = resolveParticipantInitials(displayName);
 
   const pendingOrder = orders.find((order) => canContinueCommercialPayment(resolveAccountOrderStatus(order))) ?? null;
 
@@ -191,8 +199,18 @@ export default async function MinhaContaPage() {
     ((bannerRowsResult.data ?? []) as Array<{ id: string; year: number | null; banner_card_url: string | null; banner_hero_url: string | null }>).map((row) => [String(row.id), row]),
   );
   const storeImageUrls = storeItems.map((item) => item.imageUrl).filter((url): url is string => Boolean(url)).slice(0, 3);
+  const storeProducts = storeItems
+    .filter((item) => Boolean(item.imageUrl))
+    .slice(0, 3)
+    .map((item) => ({ id: String(item.id), name: String(item.name), imageUrl: String(item.imageUrl) }));
 
-  const sponsorRows = (sponsorsResult.data ?? []) as Array<{ sponsor_id: string; name: string; banner_url: string | null; link_url: string | null }>;
+  const sponsorRows = (sponsorsResult.data ?? []) as Array<{
+    sponsor_id: string;
+    name: string;
+    banner_url: string | null;
+    link_url: string | null;
+    carousel_interval_seconds?: number | null;
+  }>;
   const sponsors: HomeSponsor[] = sponsorRows
     .filter((row) => Boolean(row.banner_url))
     .map((row) => ({
@@ -201,6 +219,7 @@ export default async function MinhaContaPage() {
       bannerUrl: String(row.banner_url),
       linkUrl: row.link_url ? String(row.link_url) : null,
     }));
+  const sponsorIntervalSeconds = Number(sponsorRows[0]?.carousel_interval_seconds ?? 4);
 
   const cardEventsRaw = listedEvents.map((event, index) => {
     const categoriesData = (Array.isArray(categoryResults[index]?.data) ? categoryResults[index].data : []) as Array<{ confirmed_count?: number; capacity?: number | null }>;
@@ -217,11 +236,13 @@ export default async function MinhaContaPage() {
       year,
       date: event.starts_at ? formatDateBR(String(event.starts_at)) : 'Data a confirmar',
       compactDate: compactDayMonth(event.starts_at ? String(event.starts_at) : null),
+      weekday: eventWeekday(event.starts_at ? String(event.starts_at) : null),
       location: event.location ? String(event.location) : 'Local a confirmar',
       registrationStatus: getRegistrationStatus(event),
       startingPrice: lowestAmount !== null ? money(lowestAmount) : null,
       soldPercent,
       isHot: soldPercent !== null && soldPercent >= 50,
+      isFeatured: Boolean(headerEvent?.id) && String(event.id) === String(headerEvent?.id),
       bannerUrl: banner?.banner_card_url || banner?.banner_hero_url || null,
       eventHref: event.slug ? `/eventos/${event.slug}` : '/eventos',
     } satisfies HomeFeaturedEvent;
@@ -249,32 +270,39 @@ export default async function MinhaContaPage() {
 
     return {
       eventName: eventObj?.name ? String(eventObj.name) : 'Evento',
-      quantity: items.length,
+      quantity: accountTicketItemCount(pendingOrder),
       categoryLabel: presentationMode === 'category_visible' ? optionalDisplayValue((categoryNameResult.data as { name: string | null } | null)?.name) : null,
       batchLabel: presentationMode === 'single' ? null : optionalDisplayValue((batchNameResult.data as { name: string | null } | null)?.name),
     };
   })();
 
+  const hasPendingPurchase = Boolean(pendingOrder && pendingOrderDetail);
+
   return (
-    <section className="space-y-5">
+    <section className="space-y-3 sm:space-y-4 lg:space-y-5">
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="truncate text-2xl font-semibold tracking-tight text-white">Olá, {greetingName}!</h1>
-          <p className="mt-1 text-sm text-slate-400">Bem-vindo à sua conta Militrin.</p>
+          <h1 className="truncate text-xl font-semibold tracking-tight text-white sm:text-2xl">Olá, {greetingName}!</h1>
+          <p className="mt-0.5 truncate text-xs text-slate-400 sm:text-sm">
+            Bem-vindo à sua conta Militrin.
+            <span className="hidden sm:inline"> Aqui é onde a experiência começa.</span>
+          </p>
         </div>
         <Link
           href="/minha-conta/dados"
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/70 text-slate-100 transition hover:border-emerald-500/40 sm:w-auto sm:gap-2 sm:px-3"
+          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-slate-700 bg-slate-950/70 pl-1 pr-2 text-slate-100 transition hover:border-emerald-500/40 sm:h-10 sm:pr-3"
           aria-label="Ver meu perfil"
         >
-          <CircleUserRound size={16} />
-          <span className="hidden sm:inline text-sm font-semibold">Perfil</span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/15 text-[11px] font-semibold text-emerald-200 sm:h-8 sm:w-8">
+            {greetingInitials}
+          </span>
+          <span className="hidden max-w-[10rem] truncate text-sm font-semibold lg:inline">{displayName}</span>
         </Link>
       </header>
 
       {headerEvent ? <HomeFeaturedHero event={headerEvent} cta={featuredHeroCta} /> : null}
 
-      <div className={pendingOrder && pendingOrderDetail ? 'grid gap-4 lg:grid-cols-2' : undefined}>
+      <div className={sponsors.length > 0 ? 'flex flex-col gap-3 lg:grid lg:grid-cols-2 lg:items-stretch lg:gap-4' : undefined}>
         <HomeTicketCarousel
           tickets={ticketCards}
           emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
@@ -283,23 +311,16 @@ export default async function MinhaContaPage() {
           emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
         />
 
-        {pendingOrder && pendingOrderDetail ? (
-          <HomePendingPurchase
-            orderId={String(pendingOrder.id)}
-            eventName={pendingOrderDetail.eventName}
-            quantity={pendingOrderDetail.quantity}
-            categoryLabel={pendingOrderDetail.categoryLabel}
-            batchLabel={pendingOrderDetail.batchLabel}
-            amount={Number(pendingOrder.final_amount ?? 0)}
-          />
+        {sponsors.length > 0 ? (
+          <HomeSponsorsCarousel sponsors={sponsors} intervalSeconds={sponsorIntervalSeconds} />
         ) : null}
       </div>
 
       {cardEventsRaw.length > 0 ? (
         <section>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-white">Eventos</h2>
-            <Link href="/eventos" className="text-sm font-semibold text-emerald-200 transition hover:text-emerald-100">
+          <div className="mb-2 flex items-center justify-between gap-3 sm:mb-3">
+            <h2 className="text-sm font-semibold text-white sm:text-base">Eventos</h2>
+            <Link href="/eventos" className="text-xs font-semibold text-emerald-200 transition hover:text-emerald-100 sm:text-sm">
               Ver todos →
             </Link>
           </div>
@@ -307,16 +328,23 @@ export default async function MinhaContaPage() {
         </section>
       ) : null}
 
-      <HomeStoreBanner imageUrls={storeImageUrls} />
-
-      {sponsors.length > 0 ? (
-        <section>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-white">Parceiros do Militrin</h2>
+      <div className={hasPendingPurchase ? 'flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] lg:items-stretch lg:gap-4' : undefined}>
+        {hasPendingPurchase && pendingOrder && pendingOrderDetail ? (
+          <div className="order-1 lg:order-2">
+            <HomePendingPurchase
+              orderId={String(pendingOrder.id)}
+              eventName={pendingOrderDetail.eventName}
+              quantity={pendingOrderDetail.quantity}
+              categoryLabel={pendingOrderDetail.categoryLabel}
+              batchLabel={pendingOrderDetail.batchLabel}
+              amount={Number(pendingOrder.final_amount ?? 0)}
+            />
           </div>
-          <HomeSponsorsCarousel sponsors={sponsors} />
-        </section>
-      ) : null}
+        ) : null}
+        <div className={hasPendingPurchase ? 'order-2 lg:order-1' : undefined}>
+          <HomeStoreBanner imageUrls={storeImageUrls} products={storeProducts} />
+        </div>
+      </div>
 
       <BetaFeedbackWidget />
     </section>
