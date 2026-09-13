@@ -95,3 +95,18 @@ test('compra pendente no mobile vem antes da loja, sem reimplementar pagamento',
   assert.match(pending, /\/minha-conta\/compras\/\$\{orderId\}/);
   assert.match(pending, /Continuar pagamento/);
 });
+
+test('PIN da home no mobile reusa getMyPublicPin e some no desktop do card de acesso', async () => {
+  const page = await read('src/app/minha-conta/page.tsx');
+  const carousel = await read('src/app/minha-conta/home-ticket-carousel.tsx');
+  const pin = await read('src/app/minha-conta/public-pin-copy.tsx');
+  const layout = await read('src/app/minha-conta/layout.tsx');
+  assert.match(page, /getMyPublicPin/);
+  assert.match(page, /publicPin=\{publicPin\}/);
+  assert.match(carousel, /<PublicPinCopy publicPin=\{publicPin\} compact \/>/);
+  assert.match(carousel, /lg:hidden/);
+  assert.match(pin, /navigator\.clipboard\.writeText\(publicPin\)/);
+  assert.match(pin, /Copiado/);
+  assert.match(layout, /<PublicPinCopy publicPin=\{publicPin\} \/>/);
+  assert.doesNotMatch(layout, /compact/);
+});

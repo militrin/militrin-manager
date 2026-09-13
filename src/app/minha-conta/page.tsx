@@ -8,6 +8,7 @@ import { resolveHomeFeaturedEventCta } from '@/lib/account/home-ticket-cta';
 import { resolveParticipantFirstName, resolveParticipantFullName, resolveParticipantInitials } from '@/lib/account/participant-identity';
 import { canContinueCommercialPayment } from '@/lib/dashboard/commercial-status';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
+import { getMyPublicPin } from '@/lib/account/public-pin';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
 import { BetaFeedbackWidget } from '@/components/feedback/BetaFeedbackWidget';
@@ -83,7 +84,7 @@ export default async function MinhaContaPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [profileResult, ordersResult, eventsResult, featuredEventsResult, sponsorsResult, headerEvent] = await Promise.all([
+  const [profileResult, ordersResult, eventsResult, featuredEventsResult, sponsorsResult, headerEvent, publicPin] = await Promise.all([
     supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
     getAccountOrders(supabase, user?.id ?? ''),
     supabase
@@ -94,6 +95,7 @@ export default async function MinhaContaPage() {
     supabase.rpc('get_featured_events_for_dashboard'),
     supabase.rpc('get_active_sponsors_for_home'),
     getPrimaryAccountHeaderEvent(supabase),
+    getMyPublicPin(user?.id),
   ]);
 
   if (ordersResult.error) {
@@ -305,6 +307,7 @@ export default async function MinhaContaPage() {
       <div className={sponsors.length > 0 ? 'flex flex-col gap-3 lg:grid lg:grid-cols-2 lg:items-stretch lg:gap-4' : undefined}>
         <HomeTicketCarousel
           tickets={ticketCards}
+          publicPin={publicPin}
           emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
           emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
           emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}

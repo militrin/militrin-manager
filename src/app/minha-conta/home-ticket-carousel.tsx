@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { LocalQrImage } from '@/components/qr/LocalQrImage';
 import { MilitrinLinkButton, cx, militrinType } from '@/components/militrin';
 import type { AccountHomeTicketCard } from '@/lib/account/home-ticket-cards';
+import { PublicPinCopy } from './public-pin-copy';
 
 function shirtLine(ticket: AccountHomeTicketCard) {
   const shirt = ticket.shirtLabel ? ticket.shirtLabel.replace(/^camiseta\s+/i, '') : null;
@@ -20,14 +21,25 @@ function AccessFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
+function MobileAccessPin({ publicPin }: { publicPin: string | null }) {
+  if (!publicPin) return null;
+  return (
+    <div className="lg:hidden">
+      <PublicPinCopy publicPin={publicPin} compact />
+    </div>
+  );
+}
+
 export function HomeTicketCarousel({
   tickets,
+  publicPin = null,
   emptyTitle,
   emptyDescription,
   emptyHref,
   emptyLabel,
 }: {
   tickets: AccountHomeTicketCard[];
+  publicPin?: string | null;
   emptyTitle?: string;
   emptyDescription?: string;
   emptyHref?: string;
@@ -39,6 +51,7 @@ export function HomeTicketCarousel({
         <p className={cx('uppercase tracking-[0.18em] text-emerald-300', militrinType.label)}>Meu acesso</p>
         <p className="mt-2 text-sm text-slate-300">{emptyTitle ?? 'Você ainda não possui ingressos.'}</p>
         {emptyDescription ? <p className="mt-1 text-xs text-slate-400">{emptyDescription}</p> : null}
+        <MobileAccessPin publicPin={publicPin} />
         {emptyHref && emptyLabel ? (
           <MilitrinLinkButton href={emptyHref} variant="secondary" size="sm" className="mt-3 w-full sm:w-auto">
             {emptyLabel}
@@ -58,6 +71,7 @@ export function HomeTicketCarousel({
           </span>
         </div>
         <p className="mt-2 text-sm text-slate-300">Você tem {tickets.length} ingressos ativos.</p>
+        <MobileAccessPin publicPin={publicPin} />
         <MilitrinLinkButton href="/minha-conta/ingressos" variant="success" size="sm" className="mt-3 w-full">
           Ver meus acessos
         </MilitrinLinkButton>
@@ -119,6 +133,8 @@ export function HomeTicketCarousel({
               <span className="truncate">{current.location}</span>
             </p>
           ) : null}
+
+          <MobileAccessPin publicPin={publicPin} />
 
           <div className="mt-3 flex items-center gap-2">
             <MilitrinLinkButton
