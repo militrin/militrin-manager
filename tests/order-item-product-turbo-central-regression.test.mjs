@@ -167,9 +167,9 @@ test('Turbo: delivery_status="delivered" abre a tela de resumo (product_already_
   assert.match(source, /function ProductAlreadyDelivered\(/);
 });
 
-test('Turbo: tela de resumo mostra produto/quantidade/variante/pedido/comprador/evento/data-hora/operador/status, com botao "Voltar ao leitor" que reseta pro scanner', async () => {
+test('Turbo: tela de resumo mostra produto/quantidade/variante/pedido/comprador/evento/data-hora/operador/status, com botao "LER PRÓXIMO QR" que reseta pro scanner', async () => {
   const source = await fs.readFile(turboModeUrl, 'utf8');
-  const fn = source.slice(source.indexOf('function ProductAlreadyDelivered('), source.indexOf('function InfoTile('));
+  const fn = source.slice(source.indexOf('function ProductAlreadyDelivered('));
   assert.match(fn, /Item já entregue/);
   assert.match(fn, /item\.quantity\}x \$\{item\.product_name\}/);
   assert.match(fn, /item\.variant/);
@@ -181,7 +181,7 @@ test('Turbo: tela de resumo mostra produto/quantidade/variante/pedido/comprador/
   assert.match(fn, /item\.delivered_at \? new Date\(item\.delivered_at\)\.toLocaleString\('pt-BR'\)/);
   assert.match(fn, /Operador/);
   assert.match(fn, /item\.delivered_by \?\? 'Não identificado'/);
-  assert.match(fn, /<BigButton onClick=\{onBack\}>Voltar ao leitor<\/BigButton>/);
+  assert.match(fn, /<BigButton onClick=\{onBack\}>LER PRÓXIMO QR<\/BigButton>/);
   // onBack = backToScanner, que despacha RESET -- volta pro leitor de verdade.
   assert.match(source, /onBack=\{backToScanner\}/);
 });

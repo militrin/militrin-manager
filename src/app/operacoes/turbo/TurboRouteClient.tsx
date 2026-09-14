@@ -86,34 +86,35 @@ export function TurboRouteClient() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-10 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-xl">
-        <p className="text-xs font-bold uppercase tracking-[0.3em] text-cyan-300">Modo Turbo</p>
-        <h1 className="mt-1 text-3xl font-black">Selecione o evento</h1>
+    <main className="min-h-[100dvh] bg-slate-950 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] text-slate-100">
+      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col">
+        <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">Modo Turbo</p>
+        <h1 className="mt-1 text-2xl font-black leading-tight">Selecione o evento</h1>
+        <p className="mt-2 text-sm text-slate-400">Estação de atendimento no celular.</p>
 
-        {message ? <p className="mt-4 text-sm text-rose-300">{message}</p> : null}
+        {message ? <p className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{message}</p> : null}
 
         {events === null ? (
           <p className="mt-6 text-sm text-slate-400">Carregando eventos...</p>
         ) : events.length === 0 && !message ? (
           <p className="mt-6 text-sm text-slate-400">Nenhum evento disponível.</p>
         ) : (
-          <div className="mt-6 space-y-2">
+          <div className="mt-6 space-y-3">
             {events.map((event) => (
               <button
                 key={event.id}
                 type="button"
                 onClick={() => chooseEvent(event)}
-                className="flex w-full items-center justify-between rounded-2xl border border-slate-700 bg-slate-900 px-5 py-4 text-left text-lg font-semibold transition hover:border-cyan-500"
+                className="flex min-h-16 w-full items-center justify-between rounded-3xl border border-slate-700 bg-slate-900 px-5 text-left text-lg font-black"
               >
-                {event.name}
-                {event.is_active ? <span className="text-xs font-normal text-emerald-300">ativo</span> : null}
+                <span className="pr-3">{event.name}</span>
+                {event.is_active ? <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-emerald-300">ativo</span> : null}
               </button>
             ))}
           </div>
         )}
 
-        <a href="/operacoes" className="mt-8 inline-block text-sm text-slate-400 underline">
+        <a href="/operacoes" className="mt-auto pt-8 text-center text-sm font-semibold text-slate-500">
           Voltar para a Central de Operações
         </a>
       </div>
