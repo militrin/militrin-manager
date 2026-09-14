@@ -308,25 +308,33 @@ export default async function MinhaContaPage() {
           ? 'flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)] lg:items-start lg:gap-4'
           : 'flex flex-col gap-3'}
       >
-        <div className={sponsors.length > 0 ? 'lg:col-start-1 lg:row-start-1' : undefined}>
-          <HomeTicketCarousel
-            tickets={ticketCards}
-            publicPin={publicPin}
-            emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
-            emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
-            emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
-            emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
-          />
+        <div className={sponsors.length > 0
+          ? 'contents lg:col-start-1 lg:row-start-1 lg:flex lg:flex-col lg:gap-4'
+          : 'contents lg:flex lg:flex-col lg:gap-4'}
+        >
+          <div className="order-1 lg:order-none">
+            <HomeTicketCarousel
+              tickets={ticketCards}
+              publicPin={publicPin}
+              emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
+              emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
+              emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
+              emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
+            />
+          </div>
+          <div className="order-5 lg:order-none">
+            <HomeStoreBanner imageUrls={storeImageUrls} products={storeProducts} />
+          </div>
         </div>
 
         {sponsors.length > 0 ? (
-          <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          <div className="order-2 lg:order-none lg:col-start-2 lg:row-start-1">
             <HomeSponsorsCarousel sponsors={sponsors} intervalSeconds={sponsorIntervalSeconds} />
           </div>
         ) : null}
 
         {cardEventsRaw.length > 0 ? (
-          <section className={sponsors.length > 0 ? 'lg:col-span-2 lg:row-start-3' : undefined}>
+          <section className={sponsors.length > 0 ? 'order-3 lg:order-none lg:col-span-2 lg:row-start-2' : 'order-3 lg:order-none'}>
             <div className="mb-2 flex items-center justify-between gap-3 sm:mb-3">
               <h2 className="text-sm font-semibold text-white sm:text-base">Eventos</h2>
               <Link href="/eventos" className="text-xs font-semibold text-emerald-200 transition hover:text-emerald-100 sm:text-sm">
@@ -338,7 +346,10 @@ export default async function MinhaContaPage() {
         ) : null}
 
         {hasPendingPurchase && pendingOrder && pendingOrderDetail ? (
-          <div className={sponsors.length > 0 ? `lg:col-span-2 ${cardEventsRaw.length > 0 ? 'lg:row-start-4' : 'lg:row-start-3'}` : undefined}>
+          <div className={sponsors.length > 0
+            ? `order-4 lg:order-none lg:col-span-2 ${cardEventsRaw.length > 0 ? 'lg:row-start-3' : 'lg:row-start-2'}`
+            : 'order-4 lg:order-none'}
+          >
             <HomePendingPurchase
               orderId={String(pendingOrder.id)}
               eventName={pendingOrderDetail.eventName}
@@ -349,10 +360,6 @@ export default async function MinhaContaPage() {
             />
           </div>
         ) : null}
-
-        <div className={sponsors.length > 0 ? 'lg:col-start-1 lg:row-start-2' : undefined}>
-          <HomeStoreBanner imageUrls={storeImageUrls} products={storeProducts} />
-        </div>
       </div>
 
       <BetaFeedbackWidget />

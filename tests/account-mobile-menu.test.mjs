@@ -97,7 +97,10 @@ test("home da Minha Conta segue a hierarquia evento, acesso, eventos, loja -- se
   assert.ok(acessosIdx !== -1, "card Meu acesso precisa existir");
   assert.ok(eventosIdx !== -1, "catalogo de eventos precisa existir");
   assert.ok(lojaIdx !== -1, "faixa da loja precisa existir");
-  assert.ok(heroIdx < acessosIdx && acessosIdx < sponsorsIdx && sponsorsIdx < eventosIdx && eventosIdx < lojaIdx);
+  assert.ok(heroIdx < acessosIdx && acessosIdx < lojaIdx && lojaIdx < sponsorsIdx && sponsorsIdx < eventosIdx);
+  assert.match(homePage, /order-1 lg:order-none/);
+  assert.match(homePage, /order-5 lg:order-none/);
+  assert.match(homePage, /contents lg:col-start-1 lg:row-start-1 lg:flex lg:flex-col lg:gap-4/);
   assert.doesNotMatch(homePage, /HomeQuickActions/);
   assert.doesNotMatch(homePage, /Acessar meu QR Code/);
 });

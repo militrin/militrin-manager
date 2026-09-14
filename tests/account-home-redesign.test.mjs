@@ -88,28 +88,40 @@ test('hierarquia da home: evento, acesso, patrocinadores, eventos, compra penden
   const pendingIdx = page.indexOf('<HomePendingPurchase');
   const storeIdx = page.indexOf('<HomeStoreBanner');
   const betaIdx = page.indexOf('<BetaFeedbackWidget');
-  assert.ok(heroIdx < accessIdx && accessIdx < sponsorsIdx && sponsorsIdx < eventsIdx && eventsIdx < pendingIdx && pendingIdx < storeIdx && storeIdx < betaIdx);
+  assert.ok(heroIdx < accessIdx && accessIdx < storeIdx && storeIdx < sponsorsIdx && sponsorsIdx < eventsIdx && eventsIdx < pendingIdx && pendingIdx < betaIdx);
+  assert.match(page, /order-1 lg:order-none/);
+  assert.match(page, /order-2 lg:order-none lg:col-start-2 lg:row-start-1/);
+  assert.match(page, /order-3 lg:order-none/);
+  assert.match(page, /order-4 lg:order-none/);
+  assert.match(page, /order-5 lg:order-none/);
 });
 
-test('desktop reorganiza acessos+loja | patrocinadores sem mudar a ordem mobile do DOM', async () => {
+test('desktop empilha acessos e loja na coluna esquerda sem esticar na altura do patrocinador', async () => {
   const page = await read('src/app/minha-conta/page.tsx');
+  const store = await read('src/app/minha-conta/home-store-banner.tsx');
   assert.match(page, /lg:grid-cols-\[minmax\(0,0\.42fr\)_minmax\(0,0\.58fr\)\]/);
-  assert.match(page, /lg:col-start-1 lg:row-start-1/);
-  assert.match(page, /lg:col-start-2 lg:row-start-1 lg:row-span-2/);
-  assert.match(page, /lg:col-start-1 lg:row-start-2/);
-  assert.match(page, /lg:col-span-2 lg:row-start-3/);
+  assert.match(page, /contents lg:col-start-1 lg:row-start-1 lg:flex lg:flex-col lg:gap-4/);
+  assert.match(page, /lg:col-start-2 lg:row-start-1/);
+  assert.match(page, /lg:col-span-2 lg:row-start-2/);
+  assert.doesNotMatch(page, /lg:row-span-2/);
+  assert.doesNotMatch(page, /lg:col-start-1 lg:row-start-2/);
   assert.doesNotMatch(page, /order-1 lg:order-2/);
   assert.doesNotMatch(page, /lg:grid-cols-2 lg:items-stretch/);
   assert.doesNotMatch(page, /lg:grid-cols-\[minmax\(0,1\.45fr\)_minmax\(0,1fr\)\]/);
+  assert.match(store, /lg:h-24 lg:w-20/);
+  assert.match(store, /lg:text-lg/);
+  assert.doesNotMatch(store, /lg:min-h-\[7\.5rem\]/);
 });
 
-test('compra pendente no mobile continua no DOM apos eventos e antes da loja, sem reimplementar pagamento', async () => {
+test('compra pendente no mobile continua apos eventos e antes da loja, sem reimplementar pagamento', async () => {
   const page = await read('src/app/minha-conta/page.tsx');
   const pending = await read('src/app/minha-conta/home-pending-purchase.tsx');
   const eventsIdx = page.indexOf('<HomeFeaturedEvents');
   const pendingIdx = page.indexOf('<HomePendingPurchase');
-  const storeIdx = page.indexOf('<HomeStoreBanner');
-  assert.ok(eventsIdx < pendingIdx && pendingIdx < storeIdx);
+  assert.ok(eventsIdx < pendingIdx);
+  assert.match(page, /order-3 lg:order-none/);
+  assert.match(page, /order-4 lg:order-none/);
+  assert.match(page, /order-5 lg:order-none/);
   assert.match(pending, /\/minha-conta\/compras\/\$\{orderId\}/);
   assert.match(pending, /Continuar pagamento/);
   assert.match(pending, /lg:h-auto lg:flex-row/);
