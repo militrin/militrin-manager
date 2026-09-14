@@ -59,10 +59,15 @@ export function buildCard(code: string, entity: IntegrityEntity): Card {
       };
     }
     case 'LEGACY_HOLDER_REFERENCE_MISMATCH': {
-      const legacy = str(metadata, 'legacy_holder_name');
+      const residual = str(metadata, 'residual_contact_name') ?? str(metadata, 'current_holder_name');
+      const operational = str(metadata, 'operational_holder_name') ?? str(metadata, 'legacy_holder_name');
       return {
-        heading: str(metadata, 'current_holder_name') ?? 'Titular atual',
-        context: contextLine([str(metadata, 'event_name'), str(metadata, 'ticket_code'), legacy ? `Cadastro legado: ${legacy}` : null]),
+        heading: operational ?? str(metadata, 'ticket_code') ?? 'Referência cadastral desatualizada',
+        context: contextLine([
+          str(metadata, 'event_name'),
+          str(metadata, 'ticket_code'),
+          residual ? `Referência residual: ${residual}` : null,
+        ]),
         badge: null,
       };
     }

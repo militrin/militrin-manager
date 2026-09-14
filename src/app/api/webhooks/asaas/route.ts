@@ -118,6 +118,7 @@ export async function POST(request: Request) {
           p_internal_status: event.status,
           p_expected_gateway_account_key: accountKey,
           p_event_type: event.eventType,
+          p_external_reference: event.externalReference ?? null,
         });
 
         if (!storeError) {

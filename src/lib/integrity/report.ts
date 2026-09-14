@@ -43,9 +43,9 @@ export const INTEGRITY_SEVERITY_LABELS: Record<IntegritySeverity, string> = {
   warning: 'Aviso',
 };
 
-// Unica fonte de verdade do resumo "X bloqueios | Y precisam de atenção | Z
-// avisos | W verificações aprovadas" -- usada pelo card do Dashboard E pela
-// Central, para que os dois numeros nunca divirjam.
+// Unica fonte de verdade do resumo estrutural "X bloqueios | Y precisam de
+// atenção | Z avisos | W verificações aprovadas" -- usada pelo card do
+// Dashboard E pela Central. Nao inclui divergencias financeiras de gateway.
 export function summarizeIntegrityReport(issues: IntegrityIssueSummary[], totalDetectorCount: number): IntegrityTotals {
   const critical = issues.filter((issue) => issue.severity === 'critical').length;
   const attention = issues.filter((issue) => issue.severity === 'attention').length;

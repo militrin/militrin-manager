@@ -10,7 +10,7 @@ import {
   getPaymentGatewayProviderName,
 } from "@/lib/payments/get-gateway-provider";
 import { getAsaasAccountCredentialsForMethod } from "@/lib/payments/asaas-account-registry";
-import { todayAsPixDueDate } from "@/lib/payments/pix-due-date";
+import { resolvePixCommercialExpiresAt, todayAsPixDueDate } from "@/lib/payments/pix-due-date";
 import { isProductionPaymentRuntime, STORE_PAYMENT_UNAVAILABLE_MESSAGE } from "@/lib/payments/production-runtime";
 import { isSyntheticGatewayPayload } from "@/lib/payments/synthetic-gateway-payload";
 import { appBaseUrl } from "@/lib/urls/app-base-url";
@@ -130,12 +130,19 @@ async function persistStoreGatewayCharge(input: {
   environment: "sandbox" | "production" | null;
 }) {
   const supabase = await createServerSupabaseClient();
+  const expiresAt = input.paymentMethod === "pix"
+    ? resolvePixCommercialExpiresAt({
+        expiresAt: input.expiresAt,
+        paymentCreatedAt: new Date().toISOString(),
+        paymentMethod: "pix",
+      }) ?? input.expiresAt
+    : input.expiresAt;
   const { data, error } = await supabase.rpc("start_store_order_payment_pix", {
     p_store_order_id: input.storeOrderId,
     p_pix_code: input.pixCode,
     p_pix_qrcode: input.pixQrCode,
     p_gateway_payment_id: input.gatewayPaymentId,
-    p_expires_at: input.expiresAt,
+    p_expires_at: expiresAt,
     p_provider: input.provider,
     p_gateway_account_key: input.accountKey,
     p_gateway_environment: input.environment,

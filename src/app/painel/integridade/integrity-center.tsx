@@ -189,6 +189,12 @@ export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: ini
 
   return (
     <div className="space-y-6">
+      <div>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Integridade estrutural</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Estes totais cobrem só as verificações estruturais (titularidade, ingressos, estoque…). Divergências de gateway aparecem em Gateway / Financeiro.
+        </p>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm text-slate-300">
           Evento
@@ -236,7 +242,7 @@ export function IntegrityCenter({ initialIssues, totalDetectorCount, checks: ini
 
       {issues.length === 0 && !error ? (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 text-center text-sm text-emerald-200">
-          ✓ Nenhum problema operacional detectado.
+          ✓ Nenhum problema estrutural detectado nestas verificações.
         </div>
       ) : (
         <div className="space-y-6">

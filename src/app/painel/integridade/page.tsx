@@ -26,9 +26,19 @@ export default async function IntegridadePage({ searchParams }: { searchParams: 
     <MilitrinSection
       eyebrow="Administração"
       title="Integridade Operacional"
-      description="Identifique e resolva inconsistências antes que elas afetem a operação do evento."
+      description="Separado em duas leituras: integridade estrutural (titularidade, ingressos, estoque) e Gateway / Financeiro (divergências de pagamento abertas)."
     >
       <div className="space-y-6">
+        {canViewReport ? (
+          <IntegrityCenter
+            initialIssues={reportResult.success ? reportResult.issues : []}
+            totalDetectorCount={reportResult.success ? reportResult.totalDetectorCount : 0}
+            checks={reportResult.success ? reportResult.checks : []}
+            initialError={!reportResult.success ? reportResult.message : null}
+            events={eventsResult.success ? eventsResult.events : []}
+            initialSelectedEventId={eventId}
+          />
+        ) : null}
         <GatewayFinancialDivergencesPanel
           divergences={divergencesResult.success ? divergencesResult.divergences : []}
         />
@@ -40,16 +50,6 @@ export default async function IntegridadePage({ searchParams }: { searchParams: 
         {queueResult.success ? null : (
           <p className="text-sm text-rose-300">{queueResult.message}</p>
         )}
-        {canViewReport ? (
-          <IntegrityCenter
-            initialIssues={reportResult.success ? reportResult.issues : []}
-            totalDetectorCount={reportResult.success ? reportResult.totalDetectorCount : 0}
-            checks={reportResult.success ? reportResult.checks : []}
-            initialError={!reportResult.success ? reportResult.message : null}
-            events={eventsResult.success ? eventsResult.events : []}
-            initialSelectedEventId={eventId}
-          />
-        ) : null}
       </div>
     </MilitrinSection>
   );

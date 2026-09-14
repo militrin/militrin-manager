@@ -71,6 +71,7 @@ export function parseAsaasWebhookPayload(rawBody: string): ParsedWebhookEvent {
     occurredAt: payload.dateCreated ? String(payload.dateCreated) : null,
     rawPayload: payload,
     gatewayAccountId: readAsaasAccountId(payload),
+    externalReference: payment.externalReference ? String(payment.externalReference) : null,
   };
 }
 

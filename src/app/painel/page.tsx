@@ -80,14 +80,14 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
           />
 
           {!data.organization ? <AdminEmptyState title="Nenhuma organização vinculada à sua conta" description="Fale com um administrador para vincular sua conta a uma organização." /> : !data.events.length ? <AdminEmptyState title="Nenhum evento cadastrado" description="Cadastre e ative um evento para liberar o painel operacional." /> : <>
-            {canViewIntegritySection ? <AdminSection compact title="Integridade operacional">
+            {canViewIntegritySection ? <AdminSection compact title="Integridade estrutural">
               {integrityTotals ? <AdminStatCard
                 compact
-                label="Integridade operacional"
+                label="Integridade estrutural"
                 value={integrityTotals.critical || integrityTotals.attention || integrityTotals.warning
                   ? `${integrityTotals.critical} bloqueio${integrityTotals.critical === 1 ? '' : 's'} / ${integrityTotals.attention} precisam de atenção / ${integrityTotals.warning} avisos`
-                  : '✓ Nenhum problema operacional detectado.'}
-                hint={`${integrityTotals.ok} verificações aprovadas`}
+                  : '✓ Nenhum problema estrutural detectado.'}
+                hint={`${integrityTotals.ok} verificações estruturais aprovadas. Divergências de gateway ficam em Integridade.`}
                 href={integrityHref}
                 actionLabel="Ver integridade"
                 icon={ShieldAlert}

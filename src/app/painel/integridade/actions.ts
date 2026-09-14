@@ -7,6 +7,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { mapReportRow } from '@/lib/integrity/report';
 import { mapDetectorCheckRow } from '@/lib/integrity/checks';
+import { mapFinancialDivergenceRow, type FinancialDivergenceView } from '@/lib/integrity/financial-divergence';
 
 export type PaidOrderAwaitingIssue = {
   order_id: string;
@@ -85,14 +86,7 @@ export async function listPaidOrdersAwaitingTicketIssueAction() {
   return { success: true as const, orders };
 }
 
-export type GatewayFinancialDivergence = {
-  id: string;
-  provider: string;
-  provider_payment_id: string | null;
-  event_type: string;
-  received_at: string;
-  last_error: string | null;
-};
+export type GatewayFinancialDivergence = FinancialDivergenceView;
 
 export async function listGatewayFinancialDivergencesAction() {
   await requireAnyPermission(['integrity.view', 'finance.confirm_payment']);
@@ -101,15 +95,7 @@ export async function listGatewayFinancialDivergencesAction() {
   const { data, error } = await supabase.rpc('list_gateway_financial_divergences');
   if (error) return { success: false as const, message: error.message, divergences: [] as GatewayFinancialDivergence[] };
 
-  const divergences: GatewayFinancialDivergence[] = (data ?? []).map((row: Record<string, unknown>) => ({
-    id: String(row.id),
-    provider: String(row.provider ?? ''),
-    provider_payment_id: row.provider_payment_id ? String(row.provider_payment_id) : null,
-    event_type: String(row.event_type ?? ''),
-    received_at: String(row.received_at ?? ''),
-    last_error: row.last_error ? String(row.last_error) : null,
-  }));
-
+  const divergences = (data ?? []).map((row: Record<string, unknown>) => mapFinancialDivergenceRow(row));
   return { success: true as const, divergences };
 }
 

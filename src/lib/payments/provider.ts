@@ -144,6 +144,8 @@ export type ParsedWebhookEvent = {
   rawPayload: unknown;
   /** `account.id` do payload Asaas, se presente. Nao e autenticacao. */
   gatewayAccountId?: string | null;
+  /** `payment.externalReference` do Asaas (orderId / store_order.id). */
+  externalReference?: string | null;
 };
 
 /**

@@ -18,7 +18,7 @@ test('cinco blocos possuem permission codes independentes', () => {
 });
 
 test('cada secao renderiza somente sob sua permissao efetiva', () => {
-  assert.match(dashboard, /canViewIntegritySection \? <AdminSection compact title="Integridade operacional"/);
+  assert.match(dashboard, /canViewIntegritySection \? <AdminSection compact title="Integridade estrutural"/);
   assert.match(dashboard, /sectionAccess\.people \? <AdminSection compact title="Pessoas e inscrições"/);
   assert.match(dashboard, /sectionAccess\.operations && data\.hasData \? <AdminSection compact title="Ingressos e operação"/);
   assert.match(dashboard, /sectionAccess\.inventory && data\.hasData \? <AdminSection compact title="Estoque de camisetas"/);

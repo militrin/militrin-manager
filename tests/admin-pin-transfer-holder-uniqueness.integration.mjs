@@ -86,6 +86,8 @@ test('transferencia administrativa por PIN para pessoa ja titular de outro ingre
   });
   assert.equal(ticket2.error, null, ticket2.error?.message);
   const ticket2Id = ticket2.data[0].ticket_id;
+  const ticket2BeforePin = await service.from('tickets').select('token, owner_user_id, order_id').eq('id', ticket2Id).single();
+  assert.equal(ticket2BeforePin.error, null, ticket2BeforePin.error?.message);
 
   // A Pessoa A ja e titular do ticket 1 -- a transferencia administrativa do
   // ticket 2 para ela pelo PIN deve ser rejeitada atomicamente pelo backend,
@@ -115,10 +117,22 @@ test('transferencia administrativa por PIN para pessoa ja titular de outro ingre
   });
   assert.equal(allowed.error, null, allowed.error?.message);
 
-  const ticket2AfterAllowed = await service.from('order_items').select('participant_id').eq('id',
+  const ticket2AfterAllowed = await service.from('order_items').select('participant_id, registration_contact_id, holder_full_name').eq('id',
     (await service.from('tickets').select('order_item_id').eq('id', ticket2Id).single()).data.order_item_id,
   ).single();
   assert.ok(ticket2AfterAllowed.data.participant_id, 'ticket 2 deve ter titular apos a titularidade anterior ser removida');
+  assert.equal(
+    ticket2AfterAllowed.data.registration_contact_id,
+    personAContact.data.id,
+    'troca real de titular por PIN deve alinhar registration_contact_id ao novo titular',
+  );
+
+  const ticket2Row = await service.from('tickets').select('participant_id, token, owner_user_id, order_id').eq('id', ticket2Id).single();
+  assert.equal(ticket2Row.error, null, ticket2Row.error?.message);
+  assert.equal(ticket2Row.data.participant_id, ticket2AfterAllowed.data.participant_id);
+  assert.equal(ticket2Row.data.token, ticket2BeforePin.data.token, 'QR/token deve permanecer igual apos troca de titular por PIN');
+  assert.equal(ticket2Row.data.owner_user_id, ticket2BeforePin.data.owner_user_id, 'owner permanece; PIN nao transfere propriedade');
+  assert.equal(ticket2Row.data.order_id, ticket2BeforePin.data.order_id, 'pedido comercial original permanece');
 
   await service.auth.admin.deleteUser(adminUserId);
   await service.auth.admin.deleteUser(personAUserId);
