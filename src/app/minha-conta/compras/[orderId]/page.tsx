@@ -17,6 +17,7 @@ import { isOrderStillEditable } from '@/lib/orders/order-editability';
 import { canContinuePendingCardCheckout } from '@/lib/checkout/pix-payment-status';
 import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
 import { canContinueCommercialPayment, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
+import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -120,22 +121,32 @@ export default async function OrderDetailPage({
     .sort((a, b) => (a.item_position ?? 0) - (b.item_position ?? 0));
   const productItems = items.filter((item) => item.item_kind === 'product');
 
-  const [{ data: eventRow }, { data: orderCreatedRow }] = await Promise.all([
+  const [{ data: eventRow }, { data: orderCreatedRow }, { data: paymentMeta }] = await Promise.all([
     supabase.from('events').select('id, name, slug, location, starts_at').eq('id', order.event_id).maybeSingle(),
     supabase.from('orders').select('created_at,display_number,order_number').eq('id', orderId).eq('user_id', user?.id ?? '').maybeSingle(),
+    supabase.from('payments').select('created_at').eq('order_id', orderId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
+
+  const paymentCreatedAt = paymentMeta?.created_at ? String(paymentMeta.created_at) : null;
+  const commercialExpiresAt = resolvePixCommercialExpiresAt({
+    expiresAt: order.payment?.expires_at,
+    paymentCreatedAt,
+    paymentMethod: order.payment?.payment_method,
+  });
 
   const editable = isOrderStillEditable({
     orderStatus: order.order_status,
     paymentStatus: order.payment?.payment_status,
     paymentExpiresAt: order.payment?.expires_at,
+    paymentCreatedAt,
+    paymentMethod: order.payment?.payment_method,
   });
   const editHref = eventRow?.slug ? `/inscricao/${eventRow.slug}?editOrder=${orderId}` : null;
 
   const commercialStatus = resolveCommercialStatus({
     orderStatus: order.order_status,
     paymentStatus: order.payment?.payment_status,
-    reservationExpiresAt: order.payment?.expires_at,
+    reservationExpiresAt: commercialExpiresAt,
   });
   const displayPaymentStatus = resolvePaymentDisplayStatus({
     commercialStatus,
@@ -318,9 +329,9 @@ export default async function OrderDetailPage({
               {order.payment?.paid_at ? <p>Pago em: {formatDateTimeBR(String(order.payment.paid_at), ' as ')}</p> : null}
             </div>
 
-            {order.order_status === 'pending' && order.payment?.expires_at ? (
+            {order.order_status === 'pending' && commercialExpiresAt && commercialStatus === 'pending' ? (
               <p className="mt-3 rounded-xl border border-amber-700/40 bg-amber-950/20 p-3 text-sm text-amber-100">
-                Prazo da reserva: {formatDateTimeBR(String(order.payment.expires_at), ' as ')}
+                Prazo da reserva: {formatDateTimeBR(String(commercialExpiresAt), ' as ')}
               </p>
             ) : null}
 
@@ -336,7 +347,7 @@ export default async function OrderDetailPage({
               )
             ) : null}
 
-            {paymentMethod === 'credit_card' && commercialStatus === 'expired' ? (
+            {(paymentMethod === 'credit_card' || paymentMethod === 'pix') && commercialStatus === 'expired' ? (
               <p className="mt-3 text-sm text-amber-200">
                 A reserva deste pedido expirou. Não é possível continuar esta cobrança.
               </p>

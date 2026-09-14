@@ -1,5 +1,6 @@
 import type { createServerSupabaseClient } from '@/lib/supabase/server';
-import { resolveCommercialStatus, type CommercialStatus } from '@/lib/dashboard/commercial-status';
+import { canContinueCommercialPayment, resolveCommercialStatus, type CommercialStatus } from '@/lib/dashboard/commercial-status';
+import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 
 type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -17,13 +18,23 @@ function one<T>(value: T | T[] | null | undefined): T | null {
  * legada que nunca toca orders/order_items) aparece "Pendente" pro cliente
  * e "Expirado" pro admin -- exatamente a divergencia que este helper evita.
  */
-export function resolveAccountOrderStatus(order: Record<string, unknown>): CommercialStatus {
+export function resolveAccountOrderStatus(order: Record<string, unknown>, now?: Date): CommercialStatus {
   const payment = one(order.payments as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const paymentRow = (payment as Record<string, unknown> | null) ?? null;
   return resolveCommercialStatus({
     orderStatus: order.status as string | null,
-    paymentStatus: (payment as Record<string, unknown> | null)?.payment_status as string | null,
-    reservationExpiresAt: (payment as Record<string, unknown> | null)?.expires_at as string | null,
+    paymentStatus: paymentRow?.payment_status as string | null,
+    reservationExpiresAt: resolvePixCommercialExpiresAt({
+      expiresAt: paymentRow?.expires_at as string | null,
+      paymentCreatedAt: paymentRow?.created_at as string | null,
+      paymentMethod: paymentRow?.payment_method as string | null,
+    }),
+    now,
   });
+}
+
+export function findActionableAccountOrder(orders: Array<Record<string, unknown>>, now?: Date): Record<string, unknown> | null {
+  return orders.find((order) => canContinueCommercialPayment(resolveAccountOrderStatus(order, now))) ?? null;
 }
 
 // payments.expires_at e a fonte canonica de validade financeira do pagamento
@@ -34,7 +45,7 @@ export function resolveAccountOrderStatus(order: Record<string, unknown>): Comme
 // pedido, orders.participant_id) e fica null em pedidos modernos -- nao e
 // mais selecionada aqui pra evitar reintroduzir essa fonte incorreta.
 export const ACCOUNT_ORDERS_SELECT =
-  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status, expires_at), tickets(id, token, status), order_items(id, item_position, status, item_kind, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
+  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status, expires_at, created_at), tickets(id, token, status), order_items(id, item_position, status, item_kind, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
 
 // Fonte canonica ticket x produto em toda a Minha Conta: order_items.item_kind
 // (nunca nome/preco/lote/QR -- mesma regra ja usada pelo detector de

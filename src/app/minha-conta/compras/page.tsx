@@ -4,6 +4,7 @@ import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinPurchaseCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { getAccountOrders, resolveAccountOrderStatus, accountTicketItems } from '@/lib/account/portal-orders-and-tickets';
+import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { orderDisplayReference } from '@/lib/display-reference';
@@ -80,7 +81,11 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
   // funciona tanto pra pedidos legados de 1 participante quanto pra pedidos
   // multi-item modernos, onde orders.participant_id costuma ser null.
   const showExpiration = commercialStatus === 'pending' || commercialStatus === 'expired';
-  const paymentExpiresAt = (payment as Record<string, unknown> | null)?.expires_at as string | null | undefined;
+  const paymentExpiresAt = resolvePixCommercialExpiresAt({
+    expiresAt: (payment as Record<string, unknown> | null)?.expires_at as string | null | undefined,
+    paymentCreatedAt: (payment as Record<string, unknown> | null)?.created_at as string | null | undefined,
+    paymentMethod: (payment as Record<string, unknown> | null)?.payment_method as string | null | undefined,
+  });
 
   return (
     <MilitrinPurchaseCard

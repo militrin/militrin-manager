@@ -54,9 +54,9 @@ test('status desconhecido cai em erro (nunca finge que esta tudo bem)', () => {
   assert.equal(resolvePixDisplayStatus('algo-novo-que-a-asaas-inventou', 100), 'error');
 });
 
-test('canRegeneratePix permite gerar novo PIX enquanto pending ou expired, nunca sobre cancelled/paid', () => {
+test('canRegeneratePix so permite gerar novo PIX enquanto pending, nunca sobre expired/cancelled/paid', () => {
   assert.equal(canRegeneratePix('pending'), true);
-  assert.equal(canRegeneratePix('expired'), true);
+  assert.equal(canRegeneratePix('expired'), false);
   assert.equal(canRegeneratePix('cancelled'), false);
   assert.equal(canRegeneratePix('paid'), false);
 });
@@ -66,6 +66,18 @@ test('formatPixCountdown formata mm:ss com zero a esquerda nos segundos', () => 
   assert.equal(formatPixCountdown(5), '0:05');
   assert.equal(formatPixCountdown(65), '1:05');
   assert.equal(formatPixCountdown(7200), '120:00');
+});
+
+test('QR Asaas de 1 ano nao e cobranca viva apos o dueDate comercial', () => {
+  const now = new Date('2026-09-13T15:00:00.000Z');
+  assert.equal(isReusableLivePix({
+    payment_status: 'pending',
+    pix_code: 'PIX',
+    expires_at: '2027-09-11T23:59:59.000Z',
+    created_at: '2026-09-11T23:54:07.893Z',
+    payment_method: 'pix',
+    now,
+  }), false);
 });
 
 test('cobranca marcada como nao reutilizavel nunca volta a ser usada', () => {

@@ -2,11 +2,10 @@ import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { EVENT_TIMEZONE, formatCompactEventWhen, formatDateBR } from '@/lib/utils/date';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { accountTicketItemCount, getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
+import { accountTicketItemCount, findActionableAccountOrder, getAccessibleTicketScope, getAccountOrders } from '@/lib/account/portal-orders-and-tickets';
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
 import { resolveHomeFeaturedEventCta } from '@/lib/account/home-ticket-cta';
 import { resolveParticipantFirstName, resolveParticipantFullName, resolveParticipantInitials } from '@/lib/account/participant-identity';
-import { canContinueCommercialPayment } from '@/lib/dashboard/commercial-status';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { getMyPublicPin } from '@/lib/account/public-pin';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
@@ -167,7 +166,7 @@ export default async function MinhaContaPage() {
   const greetingName = resolveParticipantFirstName(displayName);
   const greetingInitials = resolveParticipantInitials(displayName);
 
-  const pendingOrder = orders.find((order) => canContinueCommercialPayment(resolveAccountOrderStatus(order))) ?? null;
+  const pendingOrder = findActionableAccountOrder(orders);
 
   const ticketCards = await buildAccountHomeTicketCards(supabase, activeTickets);
   const featuredHeroCta = headerEvent
@@ -304,36 +303,42 @@ export default async function MinhaContaPage() {
 
       {headerEvent ? <HomeFeaturedHero event={headerEvent} cta={featuredHeroCta} /> : null}
 
-      <div className={sponsors.length > 0 ? 'flex flex-col gap-3 lg:grid lg:grid-cols-2 lg:items-stretch lg:gap-4' : undefined}>
-        <HomeTicketCarousel
-          tickets={ticketCards}
-          publicPin={publicPin}
-          emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
-          emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
-          emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
-          emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
-        />
+      <div
+        className={sponsors.length > 0
+          ? 'flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)] lg:items-start lg:gap-4'
+          : 'flex flex-col gap-3'}
+      >
+        <div className={sponsors.length > 0 ? 'lg:col-start-1 lg:row-start-1' : undefined}>
+          <HomeTicketCarousel
+            tickets={ticketCards}
+            publicPin={publicPin}
+            emptyTitle={archivedTicketCount > 0 ? 'Você não possui ingressos ativos.' : undefined}
+            emptyDescription={archivedTicketCount > 0 ? 'Ingressos de eventos encerrados ou cancelados ficam em anteriores e inativos.' : undefined}
+            emptyHref={archivedTicketCount > 0 ? '/minha-conta/ingressos?ver=anteriores' : undefined}
+            emptyLabel={archivedTicketCount > 0 ? `Anteriores e inativos (${archivedTicketCount})` : undefined}
+          />
+        </div>
 
         {sponsors.length > 0 ? (
-          <HomeSponsorsCarousel sponsors={sponsors} intervalSeconds={sponsorIntervalSeconds} />
-        ) : null}
-      </div>
-
-      {cardEventsRaw.length > 0 ? (
-        <section>
-          <div className="mb-2 flex items-center justify-between gap-3 sm:mb-3">
-            <h2 className="text-sm font-semibold text-white sm:text-base">Eventos</h2>
-            <Link href="/eventos" className="text-xs font-semibold text-emerald-200 transition hover:text-emerald-100 sm:text-sm">
-              Ver todos →
-            </Link>
+          <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+            <HomeSponsorsCarousel sponsors={sponsors} intervalSeconds={sponsorIntervalSeconds} />
           </div>
-          <HomeFeaturedEvents events={cardEventsRaw} />
-        </section>
-      ) : null}
+        ) : null}
 
-      <div className={hasPendingPurchase ? 'flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] lg:items-stretch lg:gap-4' : undefined}>
+        {cardEventsRaw.length > 0 ? (
+          <section className={sponsors.length > 0 ? 'lg:col-span-2 lg:row-start-3' : undefined}>
+            <div className="mb-2 flex items-center justify-between gap-3 sm:mb-3">
+              <h2 className="text-sm font-semibold text-white sm:text-base">Eventos</h2>
+              <Link href="/eventos" className="text-xs font-semibold text-emerald-200 transition hover:text-emerald-100 sm:text-sm">
+                Ver todos →
+              </Link>
+            </div>
+            <HomeFeaturedEvents events={cardEventsRaw} />
+          </section>
+        ) : null}
+
         {hasPendingPurchase && pendingOrder && pendingOrderDetail ? (
-          <div className="order-1 lg:order-2">
+          <div className={sponsors.length > 0 ? `lg:col-span-2 ${cardEventsRaw.length > 0 ? 'lg:row-start-4' : 'lg:row-start-3'}` : undefined}>
             <HomePendingPurchase
               orderId={String(pendingOrder.id)}
               eventName={pendingOrderDetail.eventName}
@@ -344,7 +349,8 @@ export default async function MinhaContaPage() {
             />
           </div>
         ) : null}
-        <div className={hasPendingPurchase ? 'order-2 lg:order-1' : undefined}>
+
+        <div className={sponsors.length > 0 ? 'lg:col-start-1 lg:row-start-2' : undefined}>
           <HomeStoreBanner imageUrls={storeImageUrls} products={storeProducts} />
         </div>
       </div>

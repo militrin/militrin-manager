@@ -5,7 +5,7 @@ import { isValidCpf, removeCpfMask } from '@/lib/validation/registration';
 import { getPaymentProvider } from '@/lib/payments/get-provider';
 import { cancelPendingExternalCharge } from '@/lib/payments/cancel-stale-charges';
 import { getPaymentGatewayAccountKeyForMethod, getPaymentGatewayProviderForMethod, getPaymentGatewayProviderName, tryGetPaymentGatewayProviderForAccountKey } from '@/lib/payments/get-gateway-provider';
-import { todayAsPixDueDate } from '@/lib/payments/pix-due-date';
+import { isCommercialPaymentWindowOpen, todayAsPixDueDate } from '@/lib/payments/pix-due-date';
 import { isReusableLiveGatewayCharge } from '@/lib/checkout/pix-payment-status';
 import type { InternalPaymentStatus, PaymentGatewayProvider } from '@/lib/payments/provider';
 import { toISODateFromBR } from '@/lib/utils/date';
@@ -718,6 +718,7 @@ export type UnifiedOrderSnapshot = {
     pix_qrcode: string | null;
     gateway_payment_id: string | null;
     expires_at: string | null;
+    created_at: string | null;
     paid_at: string | null;
     checkout_url: string | null;
     installments: number | null;
@@ -755,6 +756,13 @@ async function getUnifiedOrderSnapshot(
   const raw = data as Record<string, unknown>;
   const rawItems = (Array.isArray(raw.items) ? raw.items : []) as Array<Record<string, unknown>>;
   const rawPayment = raw.payment as Record<string, unknown> | null;
+  const paymentId = rawPayment?.payment_id ? String(rawPayment.payment_id) : '';
+  const { data: paymentCreatedRow } = paymentId
+    ? await supabase.from('payments').select('created_at').eq('id', paymentId).maybeSingle()
+    : { data: null };
+  const paymentCreatedAt = paymentCreatedRow?.created_at
+    ? String(paymentCreatedRow.created_at)
+    : (rawPayment?.created_at ? String(rawPayment.created_at) : null);
 
   const items: UnifiedOrderItem[] = rawItems.map((row, index) => {
     const participantName = row.participant_name ? String(row.participant_name) : null;
@@ -792,7 +800,7 @@ async function getUnifiedOrderSnapshot(
 
   const paymentDefaults = {
     payment_id: '', amount: 0, discount_amount: 0, final_amount: 0, payment_method: null,
-    payment_status: 'pending', pix_code: null, pix_qrcode: null, gateway_payment_id: null, expires_at: null, paid_at: null,
+    payment_status: 'pending', pix_code: null, pix_qrcode: null, gateway_payment_id: null, expires_at: null, created_at: null, paid_at: null,
     checkout_url: null, installments: null,
     last_gateway_attempt_status: null, gateway_charge_reusable: false, gateway_installment_id: null,
     payment_fee_mode: null, payment_fee_calculated_amount: 0, payment_fee_customer_amount: 0, payment_fee_organizer_amount: 0,
@@ -825,6 +833,7 @@ async function getUnifiedOrderSnapshot(
             pix_qrcode: rawPayment.pix_qrcode ? String(rawPayment.pix_qrcode) : null,
             gateway_payment_id: rawPayment.gateway_payment_id ? String(rawPayment.gateway_payment_id) : null,
             expires_at: rawPayment.expires_at ? String(rawPayment.expires_at) : null,
+            created_at: paymentCreatedAt,
             paid_at: rawPayment.paid_at ? String(rawPayment.paid_at) : null,
             checkout_url: rawPayment.checkout_url ? String(rawPayment.checkout_url) : null,
             installments: rawPayment.installments != null ? Number(rawPayment.installments) : null,
@@ -1997,6 +2006,25 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
   };
 }
 
+function closedCommercialPaymentMessage(snapshot: UnifiedOrderSnapshot): string | null {
+  const payment = snapshot.payment;
+  if (snapshot.order_status !== 'pending') {
+    return 'Este pedido não está mais disponível para pagamento.';
+  }
+  const status = String(payment.payment_status ?? '').toLowerCase();
+  if (status === 'expired' || status === 'cancelled' || status === 'refunded') {
+    return 'Este pagamento não pode mais ser gerado.';
+  }
+  if (!isCommercialPaymentWindowOpen({
+    expiresAt: payment.expires_at,
+    paymentCreatedAt: payment.created_at,
+    paymentMethod: payment.payment_method,
+  })) {
+    return 'O prazo comercial desta cobrança já venceu.';
+  }
+  return null;
+}
+
 export async function generatePublicOrderPixAction(orderId: string) {
   const supabase = await createServerSupabaseClient();
 
@@ -2006,6 +2034,11 @@ export async function generatePublicOrderPixAction(orderId: string) {
   const payment = snapshotResult.snapshot.payment;
   if (payment.payment_status === 'paid') {
     return { success: true as const, payment };
+  }
+
+  const closedMessage = closedCommercialPaymentMessage(snapshotResult.snapshot);
+  if (closedMessage) {
+    return { success: false as const, message: closedMessage };
   }
 
   if (payment.final_amount <= 0) {
@@ -2276,6 +2309,11 @@ export async function generatePublicOrderCardAction(orderId: string) {
   const payment = snapshotResult.snapshot.payment;
   if (payment.payment_status === 'paid') {
     return { success: true as const, payment };
+  }
+
+  const closedMessage = closedCommercialPaymentMessage(snapshotResult.snapshot);
+  if (closedMessage) {
+    return { success: false as const, message: closedMessage };
   }
 
   if (payment.final_amount <= 0) {

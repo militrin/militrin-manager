@@ -16,7 +16,7 @@ function SponsorSlide({ sponsor }: { sponsor: HomeSponsor }) {
 
   const tile = (
     <div
-      className="relative w-full overflow-hidden [aspect-ratio:var(--sponsor-ratio)] lg:aspect-auto lg:h-full"
+      className="relative w-full overflow-hidden [aspect-ratio:var(--sponsor-ratio)]"
       style={{ ['--sponsor-ratio' as string]: String(ratio ?? 4 / 3) }}
     >
       <Image
@@ -24,7 +24,7 @@ function SponsorSlide({ sponsor }: { sponsor: HomeSponsor }) {
         alt={sponsor.name}
         fill
         unoptimized
-        sizes="(max-width: 1024px) 92vw, 480px"
+        sizes="(max-width: 1024px) 92vw, 58vw"
         onLoad={(event) => {
           const img = event.currentTarget;
           if (img.naturalWidth > 0 && img.naturalHeight > 0) {
@@ -44,7 +44,7 @@ function SponsorSlide({ sponsor }: { sponsor: HomeSponsor }) {
       target="_blank"
       rel="noopener noreferrer"
       aria-label={`Visitar site de ${sponsor.name}`}
-      className="block w-full lg:h-full"
+      className="block w-full"
     >
       {tile}
     </a>
@@ -83,7 +83,7 @@ export function HomeSponsorsCarousel({
 
   return (
     <section
-      className="relative flex w-full flex-col rounded-[1.25rem] border border-slate-800/80 bg-slate-950/80 p-3 shadow-lg shadow-black/10 sm:rounded-[1.5rem] lg:h-full lg:min-h-[11.5rem]"
+      className="relative flex w-full flex-col rounded-[1.25rem] border border-slate-800/80 bg-slate-950/80 p-3 shadow-lg shadow-black/10 sm:rounded-[1.5rem]"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onTouchStart={(event) => {

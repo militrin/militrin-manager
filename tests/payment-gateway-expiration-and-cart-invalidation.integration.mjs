@@ -159,7 +159,7 @@ test('corrida: expiracao roda primeiro, webhook PAID chega depois -- dinheiro e 
   const row = Array.isArray(applyResult) ? applyResult[0] : applyResult;
   assert.equal(row.applied_status, 'paid', 'o fato financeiro (dinheiro recebido) e sempre registrado');
 
-  const { data: payment } = await fx.service.from('payments').select('payment_status').eq('order_id', orderId).single();
+  const { data: payment } = await fx.service.from('payments').select('id, payment_status').eq('order_id', orderId).single();
   assert.equal(payment.payment_status, 'paid');
 
   // Estado que a Fase 1 exige NUNCA acontecer: ticket emitido depois que a
@@ -168,9 +168,12 @@ test('corrida: expiracao roda primeiro, webhook PAID chega depois -- dinheiro e 
   assert.equal(order.status, 'expired', 'order permanece expired -- emissao automatica de ticket apos expiracao e deliberadamente bloqueada');
   const { data: tickets } = await fx.service.from('tickets').select('id').eq('order_id', orderId);
   assert.equal(tickets.length, 0, 'nenhum ticket deve ser emitido automaticamente depois que a reserva ja expirou');
+  const { data: items } = await fx.service.from('order_items').select('status, reservation_expires_at').eq('order_id', orderId);
+  assert.ok((items ?? []).every((item) => item.status === 'expired' && item.reservation_expires_at == null));
 
-  const { data: conflictLog } = await fx.service.from('audit_logs').select('id,details').eq('action', 'payment_paid_after_expired').eq('entity_id', payment?.id ?? '00000000-0000-0000-0000-000000000000');
-  void conflictLog; // busca best-effort por id exato acima pode nao casar; verificacao funcional já feita nas asserções de estado.
+  const { data: conflictLog } = await fx.service.from('audit_logs').select('id,details').eq('action', 'payment_paid_after_expired').eq('entity_id', payment.id);
+  assert.equal((conflictLog ?? []).length, 1);
+  assert.equal(conflictLog[0].details?.needs_manual_reconciliation, true);
 });
 
 test('corrida: webhook PAID chega primeiro -- expiracao que rodar depois NAO desfaz o pagamento confirmado', async () => {

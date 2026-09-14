@@ -11,6 +11,7 @@ import type {
   RefundPaymentInput,
 } from "./provider.ts";
 import { mapAsaasPaymentStatus, mapAsaasWebhookProviderStatus, mapAsaasWebhookToInternalStatus } from "./asaas-status-map.ts";
+import { earlierIsoTimestamp, pixDueDateEndOfDay } from "./pix-due-date.ts";
 import { verifyAsaasWebhookToken } from "./asaas-webhook-token.ts";
 import { ASAAS_REFUND_TIMEOUT_MS, GatewayTimeoutError, isGatewayTimeoutError } from "./gateway-timeout.ts";
 
@@ -203,7 +204,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       status: mapAsaasPaymentStatus(payment.status),
       pixCode: qrCode.payload,
       pixQrCodeImage: `data:image/png;base64,${qrCode.encodedImage}`,
-      expiresAt: qrCode.expirationDate ?? `${input.dueDate}T23:59:59-03:00`,
+      expiresAt: earlierIsoTimestamp(qrCode.expirationDate, pixDueDateEndOfDay(input.dueDate)) ?? pixDueDateEndOfDay(input.dueDate),
     };
   }
 

@@ -1,3 +1,5 @@
+import { resolvePixCommercialExpiresAt } from "../payments/pix-due-date.ts";
+
 // Logica pura de apresentacao do bloco de pagamento PIX (sem React/JSX) --
 // extraida para ser testavel isoladamente e reutilizada por
 // src/app/inscricao/[eventSlug]/pix-payment-card.tsx. Nunca decide nada
@@ -19,14 +21,11 @@ export function normalizePaymentStatus(status: string | null | undefined): PixPa
 
 /**
  * Estado final exibido na tela. O contador local pode chegar a zero bem
- * antes de qualquer rotina de expiracao no banco rodar (nao ha cron
- * automatico -- ver expire_stale_order_payments). Enquanto o banco ainda
+ * antes de qualquer rotina de expiracao no banco rodar (expire_stale_order_payments
+ * a cada 2 min, agora pelo prazo comercial do PIX). Enquanto o banco ainda
  * disser 'pending', tratamos a chegada a zero como expiracao "leve": para de
- * mostrar o QR como pagavel, mas ainda e seguro oferecer gerar um PIX novo
- * (o pedido continua tecnicamente pendente). Uma vez que o banco confirme
- * 'expired' de verdade, ainda e permitido gerar um PIX novo quando o
- * pedido nao foi cancelado -- ver `canRegeneratePix`. A cobranca antiga no
- * gateway pode continuar existindo; o sistema local usa `expires_at`.
+ * mostrar o QR como pagavel. Depois que o prazo comercial vence, nao se gera
+ * cobranca nova -- ver claim_order_pix_generation / start_order_payment_pix.
  */
 export function resolvePixDisplayStatus(
   paymentStatus: string | null | undefined,
@@ -38,14 +37,12 @@ export function resolvePixDisplayStatus(
 }
 
 /**
- * Regenerar PIX e seguro enquanto o pagamento ainda nao foi confirmado nem
- * cancelado -- inclusive apos expiracao local. `start_order_payment_pix`
- * reabre itens expirados para reserved e persiste uma cobranca nova (a
- * antiga e cancelada best-effort no gateway da mesma conta).
+ * Regenerar PIX so enquanto o pagamento ainda esta pending e o pedido segue
+ * no carrinho. Depois da expiracao operacional (expire_stale) nao se cria
+ * cobranca nova nem se reabre a reserva.
  */
 export function canRegeneratePix(paymentStatus: string | null | undefined): boolean {
-  const status = normalizePaymentStatus(paymentStatus);
-  return status === "pending" || status === "expired";
+  return normalizePaymentStatus(paymentStatus) === "pending";
 }
 
 /** Reutiliza a cobranca atual so se ainda estiver pending, com PIX e prazo futuro. */
@@ -53,14 +50,21 @@ export function isReusableLivePix(payment: {
   payment_status?: string | null;
   pix_code?: string | null;
   expires_at?: string | null;
+  created_at?: string | null;
+  payment_method?: string | null;
   gateway_charge_reusable?: boolean | null;
   now?: Date;
 }): boolean {
   if (normalizePaymentStatus(payment.payment_status) !== "pending") return false;
   if (!String(payment.pix_code ?? "").trim()) return false;
   if (payment.gateway_charge_reusable === false) return false;
-  if (!payment.expires_at) return false;
-  const expiresAt = new Date(payment.expires_at).getTime();
+  const commercialExpiresAt = resolvePixCommercialExpiresAt({
+    expiresAt: payment.expires_at,
+    paymentCreatedAt: payment.created_at,
+    paymentMethod: payment.payment_method ?? "pix",
+  });
+  if (!commercialExpiresAt) return false;
+  const expiresAt = new Date(commercialExpiresAt).getTime();
   if (!Number.isFinite(expiresAt)) return false;
   return expiresAt > (payment.now ?? new Date()).getTime();
 }
@@ -72,6 +76,8 @@ export function isReusableLiveGatewayCharge(payment: {
   checkout_url?: string | null;
   gateway_payment_id?: string | null;
   expires_at?: string | null;
+  created_at?: string | null;
+  payment_method?: string | null;
   gateway_charge_reusable?: boolean | null;
   now?: Date;
 }): boolean {
@@ -81,8 +87,13 @@ export function isReusableLiveGatewayCharge(payment: {
   const hasPix = Boolean(String(payment.pix_code ?? "").trim());
   const hasCheckout = Boolean(String(payment.checkout_url ?? "").trim());
   if (!hasPix && !hasCheckout) return false;
-  if (!payment.expires_at) return false;
-  const expiresAt = new Date(payment.expires_at).getTime();
+  const commercialExpiresAt = resolvePixCommercialExpiresAt({
+    expiresAt: payment.expires_at,
+    paymentCreatedAt: payment.created_at,
+    paymentMethod: payment.payment_method ?? (hasPix ? "pix" : null),
+  });
+  if (!commercialExpiresAt) return false;
+  const expiresAt = new Date(commercialExpiresAt).getTime();
   if (!Number.isFinite(expiresAt)) return false;
   return expiresAt > (payment.now ?? new Date()).getTime();
 }

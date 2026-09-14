@@ -202,6 +202,7 @@ type OrderSnapshotPayload = {
     pix_qrcode: string | null;
     gateway_payment_id: string | null;
     expires_at: string | null;
+    created_at: string | null;
     paid_at: string | null;
     checkout_url: string | null;
     installments: number | null;
@@ -759,6 +760,8 @@ export function RegistrationWizard({
         orderStatus: fresh.snapshot.order_status,
         paymentStatus: payment?.payment_status,
         paymentExpiresAt: payment?.expires_at,
+        paymentCreatedAt: payment?.created_at,
+        paymentMethod: payment?.payment_method,
       });
 
       if (!editable) {
@@ -972,6 +975,8 @@ export function RegistrationWizard({
             orderStatus: fresh.snapshot.order_status,
             paymentStatus: payment?.payment_status,
             paymentExpiresAt: payment?.expires_at,
+            paymentCreatedAt: payment?.created_at,
+            paymentMethod: payment?.payment_method,
           });
 
                     if (fresh.success && payment?.payment_status === 'paid') {
