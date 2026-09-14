@@ -47,6 +47,7 @@ test("4. QR equivalente ao #001121 (display e order_number do comprovante) e rec
     orderNumber: "ADMIN-20260909-abc3bda0",
   });
   assert.deepEqual(parseStoreOrderScanRef("ITEM-95F7F18C8796"), { displayNumber: null, orderNumber: null });
+  assert.deepEqual(parseStoreOrderScanRef("UNIT-AABBCCDDEEFF"), { displayNumber: null, orderNumber: null });
   assert.deepEqual(parseStoreOrderScanRef("a87ba37b-16ad-4a57-8992-8cd2be277962"), {
     displayNumber: null,
     orderNumber: null,

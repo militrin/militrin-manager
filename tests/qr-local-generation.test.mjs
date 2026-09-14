@@ -20,6 +20,8 @@ test('codigo operacional nao envia token para api.qrserver.com', async () => {
     '../src/app/api/inscricao/pedidos/[orderId]/itens/[itemId]/qrcode/route.ts',
     '../src/app/api/loja/pedidos/[storeOrderId]/itens/[itemId]/qrcode/route.ts',
     '../src/app/api/loja/pedidos/[storeOrderId]/qrcode/route.ts',
+    '../src/components/store/StorePickupPassActions.tsx',
+    '../src/components/store/StorePickupPass.tsx',
   ];
   for (const relative of files) {
     const source = await readFile(new URL(relative, import.meta.url), 'utf8');

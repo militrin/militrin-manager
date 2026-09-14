@@ -1,5 +1,5 @@
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ITEM_TOKEN_PATTERN = /^ITEM-/i;
+const OPERATIONAL_TOKEN_PATTERN = /^(ITEM|UNIT)-/i;
 const DISPLAY_PATTERN = /^#?0*(\d{1,8})$/;
 
 export type StoreOrderScanRef = {
@@ -9,12 +9,12 @@ export type StoreOrderScanRef = {
 
 /**
  * Referências de pedido da Loja que o comprovante/PDF realmente gravam no QR.
- * Não cobre tickets.token nem store_order_items.qr_token (ITEM-…).
+ * Não cobre tickets.token nem tokens operacionais ITEM-/UNIT-.
  */
 export function parseStoreOrderScanRef(rawValue: string): StoreOrderScanRef {
   const value = rawValue.trim();
   if (!value) return { displayNumber: null, orderNumber: null };
-  if (UUID_PATTERN.test(value) || ITEM_TOKEN_PATTERN.test(value)) {
+  if (UUID_PATTERN.test(value) || OPERATIONAL_TOKEN_PATTERN.test(value)) {
     return { displayNumber: null, orderNumber: null };
   }
 

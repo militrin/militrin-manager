@@ -18,18 +18,6 @@ type StoreOrderReceiptButtonsProps = {
   className?: string;
 };
 
-async function fetchAsDataUrl(url: string, errorMessage: string) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(errorMessage);
-  const blob = await response.blob();
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error(errorMessage));
-    reader.readAsDataURL(blob);
-  });
-}
-
 function triggerBlobDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -67,6 +55,9 @@ async function svgUrlToPngBlob(svgUrl: string): Promise<Blob> {
   }
 }
 
+// LEGADO: comprovante de PEDIDO (order_number / #display). Não é a fonte
+// canônica apresentada ao participante em Minha Conta. A ficha de retirada
+// usa StorePickupPassActions + store_order_items.qr_token (ITEM-…) / unidade.
 export function StoreOrderReceiptButtons({ storeOrderId, orderNumber, eventName, items, className }: StoreOrderReceiptButtonsProps) {
   const [loadingImage, setLoadingImage] = useState(false);
   const [loadingPdf, setLoadingPdf] = useState(false);
