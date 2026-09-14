@@ -54,34 +54,33 @@ function formatMovementType(type: string) {
   }
 }
 
-function FreeReservationValue({ free, overbooked }: { free: number; overbooked: boolean }) {
-  const freeLow = free > 0 && free <= 5;
-  if (free === 0) {
-    return (
-      <span className="inline-flex flex-wrap items-center gap-1.5">
-        <span className="font-medium text-rose-200">0</span>
-        <span className="rounded-full border border-rose-500/35 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-200">
-          Esgotado
-        </span>
-        {overbooked ? (
-          <span
-            className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
-            title="Reservas ativas excedem o estoque físico disponível."
-          >
-            Overbooking
-          </span>
-        ) : null}
-      </span>
-    );
+function FreeReservationValue({ free }: { free: number }) {
+  if (free < 0) {
+    return <span className="font-semibold tabular-nums text-amber-200">{free}</span>;
   }
+  const freeLow = free > 0 && free <= 5;
   return (
-    <span className={freeLow ? "font-medium text-amber-200" : undefined}>
+    <span className={freeLow ? "font-medium tabular-nums text-amber-200" : "tabular-nums"}>
       {free}
       {freeLow ? (
         <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-300/90">
           baixo
         </span>
       ) : null}
+    </span>
+  );
+}
+
+function ToOrderValue({ quantity }: { quantity: number }) {
+  if (quantity <= 0) {
+    return <span className="text-slate-500">—</span>;
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="font-semibold tabular-nums text-amber-100">{quantity}</span>
+      <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+        Falta encomendar
+      </span>
     </span>
   );
 }
@@ -139,9 +138,10 @@ export function ShirtStockTable({
         delivered: acc.delivered + row.delivered_quantity,
         physical: acc.physical + availability.physicalAvailable,
         free: acc.free + availability.availableForReservation,
+        toOrder: acc.toOrder + availability.toOrderQuantity,
       };
     },
-    { total: 0, reserved: 0, delivered: 0, physical: 0, free: 0 },
+    { total: 0, reserved: 0, delivered: 0, physical: 0, free: 0, toOrder: 0 },
   );
 
   function closeResetModal() {
@@ -317,6 +317,34 @@ export function ShirtStockTable({
         <p className="mt-2 text-sm text-slate-300">
           Status da escolha: <span className="font-semibold text-slate-100">{statusLabel()}</span>
         </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Saldo negativo é demanda a encomendar.
+          {limitSelectionEnabled
+            ? " Com a limitação ativa, variantes sem saldo disponível não entram em nova escolha."
+            : " No modo sob encomenda, novas reservas continuam permitidas mesmo com saldo ≤ 0."}
+        </p>
+        <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+            <dt className="text-[11px] uppercase tracking-wide text-slate-500">Recebidas</dt>
+            <dd className="font-semibold tabular-nums">{totals.total}</dd>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+            <dt className="text-[11px] uppercase tracking-wide text-slate-500">Reservadas</dt>
+            <dd className="font-semibold tabular-nums">{totals.reserved}</dd>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+            <dt className="text-[11px] uppercase tracking-wide text-slate-500">Entregues</dt>
+            <dd className="font-semibold tabular-nums">{totals.delivered}</dd>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+            <dt className="text-[11px] uppercase tracking-wide text-slate-500">Saldo líquido</dt>
+            <dd className="font-semibold tabular-nums">{totals.free}</dd>
+          </div>
+          <div className={`rounded-xl border px-3 py-2 ${totals.toOrder > 0 ? "border-amber-500/40 bg-amber-500/10" : "border-slate-800 bg-slate-950/50"}`}>
+            <dt className="text-[11px] uppercase tracking-wide text-slate-500">Falta encomendar</dt>
+            <dd className={`font-semibold tabular-nums ${totals.toOrder > 0 ? "text-amber-100" : ""}`}>{totals.toOrder}</dd>
+          </div>
+        </dl>
 
         <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-300">
           <label className="flex items-start gap-3">
@@ -454,24 +482,32 @@ export function ShirtStockTable({
         <table className={`${ADMIN_TABLE_ZEBRA_CLASS} w-full text-sm`}>
           <thead className="bg-slate-950/70 text-left text-slate-400">
             <tr>
-              <th className="px-2 py-2 font-medium">Modelo</th>
+              <th className="px-2 py-2 font-medium">Tipo</th>
               <th className="px-2 py-2 font-medium">Tamanho</th>
-              <th className="px-2 py-2 font-medium">Total</th>
+              <th className="px-2 py-2 font-medium">Recebidas</th>
               <th className="px-2 py-2 font-medium">Reservadas</th>
               <th className="px-2 py-2 font-medium">Entregues</th>
               <th className="min-w-[7.5rem] border-l border-slate-700/80 px-2 py-2 font-medium">
                 <span className="inline-flex items-start gap-1 leading-tight">
-                  <span>Disponível<br />físico</span>
-                  <abbr title="Estoque total menos itens já entregues." className="mt-0.5 inline-flex cursor-help no-underline">
-                    <Info className="inline size-3.5 text-slate-500" aria-label="Estoque total menos itens já entregues." />
+                  <span>Estoque<br />físico</span>
+                  <abbr title="Peças recebidas menos itens já entregues." className="mt-0.5 inline-flex cursor-help no-underline">
+                    <Info className="inline size-3.5 text-slate-500" aria-label="Peças recebidas menos itens já entregues." />
                   </abbr>
                 </span>
               </th>
               <th className="min-w-[7.5rem] px-2 py-2 font-medium">
                 <span className="inline-flex items-start gap-1 leading-tight">
-                  <span>Livre para<br />reserva</span>
-                  <abbr title="Estoque físico disponível menos reservas ativas." className="mt-0.5 inline-flex cursor-help no-underline">
-                    <Info className="inline size-3.5 text-slate-500" aria-label="Estoque físico disponível menos reservas ativas." />
+                  <span>Livre para<br />reservar</span>
+                  <abbr title="Estoque físico atual menos reservas pendentes. Pode ser negativo: demanda a encomendar." className="mt-0.5 inline-flex cursor-help no-underline">
+                    <Info className="inline size-3.5 text-slate-500" aria-label="Estoque físico atual menos reservas pendentes. Pode ser negativo." />
+                  </abbr>
+                </span>
+              </th>
+              <th className="min-w-[7.5rem] px-2 py-2 font-medium">
+                <span className="inline-flex items-start gap-1 leading-tight">
+                  <span>Falta<br />encomendar</span>
+                  <abbr title="Peças desta variante com demanda acima do estoque físico. Sobra de outro tamanho não cobre esta falta." className="mt-0.5 inline-flex cursor-help no-underline">
+                    <Info className="inline size-3.5 text-slate-500" aria-label="Peças desta variante com demanda acima do estoque físico." />
                   </abbr>
                 </span>
               </th>
@@ -483,7 +519,7 @@ export function ShirtStockTable({
           <tbody className="divide-y divide-slate-800 text-slate-200">
             {rows.length === 0 ? (
               <tr>
-                <td className="px-3 py-4 text-center text-slate-400" colSpan={8}>
+                <td className="px-3 py-4 text-center text-slate-400" colSpan={9}>
                   Sem linhas de estoque neste evento.
                 </td>
               </tr>
@@ -499,6 +535,8 @@ export function ShirtStockTable({
                   deliveredQuantity: row.delivered_quantity,
                 });
                 const free = availability.availableForReservation;
+                const toOrder = availability.toOrderQuantity;
+                const needsOrder = toOrder > 0;
 
                 return (
                   <Fragment key={row.id}>
@@ -509,12 +547,16 @@ export function ShirtStockTable({
                       <td className="px-2 py-2">{row.reserved_quantity}</td>
                       <td className="px-2 py-2">{row.delivered_quantity}</td>
                       <td className="border-l border-slate-700/80 px-2 py-2">
-                        <span className="sr-only">Disponível físico: </span>
+                        <span className="sr-only">Estoque físico: </span>
                         {availability.physicalAvailable}
                       </td>
-                      <td className="px-2 py-2">
-                        <span className="sr-only">Livre para reserva: </span>
-                        <FreeReservationValue free={free} overbooked={availability.overbooked} />
+                      <td className={`px-2 py-2 ${needsOrder ? "bg-amber-500/10" : ""}`}>
+                        <span className="sr-only">Livre para reservar: </span>
+                        <FreeReservationValue free={free} />
+                      </td>
+                      <td className={`px-2 py-2 ${needsOrder ? "bg-amber-500/10" : ""}`}>
+                        <span className="sr-only">Falta encomendar: </span>
+                        <ToOrderValue quantity={toOrder} />
                       </td>
                       <td className="px-2 py-2">
                         {bulkMode ? (
@@ -543,7 +585,7 @@ export function ShirtStockTable({
 
                     {isHistoryOpen ? (
                       <tr {...adminTableRowProps({ detail: true })}>
-                        <td colSpan={8} className="bg-slate-950/40 px-3 py-3">
+                        <td colSpan={9} className="bg-slate-950/40 px-3 py-3">
                           <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
                             <p className="text-sm font-semibold text-slate-100">Histórico de movimentações</p>
                             <div className="mt-3 space-y-2">
@@ -590,6 +632,7 @@ export function ShirtStockTable({
                 <td className="px-2 py-2 font-semibold">{totals.delivered}</td>
                 <td className="border-l border-slate-700/80 px-2 py-2 font-semibold">{totals.physical}</td>
                 <td className="px-2 py-2 font-semibold">{totals.free}</td>
+                <td className={`px-2 py-2 font-semibold ${totals.toOrder > 0 ? "bg-amber-500/10 text-amber-100" : ""}`}>{totals.toOrder}</td>
                 <td className="px-2 py-2" />
               </tr>
             </tfoot>
@@ -623,7 +666,7 @@ export function ShirtStockTable({
                   <div>
                     <p className="font-semibold text-slate-100">{row.shirt_type} {row.shirt_size}</p>
                     <p className="mt-1 text-xs text-slate-400">
-                      Total {row.total_quantity} · Reservadas {row.reserved_quantity} · Entregues {row.delivered_quantity}
+                      Recebidas {row.total_quantity} · Reservadas {row.reserved_quantity} · Entregues {row.delivered_quantity}
                     </p>
                   </div>
                   {bulkMode ? (
@@ -650,13 +693,19 @@ export function ShirtStockTable({
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-2">
-                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Disponível físico</dt>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Estoque físico</dt>
                     <dd className="mt-0.5 font-medium text-slate-100">{availability.physicalAvailable}</dd>
                   </div>
-                  <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-2">
-                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Livre para reserva</dt>
+                  <div className={`rounded-xl border px-3 py-2 ${availability.toOrderQuantity > 0 ? "border-amber-500/40 bg-amber-500/10" : "border-slate-800/80 bg-slate-950/40"}`}>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Livre para reservar</dt>
                     <dd className="mt-0.5">
-                      <FreeReservationValue free={availability.availableForReservation} overbooked={availability.overbooked} />
+                      <FreeReservationValue free={availability.availableForReservation} />
+                    </dd>
+                  </div>
+                  <div className={`col-span-2 rounded-xl border px-3 py-2 ${availability.toOrderQuantity > 0 ? "border-amber-500/40 bg-amber-500/10" : "border-slate-800/80 bg-slate-950/40"}`}>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Falta encomendar</dt>
+                    <dd className="mt-0.5">
+                      <ToOrderValue quantity={availability.toOrderQuantity} />
                     </dd>
                   </div>
                 </dl>
@@ -686,16 +735,20 @@ export function ShirtStockTable({
           <div className="rounded-2xl border border-slate-800 bg-slate-950/80 px-3 py-3 text-sm text-slate-100">
             <p className="font-semibold">TOTAL</p>
             <p className="mt-1 text-xs text-slate-400">
-              Total {totals.total} · Reservadas {totals.reserved} · Entregues {totals.delivered}
+              Recebidas {totals.total} · Reservadas {totals.reserved} · Entregues {totals.delivered}
             </p>
             <dl className="mt-3 grid grid-cols-2 gap-2">
               <div>
-                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Disponível físico</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Estoque físico</dt>
                 <dd className="font-semibold">{totals.physical}</dd>
               </div>
               <div>
-                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Livre para reserva</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Saldo líquido</dt>
                 <dd className="font-semibold">{totals.free}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Falta encomendar</dt>
+                <dd className={`font-semibold ${totals.toOrder > 0 ? "text-amber-100" : ""}`}>{totals.toOrder}</dd>
               </div>
             </dl>
           </div>

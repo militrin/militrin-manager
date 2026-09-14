@@ -71,11 +71,13 @@ export function reservedShirtTotal(kitPending: number, additional: number) {
   return kitPending + additional;
 }
 
-/** Livres para nova reserva = estoque fisico restante - demanda ainda reservada. */
+/** Saldo operacional assinado: estoque fisico restante − demanda ainda reservada. Pode ser negativo. */
 export function freeToReserveQuantity(physicalTotal: number, delivered: number, reserved: number) {
-  return Math.max(0, physicalTotal - delivered - reserved);
+  const physical = Math.max(0, Number(physicalTotal) - Number(delivered));
+  return physical - Math.max(0, Number(reserved));
 }
 
+/** Falta encomendar nesta variante. Sobra de outro tamanho nao entra. */
 export function shirtDeficitQuantity(physicalTotal: number, delivered: number, reserved: number) {
-  return Math.max(0, reserved - Math.max(0, physicalTotal - delivered));
+  return Math.max(0, -freeToReserveQuantity(physicalTotal, delivered, reserved));
 }

@@ -483,8 +483,12 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const reserved = inventory.reduce((sum, row) => sum + Number(row.reserved_quantity ?? 0), 0);
   const delivered = inventory.reduce((sum, row) => sum + Number(row.delivered_quantity ?? 0), 0);
   const sourceReserved = reservedShirtTotal(kitPendingReserved, additionalReserved);
-  const available = freeToReserveQuantity(received, delivered, reserved);
-  const deficit = shirtDeficitQuantity(received, delivered, reserved);
+  const rowBalance = (row: Row) => ({
+    free: freeToReserveQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)),
+    toOrder: shirtDeficitQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)),
+  });
+  const available = inventory.reduce((sum, row) => sum + rowBalance(row).free, 0);
+  const deficit = inventory.reduce((sum, row) => sum + rowBalance(row).toOrder, 0);
   const movementRows = movements.filter((movement) => ['purchase', 'adjustment', 'return'].includes(String(movement.movement_type))).map((movement) => ({ id: String(movement.id), primary: String(movement.movement_type), secondary: String(movement.notes ?? 'Movimento de estoque'), status: 'received', value: Number(movement.quantity ?? 0), href: `/camisetas?eventId=${movement.event_id}`, actionLabel: 'Ver estoque' }));
   const reservedBreakdownRows: DashboardDetailRow[] = [
     { id: 'kit-pending', primary: 'Kits de ingressos pendentes de entrega', secondary: `Ingresso active ou used, camiseta ainda não entregue nem cancelada · fontes ${sourceReserved} · inventory ${reserved}`, status: 'kit', value: kitPendingReserved, href: dashboardDetailHref('shirts_kit_reserved', selectedEvent?.id ?? 'all'), actionLabel: 'Ver kits' },
@@ -503,8 +507,8 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   put('shirts_kit_reserved', 'Camisetas de kits pendentes', kitPendingReserved, kitReservedRows);
   put('shirts_additional', 'Camisetas adicionais', additionalReserved, additionalRows);
   put('shirts_delivered', 'Camisetas entregues', delivered, inventory.filter((row) => Number(row.delivered_quantity) > 0).map((row) => inventoryRow(row, 'delivered', Number(row.delivered_quantity))));
-  put('shirts_available', 'Livres para nova reserva', available, inventory.map((row) => inventoryRow(row, 'available', freeToReserveQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)))));
-  put('shirts_deficit', 'Faltam encomendar', deficit, inventory.filter((row) => shirtDeficitQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)) > 0).map((row) => inventoryRow(row, 'deficit', shirtDeficitQuantity(Number(row.total_quantity ?? 0), Number(row.delivered_quantity ?? 0), Number(row.reserved_quantity ?? 0)))));
+  put('shirts_available', 'Saldo líquido', available, inventory.map((row) => inventoryRow(row, 'available', rowBalance(row).free)));
+  put('shirts_deficit', 'Falta encomendar', deficit, inventory.filter((row) => rowBalance(row).toOrder > 0).map((row) => inventoryRow(row, 'deficit', rowBalance(row).toOrder)));
   put('revenue_confirmed', 'Receita confirmada', confirmedPayments.reduce((sum, row) => sum + confirmedRevenueAmount(row), 0), confirmedPayments.map(paymentRow));
   put('revenue_pending', 'Receita pendente', pendingPayments.reduce((sum, row) => sum + pendingRevenueAmount(row), 0), pendingPayments.map(paymentRow));
   put('revenue_refunded', 'Receita estornada', refundedPayments.reduce((sum, row) => sum + refundedRevenueAmount(row), 0), refundedPayments.map(paymentRow));

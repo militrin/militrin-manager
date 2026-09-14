@@ -95,11 +95,15 @@ test('reservadas = kit pendente de tickets validos + adicionais reservados', () 
   assert.equal(reservedShirtTotal(0, 0), 0);
 });
 
-test('livres = estoque fisico restante menos reservas pendentes', () => {
+test('saldo operacional assinado e falta encomendar nao se compensam entre variantes', () => {
   assert.equal(freeToReserveQuantity(612, 0, 516), 96);
   assert.equal(freeToReserveQuantity(612, 10, 506), 96);
   assert.equal(shirtDeficitQuantity(612, 0, 516), 0);
   assert.equal(shirtDeficitQuantity(500, 0, 516), 16);
+  assert.equal(freeToReserveQuantity(70, 0, 75), -5);
+  assert.equal(shirtDeficitQuantity(70, 0, 75), 5);
+  assert.equal(freeToReserveQuantity(140, 0, 127) + freeToReserveQuantity(70, 0, 75), 8);
+  assert.equal(shirtDeficitQuantity(140, 0, 127) + shirtDeficitQuantity(70, 0, 75), 5);
 });
 
 test('dashboard nao escreve inventory nem reemite ingresso neste ajuste', async () => {
@@ -122,7 +126,8 @@ test('cards do painel separam ingresso ativo de inscricao comercial e mostram de
   assert.match(page, /metric\('cancelled'\)/);
   assert.match(page, /label="Camisetas adicionais"/);
   assert.match(page, /label="De kits pendentes"/);
-  assert.match(page, /label="Livres para nova reserva"/);
+  assert.match(page, /label="Saldo líquido"/);
+  assert.match(page, /label="Falta encomendar"/);
   assert.match(page, /Check-in não libera reserva/);
   assert.doesNotMatch(page, /label="Confirmadas"/);
   assert.doesNotMatch(page, /label="Canceladas"/);

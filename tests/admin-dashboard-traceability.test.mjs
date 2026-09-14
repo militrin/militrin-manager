@@ -45,8 +45,10 @@ test('shirt stock follows canonical reserved demand and free-to-reserve semantic
   assert.match(source, /kit\.variant_data\?\.variant_id/);
   assert.match(source, /kitsByTicket/);
   assert.match(source, /reservedShirtTotal\(kitPendingReserved, additionalReserved\)/);
-  assert.match(source, /freeToReserveQuantity\(received, delivered, reserved\)/);
   assert.match(source, /put\('shirts_additional', 'Camisetas adicionais'/);
+  assert.match(source, /rowBalance/);
+  assert.match(source, /put\('shirts_available', 'Saldo líquido'/);
+  assert.match(source, /put\('shirts_deficit', 'Falta encomendar'/);
 });
 
 test('cards are traceable and sensitive actions keep RBAC', async () => {
