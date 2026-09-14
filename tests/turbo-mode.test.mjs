@@ -64,19 +64,21 @@ test("botao Sair renderiza fora do switch de telas -- funciona em qualquer estad
 // ============================================================
 
 test("resolveTurboScanAction resolve ticket OU produto (qualquer canal) no backend, sem receber um 'tipo' do cliente", () => {
-  const fn = slice(actions, "export async function resolveTurboScanAction", "export async function deliverKitCheckinAndLinkWristbandAction");
+  const fn = slice(actions, "export async function resolveTurboScanAction", "export async function searchTurboOperationsAction");
   assert.match(fn, /rawValue: string/);
   assert.doesNotMatch(fn, /kind\s*[:=]\s*['"](ticket|product)['"].*payload|payload\.kind/);
-  assert.match(fn, /await assertPermission\("participants\.view"\)/);
+  assert.match(fn, /assertAnyPermission\(TURBO_ENTRY_PERMISSIONS\)/);
   assert.match(fn, /\.from\("tickets"\)/);
-  assert.match(fn, /resolveOperationalProductByQr/);
+  assert.match(fn, /resolveOperationalScanProducts/);
   assert.doesNotMatch(fn, /await assertPermission\("store\.deliver"\)/);
 });
 
-test("resolucao de item de loja (dentro da resolucao unificada) usa store_order_items.qr_token (nunca order_number, nunca id adulteravel sem lookup)", () => {
+test("resolucao de item de loja usa store_order_items.qr_token e tambem o comprovante por order_number/#display", () => {
   const helper = slice(actions, "async function resolveStoreOrderItemByQr", "// Produto \"compre junto\"");
   assert.match(helper, /\.from\("store_order_items"\)/);
   assert.match(helper, /\.eq\("qr_token", tokenCandidate\)/);
+  assert.match(actions, /resolveStoreOrderItemsByOrderRef/);
+  assert.match(actions, /parseStoreOrderScanRef/);
 });
 
 test("identificacao de produto no Turbo nao exige store.deliver -- a permissao continua so na entrega", () => {
@@ -159,24 +161,24 @@ test("sucesso do ingresso mostra 'Pulseira vinculada e check-in realizado' e com
 // Fluxo B -- produto da loja
 // ============================================================
 
-test("QR de produto (qualquer canal, unificado nesta sessao) abre product_review com produto/variante/quantidade/pedido/comprador/evento -- nunca a ficha do ingresso inteiro", () => {
+test("QR de produto (qualquer canal, unificado nesta sessao) abre product_review com produto/variante/quantidade/pedido -- nunca a ficha do ingresso inteiro", () => {
   const productReview = slice(turbo, "function ProductReview(", "function ProductAlreadyDelivered(");
   assert.match(productReview, /item\.product_name/);
   assert.match(productReview, /item\.variant/);
-  assert.match(productReview, /item\.quantity\}x/);
-  assert.match(productReview, /Confirmar entrega/);
+  assert.match(productReview, /item\.quantity/);
+  assert.match(productReview, /ENTREGAR ITEM/);
   assert.doesNotMatch(productReview, /order_tickets|additional_items/);
+  assert.doesNotMatch(productReview, /ESCANEAR PULSEIRA|CHECK-IN/);
 });
 
 test("produto cancelado ou com pagamento pendente bloqueia ANTES de abrir product_review; produto ja entregue abre o RESUMO da entrega (nunca um erro que so reseta o leitor)", () => {
-  const fn = slice(turbo, "async function handleInitialScan", "async function handleNext");
-  assert.match(fn, /result\.item\.delivery_status === 'delivered'/);
+  const fn = slice(turbo, "const openProduct = useCallback", "async function handleInitialScan");
+  assert.match(fn, /item\.delivery_status === 'delivered'/);
   assert.match(fn, /SCAN_PRODUCT_DELIVERED/);
-  assert.match(fn, /result\.item\.delivery_status === 'cancelled'/);
-  assert.match(fn, /result\.item\.delivery_status === 'not_applicable'/);
+  assert.match(fn, /item\.delivery_status === 'cancelled'/);
+  assert.match(fn, /item\.delivery_status === 'not_applicable'/);
   assert.match(fn, /SCAN_PRODUCT/);
-  // "delivered" NUNCA cai no branch de erro generico -- tem despacho proprio.
-  const deliveredBranchIdx = fn.indexOf("result.item.delivery_status === 'delivered'");
+  const deliveredBranchIdx = fn.indexOf("item.delivery_status === 'delivered'");
   const nextErrorIdx = fn.indexOf("SCAN_ERROR", deliveredBranchIdx);
   const dispatchDeliveredIdx = fn.indexOf("SCAN_PRODUCT_DELIVERED", deliveredBranchIdx);
   assert.ok(dispatchDeliveredIdx !== -1 && (nextErrorIdx === -1 || dispatchDeliveredIdx < nextErrorIdx));

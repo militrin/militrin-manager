@@ -18,17 +18,17 @@ const [actions, turbo, types, dashboard, reconcile] = await Promise.all([
 ]);
 
 test('T5 ticket normal QR → Turbo continua funcionando', () => {
-  const fn = slice(actions, 'export async function resolveTurboScanAction', 'export async function deliverKitCheckinAndLinkWristbandAction');
+  const fn = slice(actions, 'export async function resolveTurboScanAction', 'export async function searchTurboOperationsAction');
   assert.match(fn, /\.from\("tickets"\)/);
   assert.match(fn, /\.eq\("token", tokenCandidate\)/);
   assert.match(fn, /kind: "ticket"/);
-  assert.match(fn, /await assertPermission\("participants\.view"\)/);
+  assert.match(fn, /assertAnyPermission\(TURBO_ENTRY_PERMISSIONS\)/);
 });
 
 test('T6 item adicional per_line → Turbo reconhece e entrega', () => {
-  const identify = slice(actions, 'export async function resolveTurboScanAction', 'export async function deliverKitCheckinAndLinkWristbandAction');
+  const identify = slice(actions, 'export async function resolveTurboScanAction', 'export async function searchTurboOperationsAction');
   const storeFn = slice(actions, 'async function resolveStoreOrderItemByQr', 'async function resolveOrderItemProductByQr');
-  assert.match(identify, /resolveOperationalProductByQr/);
+  assert.match(identify, /resolveOperationalScanProducts/);
   assert.doesNotMatch(identify, /assertPermission\("store\.deliver"\)/);
   assert.match(storeFn, /\.eq\("qr_token", tokenCandidate\)/);
   assert.match(storeFn, /pickup_qr_mode/);
@@ -36,8 +36,7 @@ test('T6 item adicional per_line → Turbo reconhece e entrega', () => {
   assert.match(actions, /export async function deliverAdditionalStoreItemAction/);
   assert.match(actions, /await assertPermission\("store\.deliver"\)/);
   assert.match(turbo, /function ProductReview\(/);
-  assert.match(turbo, /label="Pessoa"/);
-  assert.match(turbo, /Confirmar entrega/);
+  assert.match(turbo, /ENTREGAR ITEM/);
 });
 
 test('T7 item adicional per_unit → Turbo reconhece unidade correta', () => {
@@ -54,7 +53,7 @@ test('T7 item adicional per_unit → Turbo reconhece unidade correta', () => {
 });
 
 test('T8 segunda leitura de item ja entregue → bloqueio/feedback correto', () => {
-  const scan = slice(turbo, 'async function handleInitialScan(', 'async function handleNext(');
+  const scan = slice(turbo, 'const openProduct = useCallback', 'async function handleInitialScan(');
   assert.match(scan, /delivery_status === 'delivered'/);
   assert.match(scan, /SCAN_PRODUCT_DELIVERED/);
   assert.doesNotMatch(scan, /SCAN_ERROR[\s\S]*já entregue/);

@@ -473,7 +473,12 @@ export type { OperationalProductItem } from "@/lib/operations/operational-produc
 export type TurboScanResult =
   | { success: true; kind: "ticket"; participant: OperationTicketDetails }
   | { success: true; kind: "product"; item: OperationalProductItem }
+  | { success: true; kind: "product_choices"; items: OperationalProductItem[] }
   | { success: false; message: string };
+
+export type TurboSearchHit =
+  | { kind: "ticket"; row: OperationTicketRow }
+  | { kind: "product"; item: OperationalProductItem };
 
 export const EMPTY_PICKUP_FILTERS: PickupFilters = {
   eventId: '',

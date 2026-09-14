@@ -19,10 +19,13 @@ import type {
   PickupEvent,
   ReasonCode,
   TurboScanResult,
+  TurboSearchHit,
   WristbandHistoryEntry,
 } from "./types";
 import { REASON_CODES } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
+import { formatStoreVariantLabel, parseStoreOrderScanRef } from "@/lib/operations/store-order-scan-ref";
+import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
@@ -2016,11 +2019,16 @@ export async function searchPickupParticipantByQrAction(rawValue: string): Promi
   }
 
   // Produto (loja standalone OU "compre junto") -- MESMA resolucao unificada
-  // ja usada pelo Turbo (resolveOperationalProductByQr). Resolucao SEMPRE
+  // ja usada pelo Turbo (resolveOperationalScanProducts). Resolucao SEMPRE
   // por qr_token (text), nunca id (uuid) -- o token escaneado nao e um uuid.
-  const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
-  if (item) {
-    return { success: true, kind: "product", item };
+  // Comprovante da Loja tambem resolve por order_number / #display.
+  const products = await resolveOperationalScanProducts(supabase, tokenCandidate);
+  if (products.status === "ambiguous") {
+    return { success: false, message: "QR Code ambíguo. Não foi possível identificar um único pedido." };
+  }
+  if (products.status === "resolved" && products.items.length > 0) {
+    const pending = products.items.find((item) => item.delivery_status === "to_deliver");
+    return { success: true, kind: "product", item: pending ?? products.items[0] };
   }
 
   return { success: false, message: "Ingresso não encontrado para este QR Code." };
@@ -2827,7 +2835,7 @@ async function resolveStoreOrderItemByQr(
       .maybeSingle(),
     supabase
       .from("store_orders")
-      .select("order_number, display_number, event_id, user_id, registration_contact_id, events(name), registration_contacts(full_name)")
+      .select("order_number, display_number, event_id, organization_id, user_id, registration_contact_id, events(name), registration_contacts(full_name)")
       .eq("id", line.store_order_id)
       .maybeSingle(),
   ]);
@@ -2840,10 +2848,15 @@ async function resolveStoreOrderItemByQr(
     order_number?: string;
     display_number?: string | null;
     event_id?: string | null;
+    organization_id?: string | null;
     user_id?: string | null;
     events?: { name: string } | { name: string }[] | null;
     registration_contacts?: { full_name: string } | { full_name: string }[] | null;
   } | null;
+  const organization = (await getCurrentOrganizationContext()).organization;
+  if (!organization?.id || !order?.organization_id || String(order.organization_id) !== organization.id) {
+    return null;
+  }
   const event = order ? getRelation(order.events) : null;
   const contact = order ? getRelation(order.registration_contacts) : null;
   const personName = contact?.full_name ? String(contact.full_name) : null;
@@ -2868,7 +2881,7 @@ async function resolveStoreOrderItemByQr(
     order_id: String(line.store_order_id),
     order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
     product_name: storeItem?.name ?? "Item",
-    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    variant: formatStoreVariantLabel(variant),
     quantity: Number(line.quantity ?? 1),
     event_id: order?.event_id ? String(order.event_id) : null,
     event_name: event?.name ?? "Produto global",
@@ -2930,7 +2943,7 @@ async function resolveOrderItemProductByQr(
     order_id: String(line.order_id),
     order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
     product_name: storeItem?.name ?? "Item",
-    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    variant: formatStoreVariantLabel(variant),
     quantity: Number(line.quantity ?? 1),
     event_id: String(line.event_id),
     event_name: event?.name ?? "Evento",
@@ -2998,7 +3011,7 @@ async function resolveStoreOrderItemPickupUnitByQr(
     order_id: String(line.store_order_id),
     order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
     product_name: storeItem?.name ?? "Item",
-    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    variant: formatStoreVariantLabel(variant),
     quantity: Number(line.quantity ?? 1),
     event_id: order?.event_id ? String(order.event_id) : null,
     event_name: event?.name ?? "Produto global",
@@ -3061,7 +3074,7 @@ async function resolveOrderItemPickupUnitByQr(
     order_id: String(line.order_id),
     order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
     product_name: storeItem?.name ?? "Item",
-    variant: variant ? `${variant.name}: ${variant.value}` : null,
+    variant: formatStoreVariantLabel(variant),
     quantity: Number(line.quantity ?? 1),
     event_id: String(line.event_id),
     event_name: event?.name ?? "Evento",
@@ -3092,8 +3105,80 @@ async function resolveOperationalProductByQr(
   return resolveOrderItemPickupUnitByQr(supabase, tokenCandidate);
 }
 
+type StoreOrderRefScan =
+  | { status: "none" }
+  | { status: "ambiguous" }
+  | { status: "resolved"; items: OperationalProductItem[] };
+
+// Comprovante da Loja (imagem/PDF) grava store_orders.order_number ou
+// #display_number -- NAO o ITEM-… da linha. Sem este fallback o Turbo
+// trata o QR visivel do pedido #001121 como invalido, mesmo com a linha
+// confirmada e o qr_token operacional existindo.
+// Escopo: SOMENTE a organização atual. Evento selecionado NÃO filtra a
+// query (QR de outro evento da mesma org deve resolver para a UI dizer
+// "Este QR pertence a outro evento."). Outra org = nenhum dado.
+// Se houver mais de um match, recusa — nunca escolhe o primeiro.
+async function resolveStoreOrderItemsByOrderRef(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<StoreOrderRefScan> {
+  const ref = parseStoreOrderScanRef(tokenCandidate);
+  if (!ref.displayNumber && !ref.orderNumber) return { status: "none" };
+
+  const organization = (await getCurrentOrganizationContext()).organization;
+  if (!organization?.id) return { status: "none" };
+
+  let query = supabase
+    .from("store_orders")
+    .select("id, organization_id, event_id")
+    .eq("organization_id", organization.id)
+    .limit(2);
+  query = ref.displayNumber
+    ? query.eq("display_number", ref.displayNumber)
+    : query.eq("order_number", ref.orderNumber);
+
+  const { data: orders, error } = await query;
+  if (error || !orders?.length) return { status: "none" };
+  if (orders.length !== 1) return { status: "ambiguous" };
+
+  const order = orders[0];
+  if (String(order.organization_id) !== organization.id) return { status: "none" };
+
+  const { data: lines, error: linesError } = await supabase
+    .from("store_order_items")
+    .select("qr_token")
+    .eq("store_order_id", String(order.id))
+    .not("qr_token", "is", null);
+
+  if (linesError) return { status: "none" };
+
+  const items: OperationalProductItem[] = [];
+  for (const line of lines ?? []) {
+    const token = String(line.qr_token ?? "").trim();
+    if (!token) continue;
+    const item = await resolveStoreOrderItemByQr(supabase, token);
+    if (item) items.push(item);
+  }
+  return { status: "resolved", items };
+}
+
+async function resolveOperationalScanProducts(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<StoreOrderRefScan> {
+  const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
+  if (item) return { status: "resolved", items: [item] };
+  return resolveStoreOrderItemsByOrderRef(supabase, tokenCandidate);
+}
+
+function productFromScan(items: OperationalProductItem[]): TurboScanResult | null {
+  if (items.length === 1) return { success: true, kind: "product", item: items[0] };
+  if (items.length > 1) return { success: true, kind: "product_choices", items };
+  return null;
+}
+
 export async function resolveTurboScanAction(rawValue: string): Promise<TurboScanResult> {
-  await assertPermission("participants.view");
+  await assertAnyPermission(TURBO_ENTRY_PERMISSIONS);
 
   const supabase = await createServerSupabaseClient();
   const tokenCandidate = parseTokenCandidate(rawValue);
@@ -3114,15 +3199,118 @@ export async function resolveTurboScanAction(rawValue: string): Promise<TurboSca
     return { success: true, kind: "ticket", participant: detail.participant as OperationTicketDetails };
   }
 
-  const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
-  if (item) {
-    // Identificacao do item adicional/produto nao exige permissao de entrega.
-    // Sem isso o catch do Turbo virava "QR nao reconhecido" mesmo com o
-    // token valido. A autorizacao de entrega continua na acao de confirmar.
-    return { success: true, kind: "product", item };
+  const products = await resolveOperationalScanProducts(supabase, tokenCandidate);
+  if (products.status === "ambiguous") {
+    return { success: false, message: "QR Code ambíguo. Não foi possível identificar um único pedido." };
   }
+  const resolved = products.status === "resolved" ? productFromScan(products.items) : null;
+  if (resolved) return resolved;
 
   return { success: false, message: "QR Code não corresponde a nenhum ingresso ou produto." };
+}
+
+function storeLineMatchesSearch(
+  search: string,
+  item: {
+    product_name: string;
+    variant: string | null;
+    order_reference: string;
+    buyer: string;
+    person_name: string | null;
+    item_id: string;
+  },
+  extra: string[],
+) {
+  const haystack = normalizeSearch(
+    [item.product_name, item.variant, item.order_reference, item.buyer, item.person_name, item.item_id, ...extra]
+      .filter(Boolean)
+      .join(" "),
+  );
+  return haystack.includes(search);
+}
+
+export async function searchTurboOperationsAction(payload: {
+  eventId: string;
+  search: string;
+}): Promise<{ success: true; hits: TurboSearchHit[] } | { success: false; message: string }> {
+  await assertAnyPermission(TURBO_ENTRY_PERMISSIONS);
+  const eventId = payload.eventId.trim();
+  const search = normalizeSearch(payload.search);
+  if (!isUuid(eventId)) return { success: false, message: "Evento inválido." };
+  if (search.length < 2) return { success: false, message: "Digite pelo menos 2 caracteres." };
+
+  const organization = (await getCurrentOrganizationContext()).organization;
+  if (!organization?.id) return { success: false, message: "Organização não selecionada." };
+
+  const hits: TurboSearchHit[] = [];
+  if (await hasPermission("participants.view")) {
+    const tickets = await listOperationTicketsAction({ eventId, search, page: 1, pageSize: 40 });
+    if (tickets.success) {
+      for (const row of tickets.tickets) hits.push({ kind: "ticket", row });
+    }
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: storeLines, error: storeError } = await supabase
+    .from("store_order_items")
+    .select(
+      "id, qr_token, quantity, status, delivered_at, pickup_qr_mode, store_items(name), store_item_variants(name, value), store_orders!inner(id, order_number, display_number, event_id, organization_id, status, user_id, events(name), registration_contacts(full_name))",
+    )
+    .eq("store_orders.event_id", eventId)
+    .eq("store_orders.organization_id", organization.id)
+    .limit(300);
+
+  if (storeError) return { success: false, message: storeError.message };
+
+  for (const row of storeLines ?? []) {
+    const order = getRelation(
+      row.store_orders as Record<string, unknown> | Array<Record<string, unknown>> | null,
+    );
+    const storeItem = getRelation(row.store_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    const variant = getRelation(
+      row.store_item_variants as Record<string, unknown> | Array<Record<string, unknown>> | null,
+    );
+    const event = order ? getRelation(order.events as Record<string, unknown> | Array<Record<string, unknown>> | null) : null;
+    const contact = order
+      ? getRelation(order.registration_contacts as Record<string, unknown> | Array<Record<string, unknown>> | null)
+      : null;
+    if (String(order?.organization_id ?? "") !== organization.id) continue;
+    const status = String(row.status ?? "reserved");
+    const deliveryStatus: OperationalProductItem["delivery_status"] =
+      status === "delivered" ? "delivered" : status === "cancelled" ? "cancelled" : "to_deliver";
+    const personName = contact?.full_name ? String(contact.full_name) : null;
+    const item: OperationalProductItem = {
+      source: "store",
+      item_id: String(row.id),
+      parent_item_id: null,
+      unit_index: null,
+      pickup_qr_mode: (row.pickup_qr_mode as OperationalProductItem["pickup_qr_mode"] | null) ?? "per_line",
+      order_id: String(order?.id ?? ""),
+      order_reference: order ? orderDisplayReference(order.display_number, order.order_number) : "-",
+      product_name: String(storeItem?.name ?? "Item"),
+      variant: formatStoreVariantLabel(variant as { name?: string; value?: string } | null),
+      quantity: Number(row.quantity ?? 1),
+      event_id: order?.event_id ? String(order.event_id) : null,
+      event_name: event?.name ? String(event.name) : "Produto global",
+      buyer: personName ?? "Comprador não identificado",
+      person_name: personName,
+      payment_status: deliveryStatus === "to_deliver" || deliveryStatus === "delivered" ? "confirmed" : status,
+      delivery_status: deliveryStatus,
+      delivered_at: row.delivered_at ? String(row.delivered_at) : null,
+      delivered_by: null,
+    };
+    if (
+      storeLineMatchesSearch(search, item, [
+        String(row.qr_token ?? ""),
+        String(order?.order_number ?? ""),
+        String(order?.display_number ?? ""),
+      ])
+    ) {
+      hits.push({ kind: "product", item });
+    }
+  }
+
+  return { success: true, hits: hits.slice(0, 60) };
 }
 
 export async function deliverKitCheckinAndLinkWristbandAction(payload: { ticket_id: string; wristband_code: string }) {

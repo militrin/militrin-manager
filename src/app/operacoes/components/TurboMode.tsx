@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { OperationEvent, OperationTicketDetails, OperationTicketRow, PickupCapabilities } from '../types';
+import type { OperationEvent, OperationTicketDetails, OperationTicketRow, PickupCapabilities, TurboSearchHit } from '../types';
 import type { OperationalProductItem } from '@/lib/operations/operational-product-item';
 import { SOURCE_LABEL } from '@/lib/operations/operational-product-item';
 import {
@@ -10,8 +10,8 @@ import {
   deliverOperationalProductItemAction,
   getOperationCapabilitiesAction,
   getOperationTicketDetailsAction,
-  listOperationTicketsAction,
   resolveTurboScanAction,
+  searchTurboOperationsAction,
   undoCheckinEntryAction,
   undoFullKitDeliveryAction,
   undoOperationalProductDeliveryAction,
@@ -39,6 +39,7 @@ type TurboScreen =
   | { kind: 'scanning_wristband'; participant: OperationTicketDetails }
   | { kind: 'ticket_success'; message: string; extra: string | null; participant: OperationTicketDetails | null }
   | { kind: 'product_review'; item: OperationalProductItem }
+  | { kind: 'product_choices'; items: OperationalProductItem[] }
   // Segunda leitura (ou qualquer leitura depois da primeira entrega) do
   // MESMO QR: nunca reprocessa, nunca mostra so um erro/toast -- abre o
   // resumo da entrega original (produto/pedido/comprador/evento/data-hora/
@@ -53,6 +54,7 @@ type TurboScreen =
 type TurboAction =
   | { type: 'SCAN_TICKET'; participant: OperationTicketDetails }
   | { type: 'SCAN_PRODUCT'; item: OperationalProductItem }
+  | { type: 'SCAN_PRODUCT_CHOICES'; items: OperationalProductItem[] }
   | { type: 'SCAN_PRODUCT_DELIVERED'; item: OperationalProductItem }
   | { type: 'SCAN_ERROR'; title: string; message: string; tone?: 'block' | 'attention' }
   | { type: 'OPEN_SEARCH' }
@@ -69,6 +71,8 @@ function reducer(state: TurboScreen, action: TurboAction): TurboScreen {
       return { kind: 'ticket_review', participant: action.participant };
     case 'SCAN_PRODUCT':
       return { kind: 'product_review', item: action.item };
+    case 'SCAN_PRODUCT_CHOICES':
+      return { kind: 'product_choices', items: action.items };
     case 'SCAN_PRODUCT_DELIVERED':
       return { kind: 'product_already_delivered', item: action.item };
     case 'SCAN_ERROR':
@@ -223,6 +227,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   const processingRef = useRef(false);
   const returnTimerRef = useRef<number | null>(null);
   const [canUndoDelivery, setCanUndoDelivery] = useState(false);
+  const [canDeliverStoreItems, setCanDeliverStoreItems] = useState(true);
   const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin'> | null>(null);
   const [offline, setOffline] = useState(false);
 
@@ -232,6 +237,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       .then((response) => {
         if (mounted && response.success) {
           setCanUndoDelivery(response.capabilities.canUndoDeliverStoreItems);
+          setCanDeliverStoreItems(response.capabilities.canDeliverStoreItems);
           setCapabilities({
             canUndoKit: response.capabilities.canUndoKit,
             canUndoCheckin: response.capabilities.canUndoCheckin,
@@ -273,6 +279,38 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     dispatch({ type: 'RESET' });
   }, []);
 
+  const otherEventMessage = useCallback((name: string | null | undefined) => {
+    return name ? `Este QR pertence a outro evento. ${name}.` : 'Este QR pertence a outro evento.';
+  }, []);
+
+  const openProduct = useCallback((item: OperationalProductItem) => {
+    if (item.event_id && item.event_id !== event.id) {
+      dispatch({
+        type: 'SCAN_ERROR',
+        title: 'Outro evento',
+        message: otherEventMessage(item.event_name),
+      });
+      return;
+    }
+    if (item.delivery_status === 'delivered') {
+      dispatch({ type: 'SCAN_PRODUCT_DELIVERED', item });
+      return;
+    }
+    if (item.delivery_status === 'cancelled') {
+      dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
+      return;
+    }
+    if (item.delivery_status === 'not_applicable') {
+      dispatch({
+        type: 'SCAN_ERROR',
+        title: 'Pagamento pendente',
+        message: 'Este pedido ainda não foi confirmado (pagamento pendente).',
+      });
+      return;
+    }
+    dispatch({ type: 'SCAN_PRODUCT', item });
+  }, [event.id, otherEventMessage]);
+
   async function handleInitialScan(raw: string) {
     if (processingRef.current) return;
     processingRef.current = true;
@@ -286,8 +324,8 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         if (result.participant.event_id !== event.id) {
           dispatch({
             type: 'SCAN_ERROR',
-            title: 'Evento diferente',
-            message: 'Este ingresso pertence a outro evento. Selecione o evento correspondente para operar.',
+            title: 'Outro evento',
+            message: otherEventMessage(result.participant.event_name),
           });
           return;
         }
@@ -295,35 +333,21 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         return;
       }
 
-      // result.kind === 'product' -- QUALQUER canal (loja standalone ou
-      // "compre junto", ja distinguido internamente por result.item.source).
-      // Evento derivado do proprio item (resolvido no backend, nunca exigido
-      // do cliente pra resolver o QR) -- so validado AQUI, contra o evento
-      // ja selecionado, igual ao ingresso acima. event_id pode ser null
-      // (produto global da loja, sem evento) -- nesse caso nunca bloqueia.
-      if (result.item.event_id && result.item.event_id !== event.id) {
-        dispatch({
-          type: 'SCAN_ERROR',
-          title: 'Evento diferente',
-          message: 'Este produto pertence a outro evento. Selecione o evento correspondente para operar.',
-        });
+      if (result.kind === 'product_choices') {
+        const foreign = result.items.find((item) => item.event_id && item.event_id !== event.id);
+        if (foreign && result.items.every((item) => item.event_id && item.event_id !== event.id)) {
+          dispatch({
+            type: 'SCAN_ERROR',
+            title: 'Outro evento',
+            message: otherEventMessage(foreign.event_name),
+          });
+          return;
+        }
+        dispatch({ type: 'SCAN_PRODUCT_CHOICES', items: result.items.filter((item) => !item.event_id || item.event_id === event.id) });
         return;
       }
-      if (result.item.delivery_status === 'delivered') {
-        // Segunda leitura (ou enesima): nunca um erro/toast que so some --
-        // abre o resumo da entrega original, com botao explicito de volta.
-        dispatch({ type: 'SCAN_PRODUCT_DELIVERED', item: result.item });
-      } else if (result.item.delivery_status === 'cancelled') {
-        dispatch({ type: 'SCAN_ERROR', title: 'Pedido cancelado', message: 'O pedido deste item foi cancelado.' });
-      } else if (result.item.delivery_status === 'not_applicable') {
-        dispatch({
-          type: 'SCAN_ERROR',
-          title: 'Pagamento pendente',
-          message: 'Este pedido ainda não foi confirmado (pagamento pendente).',
-        });
-      } else {
-        dispatch({ type: 'SCAN_PRODUCT', item: result.item });
-      }
+
+      openProduct(result.item);
     } catch (error) {
       dispatch({
         type: 'SCAN_ERROR',
@@ -413,6 +437,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   // item.source, qual RPC domain-specific chamar. Nenhum "if store/else
   // checkout" aqui.
   async function handleProductConfirm(item: OperationalProductItem) {
+    if (!canDeliverStoreItems) return;
     if (processingRef.current) return;
     processingRef.current = true;
     try {
@@ -462,9 +487,10 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       ) : null}
 
       {screen.kind === 'searching' ? (
-        <ParticipantSearch
+        <OperationSearch
           eventId={event.id}
-          onSelect={(participant) => dispatch({ type: 'SCAN_TICKET', participant })}
+          onSelectTicket={(participant) => dispatch({ type: 'SCAN_TICKET', participant })}
+          onSelectProduct={openProduct}
           onCancel={backToScanner}
           onFail={(title, message) => dispatch({ type: 'SCAN_ERROR', title, message })}
         />
@@ -514,7 +540,16 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       ) : null}
 
       {screen.kind === 'product_review' ? (
-        <ProductReview item={screen.item} onConfirm={() => void handleProductConfirm(screen.item)} onCancel={backToScanner} />
+        <ProductReview
+          item={screen.item}
+          canDeliver={canDeliverStoreItems}
+          onConfirm={() => void handleProductConfirm(screen.item)}
+          onCancel={backToScanner}
+        />
+      ) : null}
+
+      {screen.kind === 'product_choices' ? (
+        <ProductChoices items={screen.items} onSelect={openProduct} onCancel={backToScanner} />
       ) : null}
 
       {screen.kind === 'product_already_delivered' ? (
@@ -523,9 +558,12 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
       {screen.kind === 'product_success' ? (
         <SuccessStation
-          title="Produto entregue"
-          name={screen.item?.person_name ?? screen.item?.buyer ?? null}
-          lines={[screen.item ? `${screen.item.quantity}× ${screen.item.product_name}` : 'Produto entregue com sucesso']}
+          title="Item entregue"
+          name={screen.item?.product_name ?? null}
+          lines={[
+            screen.item?.variant ?? null,
+            screen.item ? `Quantidade ${screen.item.quantity}` : null,
+          ]}
           onNext={backToScanner}
         />
       ) : null}
@@ -761,20 +799,22 @@ function TicketReview({
   );
 }
 
-function ParticipantSearch({
+function OperationSearch({
   eventId,
-  onSelect,
+  onSelectTicket,
+  onSelectProduct,
   onCancel,
   onFail,
 }: {
   eventId: string;
-  onSelect: (participant: OperationTicketDetails) => void;
+  onSelectTicket: (participant: OperationTicketDetails) => void;
+  onSelectProduct: (item: OperationalProductItem) => void;
   onCancel: () => void;
   onFail: (title: string, message: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<OperationTicketRow[]>([]);
+  const [hits, setHits] = useState<TurboSearchHit[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
   async function runSearch() {
@@ -786,13 +826,13 @@ function ParticipantSearch({
     setLoading(true);
     setMessage(null);
     try {
-      const result = await listOperationTicketsAction({ eventId, search, page: 1, pageSize: 40 });
+      const result = await searchTurboOperationsAction({ eventId, search });
       if (!result.success) {
         onFail('Erro na busca', result.message ?? 'Não foi possível buscar.');
         return;
       }
-      setRows(result.tickets);
-      if (result.tickets.length === 0) setMessage('Nenhum participante encontrado.');
+      setHits(result.hits);
+      if (result.hits.length === 0) setMessage('Nenhuma operação encontrada.');
     } catch (error) {
       onFail('Erro de rede', error instanceof Error ? error.message : 'Falha inesperada.');
     } finally {
@@ -800,7 +840,7 @@ function ParticipantSearch({
     }
   }
 
-  async function pick(row: OperationTicketRow) {
+  async function pickTicket(row: OperationTicketRow) {
     if (!row.ticket_id) {
       onFail('Sem ingresso', 'Este cadastro não tem ingresso operacional.');
       return;
@@ -812,7 +852,7 @@ function ParticipantSearch({
         onFail('Ingresso não encontrado', result.success === false ? result.message ?? 'Falha ao abrir o ingresso.' : 'Falha ao abrir o ingresso.');
         return;
       }
-      onSelect(result.participant as OperationTicketDetails);
+      onSelectTicket(result.participant as OperationTicketDetails);
     } catch (error) {
       onFail('Erro de rede', error instanceof Error ? error.message : 'Falha inesperada.');
     } finally {
@@ -820,9 +860,12 @@ function ParticipantSearch({
     }
   }
 
+  const tickets = hits.filter((hit) => hit.kind === 'ticket');
+  const products = hits.filter((hit) => hit.kind === 'product');
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <p className="text-lg font-black">Buscar participante</p>
+      <p className="text-lg font-black">Buscar operação</p>
       <div className="mt-3 flex gap-2">
         <input
           value={query}
@@ -830,7 +873,7 @@ function ParticipantSearch({
           onKeyDown={(event) => {
             if (event.key === 'Enter') void runSearch();
           }}
-          placeholder="Nome, CPF ou código"
+          placeholder="Nome, pedido ou código"
           autoFocus
           className="min-h-14 min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-4 text-lg"
         />
@@ -843,22 +886,46 @@ function ParticipantSearch({
           Buscar
         </button>
       </div>
-      <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">
+      <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto">
         {message ? <p className="text-sm text-slate-400">{message}</p> : null}
-        {rows.map((row) => (
-          <button
-            key={row.ticket_id ?? row.participant_id}
-            type="button"
-            onClick={() => void pick(row)}
-            disabled={loading}
-            className="flex min-h-16 w-full flex-col items-start justify-center rounded-2xl border border-slate-700 bg-slate-900 px-4 text-left"
-          >
-            <span className="text-base font-black">{row.full_name || row.participant_name}</span>
-            <span className="text-sm text-slate-400">
-              {row.category_name} · {row.shirt_type} {row.shirt_size}
-            </span>
-          </button>
-        ))}
+        {tickets.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Pacote Militrin</p>
+            {tickets.map((hit) => (
+              <button
+                key={hit.row.ticket_id ?? hit.row.participant_id}
+                type="button"
+                onClick={() => void pickTicket(hit.row)}
+                disabled={loading}
+                className="flex min-h-16 w-full flex-col items-start justify-center rounded-2xl border border-slate-700 bg-slate-900 px-4 text-left"
+              >
+                <span className="text-base font-black">{hit.row.full_name || hit.row.participant_name}</span>
+                <span className="text-sm text-slate-400">
+                  {hit.row.category_name} · {hit.row.kit_status === 'delivered' ? 'Kit entregue' : 'Kit pendente'}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {products.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Loja</p>
+            {products.map((hit) => (
+              <button
+                key={`${hit.item.source}-${hit.item.item_id}`}
+                type="button"
+                onClick={() => onSelectProduct(hit.item)}
+                disabled={loading}
+                className="flex min-h-16 w-full flex-col items-start justify-center rounded-2xl border border-slate-700 bg-slate-900 px-4 text-left"
+              >
+                <span className="text-base font-black">{hit.item.person_name ?? hit.item.buyer}</span>
+                <span className="text-sm text-slate-400">
+                  Pedido {hit.item.order_reference} · {hit.item.variant ?? hit.item.product_name} · {hit.item.delivery_status === 'delivered' ? 'Já entregue' : 'Retirada pendente'}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       <button type="button" onClick={onCancel} className="mt-3 min-h-12 w-full rounded-2xl border border-slate-700 font-semibold">
         Voltar ao scanner
@@ -867,14 +934,49 @@ function ParticipantSearch({
   );
 }
 
-// Revisao de produto -- QUALQUER canal (source distingue internamente, so
-// pra badge/entrega -- a experiencia operacional e IDENTICA pros dois).
+function ProductChoices({
+  items,
+  onSelect,
+  onCancel,
+}: {
+  items: OperationalProductItem[];
+  onSelect: (item: OperationalProductItem) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StatusBanner tone="success" label="QR identificado" />
+      <p className="mt-4 text-lg font-black">Itens deste pedido</p>
+      <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">
+        {items.map((item) => (
+          <button
+            key={`${item.source}-${item.item_id}`}
+            type="button"
+            onClick={() => onSelect(item)}
+            className="flex min-h-16 w-full flex-col items-start justify-center rounded-2xl border border-slate-700 bg-slate-900 px-4 text-left"
+          >
+            <span className="text-base font-black">{item.product_name}</span>
+            <span className="text-sm text-slate-400">
+              {item.variant ?? 'Sem variante'} · Qtd {item.quantity} · {item.delivery_status === 'delivered' ? 'Já entregue' : 'Retirada pendente'}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-auto pt-4">
+        <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
+      </div>
+    </div>
+  );
+}
+
 function ProductReview({
   item,
+  canDeliver,
   onConfirm,
   onCancel,
 }: {
   item: OperationalProductItem;
+  canDeliver: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -883,37 +985,31 @@ function ProductReview({
     <div className="flex min-h-0 flex-1 flex-col">
       <StatusBanner tone="success" label="QR identificado" />
       <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{SOURCE_LABEL[item.source]}</p>
-      <p className="mt-1 text-3xl font-black leading-tight">{isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}</p>
-      <p className="mt-2 text-lg text-slate-300">{item.person_name ?? item.buyer}</p>
-      {isUnit && item.unit_index ? <p className="text-base font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
-      {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
+      <p className="mt-1 text-sm font-black uppercase tracking-wide text-cyan-200">Pedido {item.order_reference}</p>
+      <p className="mt-3 text-3xl font-black leading-tight">{item.person_name ?? item.buyer}</p>
+      <p className="mt-4 text-3xl font-black leading-tight">{item.product_name}</p>
+      {item.variant ? <p className="mt-2 text-2xl font-black uppercase leading-tight text-slate-100">{item.variant}</p> : null}
+      {isUnit && item.unit_index ? <p className="mt-2 text-base font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
       <div className="mt-4 space-y-2">
-        <Fact label="Pedido" value={item.order_reference} />
-        <Fact label="Comprador" value={item.buyer} />
-        <Fact label="Evento" value={item.event_name} />
+        <Fact label="Quantidade" value={String(item.quantity)} />
+        <Fact label="Retirada" value="Retirada pendente" tone="attention" />
       </div>
-      <p className="mt-3 text-sm font-black uppercase tracking-wide text-amber-300">A entregar</p>
+      {!canDeliver ? (
+        <div className="mt-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          Você não tem permissão para entregar itens da Loja.
+        </div>
+      ) : null}
       <div className="mt-auto flex flex-col gap-2 pt-4">
-        <BigButton onClick={onConfirm}>Confirmar entrega</BigButton>
-        <details className="rounded-2xl border border-slate-800 px-3 py-2">
-          <summary className="cursor-pointer text-sm font-semibold text-slate-500">Mais ações</summary>
-          <button type="button" onClick={onCancel} className="mt-2 min-h-12 w-full rounded-xl border border-slate-700 text-sm font-semibold">
-            Cancelar
-          </button>
-        </details>
+        {canDeliver ? (
+          <BigButton onClick={onConfirm}>ENTREGAR ITEM</BigButton>
+        ) : (
+          <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
+        )}
       </div>
     </div>
   );
 }
 
-// Resumo da entrega -- aberto em QUALQUER leitura depois da primeira
-// (2a, 3a, 10a...) do MESMO QR, pros dois canais. Nunca reprocessa entrega
-// nem estoque (o backend ja e idempotente -- isto e so leitura); sempre
-// mostra data/hora e operador da PRIMEIRA entrega (nunca do usuario atual).
-// "Desfazer entrega" (motivo obrigatorio via ReasonDialog, mesmo padrao da
-// Central normal) so aparece quando canUndoDelivery=true (permissao
-// store.undo_delivery), verificado no componente pai via
-// getOperationCapabilitiesAction.
 function ProductAlreadyDelivered({
   item,
   canUndoDelivery,
@@ -929,18 +1025,14 @@ function ProductAlreadyDelivered({
   const isUnit = item.source === 'store_unit' || item.source === 'checkout_unit';
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <StatusBanner tone="attention" label={isUnit ? 'Unidade já entregue' : 'Item já entregue'} />
-      <p className="mt-4 text-3xl font-black leading-tight">{isUnit ? item.product_name : `${item.quantity}x ${item.product_name}`}</p>
-      <p className="mt-2 text-lg text-slate-300">{item.person_name ?? item.buyer}</p>
-      {isUnit && item.unit_index ? <p className="text-base font-semibold text-cyan-300">Unidade {item.unit_index} de {item.quantity}</p> : null}
-      {item.variant ? <p className="text-slate-400">{item.variant}</p> : null}
+      <StatusBanner tone="success" label={isUnit ? 'Unidade já entregue' : 'Item já entregue'} />
+      <p className="mt-4 text-3xl font-black leading-tight">{item.product_name}</p>
+      {item.variant ? <p className="mt-2 text-2xl font-black uppercase leading-tight">{item.variant}</p> : null}
       <div className="mt-4 space-y-2">
-        <Fact label="Pessoa" value={item.person_name ?? item.buyer} />
-        <Fact label="Pedido" value={item.order_reference} />
-        <Fact label="Comprador" value={item.buyer} />
-        <Fact label="Evento" value={item.event_name} />
-        <Fact label="Primeira entrega" value={item.delivered_at ? new Date(item.delivered_at).toLocaleString('pt-BR') : '—'} />
-        <Fact label="Operador" value={item.delivered_by ?? 'Não identificado'} />
+        <Fact label="Quantidade" value={String(item.quantity)} />
+        {item.delivered_at ? (
+          <Fact label="Entregue em" value={new Date(item.delivered_at).toLocaleString('pt-BR')} />
+        ) : null}
       </div>
       <div className="mt-auto flex flex-col gap-2 pt-4">
         <BigButton onClick={onBack}>VOLTAR AO SCANNER</BigButton>

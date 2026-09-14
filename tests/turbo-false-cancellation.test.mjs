@@ -90,7 +90,7 @@ test("RPC atual de check-in tambem nao bloqueia por registration_status", () => 
 
 test("QR do Turbo resolve por token unico, nao por nome/owner", () => {
   const resolve = actions.slice(actions.indexOf("export async function resolveTurboScanAction"));
-  const body = resolve.slice(0, resolve.indexOf("export async function deliverKitCheckinAndLinkWristbandAction"));
+  const body = resolve.slice(0, resolve.indexOf("export async function searchTurboOperationsAction"));
   assert.match(body, /\.eq\("token", tokenCandidate\)/);
   assert.doesNotMatch(body, /full_name|owner_user_id|participant_id/);
 });

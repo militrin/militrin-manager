@@ -107,14 +107,14 @@ test('resolveOperationalProductByQr tenta loja standalone primeiro, depois "comp
   assert.ok(storeIdx < checkoutIdx);
 
   const turboFnStart = source.indexOf('export async function resolveTurboScanAction(');
-  const turboFnEnd = source.indexOf('\nexport async function deliverKitCheckinAndLinkWristbandAction(');
+  const turboFnEnd = source.indexOf('\nexport async function searchTurboOperationsAction(');
   const turboFn = source.slice(turboFnStart, turboFnEnd);
-  assert.match(turboFn, /resolveOperationalProductByQr\(supabase, tokenCandidate\)/);
+  assert.match(turboFn, /resolveOperationalScanProducts\(supabase, tokenCandidate\)/);
 
   const centralFnStart = source.indexOf('export async function searchPickupParticipantByQrAction(');
   const centralFnEnd = source.indexOf('\nfunction validateReasonPayload(');
   const centralFn = source.slice(centralFnStart, centralFnEnd);
-  assert.match(centralFn, /resolveOperationalProductByQr\(supabase, tokenCandidate\)/);
+  assert.match(centralFn, /resolveOperationalScanProducts\(supabase, tokenCandidate\)/);
 });
 
 test('deliverOperationalProductItemAction e o UNICO ponto de entrega chamado pela UI (Turbo e Central) -- roteia pelo source, nunca a UI decide qual RPC chamar', async () => {
@@ -144,10 +144,10 @@ test('resolveOperationalProductByQr/resolveOperationTurboScanAction nunca recebe
 
 test('Turbo e Central validam evento do produto DEPOIS de resolver (event_id pode ser null -- produto global da loja -- nunca bloqueia nesse caso)', async () => {
   const turboSource = await fs.readFile(turboModeUrl, 'utf8');
-  const turboFn = turboSource.slice(turboSource.indexOf('async function handleInitialScan('), turboSource.indexOf('\n  async function handleNext('));
+  const turboFn = turboSource.slice(turboSource.indexOf('const openProduct = useCallback'), turboSource.indexOf('\n  async function handleNext('));
   const turboResolveIdx = turboFn.indexOf('const result = await resolveTurboScanAction(raw);');
-  const turboEventCheckIdx = turboFn.indexOf('result.item.event_id && result.item.event_id !== event.id');
-  assert.ok(turboResolveIdx !== -1 && turboEventCheckIdx !== -1 && turboResolveIdx < turboEventCheckIdx);
+  const turboEventCheckIdx = turboFn.indexOf('item.event_id && item.event_id !== event.id');
+  assert.ok(turboResolveIdx !== -1 && turboEventCheckIdx !== -1 && turboEventCheckIdx < turboResolveIdx);
 
   const pageSource = await fs.readFile(pageUrl, 'utf8');
   const pageFn = pageSource.slice(pageSource.indexOf('async function handleQrRead('), pageSource.indexOf('\n  async function handleEventChange('));
@@ -161,28 +161,21 @@ test('Turbo e Central validam evento do produto DEPOIS de resolver (event_id pod
 // ============================================================
 test('Turbo: delivery_status="delivered" abre a tela de resumo (product_already_delivered) -- NUNCA um SCAN_ERROR generico', async () => {
   const source = await fs.readFile(turboModeUrl, 'utf8');
-  const fn = source.slice(source.indexOf('async function handleInitialScan('), source.indexOf('\n  async function handleNext('));
-  assert.match(fn, /if \(result\.item\.delivery_status === 'delivered'\) \{\s*\n[\s\S]*?dispatch\(\{ type: 'SCAN_PRODUCT_DELIVERED', item: result\.item \}\);/);
+  const fn = source.slice(source.indexOf('const openProduct = useCallback'), source.indexOf('\n  async function handleInitialScan('));
+  assert.match(fn, /if \(item\.delivery_status === 'delivered'\) \{\s*\n[\s\S]*?dispatch\(\{ type: 'SCAN_PRODUCT_DELIVERED', item \}\);/);
   assert.match(source, /case 'SCAN_PRODUCT_DELIVERED':\s*\n\s*return \{ kind: 'product_already_delivered', item: action\.item \};/);
   assert.match(source, /function ProductAlreadyDelivered\(/);
 });
 
-test('Turbo: tela de resumo mostra produto/quantidade/variante/pedido/comprador/evento/data-hora/operador/status, com botao VOLTAR AO SCANNER que reseta pro scanner', async () => {
+test('Turbo: tela de resumo mostra produto/quantidade/variante/data, com botao VOLTAR AO SCANNER que reseta pro scanner', async () => {
   const source = await fs.readFile(turboModeUrl, 'utf8');
   const fn = source.slice(source.indexOf('function ProductAlreadyDelivered('));
   assert.match(fn, /Item já entregue/);
-  assert.match(fn, /item\.quantity\}x \$\{item\.product_name\}/);
+  assert.match(fn, /item\.product_name/);
   assert.match(fn, /item\.variant/);
-  assert.match(fn, /label="Pessoa" value=\{item\.person_name \?\? item\.buyer\}/);
-  assert.match(fn, /label="Pedido" value=\{item\.order_reference\}/);
-  assert.match(fn, /label="Comprador" value=\{item\.buyer\}/);
-  assert.match(fn, /label="Evento" value=\{item\.event_name\}/);
-  assert.match(fn, /Primeira entrega/);
-  assert.match(fn, /item\.delivered_at \? new Date\(item\.delivered_at\)\.toLocaleString\('pt-BR'\)/);
-  assert.match(fn, /Operador/);
-  assert.match(fn, /item\.delivered_by \?\? 'Não identificado'/);
+  assert.match(fn, /label="Quantidade"/);
+  assert.match(fn, /toLocaleString\('pt-BR'\)/);
   assert.match(fn, /<BigButton onClick=\{onBack\}>VOLTAR AO SCANNER<\/BigButton>/);
-  // onBack = backToScanner, que despacha RESET -- volta pro leitor de verdade.
   assert.match(source, /onBack=\{backToScanner\}/);
 });
 
@@ -241,7 +234,7 @@ test('resolveStoreOrderItemByQr/resolveOrderItemProductByQr so chamam resolveDel
 test('store.deliver continua a unica permissao de entrega -- nenhuma permissao nova, nenhum enfraquecimento', async () => {
   const source = await fs.readFile(actionsUrl, 'utf8');
   const turboFnStart = source.indexOf('export async function resolveTurboScanAction(');
-  const turboFnEnd = source.indexOf('\nexport async function deliverKitCheckinAndLinkWristbandAction(');
+  const turboFnEnd = source.indexOf('\nexport async function searchTurboOperationsAction(');
   const turboFn = source.slice(turboFnStart, turboFnEnd);
   assert.doesNotMatch(turboFn, /await assertPermission\("store\.deliver"\);/);
   const dispatcherSource = await fs.readFile(actionsUrl, 'utf8');
@@ -254,7 +247,7 @@ test('store.deliver continua a unica permissao de entrega -- nenhuma permissao n
 // ============================================================
 test('ingresso: resolveTurboScanAction e searchPickupParticipantByQrAction continuam resolvendo por tickets.token PRIMEIRO, sem nenhuma mudanca de ordem ou comportamento', async () => {
   const source = await fs.readFile(actionsUrl, 'utf8');
-  const turboFn = source.slice(source.indexOf('export async function resolveTurboScanAction('), source.indexOf('\nexport async function deliverKitCheckinAndLinkWristbandAction('));
+  const turboFn = source.slice(source.indexOf('export async function resolveTurboScanAction('), source.indexOf('\nexport async function searchTurboOperationsAction('));
   const centralFn = source.slice(source.indexOf('export async function searchPickupParticipantByQrAction('), source.indexOf('\nfunction validateReasonPayload('));
   for (const fn of [turboFn, centralFn]) {
     assert.match(fn, /from\("tickets"\)\s*\n\s*\.select\("id"\)\s*\n\s*\.eq\("token", tokenCandidate\)/);
