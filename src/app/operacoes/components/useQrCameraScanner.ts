@@ -433,9 +433,10 @@ function decodeWithJsQR(
 
 export function useQrCameraScanner(
   onRead: (value: string) => Promise<void>,
-  options?: { smallQrMode?: boolean },
+  options?: { smallQrMode?: boolean; restartGeneration?: number },
 ) {
   const smallQrMode = options?.smallQrMode ?? false;
+  const restartGeneration = options?.restartGeneration ?? 0;
   const isDev = process.env.NODE_ENV === "development";
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -579,7 +580,7 @@ export function useQrCameraScanner(
     // smallQrMode/isDev entram pq sao lidos dentro do efeito, mas na pratica
     // sao estaticos por montagem -- nenhum consumidor troca esses valores no
     // meio da vida do componente.
-  }, [smallQrMode, isDev]);
+  }, [smallQrMode, isDev, restartGeneration]);
 
   return { videoRef, status, message, lastDetectedAt, debugInfo, tuningInfo };
 }

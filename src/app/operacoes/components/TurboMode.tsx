@@ -17,11 +17,20 @@ import {
   undoOperationalProductDeliveryAction,
 } from '../actions';
 import { remainingTurboTicketAction } from '@/lib/operations/ticket-operation-gate';
-import { getOperationalErrorTitle } from '../error-messages';
+import { describeTurboCaughtError, getOperationalErrorTitle } from '../error-messages';
 import { QrScanner } from './QrScanner';
 import { ReasonDialog } from './ReasonDialog';
 
 const AUTO_RETURN_MS = 1600;
+
+function isBrowserOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+const OFFLINE_COPY = {
+  title: 'Sem conexão',
+  message: 'Sem internet. Não confirme agora. Quando voltar, leia o QR de novo para ver o estado real.',
+};
 
 // Maquina de estados explicita (pedido: nunca vários booleans concorrentes
 // que deixem a UI num estado impossível). Cada tela do Turbo corresponde a
@@ -162,11 +171,13 @@ function BigButton({
   children,
   onClick,
   disabled,
+  busy,
   tone = 'primary',
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  busy?: boolean;
   tone?: 'primary' | 'neutral' | 'success' | 'danger';
 }) {
   const toneClass =
@@ -181,10 +192,18 @@ function BigButton({
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
-      className={`min-h-16 w-full rounded-3xl px-5 text-xl font-black disabled:cursor-not-allowed disabled:opacity-40 ${toneClass}`}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      className={`min-h-16 w-full rounded-3xl px-5 text-xl font-black disabled:cursor-not-allowed disabled:opacity-55 ${toneClass}`}
     >
-      {children}
+      {busy ? (
+        <span className="inline-flex items-center justify-center gap-3">
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+          {children}
+        </span>
+      ) : (
+        children
+      )}
     </button>
   );
 }
@@ -225,10 +244,11 @@ function Fact({ label, value, tone }: { label: string; value: string; tone?: 'su
 export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (focusTicketId?: string) => void }) {
   const [screen, dispatch] = useReducer(reducer, { kind: 'scanning_initial' });
   const processingRef = useRef(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const returnTimerRef = useRef<number | null>(null);
   const [canUndoDelivery, setCanUndoDelivery] = useState(false);
   const [canDeliverStoreItems, setCanDeliverStoreItems] = useState(true);
-  const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin'> | null>(null);
+  const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin' | 'canDeliverKit' | 'canCheckin' | 'canCombined'> | null>(null);
   const [offline, setOffline] = useState(false);
 
   useEffect(() => {
@@ -241,6 +261,9 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
           setCapabilities({
             canUndoKit: response.capabilities.canUndoKit,
             canUndoCheckin: response.capabilities.canUndoCheckin,
+            canDeliverKit: response.capabilities.canDeliverKit,
+            canCheckin: response.capabilities.canCheckin,
+            canCombined: response.capabilities.canCombined,
           });
         }
       })
@@ -270,12 +293,23 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     }, AUTO_RETURN_MS);
   }, []);
 
+  const beginBusy = useCallback((label: string) => {
+    processingRef.current = true;
+    setBusyLabel(label);
+  }, []);
+
+  const endBusy = useCallback(() => {
+    processingRef.current = false;
+    setBusyLabel(null);
+  }, []);
+
   const backToScanner = useCallback(() => {
     if (returnTimerRef.current) {
       window.clearTimeout(returnTimerRef.current);
       returnTimerRef.current = null;
     }
     processingRef.current = false;
+    setBusyLabel(null);
     dispatch({ type: 'RESET' });
   }, []);
 
@@ -313,6 +347,10 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
   async function handleInitialScan(raw: string) {
     if (processingRef.current) return;
+    if (isBrowserOffline()) {
+      dispatch({ type: 'SCAN_ERROR', title: OFFLINE_COPY.title, message: OFFLINE_COPY.message });
+      return;
+    }
     processingRef.current = true;
     try {
       const result = await resolveTurboScanAction(raw);
@@ -349,10 +387,11 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
       openProduct(result.item);
     } catch (error) {
+      const caught = describeTurboCaughtError(error);
       dispatch({
         type: 'SCAN_ERROR',
-        title: 'Erro ao ler QR',
-        message: error instanceof Error ? error.message : 'Falha inesperada ao consultar o QR Code.',
+        title: caught.title,
+        message: caught.message,
       });
     } finally {
       processingRef.current = false;
@@ -361,13 +400,18 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
   async function handleNext(participant: OperationTicketDetails) {
     if (processingRef.current) return;
+    if (isBrowserOffline()) {
+      dispatch({ type: 'FAIL', title: OFFLINE_COPY.title, message: OFFLINE_COPY.message, ticketId: participant.ticket_id });
+      return;
+    }
     const needsWristband = event.wristband_enabled && participant.wristband?.status !== 'active';
     if (needsWristband) {
       dispatch({ type: 'GO_TO_WRISTBAND' });
       return;
     }
 
-    processingRef.current = true;
+    const nextLabel = kitPending(participant) ? 'ENTREGANDO...' : 'FAZENDO CHECK-IN...';
+    beginBusy(nextLabel);
     try {
       const response = await deliverKitAndCheckinAction({ ticket_id: participant.ticket_id });
       if (!response.success) {
@@ -383,20 +427,25 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       dispatch({ type: 'TICKET_DONE', message: response.message ?? 'Check-in realizado.', extra, participant });
       scheduleReturn();
     } catch (error) {
+      const caught = describeTurboCaughtError(error);
       dispatch({
         type: 'FAIL',
-        title: 'Erro de rede',
-        message: error instanceof Error ? error.message : 'Falha inesperada.',
+        title: caught.title,
+        message: caught.message,
         ticketId: participant.ticket_id,
       });
     } finally {
-      processingRef.current = false;
+      endBusy();
     }
   }
 
   async function handleWristbandScan(raw: string, participant: OperationTicketDetails) {
     if (processingRef.current) return;
-    processingRef.current = true;
+    if (isBrowserOffline()) {
+      dispatch({ type: 'FAIL', title: OFFLINE_COPY.title, message: OFFLINE_COPY.message, ticketId: participant.ticket_id, participant });
+      return;
+    }
+    beginBusy('VINCULANDO PULSEIRA...');
     try {
       const response = await deliverKitCheckinAndLinkWristbandAction({
         ticket_id: participant.ticket_id,
@@ -420,15 +469,16 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       dispatch({ type: 'TICKET_DONE', message: 'Pulseira vinculada e check-in realizado.', extra, participant });
       scheduleReturn();
     } catch (error) {
+      const caught = describeTurboCaughtError(error);
       dispatch({
         type: 'FAIL',
-        title: 'Erro de rede',
-        message: error instanceof Error ? error.message : 'Falha inesperada.',
+        title: caught.title,
+        message: caught.message,
         ticketId: participant.ticket_id,
         participant,
       });
     } finally {
-      processingRef.current = false;
+      endBusy();
     }
   }
 
@@ -439,7 +489,11 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   async function handleProductConfirm(item: OperationalProductItem) {
     if (!canDeliverStoreItems) return;
     if (processingRef.current) return;
-    processingRef.current = true;
+    if (isBrowserOffline()) {
+      dispatch({ type: 'FAIL', title: OFFLINE_COPY.title, message: OFFLINE_COPY.message, ticketId: null });
+      return;
+    }
+    beginBusy('ENTREGANDO...');
     try {
       const response = await deliverOperationalProductItemAction({ source: item.source, item_id: item.item_id });
       if (!response.success) {
@@ -454,14 +508,15 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
       dispatch({ type: 'PRODUCT_DONE', item });
       scheduleReturn();
     } catch (error) {
+      const caught = describeTurboCaughtError(error);
       dispatch({
         type: 'FAIL',
-        title: 'Erro de rede',
-        message: error instanceof Error ? error.message : 'Falha inesperada.',
+        title: caught.title,
+        message: caught.message,
         ticketId: null,
       });
     } finally {
-      processingRef.current = false;
+      endBusy();
     }
   }
 
@@ -502,6 +557,9 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
           participant={screen.participant}
           canUndoKit={Boolean(capabilities?.canUndoKit)}
           canUndoCheckin={Boolean(capabilities?.canUndoCheckin)}
+          canCompleteTicket={capabilities?.canCombined !== false}
+          busy={Boolean(busyLabel)}
+          busyLabel={busyLabel}
           onNext={() => void handleNext(screen.participant)}
           onCancel={backToScanner}
           onOpenAdmin={() => onExit(screen.participant.ticket_id)}
@@ -511,18 +569,26 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
       {screen.kind === 'scanning_wristband' ? (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <StatusBanner tone="attention" label="Pulseira necessária" />
+          <StatusBanner tone="attention" label={busyLabel === 'VINCULANDO PULSEIRA...' ? 'VINCULANDO PULSEIRA...' : 'Pulseira necessária'} />
           <p className="text-center text-lg font-black leading-tight">{displayName(screen.participant)}</p>
           <p className="text-center text-sm text-slate-400">{shirtLabel(screen.participant)}</p>
-          <QrScanner
-            title="Escaneie a pulseira"
-            onRead={(value) => handleWristbandScan(value, screen.participant)}
-            onCancel={backToScanner}
-            square
-            hideManual
-            guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"
-            helpMessage="Aproxime a pulseira da câmera e evite reflexos."
-          />
+          <div className={busyLabel ? 'pointer-events-none opacity-60' : undefined}>
+            <QrScanner
+              title="Escaneie a pulseira"
+              onRead={(value) => handleWristbandScan(value, screen.participant)}
+              onCancel={busyLabel ? undefined : backToScanner}
+              square
+              hideManual
+              guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"
+              helpMessage="Aproxime a pulseira da câmera e evite reflexos."
+            />
+          </div>
+          {busyLabel ? (
+            <p className="inline-flex items-center justify-center gap-2 text-sm font-semibold text-cyan-200">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+              {busyLabel}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -543,6 +609,8 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
         <ProductReview
           item={screen.item}
           canDeliver={canDeliverStoreItems}
+          busy={Boolean(busyLabel)}
+          busyLabel={busyLabel}
           onConfirm={() => void handleProductConfirm(screen.item)}
           onCancel={backToScanner}
         />
@@ -641,6 +709,9 @@ function TicketReview({
   participant,
   canUndoKit,
   canUndoCheckin,
+  canCompleteTicket,
+  busy,
+  busyLabel,
   onNext,
   onCancel,
   onOpenAdmin,
@@ -650,6 +721,9 @@ function TicketReview({
   participant: OperationTicketDetails;
   canUndoKit: boolean;
   canUndoCheckin: boolean;
+  canCompleteTicket: boolean;
+  busy: boolean;
+  busyLabel: string | null;
   onNext: () => void;
   onCancel: () => void;
   onOpenAdmin: () => void;
@@ -724,7 +798,7 @@ function TicketReview({
               <button
                 key={ticket.ticket_id}
                 type="button"
-                disabled={loadingRelatedId === ticket.ticket_id}
+                disabled={busy || loadingRelatedId === ticket.ticket_id}
                 onClick={async () => {
                   setLoadingRelatedId(ticket.ticket_id);
                   const result = await getOperationTicketDetailsAction(ticket.ticket_id);
@@ -744,27 +818,36 @@ function TicketReview({
       </div>
 
       <div className="shrink-0 space-y-2 pt-2">
-        {remainingAction ? (
-          <BigButton onClick={onNext}>{primaryLabel}</BigButton>
+        {remainingAction && canCompleteTicket ? (
+          <BigButton onClick={onNext} busy={busy} disabled={busy}>
+            {busy ? busyLabel ?? 'PROCESSANDO...' : primaryLabel}
+          </BigButton>
+        ) : remainingAction && !canCompleteTicket ? (
+          <>
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              Ingresso identificado. Este perfil não entrega kit nem faz check-in. Use a Central ou um operador com permissão.
+            </div>
+            <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
+          </>
         ) : (
           <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
         )}
         <details className="rounded-2xl border border-slate-800 px-3 py-2">
           <summary className="cursor-pointer text-sm font-semibold text-slate-500">Mais ações</summary>
           <div className="mt-2 flex flex-col gap-2">
-            <button type="button" onClick={onCancel} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold">
+            <button type="button" onClick={onCancel} disabled={busy} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold disabled:opacity-40">
               Cancelar leitura
             </button>
-            <button type="button" onClick={onOpenAdmin} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold">
+            <button type="button" onClick={onOpenAdmin} disabled={busy} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold disabled:opacity-40">
               Abrir operação completa
             </button>
             {canUndoKit && !pendingKit ? (
-              <button type="button" onClick={() => setUndoKind('kit')} className="min-h-12 rounded-xl border border-amber-700/60 text-sm font-semibold text-amber-200">
+              <button type="button" onClick={() => setUndoKind('kit')} disabled={busy} className="min-h-12 rounded-xl border border-amber-700/60 text-sm font-semibold text-amber-200 disabled:opacity-40">
                 Desfazer entrega
               </button>
             ) : null}
             {canUndoCheckin && alreadyUsed ? (
-              <button type="button" onClick={() => setUndoKind('checkin')} className="min-h-12 rounded-xl border border-amber-700/60 text-sm font-semibold text-amber-200">
+              <button type="button" onClick={() => setUndoKind('checkin')} disabled={busy} className="min-h-12 rounded-xl border border-amber-700/60 text-sm font-semibold text-amber-200 disabled:opacity-40">
                 Desfazer check-in
               </button>
             ) : null}
@@ -834,7 +917,8 @@ function OperationSearch({
       setHits(result.hits);
       if (result.hits.length === 0) setMessage('Nenhuma operação encontrada.');
     } catch (error) {
-      onFail('Erro de rede', error instanceof Error ? error.message : 'Falha inesperada.');
+      const caught = describeTurboCaughtError(error);
+      onFail(caught.title, caught.message);
     } finally {
       setLoading(false);
     }
@@ -854,7 +938,8 @@ function OperationSearch({
       }
       onSelectTicket(result.participant as OperationTicketDetails);
     } catch (error) {
-      onFail('Erro de rede', error instanceof Error ? error.message : 'Falha inesperada.');
+      const caught = describeTurboCaughtError(error);
+      onFail(caught.title, caught.message);
     } finally {
       setLoading(false);
     }
@@ -873,7 +958,7 @@ function OperationSearch({
           onKeyDown={(event) => {
             if (event.key === 'Enter') void runSearch();
           }}
-          placeholder="Nome, pedido ou código"
+          placeholder="Nome, CPF, pedido ou código"
           autoFocus
           className="min-h-14 min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-4 text-lg"
         />
@@ -890,7 +975,7 @@ function OperationSearch({
         {message ? <p className="text-sm text-slate-400">{message}</p> : null}
         {tickets.length > 0 ? (
           <div className="space-y-2">
-            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Pacote Militrin</p>
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Ingressos</p>
             {tickets.map((hit) => (
               <button
                 key={hit.row.ticket_id ?? hit.row.participant_id}
@@ -972,11 +1057,15 @@ function ProductChoices({
 function ProductReview({
   item,
   canDeliver,
+  busy,
+  busyLabel,
   onConfirm,
   onCancel,
 }: {
   item: OperationalProductItem;
   canDeliver: boolean;
+  busy: boolean;
+  busyLabel: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -1001,7 +1090,9 @@ function ProductReview({
       ) : null}
       <div className="mt-auto flex flex-col gap-2 pt-4">
         {canDeliver ? (
-          <BigButton onClick={onConfirm}>ENTREGAR ITEM</BigButton>
+          <BigButton onClick={onConfirm} busy={busy} disabled={busy}>
+            {busy ? busyLabel ?? 'PROCESSANDO...' : 'ENTREGAR ITEM'}
+          </BigButton>
         ) : (
           <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
         )}

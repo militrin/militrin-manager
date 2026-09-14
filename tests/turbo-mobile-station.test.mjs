@@ -18,7 +18,7 @@ test("primeira dobra do Turbo e o scanner quadrado + busca manual como fallback"
 });
 
 test("ficha pos-scan mostra nome, categoria, camiseta, kit e acao principal no polegar", () => {
-  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function ParticipantSearch("));
+  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function OperationSearch("));
   assert.match(review, /QR identificado/);
   assert.match(review, /Camiseta/);
   assert.match(review, /Kit pendente/);
@@ -38,7 +38,7 @@ test("sucesso pede LER PRÓXIMO QR e volta ao scanner sem navegar para outra rot
 });
 
 test("acoes perigosas ficam em Mais acoes, nunca como botao principal", () => {
-  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function ParticipantSearch("));
+  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function OperationSearch("));
   const primarySlice = review.slice(0, review.indexOf("Mais ações"));
   assert.doesNotMatch(primarySlice, /Desfazer entrega/);
   assert.doesNotMatch(primarySlice, /Desfazer check-in/);
@@ -47,7 +47,7 @@ test("acoes perigosas ficam em Mais acoes, nunca como botao principal", () => {
 });
 
 test("multiplos ingressos da mesma compra aparecem como lista vertical, nao tabela", () => {
-  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function ParticipantSearch("));
+  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function OperationSearch("));
   assert.match(review, /Outros ingressos desta compra/);
   assert.doesNotMatch(review, /<table/);
 });
@@ -61,9 +61,9 @@ test("falta de conexao e QR invalido usam banner de bloqueio, nao so texto peque
 });
 
 test("estados bloqueados usam VOLTAR AO SCANNER como acao principal, sucesso usa LER PROXIMO QR", () => {
-  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function ParticipantSearch("));
+  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function OperationSearch("));
   assert.match(review, /VOLTAR AO SCANNER/);
-  assert.match(review, /remainingAction \?/);
+  assert.match(review, /remainingAction && canCompleteTicket \?/);
   assert.match(review, /onCancel/);
   assert.doesNotMatch(review, /disabled=\{!canProceed\}/);
   const error = turbo.slice(turbo.indexOf("{screen.kind === 'error'"), turbo.indexOf("function SuccessStation("));
@@ -78,4 +78,23 @@ test("layout do Turbo e viewport de celular, nao desktop amplo", () => {
   assert.match(chrome, /max-w-md/);
   assert.match(chrome, /100dvh/);
   assert.doesNotMatch(chrome, /max-w-3xl/);
+});
+
+test("busca manual cita CPF e recupera a camera sem reload", () => {
+  assert.match(turbo, /Nome, CPF, pedido ou código/);
+  assert.match(scanner, /Tentar câmera de novo/);
+  assert.match(scanner, /setRestartGeneration/);
+});
+
+test("perfil sem kit\+check-in identifica o ingresso e esconde o CTA de mutacao", () => {
+  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function OperationSearch("));
+  assert.match(review, /canCompleteTicket/);
+  assert.match(review, /Este perfil não entrega kit nem faz check-in/);
+  assert.match(turbo, /canCompleteTicket=\{capabilities\?\.canCombined !== false\}/);
+});
+
+test("falha de conexao e sessao nao aparecem como Erro de rede cru", () => {
+  assert.match(turbo, /describeTurboCaughtError/);
+  assert.match(turbo, /OFFLINE_COPY/);
+  assert.doesNotMatch(turbo, /title: 'Erro de rede'/);
 });

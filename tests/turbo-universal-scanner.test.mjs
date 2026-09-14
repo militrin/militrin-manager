@@ -108,7 +108,7 @@ test("9. leitura repetida nao duplica entrega", () => {
 test("10. duplo clique nao duplica entrega", () => {
   const confirm = slice(turbo, "async function handleProductConfirm", "return (");
   assert.match(confirm, /if \(processingRef\.current\) return;/);
-  assert.match(confirm, /processingRef\.current = true;/);
+  assert.match(confirm, /beginBusy\('ENTREGANDO\.\.\.'\)/);
   const scan = slice(turbo, "async function handleInitialScan", "async function handleNext");
   assert.match(scan, /if \(processingRef\.current\) return;/);
 });
@@ -116,7 +116,7 @@ test("10. duplo clique nao duplica entrega", () => {
 test("11. pessoa com ticket + Loja aparece como operacoes separadas na busca", () => {
   const search = slice(turbo, "function OperationSearch(", "function ProductChoices(");
   assert.match(search, /searchTurboOperationsAction/);
-  assert.match(search, /Pacote Militrin/);
+  assert.match(search, /Ingressos/);
   assert.match(search, /Loja/);
   assert.match(actions, /export async function searchTurboOperationsAction/);
   assert.match(actions, /hits\.push\(\{ kind: "ticket", row \}\)/);

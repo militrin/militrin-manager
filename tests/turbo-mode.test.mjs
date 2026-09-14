@@ -109,7 +109,7 @@ test("Proximo bloqueia ingresso cancelado, ja concluido, com pendencia de check-
   assert.match(fn, /issue\.blocks_checkin \|\| issue\.blocks_kit_delivery/);
   const review = slice(turbo, "function TicketReview(", "function ProductReview(");
   assert.match(review, /canProceed = blockers\.length === 0/);
-  assert.match(review, /remainingAction \?/);
+  assert.match(review, /remainingAction && canCompleteTicket \?/);
   assert.match(review, /VOLTAR AO SCANNER/);
   assert.doesNotMatch(review, /disabled=\{!canProceed\}/);
 });
@@ -241,10 +241,16 @@ test("acesso ao Turbo e exclusivamente pelo menu lateral -- Central de Operacoes
 // ============================================================
 
 test("processingRef evita chamada concorrente em qualquer handler que dispara uma RPC (dois scans rapidos nao duplicam operacao)", () => {
+  assert.match(turbo, /const beginBusy = useCallback\(\(label: string\) => \{/);
+  assert.match(turbo, /processingRef\.current = true;\s*\n\s*setBusyLabel\(label\)/);
   for (const handler of ["handleInitialScan", "handleNext", "handleWristbandScan", "handleProductConfirm"]) {
     const fn = slice(turbo, `async function ${handler}(`);
-    assert.match(fn.slice(0, 400), /if \(processingRef\.current\) return;/);
-    assert.match(fn.slice(0, 400), /processingRef\.current = true;/);
+    assert.match(fn, /if \(processingRef\.current\) return;/);
+    if (handler === "handleInitialScan") {
+      assert.match(fn, /processingRef\.current = true;/);
+    } else {
+      assert.match(fn, /beginBusy\(/);
+    }
   }
 });
 

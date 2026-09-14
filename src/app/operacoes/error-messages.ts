@@ -28,3 +28,38 @@ export function getOperationalErrorTitle(code: string | undefined, message: stri
 
   return "Não foi possível concluir a operação";
 }
+
+/**
+ * Catch de server action no Turbo: nunca vazar digest/código cru, e nunca
+ * chamar de "Erro de rede" uma recusa de permissão ou sessão.
+ */
+export function describeTurboCaughtError(error: unknown): { title: string; message: string } {
+  const raw = error instanceof Error ? error.message : "";
+  const name = error instanceof Error ? error.name : "";
+  const normalized = `${name} ${raw}`.toLowerCase();
+
+  if (name === "PermissionDeniedError" || normalized.includes("permissao negada") || normalized.includes("permissão negada")) {
+    return {
+      title: "Sem permissão",
+      message: "Seu perfil não pode concluir esta operação. Peça a um supervisor ou abra a Central.",
+    };
+  }
+  if (
+    normalized.includes("not authenticated")
+    || normalized.includes("não autenticado")
+    || normalized.includes("nao autenticado")
+    || normalized.includes("sessão expirada")
+    || normalized.includes("sessao expirada")
+    || normalized.includes("invalid jwt")
+    || normalized.includes("auth session")
+  ) {
+    return {
+      title: "Sessão encerrada",
+      message: "Entre de novo para continuar. Nada foi confirmado neste aparelho.",
+    };
+  }
+  return {
+    title: "Falha de conexão",
+    message: "Não deu para confirmar agora. Leia o QR de novo — se a operação já tiver sido feita, o sistema mostra o estado atual.",
+  };
+}

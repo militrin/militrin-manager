@@ -134,6 +134,19 @@ function normalizeSearch(value: string) {
     .trim();
 }
 
+function searchDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function matchesOperationSearch(search: string, fields: Array<string | null | undefined>) {
+  if (!search) return true;
+  const haystack = normalizeSearch(fields.filter(Boolean).join(" "));
+  if (haystack.includes(search)) return true;
+  const digitSearch = searchDigits(search);
+  if (digitSearch.length < 3) return false;
+  return searchDigits(fields.filter(Boolean).join(" ")).includes(digitSearch);
+}
+
 function getRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
@@ -1155,26 +1168,21 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
 
   const search = normalizeSearch(filters.search ?? "");
   const tickets = (search
-    ? allRows.filter((row) => {
-        const haystack = normalizeSearch(
-          [
-            row.participant_name,
-            row.participant_email,
-            row.cpf,
-            row.phone,
-            row.buyer_name,
-            row.buyer_cpf,
-            row.buyer_phone,
-            row.buyer_email,
-            row.ticket_token,
-            row.wristband_code,
-            row.order_number,
-          ]
-            .filter(Boolean)
-            .join(" "),
-        );
-        return haystack.includes(search);
-      })
+    ? allRows.filter((row) =>
+        matchesOperationSearch(search, [
+          row.participant_name,
+          row.participant_email,
+          row.cpf,
+          row.phone,
+          row.buyer_name,
+          row.buyer_cpf,
+          row.buyer_phone,
+          row.buyer_email,
+          row.ticket_token,
+          row.wristband_code,
+          row.order_number,
+        ]),
+      )
     : allRows
   ).sort((a, b) => a.participant_name.localeCompare(b.participant_name, "pt-BR", { sensitivity: "base" }));
 
@@ -3221,12 +3229,15 @@ function storeLineMatchesSearch(
   },
   extra: string[],
 ) {
-  const haystack = normalizeSearch(
-    [item.product_name, item.variant, item.order_reference, item.buyer, item.person_name, item.item_id, ...extra]
-      .filter(Boolean)
-      .join(" "),
-  );
-  return haystack.includes(search);
+  return matchesOperationSearch(search, [
+    item.product_name,
+    item.variant,
+    item.order_reference,
+    item.buyer,
+    item.person_name,
+    item.item_id,
+    ...extra,
+  ]);
 }
 
 export async function searchTurboOperationsAction(payload: {
@@ -3244,9 +3255,40 @@ export async function searchTurboOperationsAction(payload: {
 
   const hits: TurboSearchHit[] = [];
   if (await hasPermission("participants.view")) {
-    const tickets = await listOperationTicketsAction({ eventId, search, page: 1, pageSize: 40 });
-    if (tickets.success) {
-      for (const row of tickets.tickets) hits.push({ kind: "ticket", row });
+    // A lista pagina ANTES do filtro de busca. Sem varrer as páginas, a
+    // busca manual do Turbo só via os primeiros 40/250 ingressos — inútil
+    // como fallback de câmera num evento real.
+    const pageSize = 500;
+    let page = 1;
+    const seenTickets = new Set<string>();
+    for (;;) {
+      const tickets = await listOperationTicketsAction({ eventId, page, pageSize });
+      if (!tickets.success) return { success: false, message: tickets.message ?? "Não foi possível buscar ingressos." };
+      for (const row of tickets.tickets) {
+        const key = row.ticket_id ? `t:${row.ticket_id}` : `p:${row.participant_id}`;
+        if (seenTickets.has(key)) continue;
+        if (
+          matchesOperationSearch(search, [
+            row.participant_name,
+            row.full_name,
+            row.participant_email,
+            row.cpf,
+            row.phone,
+            row.buyer_name,
+            row.buyer_cpf,
+            row.buyer_phone,
+            row.buyer_email,
+            row.ticket_token,
+            row.wristband_code,
+            row.order_number,
+          ])
+        ) {
+          seenTickets.add(key);
+          hits.push({ kind: "ticket", row });
+        }
+      }
+      if (!tickets.hasMore || page >= 4) break;
+      page += 1;
     }
   }
 
@@ -3254,11 +3296,11 @@ export async function searchTurboOperationsAction(payload: {
   const { data: storeLines, error: storeError } = await supabase
     .from("store_order_items")
     .select(
-      "id, qr_token, quantity, status, delivered_at, pickup_qr_mode, store_items(name), store_item_variants(name, value), store_orders!inner(id, order_number, display_number, event_id, organization_id, status, user_id, events(name), registration_contacts(full_name))",
+      "id, qr_token, quantity, status, delivered_at, pickup_qr_mode, store_items(name), store_item_variants(name, value), store_orders!inner(id, order_number, display_number, event_id, organization_id, status, user_id, events(name), registration_contacts(full_name, cpf))",
     )
     .eq("store_orders.event_id", eventId)
     .eq("store_orders.organization_id", organization.id)
-    .limit(300);
+    .limit(1000);
 
   if (storeError) return { success: false, message: storeError.message };
 
@@ -3279,6 +3321,7 @@ export async function searchTurboOperationsAction(payload: {
     const deliveryStatus: OperationalProductItem["delivery_status"] =
       status === "delivered" ? "delivered" : status === "cancelled" ? "cancelled" : "to_deliver";
     const personName = contact?.full_name ? String(contact.full_name) : null;
+    const contactCpf = contact?.cpf ? String(contact.cpf) : "";
     const item: OperationalProductItem = {
       source: "store",
       item_id: String(row.id),
@@ -3304,6 +3347,7 @@ export async function searchTurboOperationsAction(payload: {
         String(row.qr_token ?? ""),
         String(order?.order_number ?? ""),
         String(order?.display_number ?? ""),
+        contactCpf,
       ])
     ) {
       hits.push({ kind: "product", item });

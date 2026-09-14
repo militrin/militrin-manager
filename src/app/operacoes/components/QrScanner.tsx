@@ -36,7 +36,8 @@ export function QrScanner({
   // de mais um prop redundante nos 2 unicos chamadores atuais.
   const smallQrMode = Boolean(guideLabel);
   const showGuide = Boolean(guideLabel) || square;
-  const { videoRef, message, status, lastDetectedAt, debugInfo, tuningInfo } = useQrCameraScanner(onRead, { smallQrMode });
+  const [restartGeneration, setRestartGeneration] = useState(0);
+  const { videoRef, message, status, lastDetectedAt, debugInfo, tuningInfo } = useQrCameraScanner(onRead, { smallQrMode, restartGeneration });
   const [manual, setManual] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [showManual, setShowManual] = useState(false);
@@ -119,6 +120,15 @@ export function QrScanner({
         <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{helpMessage}</p>
       ) : null}
       {status === 'error' && !square ? <p className="mt-2 text-sm text-rose-300">{message}</p> : null}
+      {status === 'error' ? (
+        <button
+          type="button"
+          onClick={() => setRestartGeneration((current) => current + 1)}
+          className="min-h-12 w-full rounded-2xl border border-cyan-700 bg-cyan-950 text-base font-semibold text-cyan-100"
+        >
+          Tentar câmera de novo
+        </button>
+      ) : null}
       {hideManual ? (
         <details className="rounded-2xl border border-slate-800 bg-slate-950/60 px-3 py-2">
           <summary className="cursor-pointer text-sm font-semibold text-slate-400">Código manual / USB</summary>

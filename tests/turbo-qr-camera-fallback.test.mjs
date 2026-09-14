@@ -97,9 +97,9 @@ test("nenhuma nova deteccao/chamada de rede e agendada enquanto onRead ainda est
 test("onRead e isolado via ref -- camera nunca reabre por causa de o componente-pai recriar a funcao onRead (bug real: WristbandLookupClient chamava setLoading(true) dentro do proprio handler, recriando a funcao e derrubando a camera no meio da leitura)", () => {
   assert.match(hook, /const onReadRef = useRef\(onRead\)/);
   assert.match(hook, /onReadRef\.current = onRead;/);
-  const cameraEffect = slice(hook, "  useEffect(() => {\n    let cancelled = false;", "}, [smallQrMode, isDev]);");
+  const cameraEffect = slice(hook, "  useEffect(() => {\n    let cancelled = false;", "}, [smallQrMode, isDev, restartGeneration]);");
   assert.doesNotMatch(cameraEffect, /\[onRead\]/);
-  assert.match(hook, /}, \[smallQrMode, isDev\]\);\s*\n\s*\n\s*return \{ videoRef, status, message, lastDetectedAt, debugInfo, tuningInfo \};/);
+  assert.match(hook, /}, \[smallQrMode, isDev, restartGeneration\]\);\s*\n\s*return \{ videoRef, status, message, lastDetectedAt, debugInfo, tuningInfo \};/);
 });
 
 test("MediaStreamTracks sao liberadas no cleanup do effect (desmontar o componente, ou sair do Modo Turbo/trocar de tela, sempre libera a camera)", () => {
@@ -138,7 +138,7 @@ test("guideLabel nunca fica desenhado por cima do video -- fica ACIMA da area da
 
 test("modo smallQrMode e derivado do guideLabel e repassado pro hook -- QrScannerModal (sem guideLabel) nunca ativa esse modo", () => {
   assert.match(qrScanner, /const smallQrMode = Boolean\(guideLabel\)/);
-  assert.match(qrScanner, /useQrCameraScanner\(onRead, \{ smallQrMode \}\)/);
+  assert.match(qrScanner, /useQrCameraScanner\(onRead, \{ smallQrMode, restartGeneration \}\)/);
   assert.doesNotMatch(qrScannerModal, /smallQrMode/);
 });
 
