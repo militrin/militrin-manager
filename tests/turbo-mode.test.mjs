@@ -107,7 +107,9 @@ test("Proximo bloqueia ingresso cancelado, ja concluido, com pendencia de check-
   assert.match(fn, /issue\.blocks_checkin \|\| issue\.blocks_kit_delivery/);
   const review = slice(turbo, "function TicketReview(", "function ProductReview(");
   assert.match(review, /canProceed = blockers\.length === 0/);
-  assert.match(review, /disabled={!canProceed}/);
+  assert.match(review, /remainingAction \?/);
+  assert.match(review, /VOLTAR AO SCANNER/);
+  assert.doesNotMatch(review, /disabled=\{!canProceed\}/);
 });
 
 test("reserved_quantity isolado nunca bloqueia -- Turbo nao duplica a formula de estoque, so delega pras RPCs existentes", () => {

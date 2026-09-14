@@ -140,7 +140,7 @@ test("erro de pulseira oferece 'Tentar outra pulseira' (volta pra scanning_wrist
   assert.match(turboMode, /type: 'RETRY_WRISTBAND'; participant: OperationTicketDetails/);
   assert.match(turboMode, /case 'RETRY_WRISTBAND':\s*\n\s*return \{ kind: 'scanning_wristband', participant: action\.participant \};/);
   assert.match(turboMode, /Tentar outra pulseira/);
-  assert.match(turboMode, /Cancelar e voltar ao leitor inicial/);
+  assert.match(turboMode, /VOLTAR AO SCANNER/);
 });
 
 // ============================================================

@@ -60,6 +60,19 @@ test("falta de conexao e QR invalido usam banner de bloqueio, nao so texto peque
   assert.match(turbo, /tone === 'attention'/);
 });
 
+test("estados bloqueados usam VOLTAR AO SCANNER como acao principal, sucesso usa LER PROXIMO QR", () => {
+  const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function ParticipantSearch("));
+  assert.match(review, /VOLTAR AO SCANNER/);
+  assert.match(review, /remainingAction \?/);
+  assert.match(review, /onCancel/);
+  assert.doesNotMatch(review, /disabled=\{!canProceed\}/);
+  const error = turbo.slice(turbo.indexOf("{screen.kind === 'error'"), turbo.indexOf("function SuccessStation("));
+  assert.match(error, /VOLTAR AO SCANNER/);
+  assert.doesNotMatch(error, /LER PRÓXIMO QR/);
+  const success = turbo.slice(turbo.indexOf("function SuccessStation("), turbo.indexOf("function TicketReview("));
+  assert.match(success, /LER PRÓXIMO QR/);
+});
+
 test("layout do Turbo e viewport de celular, nao desktop amplo", () => {
   const chrome = turbo.slice(turbo.indexOf("function Chrome("), turbo.indexOf("function BigButton("));
   assert.match(chrome, /max-w-md/);

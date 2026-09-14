@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
 import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
 import { resolveOperationalPaymentState } from "@/lib/operations/payment-operational-state";
+import { resolveTicketOperationGate } from "@/lib/operations/ticket-operation-gate";
 import type {
   OperationGroup,
   OperationOrderTicketSummary,
@@ -443,18 +444,12 @@ function mapTicketRow(params: {
   const kitStatus = resolveKitStatus(ticketId, kitMap, applicableKitItemCount, kitQueryFailed);
   const wristband = wristbandByTicket.get(ticketId) ?? null;
 
-  const paymentState = resolveOperationalPaymentState({
+  const { canOperate, blockReason, paymentState } = resolveTicketOperationGate({
+    ticketStatus,
     paymentStatus,
     paymentMethod,
     priceOrigin: payment?.priceOrigin,
-    ticketStatus,
   });
-  const blockReason =
-    !paymentState.operational
-      ? paymentState.blockReason
-      : registrationStatus === "cancelled"
-        ? "Inscrição cancelada."
-        : null;
 
   const ticketIndex = orderTicketIndex.get(ticketId) ?? { position: 1, count: 1 };
 
@@ -502,7 +497,7 @@ function mapTicketRow(params: {
     wristband_id: wristband?.id ?? null,
     wristband_code: wristband?.code ?? null,
     wristband_status: wristband?.status ?? "none",
-    can_operate: blockReason === null,
+    can_operate: canOperate,
     block_reason: blockReason,
     order_ticket_count: ticketIndex.count,
     order_ticket_position: ticketIndex.position,

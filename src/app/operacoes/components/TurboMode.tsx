@@ -16,6 +16,7 @@ import {
   undoFullKitDeliveryAction,
   undoOperationalProductDeliveryAction,
 } from '../actions';
+import { remainingTurboTicketAction } from '@/lib/operations/ticket-operation-gate';
 import { getOperationalErrorTitle } from '../error-messages';
 import { QrScanner } from './QrScanner';
 import { ReasonDialog } from './ReasonDialog';
@@ -540,11 +541,11 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
                   Tentar outra pulseira
                 </BigButton>
                 <BigButton tone="neutral" onClick={backToScanner}>
-                  Cancelar e voltar ao leitor inicial
+                  VOLTAR AO SCANNER
                 </BigButton>
               </>
             ) : (
-              <BigButton onClick={backToScanner}>LER PRÓXIMO QR</BigButton>
+              <BigButton onClick={backToScanner}>VOLTAR AO SCANNER</BigButton>
             )}
             {screen.ticketId ? (
               <details className="rounded-2xl border border-slate-800 px-3 py-2">
@@ -631,7 +632,23 @@ function TicketReview({
       : { tone: 'block' as const, label: blockers[0] === 'Ingresso cancelado.' ? 'Ingresso cancelado' : 'Operação bloqueada' }
     : { tone: 'success' as const, label: 'QR identificado' };
 
-  const primaryLabel = needsWristband ? 'ESCANEAR PULSEIRA' : 'ENTREGAR + CHECK-IN';
+  const remainingAction = canProceed
+    ? remainingTurboTicketAction({
+        ticketStatus: participant.ticket_status,
+        checkinStatus: participant.checkin_status,
+        canOperate: participant.can_operate,
+        kitPending: pendingKit,
+        wristbandRequired: needsWristband,
+      })
+    : null;
+  const primaryLabel =
+    remainingAction === 'wristband'
+      ? 'ESCANEAR PULSEIRA'
+      : remainingAction === 'deliver_and_checkin'
+        ? 'ENTREGAR + CHECK-IN'
+        : remainingAction === 'checkin'
+          ? 'CHECK-IN'
+          : 'VOLTAR AO SCANNER';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -689,9 +706,11 @@ function TicketReview({
       </div>
 
       <div className="shrink-0 space-y-2 pt-2">
-        <BigButton onClick={onNext} disabled={!canProceed}>
-          {primaryLabel}
-        </BigButton>
+        {remainingAction ? (
+          <BigButton onClick={onNext}>{primaryLabel}</BigButton>
+        ) : (
+          <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
+        )}
         <details className="rounded-2xl border border-slate-800 px-3 py-2">
           <summary className="cursor-pointer text-sm font-semibold text-slate-500">Mais ações</summary>
           <div className="mt-2 flex flex-col gap-2">
@@ -924,7 +943,7 @@ function ProductAlreadyDelivered({
         <Fact label="Operador" value={item.delivered_by ?? 'Não identificado'} />
       </div>
       <div className="mt-auto flex flex-col gap-2 pt-4">
-        <BigButton onClick={onBack}>LER PRÓXIMO QR</BigButton>
+        <BigButton onClick={onBack}>VOLTAR AO SCANNER</BigButton>
         {canUndoDelivery ? (
           <details className="rounded-2xl border border-slate-800 px-3 py-2">
             <summary className="cursor-pointer text-sm font-semibold text-slate-500">Mais ações</summary>
