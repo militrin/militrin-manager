@@ -13,6 +13,9 @@ export const DATA_DELETION_PATH = '/exclusao-de-dados';
 
 export const MILITRIN_CONTACT_EMAIL = 'oktoberfest.militrin@gmail.com';
 
+export const MILITRIN_INSTAGRAM_HANDLE = 'militrinoktober';
+export const MILITRIN_INSTAGRAM_URL = 'https://www.instagram.com/militrinoktober/';
+
 export function getMilitrinContactEmail(): string {
   const value = process.env.NEXT_PUBLIC_MILITRIN_CONTACT_EMAIL?.trim() ?? '';
   if (value.includes('@') && value.length <= 254) return value;

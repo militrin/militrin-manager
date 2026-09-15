@@ -8,10 +8,8 @@ type ParticipantAuthCardProps = {
   defaultNext?: string;
 };
 
-// Mesma casca visual da home publica (/): gradiente com --brand-glow (segue
-// o brand_theme da plataforma), mesmo container/card, mesma marca e o mesmo
-// PublicLoginForm usado la -- /entrar e a home precisam continuar sendo a
-// mesma identidade de produto, so que esta pagina e focada em login.
+// Porta de login publica. A home (/) e a landing institucional e aponta
+// para ca; o formulario permanece unico (PublicLoginForm) para nao divergir.
 export function ParticipantAuthCard({
   title = 'Entrar',
   subtitle = 'Acesse suas compras, acessos Militrin e dados do usuário.',

@@ -412,3 +412,99 @@ body {
   min-height: 1.75rem;
   padding-block: 0.125rem;
 }
+
+.public-landing {
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+.landing-grain {
+  pointer-events: none;
+  opacity: 0.11;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+}
+
+.landing-phone {
+  position: relative;
+  width: 214px;
+  overflow: hidden;
+  border-radius: 2.35rem;
+  background: linear-gradient(160deg, #52525b 0%, #09090b 18%, #09090b 82%, #3f3f46 100%);
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: transform 500ms ease;
+}
+
+.landing-phone-main {
+  width: 230px;
+  height: 470px;
+}
+
+.landing-phone-secondary {
+  width: 210px;
+  height: 430px;
+}
+
+.landing-phone-screen {
+  position: absolute;
+  inset: 7px;
+  overflow: hidden;
+  border-radius: 1.9rem;
+  background: #07111f;
+}
+
+.landing-phone-notch {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 10;
+  height: 16px;
+  width: 86px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.88);
+}
+
+@media (min-width: 40rem) {
+  .landing-phone-main {
+    width: 248px;
+    height: 508px;
+  }
+}
+
+@media (min-width: 64rem) {
+  .landing-phone-main {
+    width: 262px;
+    height: 530px;
+    transform: rotate(-11deg) translate(12px, 8px);
+  }
+  .landing-phone-secondary {
+    width: 228px;
+    height: 460px;
+    transform: rotate(12deg) translate(-28px, 36px);
+  }
+}
+
+@keyframes landing-glow {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.42; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .landing-hero-glow {
+    animation: landing-glow 8s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-phone,
+  .landing-phone-main,
+  .landing-phone-secondary,
+  .landing-hero-glow {
+    transition: none;
+    transform: none;
+    animation: none;
+  }
+}

@@ -83,30 +83,24 @@ test('middleware trata /minha-conta, /painel e as demais rotas protegidas como u
   assert.match(source, /sanitizePostFirstAccessNextPath\(request\.nextUrl\.searchParams\.get\('next'\), '\/minha-conta'\)/);
 });
 
-test('/entrar reusa a identidade visual e o formulario da home publica, nao uma pagina paralela', async () => {
+test('/entrar continua sendo a porta de login; a home publica aponta para ela sem duplicar o formulario', async () => {
   const entrarPage = await readFile(new URL('../src/app/entrar/page.tsx', import.meta.url), 'utf8');
   assert.match(entrarPage, /ParticipantAuthCard/);
 
   const authCard = await readFile(new URL('../src/components/public/ParticipantAuthCard.tsx', import.meta.url), 'utf8');
   const home = await readFile(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
-  const homeLoginForm = await readFile(new URL('../src/app/home-login-form.tsx', import.meta.url), 'utf8');
+  const landing = await readFile(new URL('../src/components/public/PublicLanding.tsx', import.meta.url), 'utf8');
 
-  // Mesmo shell/gradiente de fundo (segue --brand-glow, nao uma cor fixa
-  // paralela) e mesmo formato de card em ambas as paginas.
   assert.match(authCard, /var\(--brand-glow\)/);
-  assert.match(home, /var\(--brand-glow\)/);
-  assert.match(authCard, /rounded-\[2rem\] border border-slate-800\/70 bg-slate-950\/65/);
-  assert.match(home, /rounded-\[2rem\] border border-slate-800\/70 bg-slate-950\/65/);
-
-  // Mesma marca (nao um logo/badge proprio e diferente do usado na home).
   assert.match(authCard, /PublicBrandMark/);
-  assert.match(home, /PublicBrandMark/);
-  assert.doesNotMatch(authCard, /Militrin Participant Portal/);
-
-  // Mesmo componente de formulario de login em ambas as rotas -- nao duas
-  // implementacoes de formulario que podem divergir.
   assert.match(authCard, /PublicLoginForm/);
-  assert.match(homeLoginForm, /PublicLoginForm/);
+  assert.match(home, /redirect\('\/minha-conta'\)/);
+  assert.match(home, /PublicLanding/);
+  assert.doesNotMatch(home, /PublicLoginForm/);
+  assert.doesNotMatch(landing, /PublicLoginForm/);
+  assert.match(landing, /href=\{PUBLIC_LOGIN_PATH\}/);
+  assert.match(landing, /PUBLIC_LOGIN_PATH = '\/entrar'/);
+  assert.match(landing, /FIRST_ACCESS_PATH = '\/primeiro-acesso\/reenviar'/);
 });
 
 test('PublicLoginForm resolve o destino pos-login a partir do ?next da propria pagina, com fallback seguro', async () => {

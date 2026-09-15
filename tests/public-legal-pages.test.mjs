@@ -88,11 +88,13 @@ test('e-mail institucional temporario e o canal publico de contato', () => {
 test('footer publico aponta para as duas paginas legais', async () => {
   const footer = await readFile(footerPath, 'utf8');
   const home = await readFile(homePath, 'utf8');
+  const landing = await readFile(new URL('../src/components/public/PublicLanding.tsx', import.meta.url), 'utf8');
   assert.match(footer, /Política de Privacidade/);
   assert.match(footer, /Exclusão de Dados/);
   assert.match(footer, /PRIVACY_POLICY_PATH/);
   assert.match(footer, /DATA_DELETION_PATH/);
-  assert.match(home, /<PublicSiteFooter \/>/);
+  assert.match(home, /PublicLanding/);
+  assert.match(landing, /<PublicSiteFooter \/>/);
 });
 
 test('criar conta liga a politica de privacidade existente', async () => {
