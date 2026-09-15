@@ -100,7 +100,24 @@ test('/entrar continua sendo a porta de login; a home publica aponta para ela se
   assert.doesNotMatch(landing, /PublicLoginForm/);
   assert.match(landing, /href=\{PUBLIC_LOGIN_PATH\}/);
   assert.match(landing, /PUBLIC_LOGIN_PATH = '\/entrar'/);
-  assert.match(landing, /FIRST_ACCESS_PATH = '\/primeiro-acesso\/reenviar'/);
+  assert.match(landing, /PUBLIC_SIGNUP_PATH = '\/criar-conta'/);
+  assert.doesNotMatch(landing, /Primeiro acesso/);
+  assert.doesNotMatch(landing, /FIRST_ACCESS_PATH/);
+  assert.doesNotMatch(landing, /Garantir meu pacote/);
+});
+
+test('login publico preserva Criar minha conta e Esqueci minha senha; reenvio de primeiro acesso permanece na rota propria', async () => {
+  const form = await readFile(new URL('../src/components/public/PublicLoginForm.tsx', import.meta.url), 'utf8');
+  const resend = await readFile(new URL('../src/app/primeiro-acesso/reenviar/page.tsx', import.meta.url), 'utf8');
+  const resendActions = await readFile(new URL('../src/app/primeiro-acesso/reenviar/actions.ts', import.meta.url), 'utf8');
+  assert.match(form, /Criar minha conta/);
+  assert.match(form, /href=\{createAccountHref\}/);
+  assert.match(form, /\/criar-conta/);
+  assert.match(form, /href="\/esqueci-minha-senha"/);
+  assert.doesNotMatch(form, /Primeiro acesso/);
+  assert.doesNotMatch(form, /\/primeiro-acesso\/reenviar/);
+  assert.match(resend, /Solicitar novo convite/);
+  assert.match(resendActions, /export async function requestFirstAccessInviteResendAction/);
 });
 
 test('PublicLoginForm resolve o destino pos-login a partir do ?next da propria pagina, com fallback seguro', async () => {

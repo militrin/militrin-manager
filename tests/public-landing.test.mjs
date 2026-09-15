@@ -20,15 +20,25 @@ test('home deslogada e landing institucional e, se autenticado, continua indo pa
 
 test('CTAs da landing usam rotas reais ja existentes', async () => {
   const landing = await read('src/components/public/PublicLanding.tsx');
+  const signup = await read('src/app/criar-conta/page.tsx');
+  const resend = await read('src/app/primeiro-acesso/reenviar/page.tsx');
   assert.match(landing, /PUBLIC_LOGIN_PATH = '\/entrar'/);
-  assert.match(landing, /FIRST_ACCESS_PATH = '\/primeiro-acesso\/reenviar'/);
+  assert.match(landing, /PUBLIC_SIGNUP_PATH = '\/criar-conta'/);
   assert.match(landing, /FORGOT_PASSWORD_PATH = '\/esqueci-minha-senha'/);
   assert.match(landing, /href=\{PUBLIC_LOGIN_PATH\}/);
-  assert.match(landing, /href=\{FIRST_ACCESS_PATH\}/);
+  assert.match(landing, /href=\{PUBLIC_SIGNUP_PATH\}/);
   assert.match(landing, /href=\{FORGOT_PASSWORD_PATH\}/);
+  assert.match(landing, /Criar minha conta/);
   assert.match(landing, /next=\/minha-conta\/ingressos/);
   assert.match(landing, /next=\/minha-conta\/compras/);
   assert.match(landing, /next=\/minha-conta\/dados/);
+  assert.doesNotMatch(landing, /Garantir meu pacote/);
+  assert.doesNotMatch(landing, /\/inscricao\//);
+  assert.doesNotMatch(landing, /isEventOpen/);
+  assert.doesNotMatch(landing, /Primeiro acesso/);
+  assert.doesNotMatch(landing, /FIRST_ACCESS_PATH/);
+  assert.match(signup, /signUpPublicAccountAction/);
+  assert.match(resend, /Solicitar novo convite/);
   assert.doesNotMatch(landing, /whatsapp/i);
   assert.doesNotMatch(landing, /wa\.me/);
 });

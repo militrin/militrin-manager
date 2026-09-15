@@ -6,13 +6,13 @@ import {
   CircleUserRound,
   Headphones,
   Info,
-  KeyRound,
   Mail,
   MapPin,
   QrCode,
   Shield,
   ShoppingBag,
   Smartphone,
+  UserPlus,
   Users,
 } from 'lucide-react';
 import { LandingPhones } from '@/components/public/LandingPhones';
@@ -33,7 +33,7 @@ import {
 } from '@/lib/utils/date';
 
 export const PUBLIC_LOGIN_PATH = '/entrar';
-export const FIRST_ACCESS_PATH = '/primeiro-acesso/reenviar';
+export const PUBLIC_SIGNUP_PATH = '/criar-conta';
 export const FORGOT_PASSWORD_PATH = '/esqueci-minha-senha';
 export const LANDING_SHOW_ART = '/landing/evento-card.webp';
 
@@ -70,8 +70,16 @@ const faqItems = [
     answer: OKTOBERFEST_ACCESS_NOTICE.full,
   },
   {
+    question: 'Ainda não tenho conta. O que faço?',
+    answer: 'Use Criar minha conta. Depois de autenticado, a compra do Pacote Militrin aparece em Minha conta quando as vendas estiverem abertas.',
+  },
+  {
+    question: 'Já tenho conta. Como entro?',
+    answer: 'Use Acessar minha conta. Se esqueceu a senha, use Esqueci minha senha na tela de login.',
+  },
+  {
     question: 'Já comprei, mas nunca criei senha. O que faço?',
-    answer: 'Use Primeiro acesso. Informe o e-mail do convite para receber um novo link, válido por 24 horas.',
+    answer: 'Se você recebeu um e-mail de acesso ou convite, use esse link para ativar a conta que já existe no sistema. Isso não é o mesmo que Criar minha conta.',
   },
   {
     question: 'Onde vejo minhas compras?',
@@ -79,7 +87,7 @@ const faqItems = [
   },
   {
     question: 'Não recebi o e-mail de acesso.',
-    answer: 'Confira a caixa de spam. Se o convite não chegou, solicite um novo em Primeiro acesso com o mesmo e-mail da compra.',
+    answer: 'Confira a caixa de spam. Se já tem senha, recupere em Esqueci minha senha. Se recebeu um convite e o e-mail não chegou, fale pelos canais oficiais abaixo com o mesmo e-mail da compra.',
   },
   {
     question: 'Preciso imprimir o QR Code?',
@@ -216,9 +224,9 @@ export function PublicLanding({ event }: { event: PublicLandingEvent }) {
                 Acessar minha conta
                 <ArrowRight size={16} />
               </Link>
-              <Link href={FIRST_ACCESS_PATH} className={`${secondaryCtaClass} w-full sm:w-auto`}>
-                <KeyRound size={16} />
-                Primeiro acesso
+              <Link href={PUBLIC_SIGNUP_PATH} className={`${secondaryCtaClass} w-full sm:w-auto`}>
+                <UserPlus size={16} />
+                Criar minha conta
               </Link>
               <Link href={FORGOT_PASSWORD_PATH} className={`inline-flex min-h-11 items-center justify-center px-1 text-sm font-medium text-slate-400 underline-offset-4 hover:text-white hover:underline ${focusRing}`}>
                 Esqueci minha senha
