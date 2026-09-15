@@ -223,7 +223,7 @@ export async function findUserByPinAction(ticketId: string, pin: string) {
   const { data, error } = await supabase.rpc('find_user_by_public_pin', { p_ticket_id: ticketId, p_pin: pin });
   if (error) return { user: null, message: error.message };
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row) return { user: null, message: 'Nenhum usuário encontrado para esse PIN.' };
+  if (!row) return { user: null, message: 'Nenhum usuário encontrado para esse código do ingresso.' };
   return { user: { fullName: String(row.full_name) }, message: null };
 }
 

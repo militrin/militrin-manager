@@ -114,7 +114,7 @@ export default async function DadosPage({
             <p className="text-lg font-semibold text-white" title={displayName}>{displayName}</p>
           </div>
         </div>
-        {publicPin ? <div className="mb-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4"><p className="text-xs uppercase tracking-wider text-emerald-300">Seu PIN Militrin</p><p className="mt-1 font-mono text-xl font-semibold tracking-[0.2em] text-white">{publicPin}</p><p className="mt-1 text-xs text-slate-400">Compartilhe este código para receber titularidade ou transferência de ingressos. Ele não é uma senha.</p></div> : null}
+        {publicPin ? <div className="mb-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4"><p className="text-xs uppercase tracking-wider text-emerald-300">Código do ingresso</p><p className="mt-1 font-mono text-xl font-semibold tracking-[0.2em] text-white">{publicPin}</p><p className="mt-1 text-xs text-slate-400">Compartilhe este código para receber titularidade ou transferência de ingressos. Ele não é uma senha.</p></div> : null}
 
         <form action={saveProfileAction} className="grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="next_path" value={safeNext} />

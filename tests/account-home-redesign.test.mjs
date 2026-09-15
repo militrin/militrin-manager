@@ -138,6 +138,21 @@ test('PIN da home no mobile reusa getMyPublicPin e some no desktop do card de ac
   assert.match(carousel, /lg:hidden/);
   assert.match(pin, /navigator\.clipboard\.writeText\(publicPin\)/);
   assert.match(pin, /Copiado/);
+  assert.match(pin, /Código do ingresso/);
+  assert.match(pin, /Copiar código do ingresso/);
+  assert.doesNotMatch(pin, /Meu PIN/);
   assert.match(layout, /<PublicPinCopy publicPin=\{publicPin\} \/>/);
   assert.doesNotMatch(layout, /compact/);
+});
+
+test('participante ve public_pin como Codigo do ingresso, sem copy de PIN', async () => {
+  const dados = await read('src/app/minha-conta/dados/page.tsx');
+  const holder = await read('src/app/minha-conta/ingressos/[ticketId]/ticket-holder-actions.tsx');
+  const actions = await read('src/app/minha-conta/actions.ts');
+  assert.match(dados, /Código do ingresso/);
+  assert.doesNotMatch(dados, /Seu PIN Militrin/);
+  assert.match(holder, /placeholder="Código do ingresso"/);
+  assert.doesNotMatch(holder, /PIN do usuário/);
+  assert.match(actions, /Nenhum usuário encontrado para esse código do ingresso/);
+  assert.doesNotMatch(actions, /Nenhum usuário encontrado para esse PIN/);
 });
