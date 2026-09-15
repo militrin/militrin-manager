@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, CircleUserRound, Eye, EyeOff, Lock, Mail, Shield } from 'lucide-react';
 import { useState } from 'react';
 import { signInPublicAccountAction } from '@/app/inscricao/actions';
 import { resolvePostAuthDestination } from '@/lib/utils/safe-navigation';
@@ -11,10 +11,9 @@ type PublicLoginFormProps = {
   defaultNext?: string;
 };
 
-// Componente unico de login publico, reutilizado pela home (/) e por /entrar
-// -- ambas as rotas precisam permanecer a mesma experiencia visual e
-// funcional (identidade, campos, resolucao de "next"), nao duas
-// implementacoes paralelas que podem divergir com o tempo.
+const fieldClass = 'h-12 w-full rounded-2xl border border-white/10 bg-slate-950/80 py-3 pl-11 pr-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400';
+const focusRing = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950';
+
 export function PublicLoginForm({ defaultNext = '/minha-conta' }: PublicLoginFormProps) {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -71,39 +70,45 @@ export function PublicLoginForm({ defaultNext = '/minha-conta' }: PublicLoginFor
     : '/criar-conta';
 
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
-      <label className="block space-y-1 text-sm">
+    <form onSubmit={onSubmit} className="space-y-4">
+      <label className="block space-y-1.5 text-sm">
         <span className="text-slate-300">E-mail</span>
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400"
-          placeholder="voce@exemplo.com"
-        />
+        <span className="relative block">
+          <Mail size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className={fieldClass}
+            placeholder="seu@email.com"
+            autoComplete="email"
+          />
+        </span>
       </label>
 
-      <label className="block space-y-1 text-sm">
+      <label className="block space-y-1.5 text-sm">
         <span className="text-slate-300">Senha</span>
-        <div className="flex gap-2">
+        <span className="relative block">
+          <Lock size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type={showPassword ? 'text' : 'password'}
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-emerald-400"
+            className={`${fieldClass} pr-12`}
             placeholder="Sua senha"
+            autoComplete="current-password"
           />
           <button
             type="button"
             onClick={() => setShowPassword((prev) => !prev)}
-            className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-700 px-3 text-slate-200"
+            className={`absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 hover:text-white ${focusRing}`}
             aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
           >
             {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
-        </div>
+        </span>
       </label>
 
       {message ? <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{message}</p> : null}
@@ -111,19 +116,36 @@ export function PublicLoginForm({ defaultNext = '/minha-conta' }: PublicLoginFor
       <button
         type="submit"
         disabled={loading}
-        className="h-12 w-full rounded-2xl bg-emerald-400 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+        className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-emerald-400 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`}
       >
         {loading ? 'Entrando...' : 'Entrar'}
+        {loading ? null : <ArrowRight size={16} />}
       </button>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs sm:text-sm">
-        <Link href="/esqueci-minha-senha" className="text-slate-300 transition hover:text-white">
-          Esqueci minha senha
-        </Link>
-        <Link href={createAccountHref} className="font-semibold text-emerald-300 transition hover:text-emerald-200">
-          Criar minha conta
+      <div className="flex justify-end">
+        <Link href="/esqueci-minha-senha" className={`text-sm text-slate-400 underline-offset-4 hover:text-white hover:underline ${focusRing}`}>
+          Esqueci minha senha?
         </Link>
       </div>
+
+      <div className="flex items-center gap-3 pt-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        <span className="h-px flex-1 bg-white/10" />
+        ou
+        <span className="h-px flex-1 bg-white/10" />
+      </div>
+
+      <Link
+        href={createAccountHref}
+        className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-emerald-400/70 bg-transparent text-sm font-semibold text-white transition hover:bg-emerald-400/10 ${focusRing}`}
+      >
+        <CircleUserRound size={16} />
+        Criar minha conta
+      </Link>
+
+      <p className="flex items-center justify-center gap-2 pt-1 text-xs text-slate-500">
+        <Shield size={13} className="text-emerald-300" />
+        Seus dados estão seguros com a gente.
+      </p>
     </form>
   );
 }

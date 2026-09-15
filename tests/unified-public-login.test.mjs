@@ -91,9 +91,9 @@ test('/entrar continua sendo a porta de login; a home publica aponta para ela se
   const home = await readFile(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const landing = await readFile(new URL('../src/components/public/PublicLanding.tsx', import.meta.url), 'utf8');
 
-  assert.match(authCard, /var\(--brand-glow\)/);
-  assert.match(authCard, /PublicBrandMark/);
+  assert.match(authCard, /mask-logo/);
   assert.match(authCard, /PublicLoginForm/);
+  assert.match(authCard, /evento-card\.webp/);
   assert.match(home, /redirect\('\/minha-conta'\)/);
   assert.match(home, /PublicLanding/);
   assert.doesNotMatch(home, /PublicLoginForm/);
