@@ -60,9 +60,19 @@ test("listar publicacoes nao expoe token e nao seleciona automaticamente", () =>
   assert.equal("token" in dto, false);
   assert.match(picker, /CARREGAR PUBLICAÇÕES/);
   assert.match(picker, /SELECIONAR/);
+  assert.match(picker, /Tentar novamente/);
+  assert.match(picker, /Reconectar Instagram/);
+  assert.match(picker, /Nenhuma publicação disponível foi encontrada/);
   assert.doesNotMatch(picker, /setSelected\(values\[0\]/);
   assert.doesNotMatch(sync, /access_token/);
   assert.match(sync, /toInstagramMediaCard/);
+  assert.match(sync, /ok: false/);
+  assert.match(sync, /isNextControlFlowError/);
+  assert.match(sync, /SyncGiveawayCommentsResult/);
+  assert.match(sync, /reconnectRequired/);
+  const importer = read("src/components/sorteios/InstagramImport.tsx");
+  assert.match(importer, /if \(!result\.ok\)/);
+  assert.doesNotMatch(importer, /value instanceof Error \? value\.message/);
 });
 
 test("criar instagram sem publicacao e bloqueado e media_id e persistido", () => {
@@ -137,10 +147,12 @@ test("rotas da central existem e hardcodes de post foram removidos da UI", () =>
   assert.match(app, /Após iniciar, o snapshot ficará congelado/);
 });
 
-test("paginacao de midia usa cursor after", () => {
+test("paginacao de midia usa cursor after e /me/media", () => {
   const api = read("src/lib/instagram/meta-api.ts");
   assert.match(api, /listInstagramMediaPage/);
   assert.match(api, /searchParams\.set\("after"/);
+  assert.match(api, /objectId: "me"/);
+  assert.match(api, /INSTAGRAM_MEDIA_FIELDS_WITHOUT_URL/);
   assert.equal(extractInstagramPagingCursor("https://graph.instagram.com/v26.0/me/media?after=CURSOR", undefined), "CURSOR");
 });
 

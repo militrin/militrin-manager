@@ -1,13 +1,23 @@
 import "server-only";
 import { InstagramOAuthError } from "@/lib/instagram/oauth-errors";
-import { readMetaError } from "@/lib/instagram/meta-error";
+import {
+  classifyInstagramGraphFailure,
+  instagramMediaLoadUserCopy,
+  logInstagramGraphEvent,
+  readMetaError,
+  type InstagramGraphFailureKind,
+} from "@/lib/instagram/meta-error";
 import { isInstagramRuntimeConfigured, requireInstagramRedirectUri } from "@/lib/instagram/oauth-config";
 import { instagramRedirectUriDiagnostics, logInstagramAppSecretInspect, logInstagramOAuthTokenRequest, logInstagramRedirectUri } from "@/lib/instagram/oauth-log";
 import { buildInstagramAuthorizationCodeForm } from "@/lib/instagram/oauth-token-form";
 import { inspectInstagramAppSecret, sha256Hex } from "@/lib/instagram/oauth-code-inspect";
+import { INSTAGRAM_COMMENTS_FIELDS, INSTAGRAM_COMMENTS_PAGE_LIMIT, logicalGraphEndpoint, walkInstagramPages } from "@/lib/instagram/graph-pagination";
 
 const apiVersion = process.env.META_GRAPH_API_VERSION?.trim();
 const graphBase = "https://graph.instagram.com";
+export const INSTAGRAM_GRAPH_TIMEOUT_MS = 15_000;
+export const INSTAGRAM_MEDIA_FIELDS = "id,caption,media_type,permalink,timestamp,thumbnail_url,media_url";
+export const INSTAGRAM_MEDIA_FIELDS_WITHOUT_URL = "id,caption,media_type,permalink,timestamp,thumbnail_url";
 
 function versioned(path: string) {
   if (!apiVersion) throw new Error("META_GRAPH_API_VERSION nao configurada. Defina explicitamente a versao vigente da Graph API.");
@@ -24,50 +34,161 @@ function assertGraphInstagramUrl(value: string) {
 type MetaPage<T> = {
   data?: T[];
   paging?: { next?: string; cursors?: { after?: string } };
-  error?: { message?: string };
+  error?: { message?: string; code?: number; error_subcode?: number; type?: string };
 };
 
-type MetaErrorBody = { error?: { code?: number; error_subcode?: number; type?: string; message?: string } };
+type MetaErrorBody = { error?: { code?: number; error_subcode?: number; type?: string; message?: string; fbtrace_id?: string } };
 
-function safeMetaError(status: number, body: MetaErrorBody) {
-  const code = body.error?.code;
-  if (code === 190) return new Error("A conexao com o Instagram expirou. Conecte a conta novamente.");
-  if (code === 10 || code === 200) return new Error("O app nao possui permissao suficiente para esta operacao no Instagram.");
-  if (code === 4 || code === 17 || code === 32 || code === 613 || status === 429) return new Error("O limite temporario de chamadas da Meta foi atingido. Tente novamente mais tarde.");
-  if (code === 100 || status === 404) return new Error("A publicacao nao foi encontrada ou nao esta acessivel pela conta conectada.");
-  return new Error("A Meta nao conseguiu concluir a operacao. Tente novamente ou reconecte a conta.");
+export type GraphFetchFail = {
+  ok: false;
+  kind: InstagramGraphFailureKind;
+  status: number;
+  errorCode?: number | string;
+  errorSubcode?: number | string;
+  errorType?: string;
+  fbtraceId?: string;
+  sanitizedMessage: string;
+  durationMs: number;
+};
+
+async function readGraphBody(response: Response): Promise<{ body: unknown; jsonParseFailed: boolean }> {
+  const text = await response.text();
+  if (!text.trim()) return { body: {}, jsonParseFailed: false };
+  try {
+    return { body: JSON.parse(text) as unknown, jsonParseFailed: false };
+  } catch {
+    return { body: { error: { message: "resposta_nao_json", type: "ParseException" } }, jsonParseFailed: true };
+  }
 }
 
-async function metaJson<T>(url: string, accessToken: string, init?: RequestInit): Promise<T> {
-  assertGraphInstagramUrl(url);
-  const response = await fetch(url, {
-    ...init,
-    headers: { ...init?.headers, Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
+type GraphFetchOk<T> = { ok: true; status: number; body: T; durationMs: number };
+
+function failFromDetails(
+  kind: InstagramGraphFailureKind,
+  details: ReturnType<typeof readMetaError>,
+  durationMs: number,
+  extras?: { jsonParseFailed?: boolean; operation?: string; endpoint?: string },
+): GraphFetchFail {
+  logInstagramGraphEvent({
+    event: kind === "timeout" ? "graph_timeout" : kind === "network" ? "graph_network_error" : "graph_error",
+    operation: extras?.operation ?? null,
+    endpoint: extras?.endpoint ?? null,
+    graphVersion: apiVersion ?? null,
+    httpStatus: details.httpStatus,
+    errorCode: details.errorCode ?? null,
+    errorSubcode: details.errorSubcode ?? null,
+    errorType: details.errorType ?? null,
+    fbtraceId: details.fbtraceId ?? null,
+    sanitizedMessage: details.sanitizedMessage,
+    jsonParseFailed: extras?.jsonParseFailed ?? false,
+    kind,
+    durationMs,
   });
-  const body = await response.json() as T & MetaErrorBody;
-  if (!response.ok || body.error) throw safeMetaError(response.status, body);
-  return body;
+  return {
+    ok: false,
+    kind,
+    status: details.httpStatus,
+    errorCode: details.errorCode,
+    errorSubcode: details.errorSubcode,
+    errorType: details.errorType,
+    fbtraceId: details.fbtraceId,
+    sanitizedMessage: details.sanitizedMessage,
+    durationMs,
+  };
+}
+
+async function fetchGraph<T>(
+  url: string,
+  accessToken: string,
+  options?: { init?: RequestInit; operation?: string },
+): Promise<GraphFetchOk<T> | GraphFetchFail> {
+  assertGraphInstagramUrl(url);
+  const endpoint = logicalGraphEndpoint(url);
+  const operation = options?.operation;
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INSTAGRAM_GRAPH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      ...options?.init,
+      signal: options?.init?.signal ?? controller.signal,
+      headers: { ...options?.init?.headers, Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    const durationMs = Date.now() - started;
+    const { body, jsonParseFailed } = await readGraphBody(response);
+    const details = readMetaError(response.status, body);
+    const record = body && typeof body === "object" ? (body as MetaErrorBody) : {};
+    if (jsonParseFailed || !response.ok || record.error) {
+      const kind = classifyInstagramGraphFailure({
+        httpStatus: response.status,
+        errorCode: details.errorCode,
+        errorSubcode: details.errorSubcode,
+        jsonParseFailed,
+      });
+      return failFromDetails(kind, { ...details, httpStatus: response.status }, durationMs, {
+        jsonParseFailed,
+        operation,
+        endpoint,
+      });
+    }
+    return { ok: true, status: response.status, body: body as T, durationMs };
+  } catch (error) {
+    const durationMs = Date.now() - started;
+    const timedOut = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+    const kind = classifyInstagramGraphFailure({ httpStatus: 0, timedOut, networkError: !timedOut });
+    return failFromDetails(kind, {
+      httpStatus: 0,
+      sanitizedMessage: timedOut ? "timeout" : "network_error",
+    }, durationMs, { operation, endpoint });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function graphFailFields(result: GraphFetchFail): InstagramGraphCallFailure {
+  return {
+    ok: false,
+    kind: result.kind,
+    httpStatus: result.status,
+    errorCode: result.errorCode,
+    errorSubcode: result.errorSubcode,
+    errorType: result.errorType,
+    fbtraceId: result.fbtraceId,
+    sanitizedMessage: result.sanitizedMessage,
+    durationMs: result.durationMs,
+  };
 }
 
 export type InstagramMedia = { id: string; caption?: string; media_type?: string; media_url?: string; permalink?: string; timestamp?: string; thumbnail_url?: string };
 export type InstagramComment = { id: string; text?: string; timestamp?: string; username?: string; from?: { id?: string; username?: string } };
 
-async function allPagesWithMeta<T>(firstUrl: string, accessToken: string): Promise<{ items: T[]; pagesFetched: number }> {
-  const values: T[] = [];
-  let next: string | undefined = firstUrl;
-  let pages = 0;
-  while (next) {
-    if (++pages > 10_000) throw new Error("Paginacao da Meta excedeu o limite de seguranca.");
-    const page: MetaPage<T> = await metaJson(next, accessToken);
-    values.push(...(page.data ?? []));
-    next = page.paging?.next;
+function nextUrlFromPage<T>(page: MetaPage<T>): { ok: true; next: string | undefined } | { ok: false; kind: InstagramGraphFailureKind; sanitizedMessage: string } {
+  const raw = page.paging?.next;
+  if (!raw) return { ok: true, next: undefined };
+  try {
+    assertGraphInstagramUrl(raw);
+    return { ok: true, next: raw };
+  } catch {
+    return { ok: false, kind: "invalid_response", sanitizedMessage: "url_paginacao_invalida" };
   }
-  return { items: values, pagesFetched: pages };
 }
 
-async function allPages<T>(firstUrl: string, accessToken: string): Promise<T[]> {
-  return (await allPagesWithMeta<T>(firstUrl, accessToken)).items;
+async function fetchGraphPage<T>(url: string, accessToken: string, operation: string) {
+  const result = await fetchGraph<MetaPage<T>>(url, accessToken, { operation });
+  if (!result.ok) return { ok: false as const, error: result };
+  const next = nextUrlFromPage(result.body);
+  if (!next.ok) {
+    const error: GraphFetchFail = {
+      ok: false,
+      kind: next.kind,
+      status: result.status,
+      sanitizedMessage: next.sanitizedMessage,
+      durationMs: result.durationMs,
+    };
+    return { ok: false as const, error };
+  }
+  return { ok: true as const, data: result.body.data ?? [], next: next.next ?? null, durationMs: result.durationMs };
 }
 
 export function instagramAuthorizeUrl(state: string) {
@@ -141,24 +262,87 @@ export async function refreshInstagramAccessToken(accessToken: string) {
   const url = new URL(`${graphBase}/refresh_access_token`);
   url.searchParams.set("grant_type", "ig_refresh_token");
   url.searchParams.set("access_token", accessToken);
-  const response = await fetch(url, { cache: "no-store" });
-  const body = await response.json() as { access_token?: string; expires_in?: number; error?: { message?: string } };
-  if (!response.ok || !body.access_token) throw safeMetaError(response.status, body);
-  return { accessToken: body.access_token, expiresIn: body.expires_in ?? null };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INSTAGRAM_GRAPH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    const { body, jsonParseFailed } = await readGraphBody(response);
+    const details = readMetaError(response.status, body);
+    const record = body && typeof body === "object" ? body as { access_token?: string; expires_in?: number; error?: unknown } : {};
+    if (jsonParseFailed || !response.ok || record.error || !record.access_token) {
+      const kind = classifyInstagramGraphFailure({
+        httpStatus: response.status,
+        errorCode: details.errorCode,
+        errorSubcode: details.errorSubcode,
+        jsonParseFailed,
+      });
+      logInstagramGraphEvent({
+        event: "token_refresh_error",
+        operation: "token_refresh",
+        endpoint: "refresh_access_token",
+        graphVersion: apiVersion ?? null,
+        httpStatus: response.status,
+        errorCode: details.errorCode ?? null,
+        errorSubcode: details.errorSubcode ?? null,
+        errorType: details.errorType ?? null,
+        fbtraceId: details.fbtraceId ?? null,
+        sanitizedMessage: details.sanitizedMessage,
+        kind,
+      });
+      throw new Error(instagramMediaLoadUserCopy(kind).message);
+    }
+    return { accessToken: record.access_token, expiresIn: record.expires_in ?? null };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Não foi possível")) throw error;
+    const timedOut = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+    logInstagramGraphEvent({
+      event: timedOut ? "token_refresh_timeout" : "token_refresh_network_error",
+      operation: "token_refresh",
+      endpoint: "refresh_access_token",
+      graphVersion: apiVersion ?? null,
+      kind: timedOut ? "timeout" : "network",
+    });
+    throw new Error(instagramMediaLoadUserCopy(timedOut ? "timeout" : "network").message);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-const INSTAGRAM_MEDIA_FIELDS = "id,caption,media_type,permalink,timestamp,thumbnail_url,media_url";
+export type InstagramGraphCallFailure = {
+  ok: false;
+  kind: InstagramGraphFailureKind;
+  httpStatus: number;
+  errorCode?: number | string;
+  errorSubcode?: number | string;
+  errorType?: string;
+  fbtraceId?: string;
+  sanitizedMessage: string;
+  durationMs?: number;
+  pagesFetched?: number;
+  itemsFetched?: number;
+};
 
-export async function listInstagramMedia(userId: string, accessToken: string) {
-  return allPages<InstagramMedia>(versioned(`${userId}/media?fields=${INSTAGRAM_MEDIA_FIELDS}&limit=100`), accessToken);
-}
+export type InstagramMediaPageResult =
+  | { ok: true; items: InstagramMedia[]; nextCursor: string | null }
+  | InstagramGraphCallFailure;
 
-export async function listInstagramMediaPage(userId: string, accessToken: string, after?: string | null) {
-  const url = new URL(versioned(`${userId}/media`));
-  url.searchParams.set("fields", INSTAGRAM_MEDIA_FIELDS);
+export type InstagramMediaGetResult =
+  | { ok: true; media: InstagramMedia }
+  | InstagramGraphCallFailure;
+
+export type InstagramCommentsResult =
+  | { ok: true; items: InstagramComment[]; pagesFetched: number }
+  | InstagramGraphCallFailure;
+
+function mediaPageUrl(objectId: string, fields: string, after?: string | null) {
+  const url = new URL(versioned(`${objectId}/media`));
+  url.searchParams.set("fields", fields);
   url.searchParams.set("limit", "24");
   if (after) url.searchParams.set("after", after);
-  const page = await metaJson<MetaPage<InstagramMedia>>(url.toString(), accessToken);
+  return url.toString();
+}
+
+function nextCursorFromPage(page: MetaPage<InstagramMedia>) {
   let nextCursor = page.paging?.cursors?.after ?? null;
   if (!nextCursor && page.paging?.next) {
     try {
@@ -167,13 +351,146 @@ export async function listInstagramMediaPage(userId: string, accessToken: string
       nextCursor = null;
     }
   }
-  return { items: page.data ?? [], nextCursor: nextCursor || null };
+  return nextCursor || null;
 }
 
-export async function getInstagramMedia(mediaId: string, accessToken: string) {
-  return metaJson<InstagramMedia>(versioned(`${mediaId}?fields=${INSTAGRAM_MEDIA_FIELDS}`), accessToken);
+function shouldRetryWithoutMediaUrl(result: GraphFetchFail) {
+  const code = Number(result.errorCode);
+  return code === 100 || result.kind === "media_not_found" || result.kind === "invalid_response" || result.kind === "unknown";
 }
 
-export async function listInstagramComments(mediaId: string, accessToken: string) {
-  return allPagesWithMeta<InstagramComment>(versioned(`${mediaId}/comments?fields=id,from,text,timestamp&limit=100`), accessToken);
+function shouldFallbackToStoredUser(result: GraphFetchFail) {
+  return result.kind === "media_not_found" || result.kind === "invalid_response" || result.kind === "unknown";
+}
+
+function shouldStopMediaAttempts(result: GraphFetchFail) {
+  return result.kind === "expired_token" || result.kind === "permission" || result.kind === "rate_limit" || result.kind === "timeout" || result.kind === "network";
+}
+
+export async function listInstagramMedia(_userId: string, accessToken: string) {
+  const walked = await walkInstagramPages<InstagramMedia, GraphFetchFail>(
+    versioned(`me/media?fields=${INSTAGRAM_MEDIA_FIELDS}&limit=100`),
+    (url) => fetchGraphPage<InstagramMedia>(url, accessToken, "media_list"),
+  );
+  if (!walked.ok) throw new Error(instagramMediaLoadUserCopy(walked.capExceeded ? "unknown" : walked.error.kind).message);
+  return walked.items;
+}
+
+export async function listInstagramMediaPage(
+  accessToken: string,
+  after?: string | null,
+  options?: { igUserId?: string | null },
+): Promise<InstagramMediaPageResult> {
+  const attempts: Array<{ objectId: "me" | "stored"; id: string; fields: string }> = [
+    { objectId: "me", id: "me", fields: INSTAGRAM_MEDIA_FIELDS },
+    { objectId: "me", id: "me", fields: INSTAGRAM_MEDIA_FIELDS_WITHOUT_URL },
+  ];
+  const storedId = String(options?.igUserId ?? "").trim();
+  if (storedId && storedId !== "me") {
+    attempts.push({ objectId: "stored", id: storedId, fields: INSTAGRAM_MEDIA_FIELDS });
+    attempts.push({ objectId: "stored", id: storedId, fields: INSTAGRAM_MEDIA_FIELDS_WITHOUT_URL });
+  }
+
+  let lastFail: GraphFetchFail | null = null;
+  for (const attempt of attempts) {
+    if (attempt.objectId === "stored" && lastFail && !shouldFallbackToStoredUser(lastFail)) {
+      continue;
+    }
+    if (attempt.fields === INSTAGRAM_MEDIA_FIELDS_WITHOUT_URL && lastFail && !shouldRetryWithoutMediaUrl(lastFail)) {
+      continue;
+    }
+    const result = await fetchGraph<MetaPage<InstagramMedia>>(
+      mediaPageUrl(attempt.id, attempt.fields, after),
+      accessToken,
+      { operation: "media_page" },
+    );
+    if (result.ok) {
+      const items = result.body.data ?? [];
+      logInstagramGraphEvent({
+        event: "media_page_ok",
+        operation: "media_page",
+        endpoint: attempt.objectId === "me" ? "me/media" : "user/media",
+        graphVersion: apiVersion ?? null,
+        httpStatus: result.status,
+        itemsFetched: items.length,
+        pagesFetched: 1,
+        durationMs: result.durationMs,
+        usedObjectId: attempt.objectId === "me" ? "me" : "stored",
+        omittedMediaUrl: attempt.fields === INSTAGRAM_MEDIA_FIELDS_WITHOUT_URL,
+      });
+      return { ok: true, items, nextCursor: nextCursorFromPage(result.body) };
+    }
+    lastFail = result;
+    if (shouldStopMediaAttempts(result)) break;
+  }
+
+  return {
+    ok: false,
+    kind: lastFail?.kind ?? "unknown",
+    httpStatus: lastFail?.status ?? 0,
+    errorCode: lastFail?.errorCode,
+    errorSubcode: lastFail?.errorSubcode,
+    errorType: lastFail?.errorType,
+    fbtraceId: lastFail?.fbtraceId,
+    sanitizedMessage: lastFail?.sanitizedMessage ?? "operacao_meta_falhou",
+    durationMs: lastFail?.durationMs,
+  };
+}
+
+export async function getInstagramMedia(mediaId: string, accessToken: string): Promise<InstagramMediaGetResult> {
+  const result = await fetchGraph<InstagramMedia>(versioned(`${mediaId}?fields=${INSTAGRAM_MEDIA_FIELDS}`), accessToken, { operation: "media_get" });
+  if (!result.ok) return graphFailFields(result);
+  return { ok: true, media: result.body };
+}
+
+export async function listInstagramComments(mediaId: string, accessToken: string): Promise<InstagramCommentsResult> {
+  const started = Date.now();
+  const walked = await walkInstagramPages<InstagramComment, GraphFetchFail>(
+    versioned(`${mediaId}/comments?fields=${INSTAGRAM_COMMENTS_FIELDS}&limit=${INSTAGRAM_COMMENTS_PAGE_LIMIT}`),
+    (url) => fetchGraphPage<InstagramComment>(url, accessToken, "comments"),
+  );
+  const durationMs = Date.now() - started;
+  if (!walked.ok) {
+    const fail = walked.capExceeded
+      ? {
+          ok: false as const,
+          kind: "unknown" as const,
+          status: 0,
+          sanitizedMessage: "paginacao_excedeu_teto",
+          durationMs,
+        }
+      : walked.error;
+    logInstagramGraphEvent({
+      event: "comments_failed",
+      operation: "comments",
+      endpoint: "comments",
+      graphVersion: apiVersion ?? null,
+      kind: fail.kind,
+      httpStatus: fail.status,
+      errorCode: fail.errorCode ?? null,
+      errorSubcode: fail.errorSubcode ?? null,
+      fbtraceId: fail.fbtraceId ?? null,
+      pagesFetched: walked.pagesFetched,
+      itemsFetched: walked.items.length,
+      durationMs,
+      capExceeded: walked.capExceeded ?? false,
+    });
+    return {
+      ...graphFailFields(fail),
+      pagesFetched: walked.pagesFetched,
+      itemsFetched: walked.items.length,
+    };
+  }
+  logInstagramGraphEvent({
+    event: "comments_ok",
+    operation: "comments",
+    endpoint: "comments",
+    graphVersion: apiVersion ?? null,
+    httpStatus: 200,
+    pagesFetched: walked.pagesFetched,
+    itemsFetched: walked.items.length,
+    durationMs,
+    stoppedOnRepeatedCursor: walked.stoppedOnRepeatedCursor,
+  });
+  return { ok: true, items: walked.items, pagesFetched: walked.pagesFetched };
 }

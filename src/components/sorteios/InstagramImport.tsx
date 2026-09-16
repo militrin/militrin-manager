@@ -5,6 +5,7 @@ import { ExternalLink } from "lucide-react";
 import { selectGiveawayInstagramMedia, syncGiveawayComments } from "@/app/sorteios/giveaway-sync-actions";
 import { canStartGiveaway, giveawayRequiresPostChangeConfirmation } from "@/lib/giveaways/status";
 import type { InstagramMediaCard } from "@/lib/giveaways/media";
+import { beginInstagramOAuth } from "@/app/sorteios/instagram-actions";
 import { InstagramConnectionCard } from "./InstagramConnectionCard";
 import { InstagramMediaPicker } from "./InstagramMediaPicker";
 import { StrongConfirmModal } from "./StrongConfirmModal";
@@ -43,6 +44,8 @@ export function InstagramImport({
   onStartDraw: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
+  const [canReconnect, setCanReconnect] = useState(false);
   const [pending, startTransition] = useTransition();
   const [currentMediaId, setCurrentMediaId] = useState(mediaId);
   const [showPicker, setShowPicker] = useState(!mediaId && canChangePost && source === "instagram");
@@ -51,30 +54,63 @@ export function InstagramImport({
   const canStart = canStartGiveaway(status, snapshotFrozenAt, commentsCount);
   const startBlockedReason = commentsCount === 0 ? "Sincronize pelo menos um comentário antes de iniciar." : null;
 
+  function reconnect() {
+    startTransition(async () => {
+      try {
+        const { url } = await beginInstagramOAuth();
+        window.location.assign(url);
+      } catch {
+        setError("Não foi possível sincronizar os comentários do Instagram.");
+        setDetail("A conexão com o Instagram expirou. Reconecte a conta.");
+        setCanReconnect(true);
+      }
+    });
+  }
+
   function sync() {
     setError(null);
+    setDetail(null);
+    setCanReconnect(false);
     startTransition(async () => {
       try {
         const result = await syncGiveawayComments(giveawayId);
+        if (!result.ok) {
+          setError(result.message);
+          setDetail(result.detail);
+          setCanReconnect(result.reconnectRequired || result.canReconnect);
+          return;
+        }
         setCurrentMediaId(result.mediaId);
         onImported(result);
-      } catch (value) {
-        setError(value instanceof Error ? value.message : "Não foi possível sincronizar os comentários.");
+      } catch {
+        setError("Não foi possível sincronizar os comentários do Instagram.");
+        setDetail("Não foi possível concluir a operação com o Instagram. Tente novamente.");
+        setCanReconnect(false);
       }
     });
   }
 
   function applyMedia(media: InstagramMediaCard, confirmReplaceComments: boolean) {
     setError(null);
+    setDetail(null);
+    setCanReconnect(false);
     startTransition(async () => {
       try {
         const saved = await selectGiveawayInstagramMedia({ giveawayId, mediaId: media.mediaId, confirmReplaceComments });
+        if (!saved.ok) {
+          setError(saved.message);
+          setDetail(saved.detail);
+          setCanReconnect(saved.reconnectRequired || saved.canReconnect);
+          return;
+        }
         setCurrentMediaId(saved.mediaId);
         setShowPicker(false);
         setPendingMedia(null);
         onPostChanged(saved);
-      } catch (value) {
-        setError(value instanceof Error ? value.message : "Não foi possível vincular a publicação.");
+      } catch {
+        setError("Não foi possível vincular a publicação.");
+        setDetail("Não foi possível concluir a operação com o Instagram. Tente novamente.");
+        setCanReconnect(false);
       }
     });
   }
@@ -158,7 +194,22 @@ export function InstagramImport({
       ) : null}
 
       {locked ? <p className="text-xs text-amber-200">Snapshot congelado: sincronização, troca de post e importação CSV estão bloqueadas.</p> : null}
-      {error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2 text-xs text-rose-200">{error}</p> : null}
+      {error ? (
+        <div className="space-y-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2 text-xs text-rose-200">
+          <p>{error}</p>
+          {detail ? <p className="text-rose-100/80">{detail}</p> : null}
+          {canReconnect ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={reconnect}
+              className="rounded-lg bg-fuchsia-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              Reconectar Instagram
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <StrongConfirmModal
         open={pendingMedia !== null}
