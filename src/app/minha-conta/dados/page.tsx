@@ -13,6 +13,7 @@ import {
 } from '@/lib/account/participant-identity';
 import { sanitizeInternalNextPath } from '@/lib/utils/safe-navigation';
 import { getMyPublicPin } from '@/lib/account/public-pin';
+import { getCustomerProfileRow } from '@/lib/account/profile-completion';
 import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 
 export default async function DadosPage({
@@ -30,7 +31,7 @@ export default async function DadosPage({
   } = await supabase.auth.getUser();
 
   const [{ data: profileData }, publicPin, administrativeLandingPage, sponsorRow] = await Promise.all([
-    supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
+    getCustomerProfileRow(user?.id),
     getMyPublicPin(user?.id),
     resolveAdministrativeLandingPage(),
     user?.id

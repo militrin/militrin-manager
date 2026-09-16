@@ -61,9 +61,15 @@ test('middleware só resolve getUser com cookie, tem timeout e matcher positivo'
   assert.doesNotMatch(middleware, /getUser\(\);\s*\n\s*const \{ pathname/);
 });
 
-test('HomeButton e tema não bloqueiam página pública com getUser/query sem timeout', () => {
-  assert.match(homeButton, /hasSupabaseAuthCookie/);
+test('HomeButton e tema não bloqueiam página pública com cookies/getUser', () => {
+  assert.doesNotMatch(homeButton, /cookies\(/);
   assert.doesNotMatch(homeButton, /getUser/);
+  assert.doesNotMatch(homeButton, /hasSupabaseAuthCookie/);
+  assert.match(homeButton, /pathRequiresAuth/);
+  assert.doesNotMatch(theme, /createServerSupabaseClient/);
+  assert.doesNotMatch(theme, /cookies\(/);
   assert.match(theme, /withTimeout/);
   assert.match(theme, /DEFAULT_BRAND_THEME/);
+  assert.match(theme, /revalidate: 3600/);
+  assert.match(theme, /brand-theme/);
 });

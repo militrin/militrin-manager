@@ -53,6 +53,7 @@ function EventCard({ event, fullWidth }: { event: HomeFeaturedEvent; fullWidth: 
   return (
     <Link
       href={event.eventHref}
+      prefetch={false}
       className={cx(
         'flex shrink-0 snap-start flex-col overflow-hidden rounded-[1.15rem] border border-slate-800/80 bg-slate-950/70 shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-emerald-500/40 hover:shadow-emerald-950/20 lg:h-full lg:w-full',
         fullWidth ? 'w-full' : 'w-[min(72vw,230px)]',

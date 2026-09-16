@@ -183,7 +183,7 @@ export function PublicLanding({ event }: { event: PublicLandingEvent }) {
             <a href="#informacoes" className={`hover:text-white ${focusRing}`}>Dúvidas</a>
             <a href="#contato" className={`hover:text-white ${focusRing}`}>Contato</a>
           </nav>
-          <Link href={PUBLIC_LOGIN_PATH} className={`${primaryCtaClass} min-h-10 px-3 text-xs sm:min-h-11 sm:px-5 sm:text-sm`}>
+          <Link href={PUBLIC_LOGIN_PATH} prefetch={false} className={`${primaryCtaClass} min-h-10 px-3 text-xs sm:min-h-11 sm:px-5 sm:text-sm`}>
             <CircleUserRound size={15} />
             Acessar minha conta
             <ArrowRight size={14} className="hidden sm:block" />
@@ -219,12 +219,12 @@ export function PublicLanding({ event }: { event: PublicLandingEvent }) {
               </p>
             </div>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-              <Link href={PUBLIC_LOGIN_PATH} className={`${primaryCtaClass} w-full sm:w-auto`}>
+              <Link href={PUBLIC_LOGIN_PATH} prefetch={false} className={`${primaryCtaClass} w-full sm:w-auto`}>
                 <CircleUserRound size={16} />
                 Acessar minha conta
                 <ArrowRight size={16} />
               </Link>
-              <Link href={PUBLIC_SIGNUP_PATH} className={`${secondaryCtaClass} w-full sm:w-auto`}>
+              <Link href={PUBLIC_SIGNUP_PATH} prefetch={false} className={`${secondaryCtaClass} w-full sm:w-auto`}>
                 <UserPlus size={16} />
                 Criar minha conta
               </Link>
@@ -260,6 +260,7 @@ export function PublicLanding({ event }: { event: PublicLandingEvent }) {
                 <Link
                   key={item.title}
                   href={item.href}
+                  prefetch={false}
                   className={`rounded-[1.7rem] border border-white/8 bg-[#0b1628] p-5 transition hover:-translate-y-0.5 hover:border-emerald-400/35 hover:bg-[#102036] motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${focusRing}`}
                 >
                   <Icon size={38} strokeWidth={1.55} className="text-emerald-300" />

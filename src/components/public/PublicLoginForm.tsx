@@ -136,6 +136,7 @@ export function PublicLoginForm({ defaultNext = '/minha-conta' }: PublicLoginFor
 
       <Link
         href={createAccountHref}
+        prefetch={false}
         className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-emerald-400/70 bg-transparent text-sm font-semibold text-white transition hover:bg-emerald-400/10 ${focusRing}`}
       >
         <CircleUserRound size={16} />

@@ -1,9 +1,10 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag, updateTag } from 'next/cache';
 import { assertPermission } from '@/lib/admin/permissions';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { isBrandThemeId } from '@/lib/theme/brand-themes';
+import { BRAND_THEME_CACHE_TAG } from '@/lib/theme/get-brand-theme';
 
 export async function updatePlatformThemeAction(theme: string) {
   await assertPermission('settings.manage');
@@ -19,6 +20,8 @@ export async function updatePlatformThemeAction(theme: string) {
     return { success: false, message: error.message };
   }
 
+  updateTag(BRAND_THEME_CACHE_TAG);
+  revalidateTag(BRAND_THEME_CACHE_TAG, 'max');
   revalidatePath('/', 'layout');
   return { success: true };
 }

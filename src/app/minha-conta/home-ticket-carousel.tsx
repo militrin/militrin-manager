@@ -139,6 +139,7 @@ export function HomeTicketCarousel({
           <div className="mt-3 flex items-center gap-2">
             <MilitrinLinkButton
               href={primaryHref}
+              prefetch={false}
               variant="success"
               size="sm"
               iconLeft={current.canShowTicket ? <QrCode size={14} /> : undefined}
@@ -149,6 +150,7 @@ export function HomeTicketCarousel({
             {current.canShowTicket ? (
               <Link
                 href={detailsHref}
+                prefetch={false}
                 className="hidden h-9 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900/70 px-3 text-xs font-semibold text-slate-100 transition hover:border-slate-500 lg:inline-flex"
               >
                 Ver acesso

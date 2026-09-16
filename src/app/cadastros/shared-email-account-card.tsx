@@ -61,7 +61,7 @@ export function SharedEmailAccountCard({
         <div className="divide-y divide-slate-800">
           {group.people.map((person) => (
             <div key={person.id} className="grid grid-cols-[minmax(0,1.4fr)_90px_90px_110px_120px] gap-2 px-3 py-2.5 text-sm">
-              <Link href={`/cadastros/${person.id}`} className="truncate font-medium text-slate-100 hover:text-violet-200">{person.name}</Link>
+              <Link href={`/cadastros/${person.id}`} prefetch={false} className="truncate font-medium text-slate-100 hover:text-violet-200">{person.name}</Link>
               <span className="font-mono text-xs text-slate-400">{person.pin ?? "—"}</span>
               <span>{person.ticketCount}</span>
               <span>{person.isHolder ? "Titular" : "—"}</span>

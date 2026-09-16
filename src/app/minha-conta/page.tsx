@@ -6,10 +6,13 @@ import { accountTicketItemCount, findActionableAccountOrder, getAccessibleTicket
 import { buildAccountHomeTicketCards } from '@/lib/account/home-ticket-cards';
 import { resolveHomeFeaturedEventCta } from '@/lib/account/home-ticket-cta';
 import { resolveParticipantFirstName, resolveParticipantFullName, resolveParticipantInitials } from '@/lib/account/participant-identity';
+import { getCustomerProfileRow } from '@/lib/account/profile-completion';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { getMyPublicPin } from '@/lib/account/public-pin';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import { getStoreItemsForEvents } from '@/lib/store/get-store-items';
+import { getEventTicketCategories } from '@/lib/account/event-ticket-categories';
+import { getAccountHomeEventsByIds } from '@/lib/account/home-events';
 import { BetaFeedbackWidget } from '@/components/feedback/BetaFeedbackWidget';
 import { HomeTicketCarousel } from './home-ticket-carousel';
 import { HomeFeaturedEvents, type HomeFeaturedEvent } from './home-featured-events';
@@ -84,7 +87,7 @@ export default async function MinhaContaPage() {
   } = await supabase.auth.getUser();
 
   const [profileResult, ordersResult, eventsResult, featuredEventsResult, sponsorsResult, headerEvent, publicPin] = await Promise.all([
-    supabase.rpc('get_customer_profile', { p_user_id: user?.id ?? null }),
+    getCustomerProfileRow(user?.id),
     getAccountOrders(supabase, user?.id ?? ''),
     supabase
       .from('events')
@@ -137,7 +140,6 @@ export default async function MinhaContaPage() {
     registration_close_at: event.registration_close_at ? String(event.registration_close_at) : null,
     sort_order: Number(event.sort_order ?? 0),
   }));
-  const dashboardEvents = featuredEvents.length > 0 ? featuredEvents : openEvents;
   const allTickets = ticketScope.tickets as Array<{
     id: string;
     status: string | null;
@@ -147,10 +149,10 @@ export default async function MinhaContaPage() {
     event_id: string | null;
   }>;
   const homeEventIds = Array.from(new Set(allTickets.map((ticket) => String(ticket.event_id ?? '')).filter(Boolean)));
-  const { data: homeEvents } = homeEventIds.length > 0
-    ? await supabase.from('events').select('id, starts_at, ends_at, is_active').in('id', homeEventIds)
-    : { data: [] as Array<{ id: string; starts_at: string | null; ends_at: string | null; is_active: boolean | null }> };
-  const homeEventsById = new Map(((homeEvents ?? []) as Array<{ id: string; starts_at: string | null; ends_at: string | null; is_active: boolean | null }>).map((row) => [String(row.id), row]));
+  const listedEventsPreview = (featuredEvents.length > 0 ? featuredEvents : openEvents).slice(0, 3);
+  const listedEventIds = listedEventsPreview.map((event) => String(event.id)).filter(Boolean);
+  const homeEvents = await getAccountHomeEventsByIds([...homeEventIds, ...listedEventIds]);
+  const homeEventsById = new Map(homeEvents.map((row) => [String(row.id), row]));
   const activeTickets = allTickets.filter((ticket) => {
     const eventObj = homeEventsById.get(String(ticket.event_id ?? ''));
     return classifyTicketOperationalSituation({
@@ -168,7 +170,19 @@ export default async function MinhaContaPage() {
 
   const pendingOrder = findActionableAccountOrder(orders);
 
-  const ticketCards = await buildAccountHomeTicketCards(supabase, activeTickets);
+  const ticketCards = await buildAccountHomeTicketCards(supabase, activeTickets, {
+    orderItems: ticketScope.orderItems as Array<{
+      id: string;
+      participant_id: string | null;
+      ticket_category_id: string | null;
+      batch_id: string | null;
+      shirt_type: string | null;
+      shirt_size: string | null;
+      holder_full_name: string | null;
+    }>,
+    orders: orders.map((order) => ({ id: String(order.id ?? ''), status: order.status ? String(order.status) : null })),
+    events: homeEvents,
+  });
   const featuredHeroCta = headerEvent
     ? resolveHomeFeaturedEventCta({
       showBuyButton: Boolean(headerEvent.showBuyButton),
@@ -177,28 +191,22 @@ export default async function MinhaContaPage() {
     })
     : null;
 
-  const listedEvents = dashboardEvents.slice(0, 3);
-  const listedEventIds = listedEvents.map((event) => String(event.id)).filter(Boolean);
+  const listedEvents = listedEventsPreview;
   const storeEventIds = Array.from(new Set([
     ...ticketScope.ownedEventIds,
     ...listedEventIds,
     headerEvent?.id ? String(headerEvent.id) : '',
   ].filter(Boolean)));
 
-  const [bannerRowsResult, storeItems, ...categoryResults] = await Promise.all([
-    listedEventIds.length > 0
-      ? supabase.from('events').select('id, year, banner_card_url, banner_hero_url').in('id', listedEventIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; year: number | null; banner_card_url: string | null; banner_hero_url: string | null }> }),
+  const [storeItems, ...categoryResults] = await Promise.all([
     storeEventIds.length > 0 ? getStoreItemsForEvents(supabase, storeEventIds) : Promise.resolve([]),
     ...listedEvents.map((event) => (
       event?.id
-        ? supabase.rpc('get_event_ticket_categories', { p_event_id: event.id })
+        ? getEventTicketCategories(event.id)
         : Promise.resolve({ data: null })
     )),
   ]);
-  const bannersById = new Map(
-    ((bannerRowsResult.data ?? []) as Array<{ id: string; year: number | null; banner_card_url: string | null; banner_hero_url: string | null }>).map((row) => [String(row.id), row]),
-  );
+  const bannersById = homeEventsById;
   const storeImageUrls = storeItems.map((item) => item.imageUrl).filter((url): url is string => Boolean(url)).slice(0, 3);
   const storeProducts = storeItems
     .filter((item) => Boolean(item.imageUrl))
@@ -255,7 +263,7 @@ export default async function MinhaContaPage() {
     const eventId = String(pendingOrder.event_id ?? '');
     const [itemsResult, categoriesRpc] = await Promise.all([
       supabase.from('order_items').select('ticket_category_id, batch_id, item_kind').eq('order_id', String(pendingOrder.id)),
-      eventId ? supabase.rpc('get_event_ticket_categories', { p_event_id: eventId }) : Promise.resolve({ data: null }),
+      eventId ? getEventTicketCategories(eventId) : Promise.resolve({ data: null }),
     ]);
     const items = ((itemsResult.data ?? []) as Array<{ ticket_category_id: string | null; batch_id: string | null; item_kind: string | null }>)
       .filter((item) => (item.item_kind ?? 'ticket') === 'ticket');

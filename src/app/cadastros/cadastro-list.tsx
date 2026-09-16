@@ -29,15 +29,15 @@ function SharedEmailBadges({ row }: { row: Row }) {
   const accountLabel = row.sharedEmailStatus === "resolved" ? sharedEmailResolvedAccountLabel(row.sharedEmailPrincipalName) : null;
   return (
     <span className="flex flex-wrap gap-1">
-      <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 hover:border-violet-300">
+      <Link href={`/cadastros/${row.id}/conta-compartilhada`} prefetch={false} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-100 hover:border-violet-300">
         {sharedEmailBadgeLabel(row.sharedEmailCount)}
       </Link>
       {accountLabel ? (
-        <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-100 hover:border-emerald-300">
+        <Link href={`/cadastros/${row.id}/conta-compartilhada`} prefetch={false} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-100 hover:border-emerald-300">
           {accountLabel}
         </Link>
       ) : (
-        <Link href={`/cadastros/${row.id}/conta-compartilhada`} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-100 hover:border-amber-300">
+        <Link href={`/cadastros/${row.id}/conta-compartilhada`} prefetch={false} onClick={(event) => event.stopPropagation()} className="w-fit rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-100 hover:border-amber-300">
           Pendente
         </Link>
       )}
@@ -73,13 +73,13 @@ export function CadastroList({ rows, canEdit, canIssueTicket }: { rows: Row[]; c
             <SharedEmailBadges row={row} />
           </span>
           <span className="hidden lg:inline">{row.ticketCount}</span><span className="hidden lg:inline">{row.eventCount}</span>
-          <div className="hidden shrink-0 gap-1.5 lg:flex"><Link href={`/cadastros/${row.id}`} className={actionClass}>Abrir ficha</Link></div>
-          <Link href={`/cadastros/${row.id}`} className={`${actionClass} lg:hidden`}>Abrir ficha</Link>
+          <div className="hidden shrink-0 gap-1.5 lg:flex"><Link href={`/cadastros/${row.id}`} prefetch={false} className={actionClass}>Abrir ficha</Link></div>
+          <Link href={`/cadastros/${row.id}`} prefetch={false} className={`${actionClass} lg:hidden`}>Abrir ficha</Link>
         </div>
         {isOpen ? <div className="border-t border-slate-800 bg-slate-900/60 p-4">
           <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Nome completo",row.name],["CPF",maskCpf(row.cpf)],["Nascimento",row.birthDate || "Não informado"],["Gênero",row.gender || "Não informado"],["Telefone",row.phone || "Não informado"],["E-mail",row.email || "Não informado"],["Cidade",row.city || "Não informada"],["Origem",row.origin]].map(([label,value]) => <div key={label}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-0.5 break-words text-slate-200">{value}</dd></div>)}</dl>
           <div className="mt-3"><CopyableId label="PIN do cadastro" value={row.publicPin}/></div>
-          <div className="mt-4 flex flex-wrap gap-2"><Link href={`/cadastros/${row.id}`} className={actionClass}>Ver ficha e ingressos</Link>{row.sharedEmailCount > 1 ? <Link href={`/cadastros/${row.id}/conta-compartilhada`} className={actionClass}>Gerenciar conta e ingressos</Link> : null}{canEdit ? <Link href={`/cadastros/${row.id}/editar`} className={actionClass}>Editar cadastro</Link> : null}{canIssueTicket ? <Link href={row.publicPin ? `/ingressos/emitir?pin=${row.publicPin}` : "/ingressos/emitir"} className={actionClass}>Emitir ingresso</Link> : null}</div>
+          <div className="mt-4 flex flex-wrap gap-2"><Link href={`/cadastros/${row.id}`} prefetch={false} className={actionClass}>Ver ficha e ingressos</Link>{row.sharedEmailCount > 1 ? <Link href={`/cadastros/${row.id}/conta-compartilhada`} prefetch={false} className={actionClass}>Gerenciar conta e ingressos</Link> : null}{canEdit ? <Link href={`/cadastros/${row.id}/editar`} prefetch={false} className={actionClass}>Editar cadastro</Link> : null}{canIssueTicket ? <Link href={row.publicPin ? `/ingressos/emitir?pin=${row.publicPin}` : "/ingressos/emitir"} className={actionClass}>Emitir ingresso</Link> : null}</div>
         </div> : null}
       </div>;
     })}</div>

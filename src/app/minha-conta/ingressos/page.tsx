@@ -294,12 +294,12 @@ export default async function IngressosPage({
               actions={(
                 <>
                   {item.canShowTicket ? (
-                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}#qr`} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
+                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}#qr`} prefetch={false} variant="success" size="sm" iconLeft={<QrCode size={14} />} className="flex-1 sm:flex-none">
                       Abrir QR Code
                     </MilitrinLinkButton>
                   ) : null}
                   {item.ticketId ? (
-                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}`} variant="secondary" size="sm" className="flex-1 sm:flex-none">
+                    <MilitrinLinkButton href={`/minha-conta/ingressos/${item.ticketId}${showArchived ? '?lista=anteriores' : ''}`} prefetch={false} variant="secondary" size="sm" className="flex-1 sm:flex-none">
                       Ver acesso
                     </MilitrinLinkButton>
                   ) : null}

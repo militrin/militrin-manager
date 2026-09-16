@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getFirstAccessFlags } from '@/lib/account/first-access';
+import { getCustomerProfileRow } from '@/lib/account/profile-completion';
+import { getOpenParticipantIssues } from '@/lib/account/participant-open-issues';
 import { isEmailConfirmed } from '@/lib/account/email-confirmation';
 import {
   resolveParticipantAvatarUrl,
@@ -46,16 +48,13 @@ export default async function MinhaContaLayout({ children }: { children: React.R
 
   const { data: ownParticipants } = await supabase.from('participants').select('id').eq('user_id', user.id);
   const ownParticipantIds = (ownParticipants ?? []).map((participant) => String(participant.id));
-  const { data: openIssues } = ownParticipantIds.length
-    ? await supabase.from('participant_data_issues').select('id,resolution_scope,field_code')
-      .in('participant_id', ownParticipantIds).eq('status', 'open')
-    : { data: [] };
-  const requiredUserIssueCount = (openIssues ?? []).filter(isRequiredUserResolvableIssue).length;
-  const administrativeIssueCount = (openIssues ?? []).filter(isAdministrativeIssue).length;
+  const openIssues = await getOpenParticipantIssues(ownParticipantIds);
+  const requiredUserIssueCount = openIssues.filter(isRequiredUserResolvableIssue).length;
+  const administrativeIssueCount = openIssues.filter(isAdministrativeIssue).length;
   if (requiredUserIssueCount > 0) redirect('/primeiro-acesso/pendencias');
 
   const [{ data: profileData }, publicPin, sponsorRow] = await Promise.all([
-    supabase.rpc('get_customer_profile', { p_user_id: user.id }),
+    getCustomerProfileRow(user.id),
     getMyPublicPin(user.id),
     supabase.from('sponsors').select('id').eq('user_id', user.id).eq('is_active', true).maybeSingle(),
   ]);

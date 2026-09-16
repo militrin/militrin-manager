@@ -60,7 +60,7 @@ export default async function ComprarPage() {
                   </div>
                 </Link>
                 <div className="flex justify-end p-5">
-                  <Link href={`/inscricao/${event.slug}`} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
+                  <Link href={`/inscricao/${event.slug}`} prefetch={false} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
                     Continuar compra
                   </Link>
                 </div>

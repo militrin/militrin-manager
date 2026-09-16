@@ -219,7 +219,7 @@ export default function CriarContaPage() {
                 <p>{message}</p>
                 {emailAlreadyRegistered ? (
                   <div className="mt-2 flex flex-wrap gap-3">
-                    <Link href={email ? `/entrar?email=${encodeURIComponent(email)}` : '/entrar'} className="font-semibold underline">Entrar</Link>
+                    <Link href={email ? `/entrar?email=${encodeURIComponent(email)}` : '/entrar'} prefetch={false} className="font-semibold underline">Entrar</Link>
                     <Link href="/esqueci-minha-senha" className="font-semibold underline">Recuperar senha</Link>
                   </div>
                 ) : null}
@@ -237,7 +237,7 @@ export default function CriarContaPage() {
             </button>
 
             <div className="flex items-center justify-between text-sm">
-              <Link href="/entrar" className="text-slate-300 transition hover:text-white">Já tenho conta</Link>
+              <Link href="/entrar" prefetch={false} className="text-slate-300 transition hover:text-white">Já tenho conta</Link>
               <Link href="/esqueci-minha-senha" className="text-emerald-300 transition hover:text-emerald-200">Esqueci minha senha</Link>
             </div>
           </form>

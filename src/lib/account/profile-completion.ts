@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { validateFirstAccessProfile } from '@/lib/account/first-access-validation';
 
@@ -16,7 +17,44 @@ function getMissingRequiredProfileFields(profile: Record<string, unknown> | null
   return Object.keys(validation.fieldErrors);
 }
 
-export async function getProfileCompletionStatus(userId: string, authEmailInput?: string | null): Promise<ProfileCompletionStatus> {
+export type CustomerProfileRowResult = {
+  data: Record<string, unknown> | null;
+  error: { message: string } | null;
+};
+
+export const getCustomerProfileRow = cache(async (userId: string | null | undefined): Promise<CustomerProfileRowResult> => {
+  if (!userId) return { data: null, error: null };
+
+  const supabase = await createServerSupabaseClient();
+  const rpcResult = await supabase.rpc('get_customer_profile', {
+    p_user_id: userId,
+  });
+
+  if (!rpcResult.error) {
+    const data = (Array.isArray(rpcResult.data) ? rpcResult.data[0] : rpcResult.data) as Record<string, unknown> | null;
+    return { data: data ?? null, error: null };
+  }
+
+  const selectAttempts = [
+    'user_id, full_name, cpf, birth_date, gender, phone, city',
+  ];
+
+  for (const selectExpr of selectAttempts) {
+    const { data, error } = await supabase
+      .from('customer_profiles')
+      .select(selectExpr)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!error) {
+      return { data: (data ?? null) as Record<string, unknown> | null, error: null };
+    }
+  }
+
+  return { data: null, error: { message: rpcResult.error.message } };
+});
+
+async function loadProfileCompletionStatus(userId: string, authEmailInput?: string | null): Promise<ProfileCompletionStatus> {
   const supabase = await createServerSupabaseClient();
 
   let authEmail = authEmailInput ?? null;
@@ -29,37 +67,9 @@ export async function getProfileCompletionStatus(userId: string, authEmailInput?
     }
   }
 
-  let profileData: Record<string, unknown> | null = null;
-  let profileError: string | null = null;
-
-  const rpcResult = await supabase.rpc('get_customer_profile', {
-    p_user_id: userId,
-  });
-
-  if (!rpcResult.error) {
-    profileData = (Array.isArray(rpcResult.data) ? rpcResult.data[0] : rpcResult.data) as Record<string, unknown> | null;
-  } else {
-    profileError = rpcResult.error.message;
-
-    // Fallback for environments where RPC may be unavailable.
-    const selectAttempts = [
-      'user_id, full_name, cpf, birth_date, gender, phone, city',
-    ];
-
-    for (const selectExpr of selectAttempts) {
-      const { data, error } = await supabase
-        .from('customer_profiles')
-        .select(selectExpr)
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (!error) {
-        profileData = (data ?? null) as Record<string, unknown> | null;
-        profileError = null;
-        break;
-      }
-    }
-  }
+  const profileResult = await getCustomerProfileRow(userId);
+  const profileData = profileResult.data;
+  const profileError = profileResult.error?.message ?? null;
 
   if (profileError) {
     return {
@@ -134,3 +144,5 @@ export async function getProfileCompletionStatus(userId: string, authEmailInput?
     error: null,
   };
 }
+
+export const getProfileCompletionStatus = cache(loadProfileCompletionStatus);

@@ -99,7 +99,7 @@ export function HomeFeaturedHero({
               ) : null}
             </ul>
             {cta ? (
-              <Link href={cta.href} className={cx(ctaClassName, 'mt-1.5 inline-flex lg:hidden')}>
+              <Link href={cta.href} prefetch={false} className={cx(ctaClassName, 'mt-1.5 inline-flex lg:hidden')}>
                 {cta.label}
                 <ChevronRight size={14} />
               </Link>
@@ -107,7 +107,7 @@ export function HomeFeaturedHero({
           </div>
 
           {cta ? (
-            <Link href={cta.href} className={cx(ctaClassName, 'hidden lg:inline-flex')}>
+            <Link href={cta.href} prefetch={false} className={cx(ctaClassName, 'hidden lg:inline-flex')}>
               {cta.label}
               <ChevronRight size={14} />
             </Link>
