@@ -30,6 +30,7 @@ export const ADMINISTRATIVE_PANEL_PERMISSION_CODES = [
   'reports.view',
   'imports.view',
   'invites.view',
+  'accounts.health.view',
   'settings.manage',
   'team.view',
   'wristbands.view',

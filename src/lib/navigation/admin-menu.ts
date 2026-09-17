@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bell,
   CalendarDays,
   ClipboardCheck,
@@ -151,6 +152,13 @@ export const adminNavGroups: AdminNavGroup[] = [
         href: "/cadastros",
         permissionAny: ["participants.view"],
         landingPriority: 30,
+      },
+      {
+        label: "Saúde de contas",
+        icon: Activity,
+        href: "/cadastros/saude-contas",
+        permissionAny: ["accounts.health.view"],
+        landingPriority: 30.5,
       },
       {
         label: "Convites",

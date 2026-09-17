@@ -24,12 +24,17 @@ test('emissor existente preseleciona cadastro por UUID e preserva breadcrumb',as
   assert.match(form,/registrationContactId/);
 });
 
-test('action usa registration_contact_id exato e nao infere propriedade do cadastro',async()=>{
+test('action usa registration_contact_id exato e nao infere propriedade por e-mail/identidade',async()=>{
   const action=await read('../src/app/ingressos/emitir/actions.ts');
   assert.match(action,/registrationContactId\?: string \| null/);
   assert.match(action,/contactQuery\.eq\("id", input\.registrationContactId as string\)/);
   assert.match(action,/p_registration_contact_id: String\(contactResult\.data\.id\)/);
-  assert.doesNotMatch(action,/owner_user_id/);
+  // A leitura de owner_user_id e pos-emissao: confere destino do fluxo
+  // autorizado (Cadastro.user_id / intended_owner_contact_id). Nao atribui
+  // ownership por coincidencia de e-mail, nome ou participant.
+  assert.match(action,/\.select\("id, owner_user_id, intended_owner_contact_id, participant_id"\)/);
+  assert.match(action,/destinationUserId && owner !== destinationUserId/);
+  assert.doesNotMatch(action,/\.from\("tickets"\)[\s\S]*\.update\(/);
   assert.doesNotMatch(action,/full_name.*owner|email.*owner/i);
 });
 

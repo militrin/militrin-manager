@@ -24,6 +24,7 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
   const organization = (await getCurrentOrganizationContext()).organization;
   const canEdit = await hasPermission("participants.edit_basic");
   const canIssueTicket = await hasPermission("participants.create");
+  const canViewAccountHealth = await hasPermission("accounts.health.view");
 
   if (!organization?.id) {
     return <main className="p-8 text-slate-200">Selecione uma organização para visualizar os cadastros.</main>;
@@ -152,7 +153,7 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
     <TopBar title="Cadastros" subtitle={`${organization.name} · pessoas da organização`}/>
-    <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-400">{rows.length} pessoa(s) encontrada(s)</p><Link href="/cadastros/novo" className="inline-flex h-10 items-center rounded-xl bg-emerald-500 px-4 font-semibold text-emerald-950">Novo cadastro</Link></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-400">{rows.length} pessoa(s) encontrada(s)</p><div className="flex flex-wrap gap-2">{canViewAccountHealth ? <Link href="/cadastros/saude-contas" className="inline-flex h-10 items-center rounded-xl border border-emerald-500/40 px-4 font-semibold text-emerald-200">Saúde de contas</Link> : null}<Link href="/cadastros/novo" className="inline-flex h-10 items-center rounded-xl bg-emerald-500 px-4 font-semibold text-emerald-950">Novo cadastro</Link></div></div>
     {groupStatusByEmail.size ? <p className="text-sm text-violet-100"><Link href="/cadastros?shared_email=pending" className="hover:underline">Pendentes: {pendingGroups}</Link>{" · "}<Link href="/cadastros?shared_email=resolved" className="hover:underline">Resolvidos: {resolvedGroups}</Link><span className="sr-only">{sharedEmailCountersLabel(pendingGroups, resolvedGroups)}</span><span className="text-slate-500"> · a pendência some ao definir a conta principal; as Pessoas permanecem</span></p> : null}
     {params.import_batch_id ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"><p className="text-sm text-amber-100">Exibindo pessoas vinculadas ao lote de importação, sem alterar a identidade global do cadastro.</p><Link href="/cadastros" className="rounded-xl border border-amber-400/40 px-4 py-2 text-sm text-amber-100">Ver todos os cadastros</Link></div> : null}
     <form className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto]">
