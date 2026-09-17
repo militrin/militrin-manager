@@ -1,6 +1,7 @@
 import 'server-only';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { authLinkExpiresAtFromSend } from '@/lib/auth/email-otp-ttl';
+import { usesExistingAuthDelivery } from '@/lib/account/contact-account-state';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 
 // Nucleo reutilizavel do envio/reenvio de convite de primeiro acesso --
@@ -51,7 +52,14 @@ export async function markInvitedAccountPending(userId: string, mustChangePasswo
 
 export async function dispatchFirstAccessEmail(input: { inviteId: string; email: string; reasonCode: string }) {
   const admin = createServiceRoleSupabaseClient();
-  const isResend = input.reasonCode.startsWith('resend_invite_');
+  if (input.reasonCode === 'pending_email_confirmation') {
+    return {
+      error: { message: 'PENDING_AUTH_REQUIRES_SIGNUP_RESEND' },
+      authUserId: null as string | null,
+      resent: false,
+    };
+  }
+  const isResend = usesExistingAuthDelivery(input.reasonCode);
   const redirectTo = firstAccessInviteRedirect(input.inviteId);
 
   const passwordRequirementError = await requireFirstAccessPassword(input.inviteId);

@@ -15,6 +15,7 @@ type InviteAccountButtonProps = {
     status: string;
     expiresAt: string | null;
   } | null;
+  createNewAuth?: boolean;
 };
 
 function formatExpiry(value: string | null) {
@@ -24,7 +25,7 @@ function formatExpiry(value: string | null) {
   return date.toLocaleString("pt-BR");
 }
 
-export function InviteAccountButton({ contactId, canInvite, inviteStatus, reason, inviteRecord }: InviteAccountButtonProps) {
+export function InviteAccountButton({ contactId, canInvite, inviteStatus, reason, inviteRecord, createNewAuth = true }: InviteAccountButtonProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const expiryLabel = formatExpiry(inviteRecord?.expiresAt ?? null);
@@ -47,7 +48,7 @@ export function InviteAccountButton({ contactId, canInvite, inviteStatus, reason
         </div>
       ) : null}
       {canInvite ? <button type="button" onClick={submit} disabled={isPending} className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500 disabled:opacity-50">
-        {isPending ? "Enviando..." : inviteStatus === "pending" ? "Reenviar convite" : "Enviar convite para criar conta"}
+        {isPending ? "Enviando..." : inviteStatus === "pending" ? "Reenviar convite" : createNewAuth ? "Enviar convite para criar conta" : "Enviar acesso para a conta existente"}
       </button> : null}
       {!canInvite ? <p className="text-xs text-amber-300">{reason}</p> : null}
       {message ? <p className="text-xs text-slate-400">{message}</p> : null}

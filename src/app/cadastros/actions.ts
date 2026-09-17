@@ -7,6 +7,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { resendParticipantTicketAction } from "@/app/inscricoes/actions";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { dispatchFirstAccessEmail, markInvitedAccountPending } from "@/lib/account/first-access-invite-dispatch";
+import { isPendingEmailConfirmationReason } from "@/lib/account/contact-account-state";
+import { resendSignupConfirmation } from "@/lib/account/resend-signup-confirmation";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -133,6 +135,18 @@ export async function inviteCadastroFirstAccessAction(id: string, anchor: "parti
     ? await supabase.rpc("check_registration_contact_account_invite_eligibility", { p_registration_contact_id: id })
     : await supabase.rpc("check_participant_account_invite_eligibility", { p_participant_id: id });
   const eligibility = (Array.isArray(eligibilityResult.data) ? eligibilityResult.data[0] : eligibilityResult.data) as EligibilityRpcRow | null;
+  if (isPendingEmailConfirmationReason(eligibility?.reason_code) && eligibility?.email) {
+    const resend = await resendSignupConfirmation({ email: eligibility.email, audience: "admin" });
+    revalidatePath("/cadastros");
+    if (anchor === "contact") revalidatePath(`/cadastros/${id}`);
+    return {
+      success: resend.ok,
+      inviteState: "pending_confirmation" as const,
+      reasonCode: "pending_email_confirmation",
+      sent: resend.requested,
+      message: resend.message,
+    };
+  }
   if (eligibilityResult.error || !eligibility?.eligible) {
     const reasonCode = eligibilityResult.error ? "evaluation_error" : String(eligibility?.reason_code ?? "account_conflict");
     return { success: false as const, inviteState: reasonCode === "already_linked" ? "linked" as const : "conflict" as const, reasonCode, message: eligibilityResult.error?.message ?? String(eligibility?.reason_message ?? "Cadastro não elegível.") };
@@ -161,6 +175,37 @@ export async function inviteCadastroFirstAccessAction(id: string, anchor: "parti
   revalidatePath("/cadastros");
   if (anchor === "contact") revalidatePath(`/cadastros/${id}`);
   return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: invited.resent ? "Convite de primeiro acesso reenviado." : "Convite preparado e envio aceito pelo provedor." };
+}
+
+export async function resendCadastroSignupConfirmationAction(contactId: string) {
+  await assertPermission("participants.edit_basic");
+  if (!UUID_PATTERN.test(contactId)) return { success: false as const, message: "Cadastro inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_registration_contact_account_state", {
+    p_registration_contact_id: contactId,
+  });
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    state?: string;
+    reason_code?: string;
+    reason_message?: string;
+    email?: string | null;
+    can_resend_confirmation?: boolean;
+  } | null;
+  if (error || !row) {
+    return { success: false as const, message: error?.message ?? "Não foi possível avaliar a conta." };
+  }
+  if (!row.can_resend_confirmation || !isPendingEmailConfirmationReason(row.reason_code) || !row.email) {
+    return { success: false as const, message: row.reason_message ?? "Reenvio de confirmação não disponível para este cadastro." };
+  }
+  const resend = await resendSignupConfirmation({ email: row.email, audience: "admin" });
+  revalidatePath("/cadastros");
+  revalidatePath(`/cadastros/${contactId}`);
+  return {
+    success: resend.ok,
+    requested: resend.requested,
+    rateLimited: resend.rateLimited,
+    message: resend.message,
+  };
 }
 
 export async function bulkResolveImportCategoryBatchAction(input: { importBatchId: string; participantIds: string[]; categoryId: string; batchId: string }) {

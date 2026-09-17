@@ -7,7 +7,13 @@ function logMail(kind: string, payload: unknown) {
 
 export class ConsoleEmailProvider implements EmailProvider {
   async sendAccountConfirmation(input: { to: string; confirmationUrl?: string }): Promise<void> {
-    logMail("account-confirmation", input);
+    // Metodo legado da interface EmailProvider. NAO e o mailer de confirmacao
+    // GoTrue/Supabase Auth. Nenhuma superficie de signup deve chama-lo.
+    // Confirmacao de Auth com token real e exclusiva de supabase.auth.resend/signUp.
+    console.warn("[email:account-confirmation-ignored]", {
+      to: input.to,
+      reason: "GoTrue/Supabase Auth envia o token de confirmacao. MILITRIN_EMAIL_PROVIDER nao duplica esse e-mail.",
+    });
   }
 
   async sendPaymentPending(input: { to: string; participantName: string; amount: number; paymentMethod: string; expiresAt: string | null; pixCode: string | null }): Promise<void> {

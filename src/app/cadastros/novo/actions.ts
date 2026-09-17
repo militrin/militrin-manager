@@ -27,6 +27,12 @@ export async function createContactAction(formData: FormData) {
     p_city: parsed.data.city || null,
   });
   if (error || !data) redirect(`/cadastros/novo?erro=${encodeURIComponent(error?.message ?? "Cadastro não salvo")}`);
-  const { data: contact } = await supabase.from("registration_contacts").select("public_pin").eq("id", String(data)).maybeSingle();
-  redirect(`/cadastros/novo?sucesso=1&pin=${encodeURIComponent(String(contact?.public_pin ?? ""))}`);
+  const contactId = String(data);
+  const { data: contact } = await supabase.from("registration_contacts").select("public_pin").eq("id", contactId).maybeSingle();
+  const { data: accountState } = await supabase.rpc("get_registration_contact_account_state", {
+    p_registration_contact_id: contactId,
+  });
+  const row = (Array.isArray(accountState) ? accountState[0] : accountState) as { state?: string } | null;
+  const conta = encodeURIComponent(String(row?.state ?? "none"));
+  redirect(`/cadastros/novo?sucesso=1&pin=${encodeURIComponent(String(contact?.public_pin ?? ""))}&id=${encodeURIComponent(contactId)}&conta=${conta}`);
 }

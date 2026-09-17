@@ -7,6 +7,7 @@ import { BirthDateInput } from '@/components/forms/BirthDateInput';
 import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 import { formatCpf, formatPhone } from '@/lib/validation/registration';
 import { signUpPublicAccountAction } from '@/app/inscricao/actions';
+import { resendConfirmationEmailAction } from '@/app/verifique-seu-email/actions';
 import { resolvePostAuthDestination } from '@/lib/utils/safe-navigation';
 
 export default function CriarContaPage() {
@@ -26,6 +27,9 @@ export default function CriarContaPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState(false);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
+  const [resendPending, setResendPending] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
@@ -58,6 +62,8 @@ export default function CriarContaPage() {
     setIsSubmitting(true);
     setMessage(null);
     setEmailAlreadyRegistered(false);
+    setPendingConfirmation(false);
+    setResendMessage(null);
     let keepLocked = false;
 
     try {
@@ -97,6 +103,12 @@ export default function CriarContaPage() {
         if (result.code === 'EMAIL_ALREADY_REGISTERED') {
           setEmailAlreadyRegistered(true);
           setMessage('Este e-mail já possui uma conta cadastrada.');
+          return;
+        }
+
+        if (result.code === 'PENDING_EMAIL_CONFIRMATION') {
+          setPendingConfirmation(true);
+          setMessage('Já existe uma conta pendente para este e-mail.');
           return;
         }
 
@@ -215,12 +227,34 @@ export default function CriarContaPage() {
             </label>
 
             {message ? (
-              <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+              <div className={`rounded-2xl border p-3 text-sm ${pendingConfirmation ? 'border-amber-500/30 bg-amber-500/10 text-amber-100' : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>
                 <p>{message}</p>
                 {emailAlreadyRegistered ? (
                   <div className="mt-2 flex flex-wrap gap-3">
                     <Link href={email ? `/entrar?email=${encodeURIComponent(email)}` : '/entrar'} prefetch={false} className="font-semibold underline">Entrar</Link>
                     <Link href="/esqueci-minha-senha" className="font-semibold underline">Recuperar senha</Link>
+                  </div>
+                ) : null}
+                {pendingConfirmation ? (
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      disabled={resendPending || cooldownSeconds > 0}
+                      onClick={async () => {
+                        setResendPending(true);
+                        setResendMessage(null);
+                        const result = await resendConfirmationEmailAction(email);
+                        setResendMessage(result.message);
+                        setResendPending(false);
+                      }}
+                      className="rounded-xl border border-amber-400/40 px-3 py-2 text-sm font-semibold text-amber-50 disabled:opacity-50"
+                    >
+                      {resendPending ? 'Enviando...' : 'Reenviar confirmação'}
+                    </button>
+                    <Link href={email ? `/entrar?email=${encodeURIComponent(email)}` : '/entrar'} prefetch={false} className="inline-flex items-center font-semibold underline">
+                      Voltar para entrar
+                    </Link>
+                    {resendMessage ? <p className="w-full text-xs text-amber-100/80">{resendMessage}</p> : null}
                   </div>
                 ) : null}
               </div>

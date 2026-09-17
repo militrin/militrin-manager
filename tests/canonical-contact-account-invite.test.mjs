@@ -14,7 +14,7 @@ const inviteContext = fs.readFileSync('src/lib/account/participant-invite.ts', '
 const migration = fs.readFileSync('supabase/migrations/20260893000000_canonical_contact_account_invites.sql', 'utf8');
 
 test('admin-created contact eligibility does not depend on participant or ticket', () => {
-  assert.match(page, /check_registration_contact_account_invite_eligibility/);
+  assert.match(page, /get_registration_contact_account_state/);
   assert.doesNotMatch(page, /firstAccessCandidateParticipantId/);
   assert.match(migration, /prepare_registration_contact_account_invite/);
   assert.match(migration, /participant_id drop not null/);

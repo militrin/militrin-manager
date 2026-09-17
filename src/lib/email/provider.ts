@@ -12,6 +12,7 @@ export type TicketEmailPayload = {
 };
 
 export interface EmailProvider {
+  /** Legado. Nao envia confirmacao GoTrue. Signup usa supabase.auth.signUp/resend. */
   sendAccountConfirmation(input: { to: string; confirmationUrl?: string }): Promise<void>;
   sendPaymentPending(input: { to: string; participantName: string; amount: number; paymentMethod: string; expiresAt: string | null; pixCode: string | null }): Promise<void>;
   sendTicketConfirmation(input: TicketEmailPayload): Promise<void>;

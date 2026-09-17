@@ -48,7 +48,7 @@ test('reenvios signup usam callback canonico e primeiro acesso', () => {
   assert.match(authRedirects, /export function signupConfirmationRedirect/);
   assert.match(authRedirects, /\/auth\/callback\?next=/);
   assert.match(authRedirects, /\/primeiro-acesso\?next=/);
-  assert.equal((verificationActions.match(/options: \{ emailRedirectTo: signupConfirmationRedirect\(\) \}/g) ?? []).length, 2);
+  assert.match(verificationActions, /resendSignupConfirmation\(\{ email, audience: 'public' \}\)/);
   assert.match(signupActions, /signupConfirmationRedirect\(postSignupDestination\)/);
 });
 

@@ -1,7 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { signupConfirmationRedirect } from '@/lib/account/auth-redirects';
+import { resendSignupConfirmation } from '@/lib/account/resend-signup-confirmation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 
@@ -19,34 +19,9 @@ function isValidEmailFormat(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function translateResendError(message: string) {
-  const normalized = message.toLowerCase();
-  if (normalized.includes('security purposes') || normalized.includes('rate limit')) {
-    return 'Muitas solicitações em pouco tempo. Aguarde um instante e tente novamente.';
-  }
-  if (normalized.includes('already confirmed')) {
-    return 'Este e-mail já foi confirmado. Você já pode entrar normalmente.';
-  }
-  return 'Não foi possível reenviar o e-mail. Tente novamente em instantes.';
-}
-
 export async function resendConfirmationEmailAction(email: string) {
-  const normalized = normalizeEmail(email);
-  if (!normalized || !isValidEmailFormat(normalized)) {
-    return { success: false as const, message: 'E-mail inválido.' };
-  }
-
-  const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.auth.resend({
-    type: 'signup',
-    email: normalized,
-    options: { emailRedirectTo: signupConfirmationRedirect() },
-  });
-  if (error) {
-    return { success: false as const, message: translateResendError(error.message) };
-  }
-
-  return { success: true as const, message: 'E-mail enviado novamente. Verifique também sua caixa de spam.' };
+  const result = await resendSignupConfirmation({ email, audience: 'public' });
+  return { success: result.ok, message: result.message };
 }
 
 export async function changeEmailBeforeConfirmationAction(input: {
@@ -109,12 +84,8 @@ export async function changeEmailBeforeConfirmationAction(input: {
     return { success: false as const, message: updateResult.error.message };
   }
 
-  const resend = await supabase.auth.resend({
-    type: 'signup',
-    email: newEmail,
-    options: { emailRedirectTo: signupConfirmationRedirect() },
-  });
-  if (resend.error) {
+  const resend = await resendSignupConfirmation({ email: newEmail, audience: 'admin' });
+  if (!resend.ok) {
     return {
       success: true as const,
       email: newEmail,

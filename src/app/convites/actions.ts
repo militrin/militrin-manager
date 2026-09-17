@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { assertPermission } from '@/lib/admin/permissions';
 import { dispatchFirstAccessEmail, markInvitedAccountPending } from '@/lib/account/first-access-invite-dispatch';
+import { resendSignupConfirmation } from '@/lib/account/resend-signup-confirmation';
 import { canResendInviteCenter, classifyInviteCenterRow } from '@/lib/invites/invite-center-status';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
@@ -115,6 +116,12 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
     reason_message?: string;
     email?: string;
   } | null;
+  if (String(row?.reason_code ?? '') === 'pending_email_confirmation' && row?.email) {
+    const resend = await resendSignupConfirmation({ email: row.email, audience: 'admin' });
+    revalidatePath('/convites');
+    revalidatePath(`/cadastros/${contactId}`);
+    return { success: resend.ok, sent: resend.requested, message: resend.message };
+  }
   if (eligibility.error || !row?.eligible) {
     return {
       success: false as const,

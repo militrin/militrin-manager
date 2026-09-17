@@ -19,6 +19,8 @@ import { normalizePricingGenderInput, resolvePricingGender } from '@/lib/checkou
 import { buyerOwnershipModes, registrationContactHasActiveTicket, shouldAssignBuyerToNewOrder } from '@/lib/registrations/active-ticket-holder';
 import { ACCOUNT_NOT_CONFIRMED_MESSAGE, isEmailConfirmed } from '@/lib/account/email-confirmation';
 import { firstAccessRouteWithNext, signupConfirmationRedirect } from '@/lib/account/auth-redirects';
+import { resendSignupConfirmation } from '@/lib/account/resend-signup-confirmation';
+import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 import { cardPaymentReturnUrl } from '@/lib/payments/card-return-url';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
@@ -1305,6 +1307,50 @@ export async function signUpPublicAccountAction(input: {
     }
   }
 
+  const admin = createServiceRoleSupabaseClient();
+  const { data: existingAuthStatus, error: existingAuthError } = await admin.rpc(
+    'find_auth_email_confirmation_status',
+    { p_email: normalized },
+  );
+  if (existingAuthError) {
+    console.error('[signUpPublicAccountAction] find_auth_email_confirmation_status falhou', {
+      message: existingAuthError.message,
+      code: existingAuthError.code ?? null,
+    });
+    return {
+      success: false,
+      message: 'Não foi possível validar seu e-mail agora. Tente novamente em instantes.',
+    };
+  }
+  const existingAuth = (Array.isArray(existingAuthStatus) ? existingAuthStatus[0] : existingAuthStatus) as
+    | { user_id?: string; email_confirmed?: boolean }
+    | null;
+  if (existingAuth?.user_id && existingAuth.email_confirmed) {
+    return {
+      success: false,
+      code: 'EMAIL_ALREADY_REGISTERED',
+      message: 'Este e-mail já possui uma conta cadastrada.',
+    };
+  }
+  if (existingAuth?.user_id && !existingAuth.email_confirmed) {
+    const resend = await resendSignupConfirmation({
+      email: normalized,
+      nextPath: resolvePostAuthDestination({
+        nextPath: input.next_path,
+        wizardPath: input.wizard_path,
+        fallback: '/minha-conta',
+      }),
+      audience: 'public',
+    });
+    return {
+      success: false,
+      code: resend.rateLimited ? 'rate_limit' : 'PENDING_EMAIL_CONFIRMATION',
+      message: resend.rateLimited
+        ? resend.message
+        : 'Já existe uma conta pendente para este e-mail.',
+    };
+  }
+
   // Vai pro /auth/callback (mesmo mecanismo usado por convite e por
   // recuperacao de senha), nao direto pra raiz -- garante uma sessao real
   // via cookies do servidor antes de cair em /primeiro-acesso, em vez de
@@ -1391,16 +1437,8 @@ export async function signUpPublicAccountAction(input: {
     redirectTo = profileCreationFailed ? firstAccessRouteWithNext(postAuth.destination) : postAuth.redirectTo;
   }
 
-  if (emailConfirmationRequired) {
-    try {
-      await emailProvider.sendAccountConfirmation({
-        to: normalized,
-        confirmationUrl: emailRedirectTo,
-      });
-    } catch (mailError) {
-      console.warn('Falha ao registrar envio de e-mail de confirmação:', mailError);
-    }
-  }
+  // Confirmacao de signup: somente GoTrue/Supabase Auth (signUp acima ja
+  // solicita o e-mail com token). Nao duplicar via MILITRIN_EMAIL_PROVIDER.
 
   return {
     success: true,

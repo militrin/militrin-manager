@@ -9,7 +9,7 @@ import { contactTicketRoleLabel, groupContactTickets, rolesForContactTicket, tic
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
-import { InviteAccountButton } from "../invite-account-button";
+import { ContactAccountCard } from "../contact-account-card";
 import { ticketDisplayReference } from "@/lib/display-reference";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
@@ -87,26 +87,43 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     isExistingTeamMember = !teamMemberError && Boolean(isTeamMember);
     teamRoleOptions = (rolesData ?? []).map((role: { id: string; name: string }) => ({ id: String(role.id), name: String(role.name) }));
   }
-  let inviteEligibility = {
+  let accountBlock = {
+    state: (contact.user_id ? "active" : "none") as "active" | "pending_confirmation" | "existing_confirmed" | "none" | "attention",
+    reasonCode: contact.user_id ? "already_linked" : "evaluation_error",
+    reason: contact.user_id ? "Conta vinculada." : "Sem permissao para enviar convites.",
     canInvite: false,
-    inviteStatus: "forbidden" as "available" | "pending" | "linked" | "blocked" | "forbidden",
-    reason: "Sem permissao para enviar convites.",
+    canResendConfirmation: false,
+    email: contact.email ? String(contact.email) : null,
   };
-  if (!contact.user_id && canInviteFirstAccess) {
-    const result = await supabase.rpc("check_registration_contact_account_invite_eligibility", {
+  if (canInviteFirstAccess) {
+    const result = await supabase.rpc("get_registration_contact_account_state", {
       p_registration_contact_id: id,
     });
     const row = (Array.isArray(result.data) ? result.data[0] : result.data) as {
-      eligible?: boolean; reason_code?: string; reason_message?: string;
+      state?: string;
+      reason_code?: string;
+      reason_message?: string;
+      email?: string | null;
+      can_resend_confirmation?: boolean;
+      can_invite?: boolean;
     } | null;
-    const reasonCode = result.error ? "evaluation_error" : String(row?.reason_code ?? "evaluation_error");
-    inviteEligibility = {
-      canInvite: !result.error && Boolean(row?.eligible),
-      inviteStatus: reasonCode.startsWith("resend_invite_") ? "pending"
-        : reasonCode === "already_linked" ? "linked"
-          : row?.eligible ? "available" : "blocked",
-      reason: result.error?.message ?? String(row?.reason_message ?? "Nao foi possivel avaliar o convite."),
-    };
+    if (!result.error && row?.state) {
+      accountBlock = {
+        state: row.state as typeof accountBlock.state,
+        reasonCode: String(row.reason_code ?? "evaluation_error"),
+        reason: String(row.reason_message ?? "Nao foi possivel avaliar a conta."),
+        canInvite: Boolean(row.can_invite),
+        canResendConfirmation: Boolean(row.can_resend_confirmation),
+        email: row.email ? String(row.email) : accountBlock.email,
+      };
+    } else if (result.error) {
+      accountBlock = {
+        ...accountBlock,
+        state: "attention",
+        reasonCode: "evaluation_error",
+        reason: result.error.message,
+      };
+    }
   }
   const { data: latestInvite } = !contact.user_id
     ? await supabase.from("participant_account_invites")
@@ -211,12 +228,16 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">Dados globais</h2><p className="mt-1 text-sm text-slate-400">Este cadastro não pertence a um evento.</p></div><div className="flex flex-wrap gap-2"><Link href={`/cadastros/${id}/editar`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar cadastro</Link>{canIssueTicket ? <Link href={`/ingressos/emitir?from=cadastro&contactId=${encodeURIComponent(id)}`} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400">Emitir ingresso</Link> : null}{canGrantStoreItems ? <ContactGrantStoreItemButton contactId={id} events={grantableEvents}/> : null}{contactUserId && canEditTeam ? (isExistingTeamMember ? <Link href={`/painel/configuracoes/equipe/${contactUserId}`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar acesso da equipe</Link> : <AddToTeamButton userId={contactUserId} contactId={id} contactName={String(contact.full_name)} roleOptions={teamRoleOptions}/>) : null}</div></div>
       <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[["Nome",contact.full_name],["CPF",contact.cpf],["Nascimento",contact.birth_date],["Gênero",contact.gender],["Telefone",contact.phone],["E-mail",contact.email],["Cidade",contact.city],["Origem",imported ? "Importação" : "Cadastro global"],["Conta vinculada",accountIds.length ? `${accountIds.length} conta(s)` : "Não vinculada"],["Criado em",contact.created_at ? new Date(String(contact.created_at)).toLocaleString("pt-BR") : null]].map(([label,value]) => <div key={String(label)}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words">{valueOrFallback(value)}</dd></div>)}</dl>
       <div className="mt-4"><CopyableId label="PIN do cadastro" value={contact.public_pin ? String(contact.public_pin) : null}/></div>
-      {!contactUserId ? (
-        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-          <p className="text-sm text-slate-300">Esta pessoa ainda não possui uma conta vinculada. Ingressos emitidos para ela ficam com proprietário pretendido até o primeiro acesso.</p>
-          <div className="mt-3"><InviteAccountButton contactId={id} inviteRecord={inviteRecord} {...inviteEligibility}/></div>
-        </div>
-      ) : null}
+      <ContactAccountCard
+        contactId={id}
+        email={accountBlock.email}
+        state={accountBlock.state}
+        reasonCode={accountBlock.reasonCode}
+        reason={accountBlock.reason}
+        canInvite={accountBlock.canInvite}
+        canResendConfirmation={accountBlock.canResendConfirmation}
+        inviteRecord={inviteRecord}
+      />
     </section>
     {sharedEmailGroup ? <SharedEmailAccountCard group={sharedEmailGroup} contactId={id} /> : null}
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">

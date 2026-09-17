@@ -130,7 +130,8 @@ test('resend self-service NUNCA cria conta/participante/cadastro -- so signInWit
 
 test('resend self-service reusa o MESMO fluxo canonico (dispatchFirstAccessEmail, reasonCode resend_invite_*) -- nenhuma segunda arquitetura de envio', () => {
   assert.match(resendAction, /reasonCode: "resend_invite_self_service"/);
-  assert.match(dispatchLib, /const isResend = input\.reasonCode\.startsWith\('resend_invite_'\);/);
+  assert.match(dispatchLib, /usesExistingAuthDelivery/);
+  assert.match(dispatchLib, /const isResend = usesExistingAuthDelivery\(input\.reasonCode\);/);
 });
 
 test('resend self-service e anti-enumeracao: mensagem generica identica exista ou nao convite pendente pra aquele e-mail', () => {
