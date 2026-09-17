@@ -26,7 +26,7 @@ test("busca manual do Turbo varre paginas de ingresso, nao so os primeiros 40", 
   assert.doesNotMatch(fn, /pageSize: 40/);
   assert.match(fn, /const pageSize = 500/);
   assert.match(fn, /if \(!tickets\.hasMore \|\| page >= 4\) break/);
-  assert.match(fn, /matchesOperationSearch/);
+  assert.match(fn, /matchesTicketOperationSearch/);
   assert.match(actions, /function matchesOperationSearch/);
   assert.match(actions, /digitSearch\.length < 3/);
 });

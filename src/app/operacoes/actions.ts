@@ -1495,7 +1495,7 @@ async function buildTicketDetails(
   if (detailParticipantIds.length > 0) {
     const { data: detailParticipantsData } = await supabase
       .from("participants")
-      .select("id, full_name, cpf, phone, email, city, gender, birth_date, registration_status, shirt_type, shirt_size, registration_contacts(public_pin), ticket_categories(id,name)")
+      .select("id, full_name, cpf, phone, email, city, gender, birth_date, registration_status, shirt_type, shirt_size, registration_contacts(public_pin, gender), ticket_categories(id,name)")
       .in("id", detailParticipantIds);
     for (const p of detailParticipantsData ?? []) {
       detailParticipantMap.set(String((p as Record<string, unknown>).id ?? ""), p as Record<string, unknown>);
@@ -1709,15 +1709,17 @@ async function buildTicketDetails(
     canIssueTicket = false;
   }
 
-  const registrationContactPin = (() => {
+  const registrationContact = (() => {
     if (!participantId) return null;
     const relation = detailParticipantMap.get(participantId)?.registration_contacts as Record<string, unknown> | Array<Record<string, unknown>> | null | undefined;
-    const contact = Array.isArray(relation) ? relation[0] : relation;
-    return contact?.public_pin ? String(contact.public_pin) : null;
+    return (Array.isArray(relation) ? relation[0] : relation) ?? null;
   })();
+  const registrationContactPin = registrationContact?.public_pin ? String(registrationContact.public_pin) : null;
+  const storedGender = String(baseRow.gender ?? "").trim() || String(registrationContact?.gender ?? "").trim() || null;
 
   const participantDetails: OperationTicketDetails = {
     ...baseRow,
+    gender: storedGender,
     event_kit_enabled: eventHasKit,
     last_checkin_at: latestCheckin?.created_at ? String(latestCheckin.created_at) : baseRow.ticket_used_at,
     last_checkin_actor: lastCheckinActor,

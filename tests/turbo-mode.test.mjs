@@ -101,6 +101,16 @@ test("entrega de ingresso e de produto (qualquer canal) reaproveitam as actions/
 // Fluxo A -- ingresso
 // ============================================================
 
+test("ficha QR identificado inclui Gênero entre Camiseta e Kit", () => {
+  const review = slice(turbo, "function TicketReview(", "function OperationSearch(");
+  const camiseta = review.indexOf('<Fact label="Camiseta"');
+  const genero = review.indexOf('<Fact label="Gênero"');
+  const kit = review.indexOf('label="Kit"');
+  assert.ok(camiseta !== -1 && genero !== -1 && kit !== -1);
+  assert.ok(camiseta < genero && genero < kit);
+  assert.match(review, /turboGenderLabel\(participant\.gender\)/);
+});
+
 test("Proximo bloqueia ingresso cancelado, ja concluido, com pendencia de check-in/kit ou camiseta sem estoque fisico", () => {
   const fn = slice(turbo, "function getTicketBlockers", "function Chrome(");
   assert.match(fn, /ticket_status === 'cancelled'/);

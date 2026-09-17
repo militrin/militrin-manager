@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { turboGenderLabel } from '@/lib/operations/turbo-gender-label';
 import type { OperationEvent, OperationTicketDetails, OperationTicketRow, PickupCapabilities, TurboSearchHit } from '../types';
 import type { OperationalProductItem } from '@/lib/operations/operational-product-item';
 import { SOURCE_LABEL } from '@/lib/operations/operational-product-item';
@@ -572,6 +573,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
           <StatusBanner tone="attention" label={busyLabel === 'VINCULANDO PULSEIRA...' ? 'VINCULANDO PULSEIRA...' : 'Pulseira necessária'} />
           <p className="text-center text-lg font-black leading-tight">{displayName(screen.participant)}</p>
           <p className="text-center text-sm text-slate-400">{shirtLabel(screen.participant)}</p>
+          <p className="text-center text-lg font-black leading-tight">{turboGenderLabel(screen.participant.gender)}</p>
           <div className={busyLabel ? 'pointer-events-none opacity-60' : undefined}>
             <QrScanner
               title="Escaneie a pulseira"
@@ -770,6 +772,7 @@ function TicketReview({
         <p className="text-base text-slate-400">{participant.category_name || 'Categoria não informada'}</p>
 
         <Fact label="Camiseta" value={shirtLabel(participant)} />
+        <Fact label="Gênero" value={turboGenderLabel(participant.gender)} />
         <Fact
           label="Kit"
           value={pendingKit ? 'Kit pendente' : participant.event_kit_enabled || participant.kit_items.length > 0 ? 'Kit entregue' : 'Sem kit'}
