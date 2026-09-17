@@ -788,7 +788,7 @@ async function getUnifiedOrderSnapshot(
       ticket_status: row.ticket_status ? String(row.ticket_status) : null,
       ticket_token: row.ticket_token ? String(row.ticket_token) : null,
       ownership_status: row.ownership_status ? String(row.ownership_status) : null,
-      titular_display: participantName || holderName || 'Titular ainda não definido',
+      titular_display: holderName || participantName || 'Titular ainda não definido',
       store_item_id: row.store_item_id ? String(row.store_item_id) : null,
       store_item_name: row.store_item_name ? String(row.store_item_name) : null,
       store_item_image_url: row.store_item_image_url ? String(row.store_item_image_url) : null,
@@ -1935,14 +1935,47 @@ export async function createPublicMultiOrderAction(input: MultiOrderCreateInput)
     const ownershipModes=buyerOwnershipModes(quantity,assignmentRequested,!effectiveAssignFirstToBuyer);
     rpcItems = rpcItems.map((item,index) => ownershipModes[index]==='self' ? {
       ...item, ownership_mode: 'self', ownership_status: 'assigned',
-      holder_full_name: null, holder_registration_contact_id: null, holder_cpf: null, holder_email: null, holder_phone: null,
+      holder_full_name: buyerFullName, holder_registration_contact_id: null, holder_cpf: null, holder_email: null, holder_phone: null,
     } : item.ownership_mode === 'named' ? {
       ...item, ownership_mode: 'named', ownership_status: 'unassigned',
+      holder_registration_contact_id: null, holder_cpf: null, holder_email: null, holder_phone: null,
     } : {
       ...item, ownership_mode: 'unassigned', ownership_status: 'unassigned',
       holder_full_name: null, holder_registration_contact_id: null, holder_cpf: null, holder_email: null, holder_phone: null,
     });
   }
+
+  rpcItems = rpcItems.map((item) => (
+    item.ownership_mode === 'named' ? {
+      ...item,
+      ownership_mode: 'named' as const,
+      ownership_status: 'unassigned' as const,
+      holder_registration_contact_id: null,
+      holder_cpf: null,
+      holder_email: null,
+      holder_phone: null,
+    } : item.ownership_mode === 'self' ? {
+      ...item,
+      ownership_mode: 'self' as const,
+      ownership_status: 'assigned' as const,
+      holder_full_name: buyerFullName,
+      holder_registration_contact_id: null,
+      holder_cpf: null,
+      holder_email: null,
+      holder_phone: null,
+    } : {
+      ...item,
+      ownership_mode: 'unassigned' as const,
+      ownership_status: 'unassigned' as const,
+      holder_full_name: null,
+      holder_registration_contact_id: null,
+      holder_cpf: null,
+      holder_email: null,
+      holder_phone: null,
+    }
+  ));
+
+  effectiveAssignFirstToBuyer = rpcItems[0]?.ownership_mode === 'self';
 
   const createOrderRpcPayload = {
     p_event_id: String(input.event_id),

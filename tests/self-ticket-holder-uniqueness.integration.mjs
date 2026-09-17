@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createClient } from '@supabase/supabase-js';
 
-const apiUrl = 'http://127.0.0.1:54321';
 const localEnvironment = Object.fromEntries(execFileSync('cmd.exe', ['/d', '/s', '/c', 'npx.cmd supabase status -o env'], { encoding: 'utf8' })
   .split(/\r?\n/).flatMap((line) => { const match = line.match(/^([A-Z_]+)="?([^"\r\n]+)"?$/); return match ? [[match[1], match[2]]] : []; }));
+const apiUrl = String(localEnvironment.API_URL || 'http://127.0.0.1:54321').replace(/\/$/, '');
+if (/supabase\.co/i.test(apiUrl)) throw new Error('refusing non-local supabase for self-holder uniqueness integration');
 const anonKey = localEnvironment.ANON_KEY;
 const serviceKey = localEnvironment.SERVICE_ROLE_KEY;
 const options = { auth: { persistSession: false, autoRefreshToken: false } };
@@ -223,13 +224,16 @@ test('dois titulares diferentes (named) no mesmo pedido: ambos permitidos, cada 
   assert.equal(result.error, null, result.error?.message);
   const orderId = result.data[0].order_id;
 
-  const items = await service.from('order_items').select('item_position,holder_full_name,registration_contact_id')
+  const items = await service.from('order_items').select('item_position,holder_full_name,registration_contact_id,participant_id')
     .eq('order_id', orderId).order('item_position', { ascending: true });
   assert.equal(items.error, null, items.error?.message);
   assert.equal(items.data.length, 2);
-  assert.ok(items.data[0].registration_contact_id, 'primeiro titular nomeado deve estar ancorado a um cadastro');
-  assert.ok(items.data[1].registration_contact_id, 'segundo titular nomeado deve estar ancorado a um cadastro');
-  assert.notEqual(items.data[0].registration_contact_id, items.data[1].registration_contact_id, 'duas pessoas diferentes devem ter cadastros distintos, nenhuma bloqueada pela outra');
+  assert.equal(items.data[0].holder_full_name, 'Pessoa Um');
+  assert.equal(items.data[1].holder_full_name, 'Pessoa Dois');
+  assert.equal(items.data[0].registration_contact_id, null, 'titular textual nao cria Cadastro');
+  assert.equal(items.data[1].registration_contact_id, null, 'titular textual nao cria Cadastro');
+  assert.equal(items.data[0].participant_id, null);
+  assert.equal(items.data[1].participant_id, null);
 
   await service.auth.admin.deleteUser(userId);
 });

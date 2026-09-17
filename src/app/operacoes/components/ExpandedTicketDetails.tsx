@@ -255,6 +255,9 @@ export function ExpandedTicketDetails({
         ) : null}
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
+          {detail.ticket_display_code && detail.ticket_display_code !== "sem número" ? (
+            <CopyableId label="Código do ingresso" value={detail.ticket_display_code} />
+          ) : null}
           <CopyableId label="PIN do cadastro" value={detail.registration_contact_pin} />
           <button
             type="button"

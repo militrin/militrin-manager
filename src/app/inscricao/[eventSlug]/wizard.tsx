@@ -1780,9 +1780,6 @@ export function RegistrationWizard({
           ownership_mode: item.ownershipMode,
           ownership_status: ownershipStatus,
           holder_full_name: item.ownershipMode === 'named' ? item.holder_full_name : undefined,
-          holder_cpf: item.ownershipMode === 'named' ? removeCpfMask(item.holder_cpf) : undefined,
-          holder_email: item.ownershipMode === 'named' ? item.holder_email : undefined,
-          holder_phone: item.ownershipMode === 'named' ? item.holder_phone : undefined,
         };
       }),
       buyer: {
@@ -2886,34 +2883,14 @@ export function RegistrationWizard({
                           </div>
 
                           {item.ownershipMode === 'named' ? (
-                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <div className="mt-2 space-y-2">
                               <input
                                 value={item.holder_full_name}
                                 onChange={(event_) => updateCheckoutItem(index, { holder_full_name: event_.target.value })}
                                 placeholder="Nome do titular"
-                                className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
+                                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
                               />
-                              <input
-                                value={item.holder_cpf}
-                                onChange={(event_) => updateCheckoutItem(index, { holder_cpf: event_.target.value })}
-                                placeholder="CPF do titular"
-                                inputMode="numeric"
-                                className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
-                              />
-                              <input
-                                value={item.holder_email}
-                                onChange={(event_) => updateCheckoutItem(index, { holder_email: event_.target.value })}
-                                placeholder="E-mail (opcional)"
-                                className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
-                              />
-                              <input
-                                value={item.holder_phone}
-                                onChange={(event_) => updateCheckoutItem(index, { holder_phone: event_.target.value })}
-                                placeholder="Telefone (opcional)"
-                                inputMode="tel"
-                                className="h-10 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm"
-                              />
-                              <p className="sm:col-span-2 text-[11px] leading-4 text-slate-400">Para vincular automaticamente, informe um CPF válido ou e-mail e telefone. Somente o nome será mantido como informação da compra, sem criar titularidade.</p>
+                              <p className="text-[11px] leading-4 text-slate-400">O nome identifica o titular deste pacote. Não cria Cadastro, conta nem transfere a propriedade.</p>
                             </div>
                           ) : null}
 

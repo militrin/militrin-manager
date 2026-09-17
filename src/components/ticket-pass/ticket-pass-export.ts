@@ -108,7 +108,8 @@ export function drawTicketPassPdf(doc: jsPDF, model: TicketPassViewModel, assets
   const rows: Array<{ label: string; value: string; valueColor: TicketPassRgb }> = [];
   if (model.holderName) rows.push({ label: TICKET_PASS_COPY.holderLabel, value: model.holderName, valueColor: text });
   if (model.categoryName) rows.push({ label: TICKET_PASS_COPY.categoryLabel, value: model.categoryName, valueColor: text });
-  if (model.orderNumber) rows.push({ label: TICKET_PASS_COPY.orderLabel, value: model.orderNumber, valueColor: text });
+  if (model.ticketCode) rows.push({ label: TICKET_PASS_COPY.ticketCodeLabel, value: model.ticketCode, valueColor: text });
+  if (model.orderNumber && model.orderNumber !== model.ticketCode) rows.push({ label: TICKET_PASS_COPY.orderLabel, value: model.orderNumber, valueColor: text });
   rows.push({
     label: TICKET_PASS_COPY.statusLabel,
     value: model.statusIsActive ? `ATIVO` : model.statusText,
@@ -291,7 +292,8 @@ export function drawTicketPassPng(
   const rows: Array<{ label: string; value: string; color: TicketPassRgb }> = [];
   if (model.holderName) rows.push({ label: TICKET_PASS_COPY.holderLabel, value: model.holderName, color: text });
   if (model.categoryName) rows.push({ label: TICKET_PASS_COPY.categoryLabel, value: model.categoryName, color: text });
-  if (model.orderNumber) rows.push({ label: TICKET_PASS_COPY.orderLabel, value: model.orderNumber, color: text });
+  if (model.ticketCode) rows.push({ label: TICKET_PASS_COPY.ticketCodeLabel, value: model.ticketCode, color: text });
+  if (model.orderNumber && model.orderNumber !== model.ticketCode) rows.push({ label: TICKET_PASS_COPY.orderLabel, value: model.orderNumber, color: text });
   rows.push({
     label: TICKET_PASS_COPY.statusLabel,
     value: model.statusIsActive ? TICKET_PASS_COPY.activeStatus : model.statusText,

@@ -39,7 +39,7 @@ test('unique de cobranca inclui account_key e tabela de charges do parcelamento'
 
 test('checkout de cartao nao coleta PAN/CVV e permanece na mesma aba', () => {
   assert.doesNotMatch(cardCard, /<input[^>]*(name|id|autoComplete)=['"][^'"]*(card|ccv|cvv|pan)/i);
-  assert.match(cardCard, /pagina segura do Asaas/);
+  assert.match(cardCard, /pagina segura do Asaas|pagina do Asaas/);
   assert.doesNotMatch(cardCard, /target="_blank"/);
   assert.match(provider, /billingType: "CREDIT_CARD"/);
   assert.match(provider, /invoiceUrl/);
@@ -61,22 +61,49 @@ test('callback de retorno nao confirma pagamento e nao vaza pedido de outro usua
   assert.match(returnClient, /canReuseCardCheckout/);
   assert.match(returnClient, /getPublicOrderPaymentStatusAction/);
   assert.match(returnClient, /Cartao recusado/);
+  assert.match(returnClient, /markCardCheckoutAttempted/);
   assert.doesNotMatch(returnClient, /Confirmando pagamento/);
+  const markAttemptIndex = returnClient.indexOf('markCardCheckoutAttempted(orderId)');
+  const retryAssignIndex = returnClient.indexOf('window.location.assign');
+  assert.ok(markAttemptIndex !== -1, 'retorno marca a tentativa aberta');
+  assert.ok(retryAssignIndex !== -1 && retryAssignIndex > markAttemptIndex, 'assign so no retry, nunca no mount');
 });
 
-test('pending de cartao sem refused usa UX neutra e recusa especifica permanece', () => {
+test('pending de cartao diferencia primeira tentativa de retry e recusa permanece', () => {
+  assert.match(cardCard, /Redirecionando para o pagamento seguro/);
+  assert.match(cardCard, /pendingPhase/);
   assert.match(cardCard, /Pagamento ainda não confirmado/);
   assert.match(cardCard, /Se a tentativa não foi concluída, você pode tentar novamente/);
   assert.match(cardCard, /Tentar pagamento novamente/);
   assert.match(cardCard, /Cartao recusado\. Tente novamente/);
   assert.match(cardCard, /canReuseInvoice/);
   assert.match(cardCard, /nunca failed/);
+  const redirectingIndex = cardCard.indexOf('Redirecionando para o pagamento seguro');
+  const pendingIndex = cardCard.indexOf('Pagamento ainda não confirmado');
+  assert.ok(redirectingIndex !== -1 && pendingIndex !== -1 && redirectingIndex < pendingIndex);
 });
 
-test('wizard reutiliza invoice viva e gera nova cobranca quando a atual nao serve', () => {
+test('wizard redireciona na primeira tentativa, reutiliza invoice viva e gera nova cobranca quando a atual nao serve', () => {
   const reuse = wizard.match(/canReuseInvoice=\{isReusableLiveGatewayCharge\(registration\.payment\)\}/g) ?? [];
   assert.equal(reuse.length, 2);
+  assert.match(wizard, /redirectToHostedCardCheckout/);
+  assert.match(wizard, /handleCartFinalized[\s\S]*force: true/);
+  assert.match(wizard, /shouldAutoRedirectToHostedCardCheckout/);
+  assert.match(wizard, /beginCardCheckoutRedirect/);
   assert.match(wizard, /window\.location\.assign\(nextCheckout\)/);
+  assert.match(wizard, /card\.payment\.payment_status[\s\S]*=== 'paid'/);
+});
+
+test('generatePublicOrderCardAction reusa cobranca viva, persiste invoice e usa lease', () => {
+  const start = actions.indexOf('export async function generatePublicOrderCardAction');
+  const nextExport = actions.indexOf('\nexport async function', start + 10);
+  const fn = actions.slice(start, nextExport === -1 ? start + 12000 : nextExport);
+  assert.match(fn, /isReusableLiveGatewayCharge\(payment\)/);
+  assert.match(fn, /claim_order_pix_generation/);
+  assert.match(fn, /createCardPayment/);
+  assert.match(fn, /p_checkout_url: payload.checkoutUrl/);
+  assert.match(fn, /getPaymentGatewayAccountKeyForMethod\('credit_card'\)/);
+  assert.match(fn, /cardPaymentReturnUrl\(orderId\)/);
 });
 
 test('sandbox recusa sincrona permanece pending e nao inventa failed', () => {

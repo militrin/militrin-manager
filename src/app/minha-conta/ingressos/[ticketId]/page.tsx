@@ -28,8 +28,10 @@ import { TicketOperationalControls } from './ticket-operational-controls';
 import { TicketHolderActions } from './ticket-holder-actions';
 import { CategoryContextAction, HolderContextAction, ParticipantShirtChangeAction, ShirtContextAction } from './ticket-context-actions';
 import { optionalDisplayValue } from '@/lib/optional-display';
-import { orderDisplayReference } from '@/lib/display-reference';
+import { canonicalHolderName, hasCanonicalHolderName } from '@/lib/tickets/holder-name';
+import { canonicalTicketDisplayCode, orderDisplayReference } from '@/lib/display-reference';
 import { resolveLinkedAccountLabel } from '@/lib/admin/operator-names';
+import { CopyableId } from '@/components/CopyableId';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -93,7 +95,7 @@ export default async function TicketDetailPage({
   const canTransferOwnership=Boolean(permissions['tickets.transfer_ownership']);
 
   const ticketSelect =
-  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), orders(id, order_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
+  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, operational_notes, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), orders(id, order_number, display_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
   
   const ticketResult = await supabase
     .from('tickets')
@@ -121,6 +123,7 @@ export default async function TicketDetailPage({
   // LEGACY FALLBACK — do not use as canonical source: participant category only supports incomplete historical order_items.
   const categoryObj = firstRelation((orderItem?.ticket_categories as Record<string, unknown> | Record<string, unknown>[] | null | undefined) ?? (participant?.ticket_categories as Record<string, unknown> | Record<string, unknown>[] | null | undefined));
   const batchObj = firstRelation(orderItem?.registration_batches as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const ticketCode = canonicalTicketDisplayCode(order?.display_number, orderItem?.item_position, order?.order_number);
 
   const participantId = String(orderItem?.participant_id ?? ticket.participant_id ?? participant?.id ?? '');
   const orderId = String(order?.id ?? ticket.order_id ?? '');
@@ -153,8 +156,8 @@ export default async function TicketDetailPage({
       qrDataUrl = null;
     }
   }
-  const hasHolder = Boolean(participantId);
-  const holderName = hasHolder ? String(participant?.full_name ?? orderItem?.holder_full_name ?? 'Titular não identificado') : 'Não definido';
+  const hasHolder = hasCanonicalHolderName(orderItem?.holder_full_name);
+  const holderName = canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, 'Não definido');
   const buyerProfileResult = order?.user_id
     ? await supabase.from('customer_profiles').select('full_name,email').eq('user_id', String(order.user_id)).maybeSingle()
     : { data: null };
@@ -275,14 +278,14 @@ export default async function TicketDetailPage({
   // (TicketHolderActions) e uma capacidade do PROPRIO dono do ingresso
   // (regra de titularidade existente, gated por isOwner + flags do evento),
   // nao administrativa -- continua na area do participante, nao aqui.
-  const hasAdminSection = Boolean(canAdminEdit || (participantId && canManageOperationalFlow));
-  const showHolderActions = isOwner && ((!participantId && Boolean(eventObj?.allow_holder_change)) || (participantId && Boolean(eventObj?.allow_ticket_transfer)));
+  const hasAdminSection = Boolean(canAdminEdit || canManageOperationalFlow);
+  const showHolderActions = isOwner && ((!hasHolder && Boolean(eventObj?.allow_holder_change)) || (hasHolder && Boolean(eventObj?.allow_ticket_transfer)));
 
   const timelineItems = [
     {
       id: `ticket-issued-${ticket.id}`,
       title: 'Acesso emitido',
-      subtitle: `Pedido ${orderDisplayReference(null, order?.order_number)}`,
+      subtitle: `Pedido ${orderDisplayReference(order?.display_number, order?.order_number)}`,
       date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : undefined,
       status: 'confirmed',
     },
@@ -375,7 +378,8 @@ export default async function TicketDetailPage({
           eventDate={eventObj?.starts_at ? String(eventObj.starts_at) : null}
           eventLocation={optionalDisplayValue(eventObj?.location)}
           token={String(ticket.token ?? '')}
-          orderNumber={orderDisplayReference(null, order?.order_number)}
+          orderNumber={orderDisplayReference(order?.display_number, order?.order_number)}
+          ticketCode={ticketCode}
           qrDataUrl={qrDataUrl}
           canShowQr={canShowTicket}
           qrUnavailableMessage={ticketIssuanceBlocked ? 'Acesso aguardando conferência. O QR Code ficará disponível após a liberação do organizador.' : 'O QR Code fica disponível assim que o pagamento é confirmado.'}
@@ -390,12 +394,18 @@ export default async function TicketDetailPage({
                 eventDate={eventObj?.starts_at ? String(eventObj.starts_at) : null}
                 eventLocation={eventObj?.location ? String(eventObj.location) : null}
                 token={String(ticket.token ?? '')}
-                orderNumber={orderDisplayReference(null, order?.order_number)}
+                orderNumber={orderDisplayReference(order?.display_number, order?.order_number)}
+                ticketCode={ticketCode}
               />
             ) : null
           }
         />
       </div>
+      {ticketCode ? (
+        <div className="mx-auto max-w-[400px]">
+          <CopyableId label="Código do ingresso" value={ticketCode} />
+        </div>
+      ) : null}
 
       {kitItemsForDisplay.length ? (
         <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
@@ -446,7 +456,7 @@ export default async function TicketDetailPage({
       {showHolderActions ? (
         <div className={cx(militrinTokens.radiusMd, militrinTokens.surfaceMuted, militrinTokens.shadow, 'p-4 sm:p-5')}>
           <h2 className={militrinType.cardTitle}>Titular do acesso</h2>
-          <div className="mt-3">{!participantId ? <TicketHolderActions ticketId={ticketId} mode="define" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" />}</div>
+          <div className="mt-3">{!hasHolder ? <TicketHolderActions ticketId={ticketId} mode="define" currentName="" /> : <TicketHolderActions ticketId={ticketId} mode="transfer" currentName={holderName === 'Não definido' ? '' : holderName} />}</div>
         </div>
       ) : null}
 
@@ -477,7 +487,7 @@ export default async function TicketDetailPage({
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Administração</p>
           <div className="mt-3 grid gap-3">
             <div className="grid gap-2 sm:grid-cols-2">
-              <p className="flex flex-wrap items-center gap-2">Titular: <strong>{holderName}</strong><HolderContextAction ticketId={ticketId} hasHolder={hasHolder} /></p>
+              <p className="flex flex-wrap items-center gap-2">Titular: <strong>{holderName}</strong><HolderContextAction ticketId={ticketId} hasHolder={hasHolder} currentName={holderName === 'Não definido' ? '' : holderName} /></p>
               <p>Proprietário atual: <strong>{ownerName}</strong></p>
               {order ? <p>Comprador: <strong>{buyerName}</strong> <span className="text-xs text-slate-500">(original)</span></p> : null}
               {optionalDisplayValue(categoryObj?.name) ? (
@@ -498,7 +508,7 @@ export default async function TicketDetailPage({
               {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
             </div>
 
-            {participantId && canManageOperationalFlow ? (
+            {canManageOperationalFlow ? (
               <div className="border-t border-slate-800 pt-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p>
                 <TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} hasActiveWristband={false} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/>
@@ -518,7 +528,7 @@ export default async function TicketDetailPage({
                 </form>
               </div>;
             })}
-            {canAdminEdit && participantId ? (
+            {canAdminEdit ? (
               <Link href={adminEditHref ?? `/ingressos/${ticketId}/editar`} className="inline-flex">
                 <MilitrinButton size="sm" variant="secondary">Editar ingresso</MilitrinButton>
               </Link>
@@ -529,9 +539,10 @@ export default async function TicketDetailPage({
               <form action={submitTicketNotesChange} className="space-y-3">
                 <input type="hidden" name="ticket_id" value={String(ticket.id)} />
                 <label className="block space-y-2 text-sm">
-                  <span className="text-slate-300">Registrar observações</span>
-                  <textarea name="notes" defaultValue={String(participant?.notes ?? orderItem?.notes ?? '')} rows={4} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100" />
+                  <span className="text-slate-300">Observações do ingresso</span>
+                  <textarea name="notes" defaultValue={String(ticket.operational_notes ?? participant?.notes ?? orderItem?.notes ?? '')} rows={4} className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100" />
                 </label>
+                <p className="text-xs text-slate-500">Anotação operacional deste ingresso neste evento. Não depende de Cadastro.</p>
                 <MilitrinButton type="submit" size="sm" variant="secondary">Salvar observações</MilitrinButton>
               </form>
             ) : null}

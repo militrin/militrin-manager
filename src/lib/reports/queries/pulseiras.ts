@@ -74,7 +74,7 @@ export async function pulseirasHistorico(supabase: ReportSupabaseClient, ctx: Re
 
   let query = supabase
     .from("participant_wristbands")
-    .select("id,code,status,linked_at,unlinked_at,participants(full_name)")
+    .select("id,code,status,linked_at,unlinked_at,ticket_id,participants(full_name),tickets(order_items(holder_full_name))")
     .eq("event_id", resolved.event.id)
     .order("linked_at", { ascending: false })
     .limit(2001);
@@ -86,9 +86,15 @@ export async function pulseirasHistorico(supabase: ReportSupabaseClient, ctx: Re
   const operatorByWristband = await loadWristbandOperators(supabase, resolved.event.id);
   const rows = (data ?? []).map((wristband) => {
     const participant = Array.isArray(wristband.participants) ? wristband.participants[0] : wristband.participants;
+    const ticket = Array.isArray(wristband.tickets) ? wristband.tickets[0] : wristband.tickets;
+    const orderItem = ticket && typeof ticket === "object"
+      ? (Array.isArray((ticket as { order_items?: unknown }).order_items)
+        ? (ticket as { order_items: Array<{ holder_full_name?: string | null }> }).order_items[0]
+        : (ticket as { order_items?: { holder_full_name?: string | null } }).order_items)
+      : null;
     return {
       codigo: String(wristband.code ?? ""),
-      participante: participant?.full_name ? String(participant.full_name) : "-",
+      participante: String(orderItem?.holder_full_name ?? participant?.full_name ?? "").trim() || "-",
       status: STATUS_LABELS[String(wristband.status ?? "")] ?? String(wristband.status ?? ""),
       vinculada_em: wristband.linked_at ? formatDateTimeBR(String(wristband.linked_at)) : "-",
       desvinculada_em: wristband.unlinked_at ? formatDateTimeBR(String(wristband.unlinked_at)) : "-",

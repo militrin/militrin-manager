@@ -34,6 +34,13 @@ test('cidade preenchida elimina imediatamente a pendencia sem depender da lista 
   assert.equal(filled.success, true);
 });
 
+test('rejeita data de nascimento evidentemente invalida mesmo que nao esteja no futuro', () => {
+  const year = new Date().getFullYear();
+  const result = validateFirstAccessProfile({ ...validProfile, birth_date: `24/07/${year}` });
+  assert.equal(result.success, false);
+  assert.equal(result.fieldErrors.birth_date, 'Informe uma data de nascimento válida.');
+});
+
 test('rejeita CPF, data real, genero, telefone e email invalidos', () => {
   const result = validateFirstAccessProfile({
     ...validProfile,

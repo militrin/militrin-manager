@@ -80,6 +80,7 @@ export const TICKET_PASS_COPY = {
   eyebrow: 'Acesso Militrin',
   holderLabel: 'Titular',
   categoryLabel: 'Categoria',
+  ticketCodeLabel: 'Código do ingresso',
   orderLabel: 'Pedido',
   statusLabel: 'Status',
   activeStatus: 'ATIVO',
@@ -106,6 +107,7 @@ export type TicketPassViewModelInput = {
   eventLocation?: string | null;
   token: string;
   orderNumber?: string | null;
+  ticketCode?: string | null;
 };
 
 export type TicketPassViewModel = {
@@ -113,6 +115,7 @@ export type TicketPassViewModel = {
   categoryName: string | null;
   holderName: string | null;
   orderNumber: string | null;
+  ticketCode: string | null;
   status: string;
   statusText: string;
   statusIsActive: boolean;
@@ -139,6 +142,7 @@ export function buildTicketPassViewModel(input: TicketPassViewModelInput): Ticke
     categoryName: category,
     holderName: holder,
     orderNumber: formatEventPassOrderNumber(input.orderNumber),
+    ticketCode: String(input.ticketCode ?? '').trim() || null,
     status: String(input.status ?? ''),
     statusText: status.text,
     statusIsActive: status.isActive,
@@ -148,7 +152,9 @@ export function buildTicketPassViewModel(input: TicketPassViewModelInput): Ticke
   };
 }
 
-export function ticketPassExportFileStem(model: Pick<TicketPassViewModel, 'orderNumber' | 'eventName'>) {
+export function ticketPassExportFileStem(model: Pick<TicketPassViewModel, 'ticketCode' | 'orderNumber' | 'eventName'>) {
+  const ticketCode = model.ticketCode?.replace(/^#/, '') ?? '';
+  if (ticketCode) return `acesso-militrin-${ticketCode}`;
   const order = model.orderNumber?.replace(/^#/, '') ?? '';
   if (order) return `acesso-militrin-${order}`;
   const slug = model.eventName

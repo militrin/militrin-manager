@@ -10,9 +10,9 @@ const schema = await readFile(new URL('../supabase/migrations/20260815001914_rem
 const shirtRules = await readFile(new URL('../supabase/migrations/20260852000000_shirt_size_config_fixed_stock_and_lock_rules.sql', import.meta.url), 'utf8');
 
 test('titularidade e propriedade ficam semanticamente separadas', () => {
-  assert.match(holderUi, /Transferir titularidade do ingresso/);
-  assert.match(holderUi, /Para transferir a propriedade do ingresso, contate um administrador\./);
-  assert.match(holderUi, /transferTicketByPinAction/);
+  assert.match(holderUi, /Alterar titular|Definir titular/);
+  assert.match(holderUi, /Não cria Cadastro e não transfere a propriedade/);
+  assert.match(holderUi, /setOwnerTicketHolderNameAction/);
   assert.doesNotMatch(holderUi, /tickets\.transfer_ownership|owner_user_id/);
 });
 
@@ -20,7 +20,7 @@ test('ação aparece somente com as flags canônicas do evento e do item', () =>
   assert.match(page, /eventObj\?\.allow_participant_item_changes/);
   assert.match(page, /participantShirtRule\?\.allow_participant_change/);
   assert.match(page, /participantShirtRule\?\.requires_variant/);
-  assert.match(page, /participantShirtChangeEnabled \? <ParticipantShirtChangeAction/);
+  assert.match(page, /participantShirtChangeEnabled \?[\s\S]*<ParticipantShirtChangeAction/);
   assert.doesNotMatch(actionsUi, /inventory\.change_participant_shirt/);
 });
 

@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { AdminPageHeader } from "@/components/admin";
 import { ticketDisplayReference } from "@/lib/display-reference";
 import { SolicitacoesClient, type PendingChangeRequestRow } from "./SolicitacoesClient";
+import { canonicalHolderName } from "@/lib/tickets/holder-name";
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
@@ -88,7 +89,7 @@ export default async function OperacoesSolicitacoesPage({
     const orderItem = firstRelation(ticket?.order_items as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
     const order = firstRelation(ticket?.orders as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
     const registrationContact = firstRelation(orderItem?.registration_contacts as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
-    const holderName = String(registrationContact?.full_name ?? orderItem?.holder_full_name ?? "Titular não identificado");
+    const holderName = canonicalHolderName(orderItem?.holder_full_name, registrationContact?.full_name, "Titular não identificado");
     const ticketReference = ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number);
 
     const itemType = String(kitItem?.item_type ?? "");

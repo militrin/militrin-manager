@@ -158,7 +158,7 @@ export function OperationsFilters({
           <input
             value={filters.search}
             onChange={(event) => onFilterChange("search", event.target.value)}
-            placeholder="Nome, CPF, telefone, QR ou pulseira..."
+            placeholder="Nome, CPF, telefone, código do ingresso, QR ou pulseira..."
             className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 text-xs"
           />
 

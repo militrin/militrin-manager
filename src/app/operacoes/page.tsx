@@ -45,6 +45,7 @@ import {
   type PickupSortDirection,
   type PickupSortField,
 } from "./types";
+import { ticketMatchesExactDisplayCode } from "@/lib/display-reference";
 
 const VIEW_STATE_STORAGE_KEY = "operacoes.view-state.v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -233,6 +234,7 @@ function detailToListItem(detail: PickupDetails): PickupListItem {
     category_name: detail.category_name,
     order_id: detail.order_id,
     order_number: detail.order_number,
+    ticket_display_code: detail.ticket_display_code,
     order_created_at: detail.order_created_at,
     buyer_user_id: detail.buyer_user_id,
     buyer_name: detail.buyer_name,
@@ -413,17 +415,25 @@ function KitPickupPageContent() {
 
     const filtered = sourceItems.filter((item) => {
       if (search) {
-        const haystack = normalizeText([
-          item.participant_name,
-          item.participant_email,
-          item.cpf,
-          item.phone,
-          item.buyer_name,
-          item.buyer_cpf,
-          item.buyer_phone,
-          item.buyer_email,
-        ].join(" "));
-        if (!haystack.includes(search)) return false;
+        const exactCode = ticketMatchesExactDisplayCode(activeFilters.search, item.ticket_display_code);
+        if (exactCode !== null) {
+          if (!exactCode) return false;
+        } else {
+          const haystack = normalizeText([
+            item.participant_name,
+            item.participant_email,
+            item.cpf,
+            item.phone,
+            item.buyer_name,
+            item.buyer_cpf,
+            item.buyer_phone,
+            item.buyer_email,
+            item.ticket_display_code,
+            item.order_number,
+            item.wristband_code,
+          ].join(" "));
+          if (!haystack.includes(search)) return false;
+        }
       }
 
       if (activeFilters.category !== "all" && item.category_name !== activeFilters.category) return false;

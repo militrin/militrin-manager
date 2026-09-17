@@ -34,9 +34,8 @@ test('titular sem conta, remocao e historico contact-first sao suportados', asyn
   assert.match(sql,/participant_id=null,registration_contact_id=null/);
   assert.match(sql,/new_registration_contact_id[\s\S]*new_user_id/);
   assert.match(sql,/pg_advisory_xact_lock/);
-  assert.match(actions,/admin_set_ticket_holder_contact/);
-  assert.match(editor,/registration_contact_id/);
-  assert.match(editor,/Sem conta/);
+  assert.match(actions,/admin_set_ticket_holder_name/);
+  assert.match(editor,/Nome do titular/);
   assert.match(editor,/Remover titular/);
   assert.match(timeline,/previous_registration_contact_id,new_registration_contact_id/);
 });
@@ -81,7 +80,7 @@ test('acoes contextuais abrem dialogs reais e reutilizam server actions', async 
 test('comprador e titular aparecem separados sem fallback na ficha do cadastro', async () => {
   const [ticket,cadastro] = await Promise.all([read('../src/app/minha-conta/ingressos/[ticketId]/page.tsx'),read('../src/app/cadastros/[id]/page.tsx')]);
   assert.match(ticket, /Comprador:/); assert.match(ticket, /Titular:/);
-  assert.match(cadastro, /row\.participant_id \|\| orderItem\?\.participant_id/);
+  assert.match(cadastro, /canonicalHolderName\(orderItem\?\.holder_full_name/);
   assert.match(cadastro, /Titular não definido/);
 });
 
@@ -160,17 +159,17 @@ test('remocao administrativa usa dialog proprio, action canonica e atualiza a fi
   assert.match(editor,/role="dialog"/);
   assert.match(editor,/Remover \{displayedHolder\} como titular deste ingresso\?/);
   assert.match(editor,/code=\{removeReasonCode\} text=\{removeReasonText\}/);
-  assert.match(editor,/transferTicketHolderAction\(props\.ticketId, null, removeReasonCode, removeReasonText\)/);
-  assert.doesNotMatch(editor,/transferTicketHolderAction\(props\.ticketId, undefined/);
+  assert.match(editor,/clearTicketHolderNameAction\(props\.ticketId, removeReasonCode, removeReasonText\)/);
+  assert.doesNotMatch(editor,/transferTicketHolderAction/);
   assert.match(editor,/setRemoveDialogOpen\(true\)/);
   assert.match(editor,/setRemoveDialogOpen\(false\)/);
   assert.match(editor,/setDisplayedHolder\("Titular não definido"\)/);
   assert.match(editor,/router\.refresh\(\)/);
   assert.match(editor,/Não foi possível remover o titular/);
-  assert.match(actions,/admin_set_ticket_holder_contact/);
-  assert.match(actions,/buildAdminSetTicketHolderPayload\(ticketId, registrationContactId, reasonCode, reasonText\)/);
+  assert.match(actions,/admin_set_ticket_holder_name/);
+  assert.match(actions,/buildAdminClearTicketHolderNamePayload\(ticketId, reasonCode, reasonText\)/);
   assert.match(actions,/Não foi possível alterar o titular/);
-  assert.match(page,/currentHolder=\{holder\?\.full_name \?\? "Titular não definido"\}/);
+  assert.match(page,/canonicalHolderName\(item\?\.holder_full_name, holder\?\.full_name\)/);
 
   const fn=sql.slice(sql.indexOf('create or replace function public.admin_set_ticket_holder_contact'),sql.indexOf('create or replace function public.admin_transfer_ticket_holder'));
   assert.doesNotMatch(fn,/update public\.orders|update public\.payments|update public\.event_kit_items/);

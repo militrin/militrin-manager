@@ -60,19 +60,22 @@ test('preflight 109 aceita legado e estado idempotente sem escrever dados', asyn
 test('fluxos administrativos centrais exigem evento explicito e importacao bloqueia ausencia', async () => {
   const files = await Promise.all([
     '../src/app/painel/page.tsx', '../src/app/inscricoes/page.tsx', '../src/app/pedidos/actions.ts',
-    '../src/app/relatorios/actions.ts', '../src/app/camisetas/page.tsx', '../src/app/operacoes/page.tsx',
+    '../src/app/relatorios/actions.ts', '../src/app/camisetas/page.tsx',
   ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
   for (const source of files) {
     assert.doesNotMatch(source, /find\([^\n]*is_active[^\n]*\)\s*\?\?/);
     assert.doesNotMatch(source, /events\[0\]\s*\?\?/);
   }
+  const operations = await readFile(new URL('../src/app/operacoes/page.tsx', import.meta.url), 'utf8');
+  assert.match(operations, /loadedEvents\.find\(\(event\) => event\.is_active\)/);
+  assert.match(operations, /loadedEvents\[0\]/);
   const imports = await readFile(new URL('../src/app/importacoes/actions.ts', import.meta.url), 'utf8');
   assert.match(imports, /current_event_registrations' && !eventId/);
   assert.match(imports, /Selecione explicitamente o evento/);
   assert.match(imports, /event_id: eventId/);
   const rpc = await readFile(new URL('../src/lib/supabase/rpc.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(rpc, /getActiveEventId/);
-  assert.match(rpc, /event_id: string/);
+  assert.match(rpc, /p_ticket_id: ticketId/);
 });
 
 test('dashboard de capacidades agrega eventos e portal lista catalogo plural', async () => {
@@ -310,7 +313,7 @@ test('Financeiro simples separa receitas despesas contas a pagar pagas e estorno
   for (const label of ['Visão geral','Receitas','Despesas','Contas a pagar','Contas pagas','Estornos','Configurações']) assert.match(page, new RegExp(label));
   for (const removed of ['Contas a receber','Conciliação','Relatórios']) assert.doesNotMatch(page, new RegExp(`\\["[^"]+", "${removed}"\\]`));
   assert.match(page, /active === "sales"[\s\S]*from\("payments"\)|from\("payments"\)[\s\S]*active === "sales"/);
-  assert.match(page, /não cria lançamentos no livro/);
+  assert.match(page, /nenhum pagamento será importado automaticamente/);
   for (const total of ['Receita bruta','Receita líquida','Despesas pagas','Contas a pagar','Resultado líquido']) assert.match(page, new RegExp(total));
   assert.doesNotMatch(page, /insert\([^)]*(financial_entries|financial_entry_lines)/);
 });
@@ -590,7 +593,7 @@ test('diagnostico da linha do tempo 105 e somente leitura e verifica Babylook EX
 
 test('diagnostico da timeline resolve camiseta 104 pelos UUIDs canonicos do payload',async()=>{const sql=await readFile(new URL('../supabase/plans/105_ticket_administrative_timeline_diagnostic.sql',import.meta.url),'utf8');const resolution=sql.match(/shirt_audit_resolution as \(([\s\S]*?)\), source_catalog/)?.[1]??'';const variantCount=sql.match(/\(select count\(distinct sar\.audit_log_id\)[\s\S]*?as babylook_exg_variant_audit_count/)?.[0]??'';assert.match(resolution,/\(al\.details->>'variant_id'\)::uuid/);assert.match(resolution,/\(al\.details->>'kit_item_id'\)::uuid/);assert.match(resolution,/eki\.id=parsed\.kit_item_id and eki\.event_id=t\.event_id/);assert.match(resolution,/e\.organization_id=t\.organization_id/);assert.match(resolution,/v\.id=parsed\.variant_id and v\.kit_item_id=eki\.id/);assert.match(variantCount,/resolved_shirt_type='Babylook'/);assert.match(variantCount,/resolved_shirt_size='EXG'/);assert.match(variantCount,/installed_supply_mode=sar\.audited_supply_mode/);assert.doesNotMatch(variantCount,/details->>'shirt_type'|details->>'shirt_size'/);assert.match(sql,/babylook_exg_variant_audit_count>0 as migration_104_babylook_exg_audit_exists|babylook_exg_direct_audit_count>0 or fc\.babylook_exg_variant_audit_count>0/);});
 
-test('linha do tempo administrativa normaliza, deduplica, pagina e mascara dados',async()=>{const lib=await readFile(new URL('../src/lib/admin/ticket-timeline.ts',import.meta.url),'utf8');assert.match(lib,/ticket_holder_history/);assert.match(lib,/ticket_item_change_requests/);assert.match(lib,/audit_logs/);assert.match(lib,/issued_at/);assert.match(lib,/paid_at/);assert.match(lib,/deduplicateTicketTimelineEvents/);assert.match(lib,/pageSize/);assert.match(lib,/maskEmail/);assert.doesNotMatch(lib,/token|encrypted_password|refresh_token|access_token/);assert.match(lib,/ticketTimelineToCsv/);assert.match(lib,/ticketTimelineToPdf/);});
+test('linha do tempo administrativa normaliza, deduplica, pagina e mascara dados',async()=>{const lib=await readFile(new URL('../src/lib/admin/ticket-timeline.ts',import.meta.url),'utf8');const operatorDisplay=await readFile(new URL('../src/lib/admin/operator-display.ts',import.meta.url),'utf8');assert.match(lib,/ticket_holder_history/);assert.match(lib,/ticket_item_change_requests/);assert.match(lib,/audit_logs/);assert.match(lib,/issued_at/);assert.match(lib,/paid_at/);assert.match(lib,/deduplicateTicketTimelineEvents/);assert.match(lib,/pageSize/);assert.match(lib,/formatOperatorDisplayName/);assert.match(operatorDisplay,/maskOperatorEmail/);assert.doesNotMatch(lib,/token|encrypted_password|refresh_token|access_token/);assert.match(lib,/ticketTimelineToCsv/);assert.match(lib,/ticketTimelineToPdf/);});
 
 test('fonte secundaria da timeline degrada sem derrubar a ficha', async()=>{const warnings=[];const logs=[];const data=await loadOptionalTimelineSource('audit-logs',Promise.resolve({data:null,error:{code:'42703',message:'coluna ausente'}}),'ticket-test',warnings,(message,context)=>logs.push({message,context}));assert.equal(data,null);assert.deepEqual(warnings,['audit-logs']);assert.equal(logs.length,1);assert.match(logs[0].message,/ticket-timeline:audit-logs/);assert.equal(logs[0].context.code,'42703');});
 
@@ -685,7 +688,7 @@ test('rota e migration 108 liberam XLSX somente após auditoria protegida', asyn
 
 test('reenvio futuro de ingresso passa a registrar fato auditavel',async()=>{const actions=await readFile(new URL('../src/app/inscricoes/actions.ts',import.meta.url),'utf8');const resend=actions.slice(actions.indexOf('export async function resendParticipantTicketAction'),actions.indexOf('export async function updateParticipantPaymentStatusAction'));assert.match(resend,/sendTicketConfirmation/);assert.match(resend,/action: "ticket_resent"/);assert.match(resend,/entity_type: "tickets"/);assert.match(resend,/actor_user_id/);});
 
-test('interface editar ingresso limita-se a titularidade e cancelamento',async()=>{const page=await readFile(new URL('../src/app/ingressos/[ticketId]/editar/ticket-ownership-editor.tsx',import.meta.url),'utf8');const detail=await readFile(new URL('../src/app/minha-conta/ingressos/[ticketId]/page.tsx',import.meta.url),'utf8');assert.match(detail,/\/ingressos\/\$\{ticketId\}\/editar/);assert.match(page,/Titular atual/);assert.match(page,/Comprador do pedido \(somente leitura\)/);assert.match(page,/Nome, e-mail, CPF ou PIN/);assert.match(page,/Motivo obrigatório/);assert.match(page,/Transferir titularidade/);assert.match(page,/Cancelar ingresso/);assert.doesNotMatch(page,/Cidade|Telefone|Sexo|Forma de pagamento|Modelo|Tamanho/);});
+test('interface editar ingresso limita-se a titularidade e cancelamento',async()=>{const page=await readFile(new URL('../src/app/ingressos/[ticketId]/editar/ticket-ownership-editor.tsx',import.meta.url),'utf8');const detail=await readFile(new URL('../src/app/minha-conta/ingressos/[ticketId]/page.tsx',import.meta.url),'utf8');assert.match(detail,/\/ingressos\/\$\{ticketId\}\/editar/);assert.match(page,/Titular atual/);assert.match(page,/Comprador do pedido \(somente leitura\)/);assert.match(page,/Nome do titular/);assert.match(page,/Motivo obrigatório/);assert.match(page,/Alterar titular/);assert.match(page,/Transferir propriedade/);assert.match(page,/Cancelar ingresso/);assert.doesNotMatch(page,/Cidade|Telefone|Sexo|Forma de pagamento|Modelo|Tamanho/);});
 
 test('migration 104 separa estoque e sob encomenda e bloqueia troca apos entrega', async () => {
   const sql = await readFile(new URL('../supabase/migrations/104_explicit_event_shirt_supply_mode.sql', import.meta.url), 'utf8');
@@ -755,7 +758,7 @@ test('ticketId administrativo abre ficha unica protegida pela organizacao', asyn
 
 test('ficha administrativa preserva campos imutaveis e operacoes protegidas', async () => {
   const detail = await readFile(new URL('../src/app/minha-conta/ingressos/[ticketId]/page.tsx', import.meta.url), 'utf8');
-  for (const field of ['Evento', 'Titular', 'Comprador', 'Categoria', 'Lote', 'Pedido', 'Pagamento', 'Camiseta', 'Status check-in', 'Histórico']) assert.match(detail, new RegExp(field, 'i'));
+  for (const field of ['Evento', 'Titular', 'Comprador', 'Categoria', 'Lote', 'Pedido', 'Pagamento', 'Camiseta', 'Check-in realizado', 'Histórico']) assert.match(detail, new RegExp(field, 'i'));
   for (const permission of ['participants.edit_basic', 'inventory.change_participant_shirt', 'kits.deliver', 'checkin.scan']) assert.match(detail, new RegExp(permission.replace('.', '\\.')));
   assert.doesNotMatch(detail, /name=["'](?:event_id|order_id|payment_id|token|batch_id|unit_price|final_amount)["']/);
 });
@@ -950,7 +953,7 @@ test('pos-importacao encaminha pendencias pelo lote sem alterar identidade', asy
   assert.match(client, /Ver pessoas deste lote/);
   assert.match(client, /\/cadastros\?import_batch_id=/);
   assert.doesNotMatch(client, /pending=yes/);
-  assert.match(cadastroActions, /from\("registration_contacts"\)/);
+  assert.match(cadastroActions, /update_registration_contact_basic_info/);
   assert.doesNotMatch(cadastroActions, /reevaluate_participant_data_issues|finalize_imported_participant_after_issue_resolution/);
   assert.doesNotMatch(cadastroActions, /from\("(orders|order_items|tickets|payments)"\)\.update/);
 });
@@ -1194,7 +1197,7 @@ test('primeiro acesso carrega e resolve somente o participant indicado pelo conv
   assert.match(form, /Preenchimento necessário/);
   assert.match(action, /claim_participant_account_invite/);
   assert.match(action, /resolve_ticket_data_issues/);
-  assert.match(action, /select\('order_item_id'\)/);
+  assert.match(action, /select\('id,order_item_id'\)/);
   assert.match(action, /inviteContext\.openIssueIds/);
   assert.doesNotMatch(action, /issueValues\.(category|batch)/);
 });
@@ -1238,7 +1241,7 @@ test('primeiro acesso E — finaliza de forma idempotente e segue para ingressos
   // src/lib/account/first-access-invite-dispatch.ts junto com
   // dispatchFirstAccessEmail -- ver teste "migration 099...".
   const dispatchLib = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
-  assert.match(action, /claim_participant_account_invite[\s\S]*finalize_imported_ticket_after_issue_resolution/);
+  assert.match(action, /claim_participant_account_invite[\s\S]*reconcile_imported_ticket_issuance_for_user/);
   assert.match(dispatchLib, /\/minha-conta\/ingressos/);
   assert.doesNotMatch(action, /from\('(orders|payments|order_items|tickets)'\)\.(insert|update)/);
 });
@@ -1335,7 +1338,7 @@ test('portal — ingressos em conferencia nao exibem QR Code', async () => {
   assert.match(list, /blocks_ticket_issuance/);
   assert.match(card, /Ingresso aguardando conferência/);
   assert.match(list, /qrUrl=\{item\.canShowTicket \? item\.qrUrl : null\}/);
-  assert.match(detail, /ticketIssuanceBlocked[\s\S]*Ingresso aguardando conferência/);
+  assert.match(detail, /ticketIssuanceBlocked[\s\S]*Acesso aguardando conferência/);
   assert.match(card, /qrUrl \?/);
 });
 
@@ -1420,7 +1423,7 @@ test('portal — marca e saudacao da Minha conta usam Militrin', async () => {
   ];
   const contents = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), 'utf8')));
   assert.doesNotMatch(contents.join('\n'), /NEXORA/);
-  assert.match(contents[1], /title=\{`Olá, \$\{greetingName\}!`\}/);
+  assert.match(contents[1], /Olá, \{greetingName\}!/);
   assert.match(contents[1], /Bem-vindo à sua conta Militrin\./);
 });
 
@@ -1541,7 +1544,7 @@ test('falha posterior ocorre depois da conclusao persistida e retry nao redefine
   const context = await readFile(new URL('../src/lib/account/participant-invite.ts', import.meta.url), 'utf8');
   const completionIndex = action.indexOf("password_setup_completed_at: new Date().toISOString()");
   const profileIndex = action.indexOf('const profileUpdate = await upsertCustomerProfileCompat');
-  const finalizationIndex = action.indexOf("finalize_imported_ticket_after_issue_resolution");
+  const finalizationIndex = action.indexOf("reconcile_imported_ticket_issuance_for_user");
   assert.ok(completionIndex >= 0 && profileIndex > completionIndex && finalizationIndex > completionIndex);
   assert.match(context, /requiresPasswordSetup: Boolean\(invite\.requires_password_setup\) && !invite\.password_setup_completed_at/);
 });

@@ -15,6 +15,7 @@ export type TicketPassProps = {
   eventLocation?: string | null;
   token: string;
   orderNumber?: string | null;
+  ticketCode?: string | null;
   qrDataUrl?: string | null;
   canShowQr?: boolean;
   qrUnavailableMessage?: string | null;
@@ -40,6 +41,7 @@ export function TicketPass({
   eventLocation,
   token,
   orderNumber,
+  ticketCode,
   qrDataUrl = null,
   canShowQr = true,
   qrUnavailableMessage = null,
@@ -56,6 +58,7 @@ export function TicketPass({
     eventLocation,
     token,
     orderNumber,
+    ticketCode,
   });
 
   return (
@@ -83,6 +86,7 @@ export function TicketPass({
           <TicketHolderInfo
             holderName={model.holderName}
             categoryName={model.categoryName}
+            ticketCode={model.ticketCode}
             orderNumber={model.orderNumber}
             status={model.status}
           />

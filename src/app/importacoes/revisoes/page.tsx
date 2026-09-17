@@ -93,6 +93,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
         candidates?: Candidate[];
         owner_candidates?: Candidate[];
         account_review?: string;
+        collision?: boolean;
         excel_cpf?: { original?: string; suggested?: string };
       };
       const importedEmail = String(imported.email ?? '').trim().toLowerCase();
@@ -118,6 +119,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
       const batch = Array.isArray(row.import_batches) ? row.import_batches[0] : row.import_batches;
       const event = batch && (Array.isArray(batch.events) ? batch.events[0] : batch.events);
       const reason = details?.reason ?? '';
+      const excelCollision = Boolean(details?.collision);
       const suggestedCpf = String(row.cpf_excel_candidate ?? details?.excel_cpf?.suggested ?? '');
       const originalCpf = String(details?.excel_cpf?.original ?? imported.cpf_input ?? '');
       return <article key={row.id} className="rounded-3xl border border-amber-700/50 bg-slate-900/80 p-5">
@@ -176,13 +178,18 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
           <div className="mt-4 rounded-2xl border border-amber-700/40 p-4 text-sm">
             <p className="font-medium text-amber-200">Possível zero inicial removido pelo Excel</p>
             <p className="mt-1 text-slate-300">Original: {originalCpf || '10 dígitos'} · Sugestão: {suggestedCpf}</p>
+            {excelCollision ? (
+              <p className="mt-2 text-rose-200">O CPF sugerido já pertence a outro cadastro. Não confirmar o palpite — preserve a inscrição com CPF pendente ou informe outro CPF desta pessoa.</p>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
-              <form action={submitReview}>
-                <input type="hidden" name="row_id" value={row.id}/>
-                <input type="hidden" name="filter_batch_id" value={batchId ?? ''}/>
-                <input type="hidden" name="decision" value="confirm_excel_cpf"/>
-                <button className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-emerald-950">Confirmar CPF sugerido</button>
-              </form>
+              {excelCollision ? null : (
+                <form action={submitReview}>
+                  <input type="hidden" name="row_id" value={row.id}/>
+                  <input type="hidden" name="filter_batch_id" value={batchId ?? ''}/>
+                  <input type="hidden" name="decision" value="confirm_excel_cpf"/>
+                  <button className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-emerald-950">Confirmar CPF sugerido</button>
+                </form>
+              )}
               <form action={submitReview} className="flex flex-wrap items-end gap-2">
                 <input type="hidden" name="row_id" value={row.id}/>
                 <input type="hidden" name="filter_batch_id" value={batchId ?? ''}/>

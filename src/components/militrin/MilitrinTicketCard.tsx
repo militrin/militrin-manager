@@ -23,6 +23,7 @@ type MilitrinTicketCardProps = {
   kitStatus?: 'delivered' | 'pending' | null;
   checkinDone: boolean;
   qrUrl?: string | null;
+  ticketCode?: string | null;
   actions?: ReactNode;
 };
 
@@ -41,6 +42,7 @@ export function MilitrinTicketCard({
   kitStatus = null,
   checkinDone,
   qrUrl,
+  ticketCode = null,
   actions,
 }: MilitrinTicketCardProps) {
   // Estados terminais (nunca vao ter QR, independente de confirmacao futura)
@@ -90,6 +92,12 @@ export function MilitrinTicketCard({
               <p className={militrinType.label}>Titular</p>
               <p className={cx('truncate', militrinType.body)}>{holderName}</p>
             </div>
+            {ticketCode ? (
+              <div>
+                <p className={militrinType.label}>Código do ingresso</p>
+                <p className={cx('font-mono tracking-[0.08em]', militrinType.body)}>{ticketCode}</p>
+              </div>
+            ) : null}
             {shirtSize ? (
               <div>
                 <p className={militrinType.label}>{shirtType ?? 'Camiseta'}</p>

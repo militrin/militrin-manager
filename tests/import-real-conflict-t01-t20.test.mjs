@@ -99,7 +99,7 @@ test('T02 CPF com zero inicial como texto permanece valido sem pad', () => {
   assert.equal(result.resolution, 'create_new');
 });
 
-test('T03 CPF com zero perdido gera revisao e nunca autopad', () => {
+test('T03 CPF com zero perdido nao autopad e so vai a review se houver colisao', () => {
   const original = leadingZeroCpf.slice(1);
   assert.equal(original.length, 10);
   const classified = classifyImportedCpf(original, 'number');
@@ -107,12 +107,21 @@ test('T03 CPF com zero perdido gera revisao e nunca autopad', () => {
   assert.equal(classified.canonical, null);
   assert.equal(classified.excelCandidate, leadingZeroCpf);
   const result = classifyPurchase({ cpfInput: original, cpfCellKind: 'number' });
-  assert.equal(result.status, 'review_required');
-  assert.equal(result.identityMatchDetails.reason, 'excel_leading_zero');
+  assert.equal(result.status, 'data_pending');
+  assert.equal(result.resolution, 'create_new');
+  assert.equal(result.identityIssues[0].blocks_ticket_issuance, false);
+  const collision = classifyPurchase({
+    cpfInput: original,
+    cpfCellKind: 'number',
+    excelCandidateMatch: person('existing-cpf', { cpf: leadingZeroCpf }),
+  });
+  assert.equal(collision.status, 'review_required');
+  assert.equal(collision.identityMatchDetails.collision, true);
   assert.match(actions, /excel_cpf_candidate/);
   assert.doesNotMatch(actions, /padStart\(11,\s*'0'\)/);
   assert.match(reviewQueue, /Confirmar CPF sugerido/);
   assert.match(reviewQueue, /Manter como CPF pendente/);
+  assert.match(reviewQueue, /excelCollision/);
 });
 
 test('T04 CPF invalido preserva compra com identidade pendente', () => {

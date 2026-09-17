@@ -58,11 +58,11 @@ test('frontend usa select compartilhado, other condicional e assinatura nova',as
   assert.match(editor,/SENSITIVE_ACTION_REASON_OPTIONS\.map/);
   assert.match(editor,/<select/);
   assert.match(editor,/code === "other" \?/);
-  assert.match(editor,/reasonCode === "other" && !reasonText\.trim\(\)/);
+  assert.match(editor,/ownerReasonCode === "other" && !ownerReasonText\.trim\(\)/);
   assert.match(editor,/removeReasonCode === "other" && !removeReasonText\.trim\(\)/);
   const reasonFields=editor.slice(editor.indexOf('function ReasonFields'));
   assert.doesNotMatch(reasonFields,/<textarea/);
-  assert.match(actions,/buildAdminSetTicketHolderPayload\(ticketId, registrationContactId, reasonCode, reasonText\)/);
+  assert.match(actions,/buildAdminSetTicketHolderNamePayload\(ticketId, holderName, reasonCode, reasonText\)/);
 });
 
 test('timeline mostra nomes, motivo, observacao, ator e horario',async()=>{

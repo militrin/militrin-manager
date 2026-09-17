@@ -6,6 +6,9 @@ import {
   legacyOrderDisplayNumber,
   orderDisplayReference,
   ticketDisplayReference,
+  canonicalTicketDisplayCode,
+  parseTicketDisplayCode,
+  ticketMatchesExactDisplayCode,
 } from '../src/lib/display-reference.ts';
 
 test('formats a stable six-digit public order number', () => {
@@ -28,4 +31,32 @@ test('detects UUIDs and internal prefixes', () => {
   assert.equal(isTechnicalIdentifier('ADMIN-20260824-ec73999e'), true);
   assert.equal(isTechnicalIdentifier('ITEM-42E08C95EA32'), true);
   assert.equal(isTechnicalIdentifier('#001065'), false);
+});
+
+test('pedido com 3 ingressos gera tres codigos distintos', () => {
+  const codes = [1, 2, 3].map((position) => ticketDisplayReference(1065, position));
+  assert.deepEqual(codes, ['#001065-01', '#001065-02', '#001065-03']);
+  assert.equal(new Set(codes).size, 3);
+});
+
+test('parse do codigo completo ignora hash, espacos e zeros a esquerda', () => {
+  assert.deepEqual(parseTicketDisplayCode('#001065-02'), { displayNumber: 1065, itemPosition: 2 });
+  assert.deepEqual(parseTicketDisplayCode('001065-02'), { displayNumber: 1065, itemPosition: 2 });
+  assert.deepEqual(parseTicketDisplayCode('  #1065 - 2  '), { displayNumber: 1065, itemPosition: 2 });
+  assert.equal(parseTicketDisplayCode('#001065'), null);
+  assert.equal(parseTicketDisplayCode('001065'), null);
+  assert.equal(canonicalTicketDisplayCode(1065, null), null);
+});
+
+test('busca pelo codigo completo resolve exatamente um ingresso', () => {
+  const tickets = [
+    { id: 'A', code: ticketDisplayReference(1065, 1) },
+    { id: 'B', code: ticketDisplayReference(1065, 2) },
+    { id: 'C', code: ticketDisplayReference(1065, 3) },
+  ];
+  const matchedHash = tickets.filter((ticket) => ticketMatchesExactDisplayCode('#001065-02', ticket.code));
+  const matchedPlain = tickets.filter((ticket) => ticketMatchesExactDisplayCode('001065-02', ticket.code));
+  assert.deepEqual(matchedHash.map((ticket) => ticket.id), ['B']);
+  assert.deepEqual(matchedPlain.map((ticket) => ticket.id), ['B']);
+  assert.equal(ticketMatchesExactDisplayCode('João', tickets[1].code), null);
 });

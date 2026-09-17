@@ -129,7 +129,8 @@ test('Cartao: pedido permanece consultavel e aparece no historico mesmo pendente
   assert.match(lojaHistory, /payment_method === 'credit_card'/);
   assert.match(lojaHistory, /Cartão pendente ou em processamento/);
   assert.match(comprasPage, /getAccountStoreOrders/);
-  assert.match(comprasPage, /\/minha-conta\/compras\/loja\/\$\{order\.id\}/);
+  assert.match(comprasPage, /StorePurchaseListCard/);
+  assert.match(accountOrdersHelper, /ACCOUNT_STORE_ORDER_PATH = '\/minha-conta\/compras\/loja'/);
 });
 
 test('Cartao: checkout leva o usuario ao Asaas quando ha checkoutUrl, senao para a ficha', () => {

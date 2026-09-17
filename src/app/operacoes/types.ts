@@ -206,6 +206,7 @@ type OperationEntryBase = {
   category_name: string;
   order_id: string | null;
   order_number: string | null;
+  ticket_display_code: string | null;
   order_created_at: string | null;
   buyer_user_id: string | null;
   buyer_name: string;

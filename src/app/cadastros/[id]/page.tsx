@@ -14,6 +14,7 @@ import { ticketDisplayReference } from "@/lib/display-reference";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
+import { canonicalHolderName, hasCanonicalHolderName } from "@/lib/tickets/holder-name";
 import { loadSharedEmailGroup } from "@/lib/account/load-shared-email-group";
 import { SharedEmailAccountCard } from "../shared-email-account-card";
 
@@ -145,11 +146,11 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       roles, roleLabel: contactTicketRoleLabel(roles),
       status: String(row.status ?? "pending"), issuedAt: row.issued_at ? String(row.issued_at) : null,
       categoryName: String(category?.name ?? "Ingresso único"), batchName: String(batch?.name ?? "Sem lote"),
-      holderName: row.participant_id || orderItem?.participant_id ? String(participant?.full_name ?? orderItem?.holder_full_name ?? "Titular não identificado") : "Titular não definido",
-      holderUnassigned: !row.participant_id && !orderItem?.participant_id && String(orderItem?.ownership_status ?? "") === "unassigned",
+      holderName: canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, "Titular não definido"),
+      holderUnassigned: !hasCanonicalHolderName(orderItem?.holder_full_name),
       shirt: [orderItem?.shirt_type, orderItem?.shirt_size].filter(Boolean).join(" · "),
       orderNumber: order?.order_number ? String(order.order_number) : null,
-      shortCode: ticketDisplayReference(order?.display_number, orderItem?.item_position ?? 1, order?.order_number).replace(/^#/, ""),
+      shortCode: ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number).replace(/^#/, ""),
       checkinDone: Boolean(row.used_at) || String(row.status) === "used",
       kitStatus: kitItems.length === 0 ? null : kitItems.every((item) => item.status === "delivered") ? "Entregue" : "Pendente",
     }];

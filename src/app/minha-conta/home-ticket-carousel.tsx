@@ -119,6 +119,11 @@ export function HomeTicketCarousel({
               <span className="truncate">Titular: {current.holderName || 'Não definido'}</span>
             </span>
           </p>
+          {current.ticketCode ? (
+            <p className="mt-0.5 font-mono text-[11px] tracking-[0.08em] text-slate-400">
+              Código do ingresso {current.ticketCode}
+            </p>
+          ) : null}
           {details ? (
             <p className="mt-0.5 truncate text-xs text-slate-300">
               <span className="inline-flex max-w-full items-center gap-1.5">

@@ -7,6 +7,7 @@ import { orderDisplayReference } from '@/lib/display-reference';
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from '@/lib/dashboard/commercial-status';
 import { formatImportedPaymentMethod } from '@/lib/imports/payment-method';
 import { additionalTicketHolderUnassignedCopy } from '@/lib/imports/issuance-presentation';
+import { canonicalHolderName, hasCanonicalHolderName } from '@/lib/tickets/holder-name';
 import { shouldIncludeAmountInFinancialTotals } from '@/lib/imports/legacy-price';
 import {
   confirmedRevenueAmount,
@@ -50,9 +51,10 @@ const one = (value: unknown) => (Array.isArray(value) ? value[0] : value) as Row
 const cancelled = (status: unknown) => ['cancelled', 'canceled', 'void', 'voided', 'refunded', 'expired'].includes(String(status ?? '').toLowerCase());
 
 function personName(item: Row | null | undefined, participant: Row | null | undefined) {
-  const canonicalContactName = item?.registration_contacts?.full_name ?? one(item?.registration_contacts)?.full_name;
-  const canonicalParticipantName = participant?.registration_contact_id ? participant.full_name : null;
-  return String(canonicalContactName ?? canonicalParticipantName ?? 'Titular não definido');
+  return canonicalHolderName(
+    item?.holder_full_name,
+    participant?.full_name ?? item?.registration_contacts?.full_name ?? one(item?.registration_contacts)?.full_name,
+  );
 }
 
 export async function loadAdminDashboard(eventId?: string, authorizedSections: DashboardSection[] = ['people', 'operations', 'inventory', 'finance']) {
@@ -264,13 +266,10 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       actionLabel = ticket?.id ? 'Ver ingresso' : 'Ver pedido';
       href = ticket?.id ? `/ingressos/${ticket.id}` : (order?.id ? `/inscricoes/pedido/${order.id}` : '/inscricoes');
     }
-    else if (!item.registration_contact_id || item.ownership_status === 'unassigned') { actionLabel = 'Definir titular'; href = ticket?.id ? `/ingressos/${ticket.id}/editar` : '/ingressos'; requiredPermission = 'participants.edit_basic'; }
+    else if (!hasCanonicalHolderName(item.holder_full_name)) { actionLabel = 'Definir titular'; href = ticket?.id ? `/ingressos/${ticket.id}/editar` : '/ingressos'; requiredPermission = 'participants.edit_basic'; }
     else if (!item.shirt_type || !item.shirt_size) { actionLabel = 'Selecionar camiseta'; href = ticket?.id ? `/ingressos/${ticket.id}/editar` : '/camisetas'; requiredPermission = 'inventory.change_participant_shirt'; }
     else if (payment?.payment_status === 'pending') { actionLabel = 'Confirmar pagamento'; href = `/financeiro?tab=sales&status=pending&eventId=${item.event_id}`; requiredPermission = 'finance.confirm_payment'; }
-    const textualHolderOnly = !item.registration_contact_id && !participant?.registration_contact_id && String(item.holder_full_name ?? '').trim();
-    const snapshotNotice = textualHolderOnly ? `Nome informado na compra: ${String(item.holder_full_name).trim()}` : '';
     const issueMessages = open.map((issue) => String(issue.message ?? issue.field_code));
-    if (textualHolderOnly) issueMessages.unshift('Titular informado sem dados suficientes para identificação');
     if (item.ownership_status === 'unassigned' && item.registration_contact_id && assignedHolderKeys.has(`${item.event_id}:${item.registration_contact_id}`)) {
       issueMessages.unshift(additionalTicketHolderUnassignedCopy());
     }
@@ -289,19 +288,18 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
         one(item.ticket_categories)?.name ?? 'Ingresso único',
         one(item.registration_batches)?.name ?? 'Sem lote',
         order?.id ? orderDisplayReference(order.display_number, order.order_number) : null,
-        snapshotNotice || null,
       ].filter(Boolean).join(' · '),
       status: COMMERCIAL_STATUS_LABELS[commercialStatus],
       href, actionLabel, requiredPermission, issue: reason,
     };
   };
   const ticketRow = (ticket: Row): DashboardDetailRow => { const item = one(ticket.order_items) ?? itemById.get(String(ticket.order_item_id)); const participant = participantById.get(String(ticket.participant_id ?? '')) ?? one(ticket.participants);
-    const textualHolderOnly = !item?.registration_contact_id && !participant?.registration_contact_id && String(item?.holder_full_name ?? '').trim();
     const additionalUnassigned = item?.ownership_status === 'unassigned' && item?.registration_contact_id && assignedHolderKeys.has(`${ticket.event_id}:${item.registration_contact_id}`);
-    return { id: String(ticket.id), primary: additionalUnassigned ? 'Titular não definido' : personName(item, participant), secondary: [textualHolderOnly ? `Nome informado na compra: ${String(item?.holder_full_name).trim()}` : additionalUnassigned ? additionalTicketHolderUnassignedCopy() : '', one(item?.ticket_categories)?.name ?? 'Ingresso único', `#${String(ticket.id).slice(0, 8).toUpperCase()}`].filter(Boolean).join(' · '),
-      status: String(ticket.status), href: textualHolderOnly ? `/ingressos/${ticket.id}/editar` : `/ingressos/${ticket.id}`,
-      actionLabel: textualHolderOnly ? 'Definir titular' : 'Ver ingresso', requiredPermission: textualHolderOnly ? 'participants.edit_basic' : undefined,
-      issue: textualHolderOnly ? 'Titular informado sem dados suficientes para identificação' : additionalUnassigned ? additionalTicketHolderUnassignedCopy() : undefined }; };
+    const named = hasCanonicalHolderName(item?.holder_full_name);
+    return { id: String(ticket.id), primary: additionalUnassigned && !named ? 'Titular não definido' : personName(item, participant), secondary: [additionalUnassigned && !named ? additionalTicketHolderUnassignedCopy() : '', one(item?.ticket_categories)?.name ?? 'Ingresso único', `#${String(ticket.id).slice(0, 8).toUpperCase()}`].filter(Boolean).join(' · '),
+      status: String(ticket.status), href: `/ingressos/${ticket.id}`,
+      actionLabel: named ? 'Ver ingresso' : 'Definir titular', requiredPermission: named ? undefined : 'participants.edit_basic',
+      issue: additionalUnassigned && !named ? additionalTicketHolderUnassignedCopy() : undefined }; };
   const checkinRow = (ticket: Row): DashboardDetailRow => ({
     ...ticketRow(ticket), secondary: `${ticketRow(ticket).secondary} · ${ticket.used_at ? new Date(String(ticket.used_at)).toLocaleString('pt-BR') : 'Horário não registrado'}`,
   });

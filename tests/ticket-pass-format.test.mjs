@@ -40,10 +40,24 @@ test('view model do Event Pass usa dados reais e status ATIVO sem mock', () => {
   assert.equal(model.categoryName, 'Open Bar');
   assert.equal(model.holderName, 'Douglas Hobold');
   assert.equal(model.orderNumber, '#001120');
+  assert.equal(model.ticketCode, null);
   assert.equal(model.statusIsActive, true);
   assert.equal(model.statusText, 'ATIVO');
   assert.deepEqual(model.dateParts, { day: '10', month: 'OUT', year: '2026', time: '07:00' });
   assert.equal(ticketPassExportFileStem(model), 'acesso-militrin-001120');
+});
+
+test('codigo do ingresso entra no passe e no nome do arquivo exportado', () => {
+  const model = buildTicketPassViewModel({
+    eventName: 'Militrin',
+    participantName: 'João',
+    status: 'active',
+    token: 'not-printed',
+    orderNumber: '#001065',
+    ticketCode: '#001065-02',
+  });
+  assert.equal(model.ticketCode, '#001065-02');
+  assert.equal(ticketPassExportFileStem(model), 'acesso-militrin-001065-02');
 });
 
 test('TICKET_PASS_COPY comunica retirada do kit e nao entrada do evento', async () => {

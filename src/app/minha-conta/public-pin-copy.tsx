@@ -35,7 +35,7 @@ export function PublicPinCopy({
         : 'mt-3 flex items-center justify-between gap-3 border-t border-slate-800/80 pt-3'}
     >
       <p className="min-w-0 text-xs text-slate-400">
-        <span className="block">Código do ingresso</span>
+        <span className="block">PIN da conta</span>
         <span className="font-mono font-semibold tracking-[0.12em] text-slate-200">{publicPin}</span>
       </p>
       <button
@@ -44,7 +44,7 @@ export function PublicPinCopy({
         className={compact
           ? 'inline-flex h-8 shrink-0 items-center rounded-lg border border-slate-700 px-2.5 text-[11px] font-medium text-slate-300 transition hover:border-(--brand-500)/40 hover:text-(--brand-200)'
           : 'shrink-0 rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition hover:border-(--brand-500)/40 hover:text-(--brand-200)'}
-        aria-label="Copiar código do ingresso"
+        aria-label="Copiar PIN da conta"
       >
         {feedback === 'copied' ? 'Copiado' : feedback === 'error' ? 'Tente novamente' : 'Copiar'}
       </button>

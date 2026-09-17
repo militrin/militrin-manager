@@ -1,5 +1,6 @@
 import { ticketDisplayReference } from "@/lib/display-reference";
 import { currentSharedEmailPrincipalId, normalizeSharedEmail } from "@/lib/account/shared-email-ownership";
+import { canonicalHolderName } from "@/lib/tickets/holder-name";
 import type { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type ServerSupabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -107,9 +108,9 @@ export async function loadSharedEmailGroup(
       ticketId: String(row.id),
       eventId: String(row.event_id),
       eventName: String(event?.name ?? "Evento"),
-      code: ticketDisplayReference(order?.display_number, orderItem?.item_position ?? 1, order?.order_number).replace(/^#/, ""),
+      code: ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number).replace(/^#/, ""),
       holderContactId,
-      holderName: String(participant?.full_name ?? orderItem?.holder_full_name ?? "Titular não identificado"),
+      holderName: canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, "Titular não identificado"),
       categoryName: String(category?.name ?? "Ingresso"),
       status: String(row.status ?? "pending"),
       intendedOwnerContactId: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,

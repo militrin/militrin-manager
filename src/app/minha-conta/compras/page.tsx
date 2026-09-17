@@ -58,7 +58,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
 
   const holderName = (item: Record<string, unknown>) => {
     const itemParticipant = one(item.participants as Record<string, unknown> | Record<string, unknown>[] | null);
-    return (itemParticipant as Record<string, unknown> | null)?.full_name as string | undefined || item.holder_full_name as string | undefined || null;
+    return String(item.holder_full_name ?? '').trim() || (itemParticipant as Record<string, unknown> | null)?.full_name as string | undefined || null;
   };
 
   let summaryLine: string;

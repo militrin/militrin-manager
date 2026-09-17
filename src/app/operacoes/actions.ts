@@ -7,6 +7,7 @@ import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
 import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
 import { resolveOperationalPaymentState } from "@/lib/operations/payment-operational-state";
 import { resolveTicketOperationGate } from "@/lib/operations/ticket-operation-gate";
+import { canonicalHolderName } from "@/lib/tickets/holder-name";
 import type {
   OperationGroup,
   OperationOrderTicketSummary,
@@ -26,7 +27,7 @@ import { REASON_CODES } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { formatStoreVariantLabel, parseStoreOrderScanRef } from "@/lib/operations/store-order-scan-ref";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
-import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-reference";
+import { orderDisplayReference, ticketDisplayReference, canonicalTicketDisplayCode, ticketMatchesExactDisplayCode } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
 import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
@@ -145,6 +146,16 @@ function matchesOperationSearch(search: string, fields: Array<string | null | un
   const digitSearch = searchDigits(search);
   if (digitSearch.length < 3) return false;
   return searchDigits(fields.filter(Boolean).join(" ")).includes(digitSearch);
+}
+
+function matchesTicketOperationSearch(
+  search: string,
+  row: { ticket_display_code?: string | null } & Record<string, unknown>,
+  extraFields: Array<string | null | undefined>,
+) {
+  const exact = ticketMatchesExactDisplayCode(search, row.ticket_display_code);
+  if (exact !== null) return exact;
+  return matchesOperationSearch(search, extraFields);
 }
 
 function getRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -399,10 +410,9 @@ function mapTicketRow(params: {
         ? String(row.participant_id)
         : null;
 
-  const participantName = String(
-    orderItemParticipant?.full_name ??
-      participantRelation?.full_name ??
-      "Titular não definido",
+  const participantName = canonicalHolderName(
+    orderItemRelation?.holder_full_name ? String(orderItemRelation.holder_full_name) : null,
+    orderItemParticipant?.full_name ?? participantRelation?.full_name,
   );
 
   const orderRelation = getRelation(
@@ -493,6 +503,9 @@ function mapTicketRow(params: {
     category_name: categoryName,
     order_id: orderId,
     order_number: orderRelation ? orderDisplayReference(orderRelation.display_number, orderRelation.order_number) : null,
+    ticket_display_code: orderRelation
+      ? canonicalTicketDisplayCode(orderRelation.display_number, orderItemRelation?.item_position, orderRelation.order_number)
+      : null,
     order_created_at: orderRelation?.created_at ? String(orderRelation.created_at) : null,
     buyer_user_id: buyerUserId,
     buyer_name: String(buyer?.full_name ?? "Comprador não identificado"),
@@ -715,8 +728,11 @@ export async function getKitMaterializationPreviewAction(ticketId: string) {
   return {
     success: true as const,
     preview: {
-      participantName: String(participantRow?.full_name ?? orderItem?.holder_full_name ?? "Titular não definido"),
-      ticketLabel: `${orderDisplayReference(previewOrder?.display_number, previewOrder?.order_number)}-${String(Number(orderItem?.item_position ?? 1)).padStart(2, "0")}`,
+      participantName: canonicalHolderName(
+        orderItem?.holder_full_name ? String(orderItem.holder_full_name) : null,
+        participantRow?.full_name,
+      ),
+      ticketLabel: ticketDisplayReference(previewOrder?.display_number, orderItem?.item_position, previewOrder?.order_number),
       categoryName: String(category?.name ?? "Ingresso único"),
       items: (eventItems ?? []).map((item) => {
         const existing = linkMap.get(String(item.id));
@@ -837,6 +853,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
           shirt_type,
           shirt_size,
           ticket_category_id,
+          item_position,
           ticket_categories(id,name)
         ),
         orders(
@@ -1128,6 +1145,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
       category_name: String(ticketCategory?.name ?? "Ingresso único"),
       order_id: null,
       order_number: null,
+      ticket_display_code: null,
       order_created_at: null,
       buyer_user_id: null,
       buyer_name: "",
@@ -1169,7 +1187,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
   const search = normalizeSearch(filters.search ?? "");
   const tickets = (search
     ? allRows.filter((row) =>
-        matchesOperationSearch(search, [
+        matchesTicketOperationSearch(search, row, [
           row.participant_name,
           row.participant_email,
           row.cpf,
@@ -1181,6 +1199,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
           row.ticket_token,
           row.wristband_code,
           row.order_number,
+          row.ticket_display_code,
         ]),
       )
     : allRows
@@ -1252,6 +1271,7 @@ async function buildTicketDetails(
           shirt_type,
           shirt_size,
           ticket_category_id,
+          item_position,
           participants(
             id,
             full_name,
@@ -1358,7 +1378,7 @@ async function buildTicketDetails(
                 participant_id,
                 issued_at,
                 participants(full_name,shirt_type,shirt_size,ticket_categories(id,name)),
-                order_items(participant_id,holder_full_name,shirt_type,shirt_size,participants(id,full_name),ticket_categories(id,name))
+                order_items(participant_id,holder_full_name,shirt_type,shirt_size,item_position,participants(id,full_name),ticket_categories(id,name))
               `,
             )
             .eq("order_id", orderId)
@@ -1531,9 +1551,10 @@ async function buildTicketDetails(
       ticket_token: row.token ? String(row.token) : null,
       ticket_status: String(row.status ?? "pending"),
       participant_id: orderItem?.participant_id ? String(orderItem.participant_id) : null,
-      participant_name: String(
+      participant_name: canonicalHolderName(
+        orderItem?.holder_full_name ? String(orderItem.holder_full_name) : null,
         getRelation(orderItem?.participants as Record<string, unknown> | Array<Record<string, unknown>> | null)?.full_name
-          ?? "Titular não definido",
+          ?? participant?.full_name,
       ),
       category_name: String(category?.name ?? "Ingresso único"),
       // LEGACY FALLBACK — do not use as canonical source: participant shirt fields are historical compatibility only.
@@ -1750,7 +1771,7 @@ export async function getOperationTicketViewAction(ticketId: string) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("tickets")
-    .select("id, token, status, events(name, location, starts_at), orders(order_number), order_items(ticket_categories(name)), participants(full_name)")
+    .select("id, token, status, events(name, location, starts_at), orders(order_number, display_number), order_items(holder_full_name, item_position, ticket_categories(name), participants(full_name)), participants(full_name)")
     .eq("id", ticketId)
     .maybeSingle();
 
@@ -1761,6 +1782,7 @@ export async function getOperationTicketViewAction(ticketId: string) {
   const event = getRelation(row.events as Record<string, unknown> | Array<Record<string, unknown>> | null);
   const order = getRelation(row.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
   const orderItem = getRelation(row.order_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const orderItemParticipant = getRelation(orderItem?.participants as Record<string, unknown> | Array<Record<string, unknown>> | null);
   const participant = getRelation(row.participants as Record<string, unknown> | Array<Record<string, unknown>> | null);
   const category = getRelation(orderItem?.ticket_categories as Record<string, unknown> | Array<Record<string, unknown>> | null | undefined);
 
@@ -1769,13 +1791,18 @@ export async function getOperationTicketViewAction(ticketId: string) {
     message: null,
     ticket: {
       eventName: String(event?.name ?? "Evento"),
-      participantName: String(participant?.full_name ?? "Titular não informado"),
+      participantName: canonicalHolderName(
+        orderItem?.holder_full_name,
+        orderItemParticipant?.full_name ?? participant?.full_name,
+        "Titular não informado",
+      ),
       status: String(row.status ?? "pending"),
       categoryName: category?.name ? String(category.name) : null,
       eventDate: event?.starts_at ? String(event.starts_at) : null,
       eventLocation: event?.location ? String(event.location) : null,
       token: String(row.token ?? ""),
       orderNumber: order?.order_number ? String(order.order_number) : null,
+      ticketCode: canonicalTicketDisplayCode(order?.display_number, orderItem?.item_position, order?.order_number),
     },
   };
 }
@@ -1870,7 +1897,7 @@ export async function getOperationParticipantDetailsAction(participantId: string
     participant_id: participantId, participant_name: String(row.full_name ?? "Participante"), participant_email: String(row.email ?? ""), full_name: String(row.full_name ?? "Participante"),
     cpf: String(row.cpf ?? ""), phone: String(row.phone ?? ""), city: String(row.city ?? ""), gender: row.gender ? String(row.gender) : null, birth_date: row.birth_date ? String(row.birth_date) : null,
     registration_status: String(row.registration_status ?? "pending"), event_id: String(row.event_id), event_name: String(event?.name ?? "Evento"), category_id: row.ticket_category_id ? String(row.ticket_category_id) : null,
-    category_name: String(category?.name ?? "Ingresso único"), order_id: null, order_number: null, order_created_at: null, buyer_user_id: null, buyer_name: "", buyer_cpf: "", buyer_phone: "", buyer_email: "",
+    category_name: String(category?.name ?? "Ingresso único"), order_id: null, order_number: null, ticket_display_code: null, order_created_at: null, buyer_user_id: null, buyer_name: "", buyer_cpf: "", buyer_phone: "", buyer_email: "",
     buyer_type: importBatchIds.length ? "imported_holder" : "account", import_batch_id: importBatchIds[0] ?? null, payment_status: payment.paymentStatus, payment_method: paymentState.methodLabel, payment_kind: paymentState.kind, payment_label: paymentState.label, price_origin: payment.priceOrigin,
     shirt_type: String(row.shirt_type ?? ""), shirt_size: String(row.shirt_size ?? ""), kit_status: (legacyItems ?? []).length ? "pending" : "configuration_pending", checkin_status: "pending",
     wristband_id: null, wristband_code: null, wristband_status: null, can_operate: false, block_reason: "Esta inscrição não possui vínculo comprovável com um ingresso.", order_ticket_count: 0, order_ticket_position: 0,
@@ -2710,11 +2737,10 @@ export async function lookupWristbandByQrAction(rawValue: string) {
       ticket_status: String(ticketRow.status ?? ""),
       event_name: eventRelation?.name ? String(eventRelation.name) : "",
       category_name: category?.name ? String(category.name) : "Ingresso único",
-      holder_name: orderItem?.holder_full_name
-        ? String(orderItem.holder_full_name)
-        : participant?.full_name
-          ? String(participant.full_name)
-          : "Titular não definido",
+      holder_name: canonicalHolderName(
+        orderItem?.holder_full_name ? String(orderItem.holder_full_name) : null,
+        participant?.full_name,
+      ),
       buyer_name: buyerName,
     },
   };
@@ -3268,7 +3294,7 @@ export async function searchTurboOperationsAction(payload: {
         const key = row.ticket_id ? `t:${row.ticket_id}` : `p:${row.participant_id}`;
         if (seenTickets.has(key)) continue;
         if (
-          matchesOperationSearch(search, [
+          matchesTicketOperationSearch(search, row, [
             row.participant_name,
             row.full_name,
             row.participant_email,
@@ -3281,6 +3307,7 @@ export async function searchTurboOperationsAction(payload: {
             row.ticket_token,
             row.wristband_code,
             row.order_number,
+            row.ticket_display_code,
           ])
         ) {
           seenTickets.add(key);

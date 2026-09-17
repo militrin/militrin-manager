@@ -253,7 +253,7 @@ test('evento saudável não produz nenhuma ocorrência falsa', async () => {
   assert.deepEqual(rows, [], `evento saudavel nao deveria ter nenhum problema, achou: ${JSON.stringify(rows)}`);
 });
 
-test('titularidade: duplicado detectado, nomeado-sem-titular detectado, sem-titular-legítimo NÃO detectado', async () => {
+test('titularidade: duplicado detectado, nome textual NAO e incompleto, sem-titular-legítimo NÃO detectado', async () => {
   const { orgId, admin } = await makeOrgWithAdmin('holders');
   const eventId = await makeEvent(orgId, 'Evento Titularidade');
   await makeFlatBatch(eventId, true);
@@ -295,11 +295,10 @@ test('titularidade: duplicado detectado, nomeado-sem-titular detectado, sem-titu
 
   assert.equal(duplicate.length, 1, 'deve agrupar 1 problema DUPLICATE_ACTIVE_HOLDER para o evento');
   assert.equal(duplicate[0].affected_count, 2, 'os 2 ingressos do mesmo titular devem contar como afetados');
-  assert.equal(named.length, 1);
-  assert.equal(named[0].affected_count, 1);
+  assert.equal(named.length, 0, 'nome textual nao e mais titular incompleto');
 
   const titularidadeCodes = rows.filter((r) => r.domain === 'titularidade').map((r) => r.code);
-  assert.deepEqual(new Set(titularidadeCodes), new Set(['DUPLICATE_ACTIVE_HOLDER', 'TICKET_NAMED_WITHOUT_CANONICAL_HOLDER']));
+  assert.deepEqual(new Set(titularidadeCodes), new Set(['DUPLICATE_ACTIVE_HOLDER']));
 });
 
 test('pedido pago sem ticket é detectado; ticket manual legítimo NÃO é órfão', async () => {

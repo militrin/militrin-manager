@@ -14,9 +14,9 @@ function Dialog({ title, open, close, children }: { title: string; open: boolean
   </div>;
 }
 
-export function HolderContextAction({ ticketId, hasHolder }: { ticketId: string; hasHolder: boolean }) {
+export function HolderContextAction({ ticketId, hasHolder, currentName = "" }: { ticketId: string; hasHolder: boolean; currentName?: string }) {
   const [open,setOpen]=useState(false); const [notice,setNotice]=useState<string|null>(null);
-  return <><button type="button" onClick={()=>setOpen(true)} className="text-xs font-medium text-emerald-300 hover:underline">Alterar</button>{notice?<span className="text-xs text-emerald-300">{notice}</span>:null}<Dialog title={hasHolder?'Alterar titular':'Definir titular'} open={open} close={()=>setOpen(false)}><div className="mt-4"><TicketHolderActions ticketId={ticketId} mode={hasHolder?'transfer':'define'} admin onSuccess={(message)=>{setNotice(message);setOpen(false);}}/></div></Dialog></>;
+  return <><button type="button" onClick={()=>setOpen(true)} className="text-xs font-medium text-emerald-300 hover:underline">Alterar</button>{notice?<span className="text-xs text-emerald-300">{notice}</span>:null}<Dialog title={hasHolder?'Alterar titular':'Definir titular'} open={open} close={()=>setOpen(false)}><div className="mt-4"><TicketHolderActions ticketId={ticketId} mode={hasHolder?'transfer':'define'} admin currentName={currentName} onSuccess={(message)=>{setNotice(message);setOpen(false);}}/></div></Dialog></>;
 }
 
 // warning+requireReason juntos = override administrativo (ex.: alterar

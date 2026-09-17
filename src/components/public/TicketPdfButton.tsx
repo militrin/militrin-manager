@@ -27,6 +27,7 @@ type TicketPdfButtonProps = {
   eventLocation?: string | null;
   token: string;
   orderNumber?: string | null;
+  ticketCode?: string | null;
   className?: string;
 };
 
@@ -71,6 +72,7 @@ export function TicketPdfButton({
   eventLocation,
   token,
   orderNumber,
+  ticketCode,
   className,
 }: TicketPdfButtonProps) {
   const [loading, setLoading] = useState<ExportKind | null>(null);
@@ -87,6 +89,7 @@ export function TicketPdfButton({
         eventLocation,
         token,
         orderNumber,
+        ticketCode,
       });
       const accent = readTicketPassAccent();
       const [qrDataUrl, logoDataUrl] = await Promise.all([

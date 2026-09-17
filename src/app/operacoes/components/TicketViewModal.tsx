@@ -13,6 +13,7 @@ type TicketView = {
   eventLocation: string | null;
   token: string;
   orderNumber: string | null;
+  ticketCode?: string | null;
 };
 
 /**
@@ -77,6 +78,7 @@ export function TicketViewModal({ ticketId, onClose }: { ticketId: string; onClo
               eventLocation={ticket.eventLocation}
               token={ticket.token}
               orderNumber={ticket.orderNumber}
+              ticketCode={ticket.ticketCode}
               showPdfButton
             />
           </div>

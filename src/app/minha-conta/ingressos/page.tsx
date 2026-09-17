@@ -3,6 +3,8 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR } from '@/lib/utils/date';
 import { MilitrinEmptyState, MilitrinHeader, MilitrinLinkButton, MilitrinTicketCard, cx, militrinTokens, militrinType } from '@/components/militrin';
 import { optionalDisplayValue } from '@/lib/optional-display';
+import { canonicalHolderName } from '@/lib/tickets/holder-name';
+import { canonicalTicketDisplayCode } from '@/lib/display-reference';
 import { getAccessibleTicketScope, getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 import { generateQrDataUrl } from '@/lib/qr/generate-qr-data-url';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
@@ -76,7 +78,15 @@ export default async function IngressosPage({
   const commercialByOrderId = new Map(
     ((purchasedOrdersResult.data ?? []) as Array<Record<string, unknown>>).map((order) => [String(order.id), resolveAccountOrderStatus(order)]),
   );
-  const orders = ticketScope.orders as Array<{ id: string; order_number: string | null; status: string | null; event_id: string | null; user_id: string | null; buyer_type: 'account' | 'imported_holder' | 'transferred_owner' }>;
+  const orders = ticketScope.orders as Array<{
+    id: string;
+    order_number: string | null;
+    display_number?: number | null;
+    status: string | null;
+    event_id: string | null;
+    user_id: string | null;
+    buyer_type: 'account' | 'imported_holder' | 'transferred_owner';
+  }>;
   const orderItems = ticketScope.orderItems as Array<{
     id: string;
     item_position: number | null;
@@ -136,6 +146,16 @@ export default async function IngressosPage({
   }
 
   const ordersById = new Map(orders.map((order) => [String(order.id), order]));
+  const missingOrderIds = orders.filter((order) => order.display_number == null && !order.order_number).map((order) => String(order.id));
+  if (missingOrderIds.length > 0) {
+    const { data: missingOrders } = await supabase.from('orders').select('id, display_number, order_number').in('id', missingOrderIds);
+    for (const row of missingOrders ?? []) {
+      const current = ordersById.get(String(row.id));
+      if (!current) continue;
+      current.display_number = row.display_number == null ? null : Number(row.display_number);
+      current.order_number = row.order_number ? String(row.order_number) : current.order_number;
+    }
+  }
   const participantsById = new Map(((participantsResult.data ?? []) as Array<{ id: string; full_name: string | null }>).map((row) => [String(row.id), row]));
   const categoriesById = new Map(((categoriesResult.data ?? []) as Array<{ id: string; name: string | null }>).map((row) => [String(row.id), row]));
   const batchesById = new Map(((batchesResult.data ?? []) as Array<{ id: string; name: string | null }>).map((row) => [String(row.id), row]));
@@ -184,7 +204,7 @@ export default async function IngressosPage({
           qrUrl = null;
         }
       }
-      const holderName = participant?.full_name || item.holder_full_name || 'Não definido';
+      const holderName = canonicalHolderName(item.holder_full_name, participant?.full_name, 'Não definido');
       const ticketStatus = normalizeStatus(String(ticket?.status ?? item.status ?? 'pending'));
       const badgeStatus = situation === 'ativos' ? ticketStatus : ticketSituationBadgeStatus(situation);
       const badgeLabel = situation === 'ativos' ? undefined : ticketSituationLabel(situation);
@@ -196,6 +216,7 @@ export default async function IngressosPage({
         date: eventObj?.starts_at ? formatDateBR(String(eventObj.starts_at)) : null,
         location: optionalDisplayValue(eventObj?.location),
         holderName,
+        ticketCode: canonicalTicketDisplayCode(order?.display_number, item.item_position, order?.order_number),
         category: optionalDisplayValue(categoryObj?.name),
         batch: optionalDisplayValue(batchObj?.name),
         shirtType: shirtKitItem && shirtType && shirtSize ? shirtType : null,
@@ -280,8 +301,9 @@ export default async function IngressosPage({
               eventName={item.eventName}
               date={item.date}
               location={item.location}
-              holderName={item.holderName}
-              category={item.category}
+                holderName={item.holderName}
+                ticketCode={item.ticketCode}
+                category={item.category}
               batch={item.batch}
               shirtType={item.shirtType}
               shirtSize={item.shirtSize}

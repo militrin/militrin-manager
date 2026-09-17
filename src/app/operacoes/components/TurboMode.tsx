@@ -958,7 +958,7 @@ function OperationSearch({
           onKeyDown={(event) => {
             if (event.key === 'Enter') void runSearch();
           }}
-          placeholder="Nome, CPF, pedido ou código"
+            placeholder="Nome, CPF, pedido ou código do ingresso"
           autoFocus
           className="min-h-14 min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-4 text-lg"
         />

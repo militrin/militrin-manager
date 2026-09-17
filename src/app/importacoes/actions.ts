@@ -18,12 +18,14 @@ import {
   removeDuplicateSpaces,
 } from '@/lib/imports/normalization';
 import {
-  isValidCpf,
   resolveImportOptionWithDefault,
   type ImportDataIssue,
 } from '@/lib/imports/import-row-validation';
-import { calculateAgeAtEventDate } from '@/lib/utils/date';
 import { normalizeImportedShirtType } from '@/lib/imports/shirt-type';
+import {
+  collectLegacyImportPersonalIssues,
+  shouldPersistImportedBirthDate,
+} from '@/lib/imports/legacy-cadastral';
 import { normalizeImportedPaymentMethod } from '@/lib/imports/payment-method';
 import {
   importShouldCreatePricingGenderIssue,
@@ -717,42 +719,21 @@ export async function parseImportFileAction(formData: FormData) {
 
       if (importType === 'current_event_registrations' && status !== 'error' && eventRules) {
         const addIssue = (issue: ImportDataIssue) => dataIssues.push(issue);
-        if (!row.cpf_input) {
-          addIssue({ field_code: 'cpf', issue_type: 'missing_required_identity', message: 'CPF obrigatorio ausente. Compra preservada com identidade pendente.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false, resolution_scope: 'user_resolvable' });
-        } else if (classifyImportedCpf(row.cpf_input, row.cpf_cell_kind).kind === 'excel_leading_zero') {
-          addIssue({ field_code: 'cpf', issue_type: 'excel_leading_zero', message: 'Possivel zero inicial removido pelo Excel.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false, resolution_scope: 'user_resolvable' });
-        } else if (!isValidCpf(row.cpf_input)) {
-          addIssue({ field_code: 'cpf', issue_type: 'invalid_identity', message: 'CPF invalido. Compra preservada com identidade pendente.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false, resolution_scope: 'user_resolvable' });
+        for (const issue of collectLegacyImportPersonalIssues({
+          cpfInput: row.cpf_input,
+          cpfCellKind: row.cpf_cell_kind,
+          emailInput: row.email_input,
+          email: row.email,
+          phoneInput: row.phone_input,
+          phone: row.phone,
+          birthDateInput: row.birth_date_input,
+          birthDate: row.birth_date,
+          eventStartsAt: eventRules.eventStartsAt,
+          minAge: eventRules.minAge,
+        })) {
+          addIssue(issue);
         }
-
-        if (row.email_input && !row.email) {
-          addIssue({ field_code: 'email', issue_type: 'invalid_format', message: 'E-mail informado e invalido.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false });
-        }
-        if (row.phone_input && (!row.phone || row.phone.length < 10 || row.phone.length > 11)) {
-          addIssue({ field_code: 'phone', issue_type: 'invalid_format', message: 'Telefone informado e invalido.', blocks_payment: false, blocks_ticket_issuance: false, blocks_checkin: false, blocks_kit_delivery: false });
-        }
-
-        if (!row.birth_date_input) {
-          addIssue({ field_code: 'birth_date', issue_type: 'missing_required_age', message: 'Data de nascimento obrigatoria ausente.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-        } else if (!row.birth_date) {
-          addIssue({ field_code: 'birth_date', issue_type: 'invalid_date', message: 'Data de nascimento invalida.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-        } else if (eventRules.minAge > 0 && !eventRules.eventStartsAt) {
-          // So exigimos a data do evento quando ha de fato uma idade minima
-          // configurada -- sem isso, evento sem restricao de idade nao
-          // deveria travar a importacao por falta de starts_at.
-          addIssue({ field_code: 'event_date', issue_type: 'missing_required_for_age', message: 'Evento sem data de inicio para validar maioridade.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-        } else if (eventRules.eventStartsAt) {
-          // calculateAgeAtEventDate e a mesma fonte canonica usada no
-          // checkout publico (src/app/inscricao/actions.ts) -- nunca um "18"
-          // hardcoded aqui; o limiar real vem de eventRules.minAge
-          // (events.min_age), igual ao checkout.
-          const ageAtEvent = calculateAgeAtEventDate(row.birth_date, eventRules.eventStartsAt);
-          if (ageAtEvent === null) {
-            addIssue({ field_code: 'birth_date', issue_type: 'invalid_date', message: 'Nascimento invalido ou posterior a data do evento.', blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-          } else if (eventRules.minAge > 0 && ageAtEvent < eventRules.minAge) {
-            addIssue({ field_code: 'birth_date', issue_type: 'underage_at_event', message: `Pessoa menor de ${eventRules.minAge} anos na data do evento.`, blocks_payment: false, blocks_ticket_issuance: true, blocks_checkin: false, blocks_kit_delivery: false });
-          }
-        }
+        row.birth_date = shouldPersistImportedBirthDate(dataIssues, row.birth_date);
 
         const batchResolution = resolveImportOptionWithDefault(row.batch, eventRules.batches.map((batch) => ({ id: batch.id, name: batch.name })), defaultBatchId);
         const categoryResolution = resolveImportOptionWithDefault(row.category, eventRules.categories, defaultCategoryId);
@@ -825,7 +806,11 @@ export async function parseImportFileAction(formData: FormData) {
       }
 
       if (importType === 'current_event_registrations' && status !== 'error') {
-        const cpfMatch = row.cpf ? cpfMap.get(row.cpf) : undefined;
+        const importedCpf = classifyImportedCpf(row.cpf_input, row.cpf_cell_kind);
+        const cpfMatch = importedCpf.kind === 'valid' && row.cpf ? cpfMap.get(row.cpf) : undefined;
+        const excelCandidateMatch = importedCpf.kind === 'excel_leading_zero' && importedCpf.excelCandidate
+          ? cpfMap.get(importedCpf.excelCandidate)
+          : undefined;
         const emailMatches = row.email ? (emailMap.get(row.email) ?? []) : [];
         const emailMatch = emailMatches.find((candidate) => String(candidate.id ?? candidate.registration_contact_id ?? '') !== String(cpfMatch?.id ?? '')) ?? emailMatches[0];
         const nameMatch = row.normalized_name ? normalizedNameMap.get(row.normalized_name) : undefined;
@@ -836,7 +821,7 @@ export async function parseImportFileAction(formData: FormData) {
           full_name: String(matched.full_name ?? ''), cpf: String(matched.cpf ?? ''),
           email: String(matched.email ?? ''), reason,
         });
-        const intraFileAdditionalPurchase = Boolean(row.cpf && seenIntraFileCpfs.has(row.cpf) && !cpfMatch);
+        const intraFileAdditionalPurchase = Boolean(importedCpf.kind === 'valid' && row.cpf && seenIntraFileCpfs.has(row.cpf) && !cpfMatch);
         const purchase = classifyCurrentEventPurchase({
           cpfInput: row.cpf_input,
           cpfCellKind: row.cpf_cell_kind,
@@ -844,6 +829,7 @@ export async function parseImportFileAction(formData: FormData) {
           cpfMatch: cpfMatch ? toCandidate(cpfMatch, 'cpf_exact') : null,
           emailMatch: emailMatch ? toCandidate(emailMatch, 'email_exact') : null,
           nameMatch: nameMatch ? toCandidate(nameMatch, 'name_exact_suggestion') : null,
+          excelCandidateMatch: excelCandidateMatch ? toCandidate(excelCandidateMatch, 'excel_cpf_candidate') : null,
           sourceFileHash,
           occurrenceIndex: row.occurrence_index,
           existingSameEventPurchases: [
@@ -852,7 +838,7 @@ export async function parseImportFileAction(formData: FormData) {
           ],
           externalPurchaseKey: row.external_purchase_key,
         });
-        if (row.cpf) seenIntraFileCpfs.add(row.cpf);
+        if (importedCpf.kind === 'valid' && row.cpf) seenIntraFileCpfs.add(row.cpf);
         if (purchase.status === 'review_required') {
           status = 'review_required';
           resolution = 'pending';
@@ -1373,7 +1359,10 @@ export async function executeImportBatchAction(
       const cpf = normalizeCpf(String(normalized.cpf ?? ''));
       const email = normalizeEmail(String(normalized.email ?? ''));
       const phone = normalizePhone(String(normalized.phone ?? ''));
-      const birthDate = String(normalized.birth_date ?? '').trim() || null;
+      const birthDate = shouldPersistImportedBirthDate(
+        Array.isArray(row.data_issues) ? row.data_issues as ImportDataIssue[] : [],
+        String(normalized.birth_date ?? '').trim() || null,
+      );
       const gender = normalizeImportedGender(String(normalized.gender ?? ''));
       const city = String(normalized.city ?? '').trim() || null;
       const eventYear = Number(normalized.event_year ?? 0) || new Date().getFullYear();
@@ -1472,7 +1461,7 @@ export async function executeImportBatchAction(
           p_expected_registration_contact_id: resolution === 'link_existing' && row.registration_contact_id ? String(row.registration_contact_id) : null,
           p_full_name: fullName,
           p_cpf: String(normalized.cpf_input ?? cpf ?? '').trim() || null,
-          p_birth_date: birthDate,
+          p_birth_date: shouldPersistImportedBirthDate(issues, birthDate),
           p_gender: gender,
           p_phone: phone,
           p_email: email,

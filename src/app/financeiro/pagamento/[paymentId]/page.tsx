@@ -57,7 +57,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   ]);
 
   const ticketViews = (tickets ?? []).map((ticket) => {
-    const holder = one(ticket.participants)?.full_name ?? one(ticket.order_items)?.holder_full_name;
+    const holder = one(ticket.order_items)?.holder_full_name ?? one(ticket.participants)?.full_name;
     const kitRows = Array.isArray(ticket.participant_kit_items) ? ticket.participant_kit_items : ticket.participant_kit_items ? [ticket.participant_kit_items] : [];
     return classifyAdminRefundTicket({
       id: String(ticket.id),

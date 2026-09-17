@@ -2,6 +2,7 @@ import type { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatCompactEventWhen, formatDateBR } from '@/lib/utils/date';
 import { resolveTicketPresentationMode } from '@/lib/checkout/ticket-presentation';
 import { optionalDisplayValue } from '@/lib/optional-display';
+import { canonicalTicketDisplayCode } from '@/lib/display-reference';
 import { getEventTicketCategories } from '@/lib/account/event-ticket-categories';
 import { getOpenParticipantIssues } from '@/lib/account/participant-open-issues';
 import type { AccountHomeEventRow } from '@/lib/account/home-events';
@@ -19,6 +20,7 @@ export type AccountHomeTicketCard = {
   bannerUrl: string | null;
   status: string;
   holderName: string | null;
+  ticketCode: string | null;
   /** Token operacional do ticket -- so preenchido quando o QR pode ser exibido. */
   token: string | null;
   /** null quando resolveTicketPresentationMode manda esconder a categoria (0 ou 1 categoria ativa no evento). */
@@ -37,11 +39,14 @@ export type AccountHomeTicketCardOrderItem = {
   shirt_type: string | null;
   shirt_size: string | null;
   holder_full_name: string | null;
+  item_position?: number | null;
 };
 
 export type AccountHomeTicketCardOrder = {
   id: string;
   status: string | null;
+  display_number?: number | null;
+  order_number?: string | null;
 };
 
 export type AccountHomeTicketCardSources = {
@@ -89,12 +94,12 @@ export async function buildAccountHomeTicketCards(
     sources.orderItems
       ? resolved(sources.orderItems)
       : orderItemIds.length > 0
-        ? supabase.from('order_items').select('id, participant_id, ticket_category_id, batch_id, shirt_type, shirt_size, holder_full_name').in('id', orderItemIds)
+        ? supabase.from('order_items').select('id, participant_id, ticket_category_id, batch_id, shirt_type, shirt_size, holder_full_name, item_position').in('id', orderItemIds)
         : resolved([]),
     sources.orders
       ? resolved(sources.orders)
       : orderIds.length > 0
-        ? supabase.from('orders').select('id, status').in('id', orderIds)
+        ? supabase.from('orders').select('id, status, display_number, order_number').in('id', orderIds)
         : resolved([]),
     sources.events
       ? resolved(sources.events)
@@ -104,7 +109,23 @@ export async function buildAccountHomeTicketCards(
   ]);
 
   const items = (itemsResult.data ?? []) as AccountHomeTicketCardOrderItem[];
-  const orders = (ordersResult.data ?? []) as AccountHomeTicketCardOrder[];
+  let orders = (ordersResult.data ?? []) as AccountHomeTicketCardOrder[];
+  const presentOrderIds = new Set(orders.map((order) => order.id));
+  const missingOrderIds = orderIds.filter((id) => !presentOrderIds.has(id) || orders.some((order) => order.id === id && order.display_number == null && !order.order_number));
+  if (missingOrderIds.length > 0) {
+    const { data: missingOrders } = await supabase.from('orders').select('id, status, display_number, order_number').in('id', missingOrderIds);
+    const missingById = new Map((missingOrders ?? []).map((row) => [String(row.id), row]));
+    orders = orderIds.map((id) => {
+      const current = orders.find((order) => order.id === id);
+      const missing = missingById.get(id);
+      return {
+        id,
+        status: current?.status ?? (missing?.status ? String(missing.status) : null),
+        display_number: current?.display_number ?? (missing?.display_number == null ? null : Number(missing.display_number)),
+        order_number: current?.order_number ?? (missing?.order_number ? String(missing.order_number) : null),
+      };
+    });
+  }
   const events = (eventsResult.data ?? []) as Array<{ id: string; name: string | null; starts_at: string | null; location: string | null; banner_card_url: string | null; banner_hero_url: string | null }>;
 
   const participantIds = uniq(items.map((item) => item.participant_id));
@@ -166,6 +187,7 @@ export async function buildAccountHomeTicketCards(
       bannerUrl: eventObj?.banner_card_url || eventObj?.banner_hero_url || null,
       status: String(ticket.status ?? 'pending'),
       holderName: optionalDisplayValue(item?.holder_full_name ?? null),
+      ticketCode: canonicalTicketDisplayCode(order?.display_number, item?.item_position, order?.order_number),
       token: canShowQr ? String(ticket.token) : null,
       categoryLabel: presentationMode === 'category_visible' ? categoryName : null,
       batchLabel: presentationMode === 'single' ? null : batchName,

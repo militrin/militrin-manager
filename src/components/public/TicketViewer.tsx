@@ -10,6 +10,7 @@ type TicketViewerProps = {
   eventLocation?: string | null;
   token: string;
   orderNumber?: string | null;
+  ticketCode?: string | null;
   showPdfButton?: boolean;
 };
 
@@ -22,6 +23,7 @@ export function TicketViewer({
   eventLocation,
   token,
   orderNumber,
+  ticketCode,
   showPdfButton = true,
 }: TicketViewerProps) {
   return (
@@ -34,6 +36,7 @@ export function TicketViewer({
       eventLocation={eventLocation}
       token={token}
       orderNumber={orderNumber}
+      ticketCode={ticketCode}
       actions={
         showPdfButton ? (
           <TicketPdfButton
@@ -45,6 +48,7 @@ export function TicketViewer({
             eventLocation={eventLocation}
             token={token}
             orderNumber={orderNumber}
+            ticketCode={ticketCode}
           />
         ) : null
       }

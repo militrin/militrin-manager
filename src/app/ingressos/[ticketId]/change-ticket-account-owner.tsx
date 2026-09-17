@@ -15,6 +15,8 @@ type Candidate = {
 
 export function ChangeTicketAccountOwnerCard(props: {
   ticketId: string;
+  ticketCode?: string | null;
+  eventName?: string | null;
   holderName: string;
   currentOwnerName: string;
   canManage: boolean;
@@ -36,6 +38,12 @@ export function ChangeTicketAccountOwnerCard(props: {
     <section className="rounded-3xl border border-violet-500/30 bg-violet-500/5 p-5">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-200">Conta proprietária</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {props.ticketCode ? (
+          <div className="sm:col-span-2">
+            <p className="text-xs text-slate-500">Código do ingresso</p>
+            <p className="font-mono tracking-[0.08em]">{props.ticketCode}</p>
+          </div>
+        ) : null}
         <div>
           <p className="text-xs text-slate-500">Titular atual</p>
           <p className="font-medium">{props.holderName}</p>
@@ -62,6 +70,8 @@ export function ChangeTicketAccountOwnerCard(props: {
               <button type="button" onClick={() => setOpen(false)} aria-label="Fechar" className="rounded-lg border border-slate-700 px-3 py-1">×</button>
             </div>
             <div className="mt-4 grid gap-3 text-sm">
+              {props.ticketCode ? <p>Código do ingresso: <strong className="font-mono tracking-[0.08em]">{props.ticketCode}</strong></p> : null}
+              {props.eventName ? <p>Evento: <strong>{props.eventName}</strong></p> : null}
               <p>Titular atual: <strong>{props.holderName}</strong></p>
               <p>Conta proprietária atual: <strong>{props.currentOwnerName}</strong></p>
             </div>

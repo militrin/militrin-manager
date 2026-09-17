@@ -179,8 +179,14 @@ export default async function MinhaContaPage() {
       shirt_type: string | null;
       shirt_size: string | null;
       holder_full_name: string | null;
+      item_position: number | null;
     }>,
-    orders: orders.map((order) => ({ id: String(order.id ?? ''), status: order.status ? String(order.status) : null })),
+    orders: orders.map((order) => ({
+      id: String(order.id ?? ''),
+      status: order.status ? String(order.status) : null,
+      display_number: order.display_number == null ? null : Number(order.display_number),
+      order_number: order.order_number ? String(order.order_number) : null,
+    })),
     events: homeEvents,
   });
   const featuredHeroCta = headerEvent

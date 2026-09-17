@@ -1,5 +1,5 @@
 import { isValidCpf } from '../imports/import-row-validation.ts';
-import { parseDateInput } from '../utils/date.ts';
+import { calculateAgeAtEventDate, isPlausiblePersonAge, parseDateInput } from '../utils/date.ts';
 
 export const FIRST_ACCESS_PROFILE_FIELDS = [
   'full_name',
@@ -35,7 +35,10 @@ function normalizeDate(value: unknown) {
   const today = new Date();
   today.setHours(23, 59, 59, 999);
   if (date.getTime() > today.getTime()) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const ageToday = calculateAgeAtEventDate(iso, today.toISOString());
+  if (!isPlausiblePersonAge(ageToday)) return '';
+  return iso;
 }
 
 export function validateFirstAccessProfile(input: FirstAccessProfileInput) {

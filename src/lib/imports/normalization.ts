@@ -23,8 +23,23 @@ export function maskCpf(cpf: string | null | undefined) {
   return `${digits.slice(0, 3)}***${digits.slice(-2)}`;
 }
 
+/**
+ * Excel number cells often stringify as `54999999999.0` / `54999999999,0`.
+ * Stripping non-digits first would keep the trailing zero and invent a
+ * 12-digit phone. Only this exact integer-plus-trailing-zeros form is
+ * treated as an Excel artifact.
+ */
+const EXCEL_INTEGER_TRAILING_ZEROS = /^(\d{10,11})[.,]0+$/;
+
+export function stripUnequivocalExcelNumericArtifact(value: string | null | undefined) {
+  const trimmed = String(value ?? '').trim();
+  const match = trimmed.match(EXCEL_INTEGER_TRAILING_ZEROS);
+  return match ? match[1] : trimmed;
+}
+
 export function normalizePhone(value: string | null | undefined) {
-  const digits = String(value ?? '').replace(/\D/g, '');
+  const cleaned = stripUnequivocalExcelNumericArtifact(value);
+  const digits = cleaned.replace(/\D/g, '');
   if (!digits) return null;
   return digits;
 }

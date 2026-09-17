@@ -57,7 +57,7 @@ test('Minha Conta: helper canonico accountTicketItems/accountTicketItemCount cen
 test('Minha Conta home: latestOrderItemCount e a quantidade da compra pendente usam a fonte canonica, nunca order_items.length bruto', async () => {
   const source = await read('src/app/minha-conta/page.tsx');
   assert.match(source, /accountTicketItemCount/);
-  assert.match(source, /const latestOrderItemCount = latestOrder \? accountTicketItemCount\(latestOrder\) : 0;/);
+  assert.match(source, /quantity: accountTicketItemCount\(pendingOrder\)/);
   // pendingOrderDetail usa uma query propria (so ticket_category_id/batch_id) --
   // precisa do mesmo filtro aplicado manualmente, com item_kind selecionado.
   assert.match(source, /select\('ticket_category_id, batch_id, item_kind'\)/);

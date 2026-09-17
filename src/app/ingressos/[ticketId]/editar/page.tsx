@@ -7,6 +7,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { TicketOwnershipEditor } from "./ticket-ownership-editor";
 import { appendNavigationContext, isSafeContextUuid } from "@/lib/navigation/admin-navigation";
 import { resolveLinkedAccountLabel } from "@/lib/admin/operator-names";
+import { canonicalHolderName } from "@/lib/tickets/holder-name";
+import { canonicalTicketDisplayCode } from "@/lib/display-reference";
 
 function one<T>(value: T | T[] | null): T | null {
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -23,7 +25,7 @@ export default async function EditTicketOwnershipPage({ params, searchParams }: 
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("tickets")
-    .select("id,token,status,used_at,organization_id,owner_user_id,participant_id,participants(full_name),orders(user_id),order_items(registration_contact_id,ticket_categories(name)),participant_kit_items(status)")
+    .select("id,token,status,used_at,organization_id,owner_user_id,participant_id,events(name),participants(full_name),orders(user_id,display_number,order_number),order_items(registration_contact_id,holder_full_name,item_position,ticket_categories(name)),participant_kit_items(status)")
     .eq("id", ticketId)
     .eq("organization_id", organization.id)
     .maybeSingle();
@@ -31,7 +33,8 @@ export default async function EditTicketOwnershipPage({ params, searchParams }: 
   if (!data) redirect("/acesso-negado");
 
   const holder = one(data.participants as { full_name: string } | { full_name: string }[] | null);
-  const order = one(data.orders as { user_id: string | null } | { user_id: string | null }[] | null);
+  const order = one(data.orders as { user_id: string | null; display_number?: number | null; order_number?: string | null } | { user_id: string | null; display_number?: number | null; order_number?: string | null }[] | null);
+  const event = one(data.events as { name: string } | { name: string }[] | null);
   const buyerResult = order?.user_id
     ? await supabase.from("customer_profiles").select("full_name").eq("user_id", order.user_id).maybeSingle()
     : null;
@@ -39,13 +42,14 @@ export default async function EditTicketOwnershipPage({ params, searchParams }: 
     ? { data: { full_name: await resolveLinkedAccountLabel(String(data.owner_user_id)) } }
     : null;
   const kits = (data.participant_kit_items ?? []) as Array<{ status: string }>;
-  const item = one(data.order_items as {registration_contact_id:string|null;ticket_categories:{name:string}|{name:string}[]|null}|Array<{registration_contact_id:string|null;ticket_categories:{name:string}|{name:string}[]|null}>|null);
+  const item = one(data.order_items as {registration_contact_id:string|null;holder_full_name?:string|null;item_position?:number|null;ticket_categories:{name:string}|{name:string}[]|null}|Array<{registration_contact_id:string|null;holder_full_name?:string|null;item_position?:number|null;ticket_categories:{name:string}|{name:string}[]|null}>|null);
   const category = one(item?.ticket_categories ?? null);
   const requestedContactId = navigation.from === "cadastro" && isSafeContextUuid(navigation.contactId) ? navigation.contactId : null;
   const ownerContactResult=requestedContactId&&data.owner_user_id?await supabase.from("participants").select("id").eq("organization_id",organization.id).eq("registration_contact_id",requestedContactId).eq("user_id",data.owner_user_id).limit(1):null;
   const fromCadastro = Boolean(requestedContactId && (requestedContactId === item?.registration_contact_id || ownerContactResult?.data?.length));
   const contactResult = fromCadastro ? await supabase.from("registration_contacts").select("full_name").eq("id",requestedContactId).eq("organization_id",organization.id).maybeSingle() : null;
-  const ticketLabel = `#${String(data.token ?? data.id).slice(0,8).toUpperCase()}${category?.name ? ` / ${category.name}` : ""}`;
+  const ticketCode = canonicalTicketDisplayCode(order?.display_number, item?.item_position, order?.order_number);
+  const ticketLabel = `${ticketCode ?? "Ingresso"}${category?.name ? ` / ${category.name}` : ""}`;
   const context = fromCadastro ? {from:"cadastro",contactId:requestedContactId!} : {};
   const detailHref = appendNavigationContext(`/ingressos/${ticketId}`,context);
   const breadcrumbs = fromCadastro ? [{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contactResult?.data?.full_name ?? "Cadastro"),href:`/cadastros/${requestedContactId}`},{label:ticketLabel,href:detailHref},{label:"Editar ingresso"}] : [{label:"Início",href:"/painel"},{label:"Ingressos",href:"/ingressos"},{label:ticketLabel,href:detailHref},{label:"Editar ingresso"}];
@@ -58,7 +62,9 @@ export default async function EditTicketOwnershipPage({ params, searchParams }: 
           <TopBar title="Editar ingresso" subtitle="Titularidade operacional e cancelamento" breadcrumbs={breadcrumbs} backHref={detailHref} fallbackHref="/ingressos" />
           <TicketOwnershipEditor
             ticketId={ticketId}
-            currentHolder={holder?.full_name ?? "Titular não definido"}
+            ticketCode={ticketCode}
+            eventName={String(event?.name ?? "Evento")}
+            currentHolder={canonicalHolderName(item?.holder_full_name, holder?.full_name)}
             buyer={buyerResult?.data?.full_name ?? "Comprador não identificado"}
             currentOwner={ownerResult?.data?.full_name ?? (data.owner_user_id ? "Conta vinculada" : "Proprietário não definido")}
             currentOwnerUserId={data.owner_user_id ? String(data.owner_user_id) : null}

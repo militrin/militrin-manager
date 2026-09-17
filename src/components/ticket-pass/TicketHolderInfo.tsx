@@ -5,6 +5,7 @@ import { formatEventPassOrderNumber, TICKET_PASS_COPY, ticketPassStatusPresentat
 type TicketHolderInfoProps = {
   holderName?: string | null;
   categoryName?: string | null;
+  ticketCode?: string | null;
   orderNumber?: string | null;
   status: string;
 };
@@ -53,7 +54,7 @@ function StatusValue({ status }: { status: string }) {
   return <span className={`text-sm font-semibold uppercase tracking-[0.14em] ${tone}`}>{presentation.text}</span>;
 }
 
-export function TicketHolderInfo({ holderName, categoryName, orderNumber, status }: TicketHolderInfoProps) {
+export function TicketHolderInfo({ holderName, categoryName, ticketCode, orderNumber, status }: TicketHolderInfoProps) {
   const orderLabel = formatEventPassOrderNumber(orderNumber);
 
   return (
@@ -64,7 +65,10 @@ export function TicketHolderInfo({ holderName, categoryName, orderNumber, status
       {categoryName ? (
         <InfoRow icon={<TicketIcon size={15} strokeWidth={1.75} aria-hidden />} label={TICKET_PASS_COPY.categoryLabel} value={categoryName} />
       ) : null}
-      {orderLabel ? (
+      {ticketCode ? (
+        <InfoRow icon={<Hash size={15} strokeWidth={1.75} aria-hidden />} label={TICKET_PASS_COPY.ticketCodeLabel} value={ticketCode} valueClassName="font-mono text-sm font-semibold tracking-[0.12em] text-zinc-50" />
+      ) : null}
+      {orderLabel && orderLabel !== ticketCode ? (
         <InfoRow icon={<Hash size={15} strokeWidth={1.75} aria-hidden />} label={TICKET_PASS_COPY.orderLabel} value={orderLabel} valueClassName="font-mono text-sm font-semibold tracking-[0.12em] text-zinc-50" />
       ) : null}
       <InfoRow icon={<CheckCircle2 size={15} strokeWidth={1.75} aria-hidden />} label={TICKET_PASS_COPY.statusLabel} value={<StatusValue status={status} />} />

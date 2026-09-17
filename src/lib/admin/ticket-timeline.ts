@@ -10,6 +10,7 @@ import { orderDisplayReference, ticketDisplayReference } from "@/lib/display-ref
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
 import { auditReasonFromDetails } from "@/lib/admin/audit-reason-label";
+import { canonicalHolderName } from "@/lib/tickets/holder-name";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 type Row = Record<string, unknown>;
@@ -122,7 +123,7 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
   if (ticketResult.error) throw ticketResult.error;
   if (!ticketResult.data) throw new Error("Ingresso não encontrado ou sem acesso à organização.");
   const ticket = ticketResult.data as Row;
-  const orderItem = ticket.order_item_id ? one(await loadOptionalTimelineSource("order-item", supabase.from("order_items").select("id,order_id,participant_id,event_id,item_position").eq("id", String(ticket.order_item_id)).eq("event_id", String(ticket.event_id)).maybeSingle(), ticketId, warnings)) : null;
+  const orderItem = ticket.order_item_id ? one(await loadOptionalTimelineSource("order-item", supabase.from("order_items").select("id,order_id,participant_id,event_id,item_position,holder_full_name").eq("id", String(ticket.order_item_id)).eq("event_id", String(ticket.event_id)).maybeSingle(), ticketId, warnings)) : null;
   const canonicalOrderId = orderItem?.order_id ?? ticket.order_id;
   const order = canonicalOrderId ? one(await loadOptionalTimelineSource("order", supabase.from("orders").select("id,order_number,display_number,confirmed_at,payment_id,event_id,organization_id").eq("id", String(canonicalOrderId)).eq("event_id", String(ticket.event_id)).eq("organization_id", organizationId).maybeSingle(), ticketId, warnings)) : null;
   const payment = order?.payment_id ? one(await loadOptionalTimelineSource("payment", supabase.from("payments").select("id,paid_at,payment_status,event_id,organization_id").eq("id", String(order.payment_id)).eq("event_id", String(ticket.event_id)).eq("organization_id", organizationId).maybeSingle(), ticketId, warnings)) : null;
@@ -199,7 +200,7 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
     }
   }
   const [holderRows, ownerRows, requestRows] = await Promise.all([
-    loadOptionalTimelineSource("holder-history", supabase.from("ticket_holder_history").select("id,operation,previous_participant_id,new_participant_id,previous_registration_contact_id,new_registration_contact_id,previous_user_id,new_user_id,actor_user_id,actor_origin,reason,reason_code,reason_text,created_at").eq("ticket_id", ticketId).eq("organization_id", organizationId).order("created_at", { ascending: true }).limit(500), ticketId, warnings),
+    loadOptionalTimelineSource("holder-history", supabase.from("ticket_holder_history").select("id,operation,previous_participant_id,new_participant_id,previous_registration_contact_id,new_registration_contact_id,previous_user_id,new_user_id,previous_holder_name,new_holder_name,actor_user_id,actor_origin,reason,reason_code,reason_text,created_at").eq("ticket_id", ticketId).eq("organization_id", organizationId).order("created_at", { ascending: true }).limit(500), ticketId, warnings),
     loadOptionalTimelineSource("owner-history", supabase.from("ticket_owner_history").select("id,operation,previous_owner_user_id,new_owner_user_id,actor_user_id,reason_code,reason_text,created_at").eq("ticket_id",ticketId).eq("organization_id",organizationId).order("created_at",{ascending:true}).limit(500),ticketId,warnings),
     loadOptionalTimelineSource("item-change-requests", supabase.from("ticket_item_change_requests").select("id,status,current_variant,requested_variant,requested_at,reviewed_at,reason,review_notes").eq("ticket_id", ticketId).eq("organization_id", organizationId).order("requested_at", { ascending: true }).limit(500), ticketId, warnings),
   ]);
@@ -272,8 +273,10 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
   }
   for (const row of holderRows ?? []) {
     const action = String(row.operation);
-    const previousName=row.previous_participant_id ? holderNames.get(String(row.previous_participant_id)) ?? "Titular anterior" : "Titular não definido";
-    const newName=row.new_participant_id ? holderNames.get(String(row.new_participant_id)) ?? "Novo titular" : "Titular não definido";
+    const previousName = String(row.previous_holder_name ?? "").trim()
+      || (row.previous_participant_id ? holderNames.get(String(row.previous_participant_id)) ?? "Titular anterior" : "Titular não definido");
+    const newName = String(row.new_holder_name ?? "").trim()
+      || (row.new_participant_id ? holderNames.get(String(row.new_participant_id)) ?? "Novo titular" : "Titular não definido");
     events.push({ id: `holder-${row.id}`, occurredAt: String(row.created_at), type: action, label: actionLabel(action, "Titularidade atualizada"), description: action === "holder_removed" ? "O ingresso ficou sem titular." : "A titularidade do ingresso foi atualizada.", previousState: previousName, newState: newName, hasTransition:true, operator: formatOperatorDisplayName({ resolvedName: operatorNames.get(String(row.actor_user_id ?? "")), actorUserId: row.actor_user_id ? String(row.actor_user_id) : null, actorOrigin: row.actor_origin ? String(row.actor_origin) : null }), reason: sensitiveActionReasonLabel(row.reason_code) ?? (row.reason ? "Motivo legado" : null), observation: row.reason_text ? String(row.reason_text) : row.reason ? String(row.reason) : null, detail: null, eventId: String(ticket.event_id), relatedTicketId: ticketId, relatedOrderId: String(canonicalOrderId ?? "") || null, source: "functional" });
   }
   for(const row of ownerRows??[]){
@@ -314,7 +317,7 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
     availableEvents = (eventOptions ?? []).map((item) => ({ id: item.id, name: item.name }));
   }
   const pageSize = Math.min(5000, Math.max(10, filters.pageSize ?? 25)); const page = Math.max(1, filters.page ?? 1); const start = (page - 1) * pageSize;
-  return { header: { ticketId, ticketReference: ticketDisplayReference(order?.display_number, orderItem?.item_position ?? 1, order?.order_number), eventName: String(event?.name ?? "Evento"), filteredEventName, orderNumber: orderDisplayReference(order?.display_number, order?.order_number), holderName: String(participant?.full_name ?? "Sem titular"), status: getTimelineStateLabel(String(ticket.status), { eventType: "ticket_header", field: "status" }) ?? "Estado não informado", organizationId, eventId: String(ticket.event_id) }, events: filtered.slice(start, start + pageSize), total: technicalFilterSelected ? filteredTechnical.length : filtered.length, page, pageSize, availableTypes, hasPartialHistory: warnings.length > 0, scope, appliedEventId, appliedTypeCode, appliedTypeLabel, technicalEvents: filters.canViewTechnicalAudit ? filteredTechnical : [], technicalEventCount: filteredTechnical.length, canViewTechnicalAudit: Boolean(filters.canViewTechnicalAudit), availableEvents, generatedAt: new Date().toISOString() };
+  return { header: { ticketId, ticketReference: ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number), eventName: String(event?.name ?? "Evento"), filteredEventName, orderNumber: orderDisplayReference(order?.display_number, order?.order_number), holderName: canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, "Sem titular"), status: getTimelineStateLabel(String(ticket.status), { eventType: "ticket_header", field: "status" }) ?? "Estado não informado", organizationId, eventId: String(ticket.event_id) }, events: filtered.slice(start, start + pageSize), total: technicalFilterSelected ? filteredTechnical.length : filtered.length, page, pageSize, availableTypes, hasPartialHistory: warnings.length > 0, scope, appliedEventId, appliedTypeCode, appliedTypeLabel, technicalEvents: filters.canViewTechnicalAudit ? filteredTechnical : [], technicalEventCount: filteredTechnical.length, canViewTechnicalAudit: Boolean(filters.canViewTechnicalAudit), availableEvents, generatedAt: new Date().toISOString() };
 }
 
 export function ticketTimelineToCsv(result: TicketTimelineResult, generatedAt: string, generatedBy: string) {

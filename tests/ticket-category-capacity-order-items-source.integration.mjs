@@ -112,7 +112,7 @@ async function buildFixture() {
   }
 
   async function orderItems(orderId) {
-    const { data, error } = await service.from('order_items').select('id,participant_id,status,ticket_category_id,item_kind,item_position').eq('order_id', orderId).order('item_position');
+    const { data, error } = await service.from('order_items').select('id,participant_id,status,ticket_category_id,item_kind,item_position,holder_full_name').eq('order_id', orderId).order('item_position');
     if (error) throw new Error(JSON.stringify(error));
     return data;
   }
@@ -187,10 +187,8 @@ test('nomear titular (ownership_mode=named) durante o checkout nao muda a capaci
   const items = await fx.orderItems(orderId);
   assert.equal(items.length, 3);
   const named = items[1];
-  assert.ok(named.participant_id, 'o item nomeado deve ganhar um participant apos materialize_named_checkout_holders');
-
-  const { data: namedParticipant } = await fx.service.from('participants').select('ticket_category_id').eq('id', named.participant_id).single();
-  assert.equal(namedParticipant.ticket_category_id, null, 'achado documentado: participant projetado de titular nomeado nunca recebe ticket_category_id');
+  assert.equal(named.participant_id, null, 'o item nomeado nao cria participant');
+  assert.equal(named.holder_full_name, 'Titular Nomeado');
 
   const after = await fx.availableSlots(category.id);
   assert.equal(after.available, before.available - 3, 'nomear o titular nao consome vaga extra nem deixa de contar a que ja existia');

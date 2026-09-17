@@ -15,12 +15,40 @@ export function orderDisplayReference(displayNumber: unknown, legacyOrderNumber?
   return formatDisplayNumber(displayNumber) ?? legacyOrderDisplayNumber(legacyOrderNumber) ?? 'sem número';
 }
 
-export function ticketDisplayReference(displayNumber: unknown, position: unknown, legacyOrderNumber?: unknown) {
+export type ParsedTicketDisplayCode = {
+  displayNumber: number;
+  itemPosition: number;
+};
+
+export function canonicalTicketDisplayCode(displayNumber: unknown, position: unknown, legacyOrderNumber?: unknown) {
   const order = formatDisplayNumber(displayNumber) ?? legacyOrderDisplayNumber(legacyOrderNumber);
   const itemPosition = Number(position);
   return order && Number.isSafeInteger(itemPosition) && itemPosition > 0
     ? `${order}-${String(itemPosition).padStart(2, '0')}`
-    : order ?? 'sem número';
+    : null;
+}
+
+export function ticketDisplayReference(displayNumber: unknown, position: unknown, legacyOrderNumber?: unknown) {
+  return canonicalTicketDisplayCode(displayNumber, position, legacyOrderNumber)
+    ?? formatDisplayNumber(displayNumber)
+    ?? legacyOrderDisplayNumber(legacyOrderNumber)
+    ?? 'sem número';
+}
+
+export function parseTicketDisplayCode(raw: unknown): ParsedTicketDisplayCode | null {
+  const normalized = String(raw ?? '').trim().replace(/\s+/g, '');
+  const match = normalized.match(/^#?0*([1-9][0-9]{0,17})-0*([1-9][0-9]{0,8})$/);
+  if (!match) return null;
+  const displayNumber = Number(match[1]);
+  const itemPosition = Number(match[2]);
+  if (!Number.isSafeInteger(displayNumber) || !Number.isSafeInteger(itemPosition)) return null;
+  return { displayNumber, itemPosition };
+}
+
+export function ticketMatchesExactDisplayCode(rawSearch: unknown, ticketCode: string | null | undefined) {
+  const parsed = parseTicketDisplayCode(rawSearch);
+  if (!parsed) return null;
+  return ticketCode === ticketDisplayReference(parsed.displayNumber, parsed.itemPosition);
 }
 
 export function isTechnicalIdentifier(value: unknown) {

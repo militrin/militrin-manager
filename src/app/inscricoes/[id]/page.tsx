@@ -144,7 +144,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
           {
             id: `ticket-issued-${String(ticket.id)}`,
             title: 'Ticket emitido',
-            description: `Ingresso ${ticketDisplayReference(order?.display_number, ticketItem?.item_position ?? 1, order?.order_number)}`,
+            description: `Ingresso ${ticketDisplayReference(order?.display_number, ticketItem?.item_position, order?.order_number)}`,
             date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : undefined,
             status: mapStatus(String(ticket.status ?? 'active')),
           },
@@ -248,7 +248,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                   const entryBatch = Array.isArray(item?.registration_batches) ? item.registration_batches[0] : item?.registration_batches;
                   return (
                     <div key={String(entry.id)} className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-200 sm:grid-cols-2">
-                      <p><span className="text-slate-400">Ingresso:</span> {ticketDisplayReference(order?.display_number, item?.item_position ?? 1, order?.order_number)}</p>
+                      <p><span className="text-slate-400">Ingresso:</span> {ticketDisplayReference(order?.display_number, item?.item_position, order?.order_number)}</p>
                       <p><span className="text-slate-400">Categoria:</span> {String(entryCategory?.name ?? '-')}</p>
                       <p><span className="text-slate-400">Lote:</span> {String(entryBatch?.name ?? '-')}</p>
                       <p><span className="text-slate-400">Camiseta:</span> {String(item?.shirt_type ?? '-')} {String(item?.shirt_size ?? '')}</p>
@@ -291,7 +291,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
             <AdminSection title="D. Ingresso" description="Ticket, QR e check-in">
               {ticket ? (
                 <div className="grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
-                  <p><span className="text-slate-400">Ingresso:</span> {ticketDisplayReference(order?.display_number, ticketItem?.item_position ?? 1, order?.order_number)}</p>
+                  <p><span className="text-slate-400">Ingresso:</span> {ticketDisplayReference(order?.display_number, ticketItem?.item_position, order?.order_number)}</p>
                   <p><span className="text-slate-400">Status:</span> <AdminStatusBadge status={mapStatus(String(ticket.status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Check-in:</span> {ticket.used_at ? formatDateTimeBR(String(ticket.used_at), ' às ') : 'Não realizado'}</p>
                   <p className="sm:col-span-2">
@@ -333,8 +333,8 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
             </AdminSection>
           </div>
 
-          <AdminSection title="G. Observações internas" description="Área pronta para edição auditada futura">
-            <p className="text-sm text-slate-300">{participant.notes ? String(participant.notes) : 'Sem observações internas.'}</p>
+          <AdminSection title="G. Observações cadastrais" description="Anotação sobre este cadastro neste evento. Titular textual sem Cadastro não possui esta nota.">
+            <p className="text-sm text-slate-300">{participant.notes ? String(participant.notes) : 'Sem observações cadastrais.'}</p>
           </AdminSection>
 
           <AdminSection title="Linha do tempo operacional" description="Mais recente para mais antigo">

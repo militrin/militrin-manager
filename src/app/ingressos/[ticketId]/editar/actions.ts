@@ -3,16 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { assertPermission } from "@/lib/admin/permissions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { buildAdminSetTicketHolderPayload } from "@/lib/admin/ticket-holder-rpc";
+import { buildAdminClearTicketHolderNamePayload, buildAdminSetTicketHolderNamePayload } from "@/lib/admin/ticket-holder-rpc";
 import { buildAdminTransferTicketOwnershipPayload, type TicketOwnerHolderAction } from "@/lib/admin/ticket-owner-rpc";
-
-export async function searchTicketHolderCandidatesAction(ticketId: string, term: string) {
-  await assertPermission("participants.edit_basic");
-  const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc("search_admin_ticket_holder_contacts", { p_ticket_id: ticketId, p_term: term });
-  if (error) return { success: false as const, message: error.message, candidates: [] };
-  return { success: true as const, message: data?.length ? `${data.length} cadastro(s) encontrado(s).` : "Nenhum cadastro encontrado.", candidates: data ?? [] };
-}
 
 export async function searchTicketOwnerAccountsAction(ticketId: string, term: string) {
   await assertPermission("tickets.transfer_ownership");
@@ -43,19 +35,49 @@ export async function transferTicketOwnershipAction(input: {
   return {success:true as const,message:"Propriedade transferida com sucesso.",result:data};
 }
 
-export async function transferTicketHolderAction(ticketId: string, registrationContactId: string | null | undefined, reasonCode: string, reasonText?: string | null) {
+export async function setTicketHolderNameAction(ticketId: string, holderName: string, reasonCode?: string | null, reasonText?: string | null) {
   await assertPermission("participants.edit_basic");
-  let payload: ReturnType<typeof buildAdminSetTicketHolderPayload>;
+  let payload: ReturnType<typeof buildAdminSetTicketHolderNamePayload>;
   try {
-    payload = buildAdminSetTicketHolderPayload(ticketId, registrationContactId, reasonCode, reasonText);
+    payload = buildAdminSetTicketHolderNamePayload(ticketId, holderName, reasonCode, reasonText);
   } catch (error) {
     return { success: false as const, message: error instanceof Error ? error.message : "Dados de titularidade inválidos." };
   }
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc("admin_set_ticket_holder_contact", payload);
-  if (error) return { success: false as const, message: error.message.includes("HOLDER_ALREADY_HAS_TICKET_FOR_EVENT") ? "Esta pessoa já é titular de outro ingresso neste evento." : `Não foi possível alterar o titular: ${error.message}` };
-  revalidatePath(`/ingressos/${ticketId}`); revalidatePath(`/ingressos/${ticketId}/editar`);
-  return { success: true as const, message: (data as { changed?: boolean })?.changed === false ? "Nenhuma alteração necessária." : payload.p_registration_contact_id ? "Titularidade atualizada." : "Titular removido com sucesso." };
+  const { data, error } = await supabase.rpc("admin_set_ticket_holder_name", payload);
+  if (error) return { success: false as const, message: `Não foi possível alterar o titular: ${error.message}` };
+  revalidatePath("/minha-conta/ingressos");
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/ingressos/${ticketId}`);
+  revalidatePath(`/ingressos/${ticketId}/editar`);
+  revalidatePath("/operacoes");
+  return {
+    success: true as const,
+    message: (data as { changed?: boolean })?.changed === false ? "Nenhuma alteração necessária." : "Titular atualizado",
+    holderName: payload.p_holder_name,
+  };
+}
+
+export async function clearTicketHolderNameAction(ticketId: string, reasonCode: string, reasonText?: string | null) {
+  await assertPermission("participants.edit_basic");
+  let payload: ReturnType<typeof buildAdminClearTicketHolderNamePayload>;
+  try {
+    payload = buildAdminClearTicketHolderNamePayload(ticketId, reasonCode, reasonText);
+  } catch (error) {
+    return { success: false as const, message: error instanceof Error ? error.message : "Dados de titularidade inválidos." };
+  }
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("admin_set_ticket_holder_name", payload);
+  if (error) return { success: false as const, message: `Não foi possível remover o titular: ${error.message}` };
+  revalidatePath("/minha-conta/ingressos");
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/ingressos/${ticketId}`);
+  revalidatePath(`/ingressos/${ticketId}/editar`);
+  revalidatePath("/operacoes");
+  return {
+    success: true as const,
+    message: (data as { changed?: boolean })?.changed === false ? "Nenhuma alteração necessária." : "Titular removido com sucesso.",
+  };
 }
 
 export async function cancelTicketAction(ticketId: string, reason: string, confirmed: boolean, replacementRequired: boolean) {

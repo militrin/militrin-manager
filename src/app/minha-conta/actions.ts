@@ -223,7 +223,7 @@ export async function findUserByPinAction(ticketId: string, pin: string) {
   const { data, error } = await supabase.rpc('find_user_by_public_pin', { p_ticket_id: ticketId, p_pin: pin });
   if (error) return { user: null, message: error.message };
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row) return { user: null, message: 'Nenhum usuário encontrado para esse código do ingresso.' };
+  if (!row) return { user: null, message: 'Nenhum usuário encontrado para esse PIN da conta.' };
   return { user: { fullName: String(row.full_name) }, message: null };
 }
 
@@ -254,6 +254,27 @@ export async function adminChangeTicketShirtAction(ticketId: string, shirtOption
   revalidatePath(`/minha-conta/ingressos/${ticketId}`);
   return { success: true, message: 'Camiseta atualizada.' };
 }
+export async function setOwnerTicketHolderNameAction(ticketId: string, holderName: string) {
+  const name = holderName.trim();
+  if (!ticketId) return { success: false as const, message: 'Ingresso inválido.' };
+  if (!name) return { success: false as const, message: 'Informe o nome do titular.' };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc('set_ticket_holder_name_for_owner', {
+    p_ticket_id: ticketId,
+    p_holder_name: name,
+  });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath('/minha-conta/ingressos');
+  revalidatePath(`/minha-conta/ingressos/${ticketId}`);
+  revalidatePath(`/ingressos/${ticketId}`);
+  revalidatePath('/operacoes');
+  return {
+    success: true as const,
+    message: (data as { changed?: boolean })?.changed === false ? 'Nenhuma alteração necessária.' : 'Titular atualizado',
+    holderName: name,
+  };
+}
+
 export async function defineTicketHolderByPinAction(ticketId: string, pin: string) { return changeHolderByPin('define_ticket_holder_by_pin', ticketId, pin); }
 export async function transferTicketByPinAction(ticketId: string, pin: string) { return changeHolderByPin('transfer_ticket_by_pin', ticketId, pin); }
 export async function adminTransferTicketByPinAction(ticketId: string, pin: string, mode: 'define' | 'transfer') {
@@ -351,38 +372,11 @@ export async function updateTicketNotesAction(formData: FormData) {
     return { success: false, message: 'Ingresso nao encontrado.' };
   }
 
-  const { data: ticket, error } = await supabase
-    .from('tickets')
-    .select('id, order_id, orders!inner(id, event_id), order_items(id, participant_id)')
-    .eq('id', ticketId)
-    .maybeSingle();
-
-  if (error) return { success: false, message: error.message };
-  if (!ticket) return { success: false, message: 'Ingresso nao encontrado.' };
-
-  const order = Array.isArray(ticket.orders) ? ticket.orders[0] : ticket.orders;
-  const orderItem = Array.isArray(ticket.order_items) ? ticket.order_items[0] : ticket.order_items;
-  const participantId = String(orderItem?.participant_id ?? '');
-
-  if (!participantId) {
-    return { success: false, message: 'Titular ainda nao definido. Defina o titular antes de registrar observacoes.' };
-  }
-
-  const { error: noteError } = await supabase.rpc('update_participant_event_notes', {
-    p_participant_id: participantId, p_notes: notes || null,
+  const { error: noteError } = await supabase.rpc('update_ticket_operational_notes', {
+    p_ticket_id: ticketId,
+    p_notes: notes || null,
   });
   if (noteError) return { success: false, message: noteError.message };
-
-  await supabase.from('audit_logs').insert({
-  action: 'ticket_notes_updated',
-  entity_type: 'participants',
-  entity_id: participantId,
-  event_id: String(order?.event_id ?? ''),
-  details: {
-    actor: 'admin',
-    notes: notes || null,
-  },
-});
 
   revalidatePath('/minha-conta');
   revalidatePath('/minha-conta/ingressos');

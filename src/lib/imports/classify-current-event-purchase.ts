@@ -49,6 +49,7 @@ export function classifyCurrentEventPurchase(input: {
   cpfMatch: IdentityCandidateRef | null;
   emailMatch: IdentityCandidateRef | null;
   nameMatch: IdentityCandidateRef | null;
+  excelCandidateMatch?: IdentityCandidateRef | null;
   sourceFileHash: string;
   occurrenceIndex: number;
   existingSameEventPurchases: ExistingPurchaseMatch[];
@@ -66,24 +67,39 @@ export function classifyCurrentEventPurchase(input: {
   if (cpf.kind === 'missing') {
     identityIssues.push(identityIssue('missing_required_identity', 'CPF obrigatorio ausente. Compra preservada com identidade pendente.'));
   } else if (cpf.kind === 'excel_leading_zero') {
-    identityIssues.push(identityIssue('excel_leading_zero', 'Possivel zero inicial removido pelo Excel.'));
+    identityIssues.push(identityIssue(
+      'excel_leading_zero',
+      'Possivel zero inicial removido pelo Excel. CPF nao sera inventado; identidade fica pendente.',
+    ));
     identityMatchDetails.excel_cpf = {
       original: cpf.digits,
       suggested: cpf.excelCandidate,
       cell_kind: cpf.cellKind,
     };
-    return {
-      status: 'review_required',
-      resolution: 'pending',
-      errorMessage: 'Possivel zero inicial removido pelo Excel. Confirme o CPF antes de tratar como identidade.',
-      identityMatchDetails: { ...identityMatchDetails, reason: 'excel_leading_zero' },
-      identityIssues,
-      additionalPurchase: false,
-      possibleReimportOfRowId: null,
-    };
+    if (input.excelCandidateMatch) {
+      return {
+        status: 'review_required',
+        resolution: 'pending',
+        errorMessage: 'O CPF sugerido pelo zero a esquerda ja pertence a outro cadastro. Nao atribuir automaticamente.',
+        identityMatchDetails: {
+          ...identityMatchDetails,
+          reason: 'excel_leading_zero',
+          collision: true,
+          candidates: [input.excelCandidateMatch],
+        },
+        identityIssues,
+        additionalPurchase: false,
+        possibleReimportOfRowId: null,
+      };
+    }
+    // Sem colisao: preservar compra/ingresso com CPF pendente. Nunca autopad.
   } else if (cpf.kind === 'invalid') {
     identityIssues.push(identityIssue('invalid_identity', 'CPF invalido. Compra preservada com identidade pendente.'));
   }
+
+  // CPF invalido/Excel nunca e identidade confiavel -- nao vincular por
+  // palpite de zero a esquerda nem por digitos incompletos.
+  const trustedCpfMatch = cpf.kind === 'valid' ? input.cpfMatch : null;
 
   const differentFile = input.existingSameEventPurchases.find((match) => match.sourceFileHash !== input.sourceFileHash);
   if (differentFile) {
@@ -102,7 +118,7 @@ export function classifyCurrentEventPurchase(input: {
     };
   }
 
-  const cpfContactId = input.cpfMatch?.registration_contact_id || null;
+  const cpfContactId = trustedCpfMatch?.registration_contact_id || null;
   const emailContactId = input.emailMatch?.registration_contact_id || null;
 
   if (cpfContactId && emailContactId && cpfContactId !== emailContactId) {
@@ -121,9 +137,9 @@ export function classifyCurrentEventPurchase(input: {
     };
   }
 
-  if (input.cpfMatch) {
+  if (trustedCpfMatch) {
     identityMatchDetails.reason = input.emailMatch ? 'cpf_and_email_exact' : 'cpf_exact';
-    identityMatchDetails.candidates = [input.cpfMatch];
+    identityMatchDetails.candidates = [trustedCpfMatch];
     identityMatchDetails.additional_purchase = true;
     return {
       status: identityIssues.length ? 'data_pending' : 'ready',

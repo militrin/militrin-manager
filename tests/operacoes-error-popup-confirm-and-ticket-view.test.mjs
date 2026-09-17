@@ -186,11 +186,11 @@ test('12/13. "Ver ingresso" abre o TicketViewModal com o ticket_id da PROPRIA fi
   assert.match(modalSql, /getOperationTicketViewAction\(ticketId\)/);
   assert.match(modalSql, /token=\{ticket\.token\}/);
 
-  // O QR usado e o MESMO makeQrUrl(token) ja usado pelo resto do sistema --
-  // nao existe QR alternativo criado pra esta tarefa.
+  // O QR usado e o MESMO token operacional gerado localmente (LocalQrImage /
+  // generateQrDataUrl) -- nao existe QR alternativo criado pra esta tarefa.
   const viewerSql = await readFile(ticketViewerUrl, 'utf8');
-  assert.match(viewerSql, /function makeQrUrl\(token: string\)/);
-  assert.match(viewerSql, /const qr = makeQrUrl\(token\);/);
+  assert.match(viewerSql, /token=\{token\}/);
+  assert.match(viewerSql, /TicketPass/);
 });
 
 test('14. getOperationTicketViewAction nao filtra por status do ingresso -- ticket usado ou cancelado continua sendo devolvido (ficha administrativa, nao a vitrine do comprador)', async () => {

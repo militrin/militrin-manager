@@ -53,6 +53,13 @@ test('item entregue e cobranca paga bloqueiam; cortesia e cancelada logicamente'
   assert.doesNotMatch(sql,/delete from/); assert.match(sql,/set status='cancelled'/);
 });
 
+test('modal de item adicional aponta para o pagamento sem burlar a protecao',()=>{
+  assert.match(ui,/financeHref/);
+  assert.match(ui,/Ver pagamento/);
+  assert.match(ui,/Ir para o financeiro/);
+  assert.match(page,/financeHref=\{\`\/loja\/pedidos\/\$\{item\.orderId\}#pagamento\`\}/);
+});
+
 test('item compartilhado reconcilia por status e estoque proprio usa roteador existente',()=>{
   const sql=fn('owner_cancel_store_order_item'); assert.match(sql,/linked_event_kit_item_id is null[\s\S]*release_store_item_reservation/); assert.match(sql,/update public\.store_order_items[\s\S]*set status='cancelled'/);
   assert.doesNotMatch(sql,/update public\.event_kit_item_variant_inventory/);

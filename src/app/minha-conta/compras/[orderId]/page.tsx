@@ -15,7 +15,7 @@ import { optionalDisplayValue } from '@/lib/optional-display';
 import { shirtDisplayLabel } from '@/lib/constants/shirts';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
 import { canContinuePendingCardCheckout } from '@/lib/checkout/pix-payment-status';
-import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
+import { canonicalTicketDisplayCode, orderDisplayReference } from '@/lib/display-reference';
 import { canContinueCommercialPayment, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
 import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 
@@ -171,7 +171,7 @@ export default async function OrderDetailPage({
   const orderReference = orderDisplayReference(orderCreatedRow?.display_number, orderCreatedRow?.order_number ?? order.order_number);
 
   const receiptItemsSummary = [
-    ...ticketItems.map((item) => `${item.participant_name ?? item.holder_full_name ?? 'Titular'}${item.category_name ? ` • ${item.category_name}` : ''}${item.ticket_status ? ` • ${getStatusLabel(item.ticket_status)}` : ''}`),
+    ...ticketItems.map((item) => `${item.holder_full_name ?? item.participant_name ?? 'Titular'}${item.category_name ? ` • ${item.category_name}` : ''}${item.ticket_status ? ` • ${getStatusLabel(item.ticket_status)}` : ''}`),
     ...productItems.map((item) => `${item.quantity}x ${item.store_item_name ?? 'Produto'}${item.variant_name ? ` (${item.variant_name} ${item.variant_value})` : ''}`),
   ].join('; ');
 
@@ -240,22 +240,21 @@ export default async function OrderDetailPage({
           <div className="space-y-3">
             {ticketItems.map((item, index) => {
               const shirtLabel = shirtDisplayLabel(item.shirt_type);
-              const holderLabel = item.participant_name || item.holder_full_name;
-              const position = item.item_position ?? index + 1;
-              const friendlyCode = ticketDisplayReference(orderCreatedRow?.display_number, position, order.order_number);
+              const holderLabel = item.holder_full_name || item.participant_name;
+              const ticketCode = canonicalTicketDisplayCode(orderCreatedRow?.display_number, item.item_position, order.order_number);
               return (
                 <article key={item.order_item_id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-[220px] flex-1 space-y-1">
                       <p className="text-base font-semibold text-white">
-                        Acesso {position}{item.category_name ? ` — ${item.category_name}` : ''}
+                        Acesso {item.item_position ?? index + 1}{item.category_name ? ` — ${item.category_name}` : ''}
                       </p>
                       <p className="text-sm text-slate-300">{holderLabel ? `Titular: ${holderLabel}` : 'Titular: Não definido'}</p>
                       {shirtLabel ? (
                         <p className="text-sm text-slate-400">{shirtLabel}{item.shirt_size ? ` · ${item.shirt_size}` : ''}</p>
                       ) : null}
                       {item.batch_name ? <p className="text-sm text-slate-400">{item.batch_name}</p> : null}
-                      <p className="text-xs text-slate-500">Código: {friendlyCode}</p>
+                      {ticketCode ? <p className="text-xs text-slate-500">Código do ingresso: {ticketCode}</p> : null}
                     </div>
                     <div className="flex flex-col items-end gap-2 text-right">
                       <MilitrinStatusBadge status={item.ticket_status ?? item.status} />
@@ -387,7 +386,7 @@ export default async function OrderDetailPage({
                 <p className="text-center text-sm text-slate-300">Acesso {item.item_position ?? index + 1}</p>
                 <TicketViewer
                   eventName={String(eventRow?.name ?? order.event_name ?? 'Evento')}
-                  participantName={item.participant_name ?? item.holder_full_name ?? ''}
+                  participantName={item.holder_full_name ?? item.participant_name ?? ''}
                   status={item.ticket_status ?? 'active'}
                   categoryName={item.category_name}
                   eventDate={eventRow?.starts_at ? String(eventRow.starts_at) : null}
