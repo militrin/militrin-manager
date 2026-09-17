@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { AccountHealthAction, AccountHealthState } from "@/lib/account/account-health";
+import { PENDING_CONFIRMATION_ADMIN_COPY } from "@/lib/account/first-access-invite-copy";
 import {
   reanalyzeAccountHealthCaseAction,
   resendAccountHealthConfirmationAction,
@@ -38,6 +39,9 @@ export function AccountHealthCaseActions({
 
   return (
     <div className="space-y-3">
+      {state === "pending_confirmation" ? (
+        <p className="text-sm text-slate-300">{PENDING_CONFIRMATION_ADMIN_COPY}</p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {canAct && actions.includes("resend_confirmation") ? (
           <button

@@ -76,22 +76,32 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
   const canonicalFullName = String(directContactRelation?.full_name ?? contactRelation?.full_name ?? '').trim();
 
   if (isResend) {
+    const existingAuth = await admin.rpc('find_auth_email_confirmation_status', { p_email: input.email });
+    const existingAuthId = String(
+      (Array.isArray(existingAuth.data) ? existingAuth.data[0] : existingAuth.data)?.user_id ?? '',
+    ) || null;
+    let correlatableAuthId: string | null = null;
+    if (existingAuthId) {
+      const detailed = await admin.auth.admin.getUserById(existingAuthId);
+      const metadataInviteId = String(detailed.data.user?.user_metadata?.participant_invite_id ?? '');
+      if (metadataInviteId === input.inviteId) correlatableAuthId = existingAuthId;
+    }
     const result = await admin.auth.signInWithOtp({
       email: input.email,
       options: { shouldCreateUser: false, emailRedirectTo: redirectTo },
     });
     if (!result.error) {
       const stampError = await stampInviteAuthEmailSent(input.inviteId);
-      if (stampError) return { error: stampError, authUserId: null as string | null, resent: true };
+      if (stampError) return { error: stampError, authUserId: correlatableAuthId, resent: true };
     }
-    if (!result.error && invitePerson?.auth_user_id) {
+    if (!result.error && correlatableAuthId) {
       const pendingError = await markInvitedAccountPending(
-        String(invitePerson.auth_user_id),
-        !invitePerson.password_setup_completed_at,
+        correlatableAuthId,
+        !invitePerson?.password_setup_completed_at,
       );
-      if (pendingError) return { error: pendingError, authUserId: null as string | null, resent: true };
+      if (pendingError) return { error: pendingError, authUserId: correlatableAuthId, resent: true };
     }
-    return { error: result.error, authUserId: null as string | null, resent: true };
+    return { error: result.error, authUserId: correlatableAuthId, resent: true };
   }
 
   const result = await admin.auth.admin.inviteUserByEmail(input.email, {
@@ -103,6 +113,24 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
     if (stampError) return { error: stampError, authUserId: result.data.user?.id ?? null, resent: false };
   }
   return { error: result.error, authUserId: result.data.user?.id ?? null, resent: false };
+}
+
+export async function associateInviteAuthUser(inviteId: string, userId: string) {
+  if (!inviteId || !userId) {
+    return { error: { message: 'INVITE_AUTH_ASSOCIATION_REQUIRED' }, data: null as { id: string } | null };
+  }
+  const admin = createServiceRoleSupabaseClient();
+  const result = await admin.from('participant_account_invites')
+    .update({ auth_user_id: userId, updated_at: new Date().toISOString() })
+    .eq('id', inviteId)
+    .or(`auth_user_id.is.null,auth_user_id.eq.${userId}`)
+    .select('id')
+    .maybeSingle();
+  if (result.error) return result;
+  if (!result.data) {
+    return { error: { message: 'INVITE_AUTH_USER_MISMATCH' }, data: null as { id: string } | null };
+  }
+  return result;
 }
 
 export async function stampInviteAuthEmailSent(inviteId: string) {
@@ -123,15 +151,20 @@ export async function markFirstAccessAuthConfirmed(userId: string, inviteId?: st
   if (!userId) return null;
   const admin = createServiceRoleSupabaseClient();
   const now = new Date().toISOString();
-  let query = admin.from('participant_account_invites')
-    .update({ auth_confirmed_at: now, updated_at: now })
-    .is('auth_confirmed_at', null)
-    .is('password_setup_completed_at', null);
-  if (inviteId) {
-    query = query.eq('id', inviteId);
-  } else {
-    query = query.or(`auth_user_id.eq.${userId},claimed_user_id.eq.${userId}`);
-  }
-  const result = await query;
+  const result = inviteId
+    ? await admin.from('participant_account_invites')
+      .update({
+        auth_confirmed_at: now,
+        updated_at: now,
+        auth_user_id: userId,
+      })
+      .eq('id', inviteId)
+      .is('password_setup_completed_at', null)
+      .or(`auth_user_id.is.null,auth_user_id.eq.${userId}`)
+    : await admin.from('participant_account_invites')
+      .update({ auth_confirmed_at: now, updated_at: now })
+      .is('auth_confirmed_at', null)
+      .is('password_setup_completed_at', null)
+      .or(`auth_user_id.eq.${userId},claimed_user_id.eq.${userId}`);
   return result.error;
 }

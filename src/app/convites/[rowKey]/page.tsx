@@ -78,12 +78,12 @@ export default async function InviteCenterDetailPage({ params }: { params: Promi
           ) : null}
           {status === "pendente" ? (
             <p className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
-              Convite enviado. O link de acesso vale por 24 horas após o envio. Ainda não iniciou o primeiro acesso.
+              Convite enviado. O convite interno permanece disponível; o link do e-mail vale cerca de 24 horas após o envio. Ainda não iniciou o primeiro acesso.
             </p>
           ) : null}
           {status === "expirado" ? (
             <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-              Link de acesso expirado. A janela Auth de 24 horas terminou. Reenvie para gerar um novo link.
+              Link do e-mail expirado. A janela Auth de cerca de 24 horas terminou; o convite interno pode continuar válido. Reenvie para gerar um novo link.
             </p>
           ) : null}
           {status === "cadastro_pendente" ? (

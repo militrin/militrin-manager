@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createBrowserClient } from '@supabase/ssr';
 import type { EmailOtpType } from '@supabase/supabase-js';
+import { stampFirstAccessAuthFromSessionAction } from '@/app/auth/confirmar/actions';
 import { safeAuthDestination } from '@/lib/auth/callback-destinations';
 import {
   buildInviteErrorCopy,
@@ -123,6 +124,10 @@ export function AuthCallbackClient() {
         throw { kind, code: sessionResult.error.code ?? null, message: sessionResult.error.message };
       }
       if (!sessionResult.data.session) throw { kind, code: null, message: 'session_not_established' };
+
+      if (kind !== 'recovery') {
+        await stampFirstAccessAuthFromSessionAction();
+      }
 
       reachedTerminalState = true;
       router.replace(destination);

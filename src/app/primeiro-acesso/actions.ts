@@ -243,12 +243,16 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
       const admin = createServiceRoleSupabaseClient();
       const passwordCompletion = await admin
         .from('participant_account_invites')
-        .update({ password_setup_completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .update({
+          password_setup_completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          auth_user_id: user.id,
+        })
         .eq('id', inviteId)
-        .eq('auth_user_id', user.id)
         .eq('requires_password_setup', true)
         .is('password_setup_completed_at', null)
         .in('status', ['pending', 'claimed'])
+        .or(`auth_user_id.is.null,auth_user_id.eq.${user.id}`)
         .select('id')
         .maybeSingle();
       if (passwordCompletion.error || !passwordCompletion.data) {

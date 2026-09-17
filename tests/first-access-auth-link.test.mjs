@@ -38,6 +38,7 @@ test('GET da página intermediária não consome token; POST consome via verifyO
   const page = await read('src/app/auth/confirmar/page.tsx');
   const form = await read('src/app/auth/confirmar/ConfirmFirstAccessForm.tsx');
   const action = await read('src/app/auth/confirmar/actions.ts');
+  const callback = await read('src/app/auth/callback/AuthCallbackClient.tsx');
   const getRoute = await read('src/app/auth/confirm/route.ts');
   assert.doesNotMatch(page, /verifyOtp/);
   assert.doesNotMatch(form, /verifyOtp/);
@@ -45,6 +46,8 @@ test('GET da página intermediária não consome token; POST consome via verifyO
   assert.match(getRoute, /\/auth\/confirmar/);
   assert.match(action, /verifyOtp/);
   assert.match(action, /token_hash: tokenHash/);
+  assert.match(action, /stampFirstAccessAuthFromSessionAction/);
+  assert.match(callback, /stampFirstAccessAuthFromSessionAction/);
   assert.match(form, /type="submit"/);
   assert.match(form, /confirmFirstAccessOtpAction/);
 });
@@ -123,10 +126,12 @@ test('Central não consulta auth.users por linha e não reintroduz N+1', async (
 test('copy da Central/cadastro não diz que o link vale 7 dias', async () => {
   const list = await read('src/app/convites/invite-center-list.tsx');
   const cadastro = await read('src/app/cadastros/invite-account-button.tsx');
+  const copy = await read('src/lib/account/first-access-invite-copy.ts');
   const detail = await read('src/app/convites/[rowKey]/page.tsx');
   assert.doesNotMatch(list, /7 dias/);
   assert.doesNotMatch(cadastro, /7 dias no cadastro interno/);
-  assert.match(cadastro, /válido por 24 horas após o envio/);
+  assert.match(copy, /24 horas após o envio/);
+  assert.match(cadastro, /firstAccessInviteAdminCopy/);
   assert.match(detail, /Link válido até/);
   assert.match(detail, /Registro interno até/);
 });

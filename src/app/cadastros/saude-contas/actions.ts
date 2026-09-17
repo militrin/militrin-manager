@@ -152,7 +152,19 @@ export async function resendAccountHealthConfirmationAction(caseId: string) {
     if (state.error || !stateRow?.can_resend_confirmation || !isPendingEmailConfirmationReason(stateRow.reason_code) || !stateRow.email) {
       return { success: false as const, message: stateRow?.reason_message ?? "Reenvio de confirmação não disponível para este cadastro." };
     }
-    const resend = await resendSignupConfirmation({ email: stateRow.email, audience: "admin" });
+    const pendingInvite = await supabase.from("participant_account_invites")
+      .select("id")
+      .eq("registration_contact_id", contactId)
+      .eq("status", "pending")
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const resend = await resendSignupConfirmation({
+      email: stateRow.email,
+      audience: "admin",
+      inviteId: pendingInvite.data?.id ? String(pendingInvite.data.id) : null,
+    });
     if (resend.ok) {
       await recordHealthAction({
         action: "account_health_confirmation_resent",

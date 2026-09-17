@@ -2,11 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { assertPermission, hasPermission } from "@/lib/admin/permissions";
-import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { resendParticipantTicketAction } from "@/app/inscricoes/actions";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
-import { dispatchFirstAccessEmail, markInvitedAccountPending } from "@/lib/account/first-access-invite-dispatch";
+import { dispatchFirstAccessEmail, markInvitedAccountPending, associateInviteAuthUser } from "@/lib/account/first-access-invite-dispatch";
 import { isPendingEmailConfirmationReason } from "@/lib/account/contact-account-state";
 import { resendSignupConfirmation } from "@/lib/account/resend-signup-confirmation";
 
@@ -136,7 +135,21 @@ export async function inviteCadastroFirstAccessAction(id: string, anchor: "parti
     : await supabase.rpc("check_participant_account_invite_eligibility", { p_participant_id: id });
   const eligibility = (Array.isArray(eligibilityResult.data) ? eligibilityResult.data[0] : eligibilityResult.data) as EligibilityRpcRow | null;
   if (isPendingEmailConfirmationReason(eligibility?.reason_code) && eligibility?.email) {
-    const resend = await resendSignupConfirmation({ email: eligibility.email, audience: "admin" });
+    const pendingInvite = anchor === "contact"
+      ? await supabase.from("participant_account_invites")
+        .select("id")
+        .eq("registration_contact_id", id)
+        .eq("status", "pending")
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      : { data: null as { id?: string } | null };
+    const resend = await resendSignupConfirmation({
+      email: eligibility.email,
+      audience: "admin",
+      inviteId: pendingInvite.data?.id ? String(pendingInvite.data.id) : null,
+    });
     revalidatePath("/cadastros");
     if (anchor === "contact") revalidatePath(`/cadastros/${id}`);
     return {
@@ -161,16 +174,12 @@ export async function inviteCadastroFirstAccessAction(id: string, anchor: "parti
   const invited = await dispatchFirstAccessEmail({ inviteId: prepared.invite_id, email: prepared.email, reasonCode });
   if (invited.error) return { success: true as const, prepared: true, sent: false, message: `Convite preparado, mas o provedor não aceitou o envio: ${invited.error.message}` };
   if (invited.authUserId) {
-    const admin = createServiceRoleSupabaseClient();
-    const association = await admin.from("participant_account_invites").update({
-      auth_user_id: invited.authUserId,
-      updated_at: new Date().toISOString(),
-    }).eq("id", prepared.invite_id);
+    const association = await associateInviteAuthUser(prepared.invite_id, invited.authUserId);
     if (!association.error) {
       const pendingError = await markInvitedAccountPending(invited.authUserId);
       if (pendingError) return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: "Convite enviado, mas nao foi possivel registrar as etapas obrigatorias do primeiro acesso." };
     }
-    if (association.error) return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: "Convite enviado, mas a correlação da conta exige a migration 099 antes de um futuro reenvio." };
+    if (association.error) return { success: true as const, prepared: true, sent: true, inviteState: "resend" as const, message: association.error.message === "INVITE_AUTH_USER_MISMATCH" ? "Convite enviado, mas a conta autenticada não corresponde a este convite." : "Convite enviado, mas a correlação da conta exige a migration 099 antes de um futuro reenvio." };
   }
   revalidatePath("/cadastros");
   if (anchor === "contact") revalidatePath(`/cadastros/${id}`);
@@ -197,7 +206,19 @@ export async function resendCadastroSignupConfirmationAction(contactId: string) 
   if (!row.can_resend_confirmation || !isPendingEmailConfirmationReason(row.reason_code) || !row.email) {
     return { success: false as const, message: row.reason_message ?? "Reenvio de confirmação não disponível para este cadastro." };
   }
-  const resend = await resendSignupConfirmation({ email: row.email, audience: "admin" });
+  const pendingInvite = await supabase.from("participant_account_invites")
+    .select("id")
+    .eq("registration_contact_id", contactId)
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const resend = await resendSignupConfirmation({
+    email: row.email,
+    audience: "admin",
+    inviteId: pendingInvite.data?.id ? String(pendingInvite.data.id) : null,
+  });
   revalidatePath("/cadastros");
   revalidatePath(`/cadastros/${contactId}`);
   return {
@@ -259,7 +280,7 @@ export async function previewBulkFirstAccessInvitesAction(participantIds: string
 export async function sendBulkFirstAccessInvitesAction(participantIds: string[]) {
   await assertPermission("participants.edit_basic");
   const preview = await previewBulkFirstAccessInvitesAction(participantIds);
-  const supabase = await createServerSupabaseClient(); const admin = createServiceRoleSupabaseClient();
+  const supabase = await createServerSupabaseClient();
   const report = { prepared: 0, sent: 0, ignored: preview.total - preview.eligible, failed: 0, reasons: { ...preview.reasons } as Record<string, number>, details: [] as Array<{ participantId: string; status: string; reason: string }> };
   for (const item of preview.results) {
     if (!item.eligible) { report.details.push({ participantId: item.participantId, status: "ignored", reason: item.reasonMessage }); continue; }
@@ -271,10 +292,7 @@ export async function sendBulkFirstAccessInvitesAction(participantIds: string[])
     if (sent.error) { report.failed += 1; report.reasons.email_dispatch_failed = (report.reasons.email_dispatch_failed ?? 0) + 1; report.details.push({ participantId: item.participantId, status: "prepared_not_sent", reason: sent.error.message }); }
     else {
       if (sent.authUserId) {
-        const association = await admin.from("participant_account_invites").update({
-          auth_user_id: sent.authUserId,
-          updated_at: new Date().toISOString(),
-        }).eq("id", prepared.invite_id);
+        const association = await associateInviteAuthUser(prepared.invite_id, sent.authUserId);
         if (!association.error) {
           const pendingError = await markInvitedAccountPending(sent.authUserId);
           if (pendingError) { report.failed += 1; report.reasons.onboarding_state_failed = (report.reasons.onboarding_state_failed ?? 0) + 1; report.details.push({ participantId: item.participantId, status: "sent_onboarding_state_failed", reason: pendingError.message }); continue; }

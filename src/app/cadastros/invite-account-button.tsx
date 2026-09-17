@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { inviteCadastroFirstAccessAction } from "./actions";
+import { firstAccessInviteAdminCopy } from "@/lib/account/first-access-invite-copy";
 
 // Reusa o fluxo de convite de primeiro acesso existente. A elegibilidade e o
 // estado chegam do backend canonico da Pessoa; o React nao reimplementa regras.
@@ -14,21 +15,14 @@ type InviteAccountButtonProps = {
   inviteRecord?: {
     status: string;
     expiresAt: string | null;
+    authLinkExpiresAt?: string | null;
   } | null;
   createNewAuth?: boolean;
 };
 
-function formatExpiry(value: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString("pt-BR");
-}
-
 export function InviteAccountButton({ contactId, canInvite, inviteStatus, reason, inviteRecord, createNewAuth = true }: InviteAccountButtonProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const expiryLabel = formatExpiry(inviteRecord?.expiresAt ?? null);
 
   function submit() {
     setMessage(null);
@@ -43,7 +37,10 @@ export function InviteAccountButton({ contactId, canInvite, inviteStatus, reason
       {inviteRecord ? (
         <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
           <p>Status do convite: <strong>{inviteRecord.status}</strong></p>
-          {expiryLabel ? <p className="mt-1">Link de acesso: válido por 24 horas após o envio. Última validade interna do cadastro: {expiryLabel}.</p> : <p className="mt-1">Link de acesso: válido por 24 horas após o envio.</p>}
+          <p className="mt-1">{firstAccessInviteAdminCopy({
+            inviteExpiresAt: inviteRecord.expiresAt,
+            authLinkExpiresAt: inviteRecord.authLinkExpiresAt,
+          })}</p>
           <p className="mt-1 text-slate-400">O link de primeiro acesso é enviado por e-mail pelo Supabase Auth. Esta tela não copia nem exibe token.</p>
         </div>
       ) : null}

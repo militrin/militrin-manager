@@ -39,7 +39,7 @@ test('canonical contact eligibility covers missing data, conflicts and linked ac
 test('pending invite uses the same Auth callback and first-access claim flow', () => {
   assert.match(actions, /inviteCadastroFirstAccessAction\(id: string, anchor/);
   assert.match(actions, /prepare_registration_contact_account_invite/);
-  assert.match(actions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending \} from "@\/lib\/account\/first-access-invite-dispatch";/);
+  assert.match(actions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending, associateInviteAuthUser \} from "@\/lib\/account\/first-access-invite-dispatch";/);
   assert.match(firstAccessDispatch, /function firstAccessInviteRedirect/);
   assert.match(firstAccessDispatch, /\/auth\/callback/);
   assert.match(firstAccessDispatch, /\/primeiro-acesso/);

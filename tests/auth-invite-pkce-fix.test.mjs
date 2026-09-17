@@ -166,7 +166,7 @@ test('dispatchFirstAccessEmail/markInvitedAccountPending/firstAccessInviteRedire
 });
 
 test('cadastros/actions.ts (admin, participants.edit_basic) importa do modulo compartilhado em vez de definir a logica de novo', () => {
-  assert.match(cadastrosActions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending \} from "@\/lib\/account\/first-access-invite-dispatch";/);
+  assert.match(cadastrosActions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending, associateInviteAuthUser \} from "@\/lib\/account\/first-access-invite-dispatch";/);
   assert.doesNotMatch(cadastrosActions, /async function dispatchFirstAccessEmail/);
 });
 

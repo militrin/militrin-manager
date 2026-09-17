@@ -122,7 +122,7 @@ test('retry apos senha no Auth e falha posterior nao cria outra Auth e so avanca
 test('sessao valida continua exigida; convite ancora o mesmo usuario Auth', () => {
   assert.match(action, /if \(!user\?\.id\)/);
   assert.match(page, /if \(!user\?\.id\)/);
-  assert.match(action, /\.eq\('auth_user_id', user\.id\)/);
+  assert.match(action, /auth_user_id\.is\.null,auth_user_id\.eq\.\$\{user\.id\}/);
   assert.match(form, /completeFirstAccessAction\(formData\)/);
   assert.match(action, /code: 'session_expired'/);
   assert.match(action, /FIRST_ACCESS_SESSION_EXPIRED_MESSAGE/);

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { resendCadastroSignupConfirmationAction } from "./actions";
 import { InviteAccountButton } from "./invite-account-button";
 import { adminAttentionCopy, contactAccountStateView, type ContactAccountState } from "@/lib/account/contact-account-state";
+import { PENDING_CONFIRMATION_ADMIN_COPY } from "@/lib/account/first-access-invite-copy";
 
 type ContactAccountCardProps = {
   contactId: string;
@@ -16,6 +17,7 @@ type ContactAccountCardProps = {
   inviteRecord?: {
     status: string;
     expiresAt: string | null;
+    authLinkExpiresAt?: string | null;
   } | null;
 };
 
@@ -66,7 +68,7 @@ export function ContactAccountCard({
 
       {state === "pending_confirmation" ? (
         <div className="mt-3 space-y-3">
-          <p className="text-sm text-slate-300">Conta pendente de confirmação. Não criamos outra Auth nem enviamos convite de criação de conta.</p>
+          <p className="text-sm text-slate-300">{PENDING_CONFIRMATION_ADMIN_COPY}</p>
           {canResendConfirmation ? (
             <button
               type="button"

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { assertPermission } from '@/lib/admin/permissions';
-import { dispatchFirstAccessEmail, markInvitedAccountPending } from '@/lib/account/first-access-invite-dispatch';
+import { dispatchFirstAccessEmail, markInvitedAccountPending, associateInviteAuthUser } from '@/lib/account/first-access-invite-dispatch';
 import { resendSignupConfirmation } from '@/lib/account/resend-signup-confirmation';
 import { canResendInviteCenter, classifyInviteCenterRow } from '@/lib/invites/invite-center-status';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
@@ -184,11 +184,8 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
     return { success: true as const, sent: false, message: `Convite preparado, mas o envio falhou: ${dispatched.error.message}` };
   }
   if (dispatched.authUserId) {
-    await supabase.from('participant_account_invites').update({
-      auth_user_id: dispatched.authUserId,
-      updated_at: new Date().toISOString(),
-    }).eq('id', invite.invite_id);
-    await markInvitedAccountPending(dispatched.authUserId);
+    const association = await associateInviteAuthUser(invite.invite_id, dispatched.authUserId);
+    if (!association.error) await markInvitedAccountPending(dispatched.authUserId);
   }
 
   await supabase.from('audit_logs').insert({

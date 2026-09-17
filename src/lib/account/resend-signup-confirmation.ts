@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { signupConfirmationRedirect } from '@/lib/account/auth-redirects';
+import { firstAccessInviteRedirect, stampInviteAuthEmailSent } from '@/lib/account/first-access-invite-dispatch';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export const PUBLIC_PENDING_RESEND_MESSAGE =
@@ -46,6 +47,7 @@ export async function resendSignupConfirmation(input: {
   email: string;
   nextPath?: string;
   audience: 'public' | 'admin';
+  inviteId?: string | null;
 }): Promise<ResendSignupConfirmationResult> {
   const email = normalizeEmail(input.email);
   if (!email || !isValidEmailFormat(email)) {
@@ -67,13 +69,19 @@ export async function resendSignupConfirmation(input: {
   }
 
   const supabase = await createServerSupabaseClient();
+  const emailRedirectTo = input.inviteId
+    ? firstAccessInviteRedirect(input.inviteId)
+    : signupConfirmationRedirect(input.nextPath);
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email,
-    options: { emailRedirectTo: signupConfirmationRedirect(input.nextPath) },
+    options: { emailRedirectTo },
   });
 
   const kind = classifyGoTrueResendError(error?.message);
+  if (!error && input.inviteId) {
+    await stampInviteAuthEmailSent(input.inviteId);
+  }
 
   if (input.audience === 'public') {
     if (kind === 'rate_limit') {

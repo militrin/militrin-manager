@@ -58,3 +58,15 @@ export async function confirmFirstAccessOtpAction(formData: FormData) {
 
   redirect(destination);
 }
+
+export async function stampFirstAccessAuthFromSessionAction() {
+  const supabase = await createServerSupabaseClient();
+  const { data } = await supabase.auth.getUser();
+  const userId = data.user?.id;
+  if (!userId) return { ok: false as const };
+  const inviteId = typeof data.user?.user_metadata?.participant_invite_id === "string"
+    ? data.user.user_metadata.participant_invite_id
+    : null;
+  await markFirstAccessAuthConfirmed(userId, inviteId);
+  return { ok: true as const };
+}

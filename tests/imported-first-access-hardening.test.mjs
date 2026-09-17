@@ -61,7 +61,7 @@ test('sucesso segue senha, perfil, claim, pendencias e somente entao limpa flags
 test('senha aparece enquanto convite exige setup e nao reaparece apos conclusao', () => {
   assert.match(inviteContext, /requiresPasswordSetup: Boolean\(invite\.requires_password_setup\) && !invite\.password_setup_completed_at/);
   assert.match(page, /mustChangePassword=\{inviteContext \? inviteContext\.requiresPasswordSetup : status\.mustChangePassword\}/);
-  assert.match(inviteActions, /!invitePerson\.password_setup_completed_at/);
+  assert.match(inviteActions, /!invitePerson\?\.password_setup_completed_at/);
 });
 
 test('usuario normal usa apenas flag propria e conta incompleta nao acessa Minha Conta', () => {

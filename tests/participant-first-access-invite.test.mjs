@@ -46,7 +46,7 @@ test('convite individual e em massa usam o mesmo primeiro acesso autenticado', (
   assert.match(firstAccessDispatch, /function firstAccessInviteRedirect/);
   assert.match(firstAccessDispatch, /\/auth\/callback\?next=/);
   assert.match(firstAccessDispatch, /\/primeiro-acesso\?invite=/);
-  assert.match(cadastroActions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending \} from "@\/lib\/account\/first-access-invite-dispatch";/);
+  assert.match(cadastroActions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending, associateInviteAuthUser \} from "@\/lib\/account\/first-access-invite-dispatch";/);
   assert.match(cadastroActions, /inviteCadastroFirstAccessAction[\s\S]*dispatchFirstAccessEmail/);
   assert.match(cadastroActions, /sendBulkFirstAccessInvitesAction[\s\S]*dispatchFirstAccessEmail/);
   assert.match(callback, /exchangeCodeForSession/);

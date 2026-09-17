@@ -127,14 +127,14 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   }
   const { data: latestInvite } = !contact.user_id
     ? await supabase.from("participant_account_invites")
-      .select("status,expires_at")
+      .select("status,expires_at,auth_link_expires_at")
       .eq("registration_contact_id", id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
     : { data: null };
   const inviteRecord = latestInvite
-    ? { status: String(latestInvite.status), expiresAt: latestInvite.expires_at ? String(latestInvite.expires_at) : null }
+    ? { status: String(latestInvite.status), expiresAt: latestInvite.expires_at ? String(latestInvite.expires_at) : null, authLinkExpiresAt: latestInvite.auth_link_expires_at ? String(latestInvite.auth_link_expires_at) : null }
     : null;
 
   const tickets = (ticketRows ?? []).flatMap((row) => {

@@ -70,7 +70,7 @@ test('P1-2 nao inventa token paralelo nem copia link Auth', () => {
   assert.doesNotMatch(inviteButton, /generateLink|navigator\.clipboard/i);
   assert.match(inviteButton, /não copia nem exibe token/);
   assert.match(inviteButton, /Reenviar convite/);
-  assert.match(inviteButton, /válido por 24 horas após o envio/);
+  assert.match(inviteButton, /firstAccessInviteAdminCopy/);
   assert.match(middleware, /pathname === '\/primeiro-acesso\/reenviar'/);
   assert.match(firstAccessPage, /failureCopy\.actionHref/);
   assert.match(participantInvite, /actionHref: '\/primeiro-acesso\/reenviar'/);

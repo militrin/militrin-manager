@@ -1534,7 +1534,7 @@ test('primeiro acesso valida senha no servidor e conclui estado somente apos upd
   assert.ok(updateIndex >= 0 && updateIndex < completionIndex && completionIndex < profileIndex && profileIndex < claimIndex);
   assert.match(action, /passwordUpdate\.error[\s\S]*return \{ success: false[\s\S]*passwordInviteContext = await getParticipantInviteContext/);
   assert.match(action, /passwordInviteContext\.valid[\s\S]*passwordInviteContext\.requiresPasswordSetup/);
-  assert.match(action, /\.eq\('auth_user_id', user\.id\)/);
+  assert.match(action, /auth_user_id\.is\.null,auth_user_id\.eq\.\$\{user\.id\}/);
   assert.match(action, /\.eq\('requires_password_setup', true\)/);
   assert.match(action, /\.is\('password_setup_completed_at', null\)/);
 });
