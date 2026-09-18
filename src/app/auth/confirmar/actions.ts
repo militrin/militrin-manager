@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { safeAuthDestination } from "@/lib/auth/callback-destinations";
+import { inviteIdFromAuthDestination, safeAuthDestination } from "@/lib/auth/callback-destinations";
 import { categorizeInviteError, logSanitizedAuthLinkFailure, type InviteLinkKind } from "@/lib/auth/invite-error-copy";
 import { createPasswordRecoveryState } from "@/lib/account/password-recovery-state";
 import { markFirstAccessAuthConfirmed } from "@/lib/account/first-access-invite-dispatch";
@@ -44,9 +44,10 @@ export async function confirmFirstAccessOtpAction(formData: FormData) {
 
   const userId = data.user?.id;
   if (userId && kind !== "recovery") {
-    const inviteId = typeof data.user?.user_metadata?.participant_invite_id === "string"
-      ? data.user.user_metadata.participant_invite_id
-      : null;
+    const inviteId = inviteIdFromAuthDestination(destination)
+      ?? (typeof data.user?.user_metadata?.participant_invite_id === "string"
+        ? data.user.user_metadata.participant_invite_id
+        : null);
     await markFirstAccessAuthConfirmed(userId, inviteId);
   }
 
@@ -59,14 +60,15 @@ export async function confirmFirstAccessOtpAction(formData: FormData) {
   redirect(destination);
 }
 
-export async function stampFirstAccessAuthFromSessionAction() {
+export async function stampFirstAccessAuthFromSessionAction(inviteHint?: string | null) {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase.auth.getUser();
   const userId = data.user?.id;
   if (!userId) return { ok: false as const };
-  const inviteId = typeof data.user?.user_metadata?.participant_invite_id === "string"
-    ? data.user.user_metadata.participant_invite_id
-    : null;
+  const inviteId = inviteHint
+    ?? (typeof data.user?.user_metadata?.participant_invite_id === "string"
+      ? data.user.user_metadata.participant_invite_id
+      : null);
   await markFirstAccessAuthConfirmed(userId, inviteId);
   return { ok: true as const };
 }

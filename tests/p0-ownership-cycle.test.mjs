@@ -10,6 +10,7 @@ const LEONARDO_CONTACT = 'c9f8e828-c7ef-4592-ac90-9b844e0f2dd5';
 
 const migration = await readFile(new URL('../supabase/migrations/20261020000000_ownership_cycle_intended_owner_guard.sql', import.meta.url), 'utf8');
 const claimSql = await readFile(new URL('../supabase/migrations/20261009000000_linked_account_ticket_ownership.sql', import.meta.url), 'utf8');
+const claimHotfixSql = await readFile(new URL('../supabase/migrations/20261105000000_first_access_reissue_correlation.sql', import.meta.url), 'utf8');
 const firstAccess = await readFile(new URL('../src/app/primeiro-acesso/actions.ts', import.meta.url), 'utf8');
 const portal = await readFile(new URL('../src/lib/account/portal-orders-and-tickets.ts', import.meta.url), 'utf8');
 const cadastroPage = await readFile(new URL('../src/app/cadastros/[id]/page.tsx', import.meta.url), 'utf8');
@@ -34,9 +35,9 @@ const materializeTrigger = migration.slice(
   migration.indexOf('create or replace function public.trg_materialize_linked_ticket_owner'),
   migration.indexOf('create or replace function public.issue_manual_ticket_batch'),
 );
-const claimFn = claimSql.slice(
-  claimSql.indexOf('create or replace function public.claim_registration_contact_account_invite'),
-  claimSql.indexOf('-- Reparo estrutural'),
+const claimHotfixFn = claimHotfixSql.slice(
+  claimHotfixSql.indexOf('create or replace function public.claim_registration_contact_account_invite'),
+  claimHotfixSql.indexOf('\n$$;', claimHotfixSql.indexOf('create or replace function public.claim_registration_contact_account_invite')),
 );
 const resolveFn = claimSql.slice(
   claimSql.indexOf('create or replace function public.resolve_administrative_ticket_owner'),
@@ -64,7 +65,7 @@ test('2. Pessoa com Auth + emissao sem titular: owner imediato, holder permanece
   assert.match(unassignedLoop, /assert_administrative_destination_ownership\(v_extra\.ticket_id, v_contact\.id\)/);
 });
 
-test('3-4. Pessoa sem Auth: intended_owner preenchido e owner NULL ate o claim', () => {
+test('3-4. Pessoa sem Auth: intended_owner preenchido e owner NULL na emissao', () => {
   assert.match(resolveFn, /if v_owner is null then\s+return null;/);
   assert.match(holderPath, /if v_contact\.user_id is not null then/);
   assert.match(initFn, /buyer_type in \('administrative', 'imported_holder'\)/);
@@ -72,15 +73,16 @@ test('3-4. Pessoa sem Auth: intended_owner preenchido e owner NULL ate o claim',
   assert.doesNotMatch(initFn, /lower\(trim\(.*email/);
 });
 
-test('5-6. primeiro acesso materializa owner por intended_owner_contact_id, nao por e-mail', () => {
+test('5-6. primeiro acesso nao materializa owner; materialize (outros fluxos) usa intended_owner, nao e-mail', () => {
   assert.match(firstAccess, /claim_registration_contact_account_invite/);
-  assert.match(claimFn, /update public\.registration_contacts\s+set user_id = v_actor/);
-  assert.match(claimFn, /perform public\.materialize_intended_ticket_owners_for_contact\(v_contact\.id, v_actor\)/);
-  assert.match(claimFn, /if v_inv\.status = 'claimed' then[\s\S]*materialize_intended_ticket_owners_for_contact\(v_contact\.id, v_actor\)/);
-  assert.doesNotMatch(claimFn, /lower\(trim\(.*email[\s\S]*tickets/);
-  const materializeFn = claimSql.slice(
-    claimSql.indexOf('create or replace function public.materialize_intended_ticket_owners_for_contact'),
-    claimSql.indexOf('create or replace function public.trg_materialize_linked_ticket_owner'),
+  assert.match(claimHotfixFn, /update public\.registration_contacts\s+set user_id = v_actor/);
+  assert.match(claimHotfixFn, /skip_ticket_ownership_on_account_claim/);
+  assert.doesNotMatch(claimHotfixFn, /materialize_intended_ticket_owners_for_contact/);
+  assert.doesNotMatch(claimHotfixFn, /update public\.tickets/);
+  assert.doesNotMatch(claimHotfixFn, /lower\(trim\(.*email[\s\S]*tickets/);
+  const materializeFn = claimHotfixSql.slice(
+    claimHotfixSql.indexOf('create or replace function public.materialize_intended_ticket_owners_for_contact'),
+    claimHotfixSql.indexOf('create or replace function public.prepare_registration_contact_account_invite'),
   );
   assert.match(materializeFn, /where t\.intended_owner_contact_id = p_contact_id\s+and t\.owner_user_id is null/);
   assert.doesNotMatch(materializeFn, /email|cpf/i);
@@ -101,9 +103,10 @@ test('10-11. shared-email e matching oportunista por e-mail continuam proibidos'
   assert.match(resolveFn, /from public\.registration_contacts c\s+join auth\.users au on au\.id = c\.user_id/);
 });
 
-test('12. retry de claim e idempotente', () => {
-  assert.match(claimFn, /if v_inv\.status = 'claimed' then[\s\S]*return v_contact\.id;/);
-  assert.match(claimFn, /materialize_intended_ticket_owners_for_contact\(v_contact\.id, v_actor\)/);
+test('12. retry de claim e idempotente e nao escreve ticket', () => {
+  assert.match(claimHotfixFn, /if v_inv\.status = 'claimed' then[\s\S]*return v_contact\.id;/);
+  assert.match(claimHotfixFn, /skip_ticket_ownership_on_account_claim/);
+  assert.doesNotMatch(claimHotfixFn, /materialize_intended_ticket_owners_for_contact/);
 });
 
 test('13. retry de emissao do mesmo order_item nao duplica ticket', () => {

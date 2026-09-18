@@ -9,6 +9,7 @@ const cadastroActions = await readFile(new URL('../src/app/cadastros/actions.ts'
 // firstAccessInviteRedirect foi movido de cadastros/actions.ts pra este
 // modulo compartilhado server-only (auditoria PKCE/regularizacao de convite).
 const firstAccessDispatch = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
+const firstAccessInviteUrl = await readFile(new URL('../src/lib/account/first-access-invite-url.ts', import.meta.url), 'utf8');
 const callback = await readFile(new URL('../src/app/auth/callback/AuthCallbackClient.tsx', import.meta.url), 'utf8');
 
 // P0 -- bug real encontrado em producao: firstAccessInviteRedirect usava
@@ -45,7 +46,8 @@ test('convite sem sessao nunca encaminha o participante para uma tela que exige 
 test('convite individual e em massa usam o mesmo primeiro acesso autenticado', () => {
   assert.match(firstAccessDispatch, /function firstAccessInviteRedirect/);
   assert.match(firstAccessDispatch, /\/auth\/callback\?next=/);
-  assert.match(firstAccessDispatch, /\/primeiro-acesso\?invite=/);
+  assert.match(firstAccessDispatch, /firstAccessOnboardingPath\(inviteId\)/);
+  assert.match(firstAccessInviteUrl, /\/primeiro-acesso\?invite=/);
   assert.match(cadastroActions, /import \{ dispatchFirstAccessEmail, markInvitedAccountPending, associateInviteAuthUser \} from "@\/lib\/account\/first-access-invite-dispatch";/);
   assert.match(cadastroActions, /inviteCadastroFirstAccessAction[\s\S]*dispatchFirstAccessEmail/);
   assert.match(cadastroActions, /sendBulkFirstAccessInvitesAction[\s\S]*dispatchFirstAccessEmail/);

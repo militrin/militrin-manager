@@ -4,7 +4,8 @@ import { getProfileCompletionStatus } from '@/lib/account/profile-completion';
 import { sanitizePostFirstAccessNextPath } from '@/lib/utils/safe-navigation';
 import Link from 'next/link';
 import { FirstAccessForm } from './FirstAccessForm';
-import { getParticipantInviteContext, getParticipantInviteFailureCopy } from '@/lib/account/participant-invite';
+import { getParticipantInviteContext, getParticipantInviteFailureCopy, listLiveFirstAccessInviteIdsForUser } from '@/lib/account/participant-invite';
+import { chooseFirstAccessInviteId, parseInviteId } from '@/lib/account/first-access-invite-url';
 import { validateFirstAccessProfile } from '@/lib/account/first-access-validation';
 import { resolveAdministrativeLandingPage } from '@/lib/navigation/admin-landing';
 
@@ -40,17 +41,17 @@ export default async function PrimeiroAcessoPage({ searchParams }: { searchParam
   }
 
   const status = await getProfileCompletionStatus(user.id, user.email ?? null);
-  // Fonte primaria e' o parametro `invite` da URL (compatibilidade com o
-  // link hoje enviado, que passa por /auth/callback?next=/primeiro-acesso
-  // ?invite=...). Fallback: inviteUserByEmail ja grava participant_invite_id
-  // em user_metadata (data: {...}, ver dispatchFirstAccessEmail) -- uma vez
-  // autenticado (verifyOtp/exchangeCodeForSession), esse metadado ja
-  // identifica o convite sem depender de nenhum parametro de URL ter
-  // sobrevivido ao redirecionamento. getParticipantInviteContext revalida
-  // elegibilidade/sessao do mesmo jeito nos dois casos -- nunca um atalho de
-  // seguranca, so uma fonte alternativa do id.
-  const inviteIdFromSession = typeof user.user_metadata?.participant_invite_id === 'string' ? user.user_metadata.participant_invite_id : null;
-  const effectiveInviteId = params.invite || inviteIdFromSession || undefined;
+  const urlInviteId = parseInviteId(params.invite);
+  const metadataInviteId = parseInviteId(
+    typeof user.user_metadata?.participant_invite_id === 'string' ? user.user_metadata.participant_invite_id : null,
+  );
+  const liveInviteIds = await listLiveFirstAccessInviteIdsForUser(user);
+  const chosen = chooseFirstAccessInviteId({
+    urlInviteId,
+    metadataInviteId,
+    liveInviteIds,
+  });
+  const effectiveInviteId = chosen.inviteId ?? undefined;
   const inviteContext = effectiveInviteId ? await getParticipantInviteContext(effectiveInviteId, user) : null;
 
   const administrativeLandingPage = !effectiveInviteId

@@ -238,7 +238,7 @@ if (!availableUrl) {
     assert.equal(ticketAfter.id, ticketBefore.id);
     assert.equal(ticketAfter.participant_id, ticketBefore.participant_id);
     assert.equal(ticketAfter.intended_owner_contact_id, ticketBefore.intended_owner_contact_id);
-    assert.equal(ticketAfter.owner_user_id, authUserId);
+    assert.equal(ticketAfter.owner_user_id, ticketBefore.owner_user_id, 'ativacao de conta nao preenche owner_user_id');
     assert.equal(orderAfter.id, orderBefore.id);
     assert.ok(orderAfter.user_id == null || orderAfter.user_id === authUserId);
     assert.equal(holderAfter.holder_full_name, holderBefore.holder_full_name);

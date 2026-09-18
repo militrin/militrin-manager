@@ -172,10 +172,11 @@ test('cadastros/actions.ts (admin, participants.edit_basic) importa do modulo co
 
 // -------------------- /primeiro-acesso: invite id via sessao, sem depender so da URL --------------------
 
-test('4/7) /primeiro-acesso resolve o convite tambem por user_metadata.participant_invite_id (fallback quando a URL nao carrega ?invite=) -- getParticipantInviteContext revalida elegibilidade do mesmo jeito nos dois casos', () => {
-  assert.match(primeiroAcessoPage, /const inviteIdFromSession = typeof user\.user_metadata\?\.participant_invite_id === 'string'/);
-  assert.match(primeiroAcessoPage, /const effectiveInviteId = params\.invite \|\| inviteIdFromSession \|\| undefined;/);
-  assert.match(primeiroAcessoPage, /getParticipantInviteContext\(effectiveInviteId, user\)/);
+test('4/7) /primeiro-acesso nunca cai silenciosamente em metadata velha; URL vence e o convite vivo e o fallback', () => {
+  assert.match(primeiroAcessoPage, /chooseFirstAccessInviteId/);
+  assert.match(primeiroAcessoPage, /listLiveFirstAccessInviteIdsForUser/);
+  assert.match(primeiroAcessoPage, /urlInviteId/);
+  assert.doesNotMatch(primeiroAcessoPage, /const effectiveInviteId = params\.invite \|\| inviteIdFromSession/);
 });
 
 test('5) requires_password_setup continua vindo do inviteContext quando ha convite valido (nunca sobrescrito pelo fallback de sessao)', () => {

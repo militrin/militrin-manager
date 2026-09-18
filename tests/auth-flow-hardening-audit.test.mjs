@@ -19,10 +19,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 // sanitizeInternalNextPath e password-recovery-state.ts sao modulos "folha"
 // (sem nenhum import @/ proprio) -- dá pra importar e rodar de verdade sob
-// node puro. callback-destinations.ts importa @/lib/utils/safe-navigation
-// (alias nao resolvivel fora do bundler do Next), entao safeAuthDestination
-// e' auditado por leitura de codigo-fonte (mesmo padrao ja usado em
-// auth-invite-pkce-fix.test.mjs) em vez de import direto.
+// node puro. callback-destinations.ts agora usa import relativo e pode ser
+// exercitado no teste de reissue; aqui a allowlist continua auditada por fonte.
 import { sanitizeInternalNextPath } from '../src/lib/utils/safe-navigation.ts';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '../src/lib/account/password-recovery-state.ts';
 
@@ -45,7 +43,7 @@ function safeAuthDestination(value, fallback = '/primeiro-acesso') {
 
 test('callback-destinations.ts define a mesma allowlist e a mesma logica de combinacao testadas aqui (esta reimplementacao no teste nao diverge do arquivo real)', () => {
   assert.match(destinations, /export const ALLOWED_AUTH_DESTINATION_PREFIXES = \['\/primeiro-acesso', '\/redefinir-senha'\];/);
-  assert.match(destinations, /const safe = sanitizeInternalNextPath\(value, fallback\);/);
+  assert.match(destinations, /const safe = sanitizeInternalNextPath\(unwrapped, fallback\);/);
   assert.match(destinations, /\(prefix\) => safe === prefix \|\| safe\.startsWith\(`\$\{prefix\}\?`\)/);
 });
 

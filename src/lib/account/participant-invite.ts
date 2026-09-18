@@ -1,6 +1,7 @@
 import 'server-only';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { evaluateParticipantInviteAccess } from '@/lib/account/participant-invite-policy';
+import { parseInviteId } from '@/lib/account/first-access-invite-url';
 
 type AuthenticatedInviteUser = {
   id: string;
@@ -54,6 +55,24 @@ export function getParticipantInviteFailureCopy(reason: ParticipantInviteContext
     actionHref: '/primeiro-acesso/reenviar',
     actionLabel: 'Solicitar novo convite',
   };
+}
+
+export async function listLiveFirstAccessInviteIdsForUser(user: AuthenticatedInviteUser): Promise<string[]> {
+  const email = String(user.email ?? '').trim().toLowerCase();
+  if (!user.id || !email) return [];
+  const admin = createServiceRoleSupabaseClient();
+  const { data } = await admin.from('participant_account_invites')
+    .select('id,auth_user_id,auth_email_sent_at,updated_at')
+    .eq('status', 'pending')
+    .gt('expires_at', new Date().toISOString())
+    .ilike('email', email)
+    .or(`auth_user_id.eq.${user.id},auth_user_id.is.null`)
+    .order('auth_email_sent_at', { ascending: false, nullsFirst: false });
+  const rows = (data ?? []).filter((row) => !row.auth_user_id || row.auth_user_id === user.id);
+  const associated = rows.filter((row) => row.auth_user_id === user.id);
+  return (associated.length ? associated : rows)
+    .map((row) => parseInviteId(String(row.id)))
+    .filter((id): id is string => Boolean(id));
 }
 
 export async function getParticipantInviteContext(inviteId: string, user: AuthenticatedInviteUser): Promise<ParticipantInviteContext> {

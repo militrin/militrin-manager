@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createBrowserClient } from '@supabase/ssr';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { stampFirstAccessAuthFromSessionAction } from '@/app/auth/confirmar/actions';
-import { safeAuthDestination } from '@/lib/auth/callback-destinations';
+import { safeAuthDestination, inviteIdFromAuthDestination } from '@/lib/auth/callback-destinations';
 import {
   buildInviteErrorCopy,
   categorizeInviteError,
@@ -126,7 +126,7 @@ export function AuthCallbackClient() {
       if (!sessionResult.data.session) throw { kind, code: null, message: 'session_not_established' };
 
       if (kind !== 'recovery') {
-        await stampFirstAccessAuthFromSessionAction();
+        await stampFirstAccessAuthFromSessionAction(inviteIdFromAuthDestination(destination));
       }
 
       reachedTerminalState = true;

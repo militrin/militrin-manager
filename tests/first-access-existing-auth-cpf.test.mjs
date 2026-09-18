@@ -26,17 +26,17 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
   read('src/app/auth/confirmar/actions.ts'),
 ]);
 
-test('reenvio de Auth confirmada so correlaciona auth_user_id quando o metadata e deste convite', () => {
+test('reenvio de Auth confirmada associa o convite atual e atualiza a referencia canonica', () => {
   const resend = dispatch.slice(
     dispatch.indexOf('if (isResend)'),
     dispatch.indexOf('const result = await admin.auth.admin.inviteUserByEmail'),
   );
   assert.match(resend, /find_auth_email_confirmation_status/);
-  assert.match(resend, /getUserById/);
-  assert.match(resend, /metadataInviteId === input\.inviteId/);
+  assert.match(resend, /updateUserById/);
+  assert.match(resend, /participant_invite_id: input\.inviteId/);
+  assert.match(resend, /associateInviteAuthUser\(input\.inviteId, existingAuthId\)/);
   assert.match(resend, /signInWithOtp[\s\S]*shouldCreateUser: false/);
   assert.match(resend, /authUserId: correlatableAuthId/);
-  assert.doesNotMatch(resend, /authUserId: existingAuthId/);
 });
 
 test('concluir cadastro carimba auth_user_id na senha mesmo quando o convite ainda nao tinha correlacao', () => {

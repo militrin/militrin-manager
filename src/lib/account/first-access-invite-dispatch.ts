@@ -2,6 +2,7 @@ import 'server-only';
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { authLinkExpiresAtFromSend } from '@/lib/auth/email-otp-ttl';
 import { usesExistingAuthDelivery } from '@/lib/account/contact-account-state';
+import { firstAccessOnboardingPath } from '@/lib/account/first-access-invite-url';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 
 // Nucleo reutilizavel do envio/reenvio de convite de primeiro acesso --
@@ -24,7 +25,7 @@ export function firstAccessInviteRedirect(inviteId: string) {
   // projeto) e cai no Site URL configurado, que os usuarios percebiam como
   // "o link me leva pro login".
   const appUrl = appBaseUrl();
-  const destination = `/primeiro-acesso?invite=${encodeURIComponent(inviteId)}&next=${encodeURIComponent('/minha-conta/ingressos')}`;
+  const destination = firstAccessOnboardingPath(inviteId);
   return `${appUrl}/auth/callback?next=${encodeURIComponent(destination)}`;
 }
 
@@ -68,7 +69,7 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
   }
 
   const { data: invitePerson } = await admin.from('participant_account_invites')
-    .select('auth_user_id,password_setup_completed_at,registration_contacts(full_name),participants(registration_contacts(full_name))')
+    .select('auth_user_id,password_setup_completed_at,registration_contact_id,registration_contacts(id,full_name),participants(registration_contacts(id,full_name))')
     .eq('id', input.inviteId).maybeSingle();
   const directContactRelation = Array.isArray(invitePerson?.registration_contacts) ? invitePerson.registration_contacts[0] : invitePerson?.registration_contacts;
   const participantRelation = Array.isArray(invitePerson?.participants) ? invitePerson?.participants[0] : invitePerson?.participants;
@@ -82,9 +83,31 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
     ) || null;
     let correlatableAuthId: string | null = null;
     if (existingAuthId) {
-      const detailed = await admin.auth.admin.getUserById(existingAuthId);
-      const metadataInviteId = String(detailed.data.user?.user_metadata?.participant_invite_id ?? '');
-      if (metadataInviteId === input.inviteId) correlatableAuthId = existingAuthId;
+      const inviteContactId = String(
+        invitePerson?.registration_contact_id
+        ?? directContactRelation?.id
+        ?? contactRelation?.id
+        ?? '',
+      );
+      const linkedContacts = await admin.from('registration_contacts')
+        .select('id')
+        .eq('user_id', existingAuthId);
+      const otherLinked = (linkedContacts.data ?? []).some((row) => !inviteContactId || row.id !== inviteContactId);
+      if (!otherLinked) {
+        const detailed = await admin.auth.admin.getUserById(existingAuthId);
+        const currentMetadata = (detailed.data.user?.user_metadata ?? {}) as Record<string, unknown>;
+        const metadataSync = await admin.auth.admin.updateUserById(existingAuthId, {
+          user_metadata: { ...currentMetadata, participant_invite_id: input.inviteId },
+        });
+        if (metadataSync.error) {
+          return { error: metadataSync.error, authUserId: null, resent: true };
+        }
+        const association = await associateInviteAuthUser(input.inviteId, existingAuthId);
+        if (association.error) {
+          return { error: association.error, authUserId: null, resent: true };
+        }
+        correlatableAuthId = existingAuthId;
+      }
     }
     const result = await admin.auth.signInWithOtp({
       email: input.email,
@@ -159,10 +182,14 @@ export async function markFirstAccessAuthConfirmed(userId: string, inviteId?: st
         auth_user_id: userId,
       })
       .eq('id', inviteId)
+      .eq('status', 'pending')
+      .gt('expires_at', now)
       .is('password_setup_completed_at', null)
       .or(`auth_user_id.is.null,auth_user_id.eq.${userId}`)
     : await admin.from('participant_account_invites')
       .update({ auth_confirmed_at: now, updated_at: now })
+      .eq('status', 'pending')
+      .gt('expires_at', now)
       .is('auth_confirmed_at', null)
       .is('password_setup_completed_at', null)
       .or(`auth_user_id.eq.${userId},claimed_user_id.eq.${userId}`);

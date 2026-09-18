@@ -4,15 +4,17 @@
 // variável. Cada template grava o type explicitamente.
 
 export const LIVE_TEMPLATE_ASSUMPTION = 'ConfirmationURL';
+// RedirectTo e o emailRedirectTo do dispatch (callback com next=/primeiro-acesso?invite=<id>).
+// /auth/confirmar desembrulha esse next e preserva o convite atual.
 
 export const INVITE_TEMPLATE_AFTER = `<h2>Convite Militrin</h2>
 <p>Você foi convidado a criar sua conta. Este link vale por 24 horas e só funciona uma vez.</p>
-<p><a href="{{ .SiteURL }}/auth/confirmar?token_hash={{ .TokenHash }}&type=invite&next=/primeiro-acesso">Confirmar primeiro acesso</a></p>
+<p><a href="{{ .SiteURL }}/auth/confirmar?token_hash={{ .TokenHash }}&type=invite&next={{ .RedirectTo }}">Confirmar primeiro acesso</a></p>
 `;
 
 export const MAGIC_LINK_TEMPLATE_AFTER = `<h2>Novo link de acesso Militrin</h2>
 <p>Use este link para continuar o primeiro acesso. Ele vale por 24 horas e substitui o link anterior.</p>
-<p><a href="{{ .SiteURL }}/auth/confirmar?token_hash={{ .TokenHash }}&type=magiclink&next=/primeiro-acesso">Confirmar primeiro acesso</a></p>
+<p><a href="{{ .SiteURL }}/auth/confirmar?token_hash={{ .TokenHash }}&type=magiclink&next={{ .RedirectTo }}">Confirmar primeiro acesso</a></p>
 `;
 
 // Placeholders até a leitura real do Dashboard. Substituídos no relatório
