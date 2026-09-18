@@ -3,6 +3,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getEmailProvider } from "@/lib/email/fake-provider";
+import { publicOrderCode } from "@/lib/display-reference";
 import { assertPermission } from "@/lib/admin/permissions";
 import { normalizeShirtSize, normalizeShirtType } from "@/lib/constants/shirts";
 import type { UpdatePaymentStatusInput } from "./payment-status.types";
@@ -455,7 +456,7 @@ export async function resendParticipantTicketAction(participantId: string) {
       name: String(item.item_name ?? ""),
       quantity: Number(item.quantity ?? 1),
     })),
-    orderNumber: String(order?.order_number ?? "-"),
+    orderNumber: publicOrderCode(null, order?.order_number),
     ticketToken: String(ticket.token),
     accountUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/inscricoes/${participantId}`,
   });

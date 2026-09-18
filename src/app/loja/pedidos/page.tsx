@@ -6,7 +6,7 @@ import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { StoreSubNav } from "../store-sub-nav";
 import { OperationalProductItemCard } from "./operational-product-item-card";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
-import { orderDisplayReference } from "@/lib/display-reference";
+import { orderDisplayReference, orderMatchesPublicQuery, parsePublicOrderQuery } from "@/lib/display-reference";
 import Link from "next/link";
 
 type SearchParams = Promise<{
@@ -66,7 +66,7 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
   const dateTo = params.dateTo ?? "";
 
   const supabase = await createServerSupabaseClient();
-  const friendlySearch = q.trim().match(/^#?(\d{1,12})$/);
+  const friendlySearch = parsePublicOrderQuery(q);
   const [{ data: eventsData, error: eventsError }, { data: itemRows, error: itemsError }] = await Promise.all([
     supabase.from("events").select("id, name, year").order("is_active", { ascending: false }).order("year", { ascending: false }),
     // Consolida os dois canais de venda de produto (loja standalone e
@@ -116,7 +116,7 @@ export default async function StoreOrdersPage({ searchParams }: { searchParams: 
   }));
 
   const orders = items
-    .filter((item) => !friendlySearch || item.order_reference === `#${friendlySearch[1].padStart(6, "0")}`)
+    .filter((item) => !friendlySearch || orderMatchesPublicQuery(q, { publicCode: item.order_reference }))
     .filter((item) => !globalOnly || (item.source === "store" && !item.event_id));
 
   function statusHref(code: string) {

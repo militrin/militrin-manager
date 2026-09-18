@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { cardPaymentReturnPath } from '@/lib/payments/card-return-url';
+import { publicOrderCode } from '@/lib/display-reference';
 import { PaymentReturnClient } from './payment-return-client';
 
 function isUuid(value: string) {
@@ -41,7 +42,7 @@ export default async function PaymentReturnPage({
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--brand-glow-1),_transparent_38%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-10 text-slate-100 sm:px-6">
       <PaymentReturnClient
         orderId={orderId}
-        orderNumber={raw.order_number ? String(raw.order_number) : null}
+        orderNumber={raw.order_number ? publicOrderCode(null, raw.order_number) : null}
         paymentStatus={String(payment.payment_status ?? 'pending')}
         lastGatewayAttemptStatus={payment.last_gateway_attempt_status ? String(payment.last_gateway_attempt_status) : null}
         checkoutUrl={payment.checkout_url ? String(payment.checkout_url) : null}

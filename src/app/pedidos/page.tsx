@@ -94,7 +94,7 @@ export default async function PedidosPage({
               <input
                 name="q"
                 defaultValue={params.q ?? ""}
-                placeholder="Nome, CPF ou nº do pedido"
+                placeholder="Nome, CPF ou código do pedido"
                 className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none w-64"
               />
               <select
@@ -159,7 +159,7 @@ export default async function PedidosPage({
                   >
                     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-5 py-4 hover:bg-slate-800/30 transition rounded-2xl">
                       {/* Número do pedido */}
-                      <span className="text-xs font-semibold text-slate-300 w-28 shrink-0">
+                      <span className="text-xs font-semibold text-slate-300 min-w-[11.5rem] shrink-0">
                         Pedido {order.orderNumber}
                       </span>
 
@@ -196,13 +196,18 @@ export default async function PedidosPage({
 
                       {/* Valor total */}
                       {canViewAmounts && (
-                        <span className="text-sm font-medium text-slate-100 w-24 text-right shrink-0">
-                          {money(order.finalAmount, order.priceOrigin)}
+                        <span className="text-sm font-medium text-slate-100 min-w-[6.5rem] text-right shrink-0">
+                          {money(order.chargedAmount, order.priceOrigin)}
                           {order.hasDiscount && (
                             <span className="ml-1 text-xs text-emerald-400">
                               -{money(order.discountAmount)}
                             </span>
                           )}
+                          {order.customerFee > 0 ? (
+                            <span className="mt-0.5 block text-[11px] font-normal text-slate-500">
+                              {money(order.finalAmount, order.priceOrigin)} + {money(order.customerFee)} taxa
+                            </span>
+                          ) : null}
                         </span>
                       )}
 
@@ -271,7 +276,14 @@ export default async function PedidosPage({
                         </div>
                       )}
 
-                      <div className="mt-3 flex gap-3">
+                      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                        {canViewAmounts ? (
+                          <>
+                            <span>Valor do pedido {money(order.finalAmount, order.priceOrigin)}</span>
+                            {order.customerFee > 0 ? <span>Taxa {money(order.customerFee)}</span> : null}
+                            <span>Total cobrado {money(order.chargedAmount, order.priceOrigin)}</span>
+                          </>
+                        ) : null}
                         <Link
                           href={`/inscricoes/pedido/${order.id}`}
                           className="text-xs text-slate-400 underline hover:text-slate-200"

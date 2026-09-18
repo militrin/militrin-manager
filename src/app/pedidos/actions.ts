@@ -4,7 +4,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import type { OrderRow, OrderItemRow, OrderProductItemRow, OrdersFilterInput } from "./types";
 import { ORDER_PAGE_SIZE, parseOrderOrigin } from "./types";
-import { orderDisplayReference } from "@/lib/display-reference";
+import { orderDisplayReference, orderMatchesAdminSearch } from "@/lib/display-reference";
+import { orderChargeBreakdown } from "@/lib/orders/charge-breakdown";
 import { countIssuedTickets } from "@/lib/imports/issuance-presentation";
 
 export type OrdersResult = {
@@ -81,17 +82,19 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
   // ── 2. Pagamentos em lote ────────────────────────────────────────────
   const { data: paymentsRaw } = await supabase
     .from("payments")
-    .select("order_id, payment_method, payment_status, final_amount")
+    .select("order_id, payment_method, payment_status, final_amount, payment_fee_customer_amount")
     .in("order_id", orderIds)
     .order("created_at", { ascending: false });
 
-  const paymentByOrder = new Map<string, { method: string | null; status: string }>();
+  const paymentByOrder = new Map<string, { method: string | null; status: string; chargedAmount: number | null; customerFee: number }>();
   for (const p of paymentsRaw ?? []) {
     const oid = String(p.order_id ?? "");
     if (!paymentByOrder.has(oid)) {
       paymentByOrder.set(oid, {
         method: p.payment_method ? String(p.payment_method) : null,
         status: String(p.payment_status ?? "pending"),
+        chargedAmount: p.final_amount == null ? null : Number(p.final_amount),
+        customerFee: Number(p.payment_fee_customer_amount ?? 0),
       });
     }
   }
@@ -157,15 +160,23 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
     const buyer = Array.isArray(o.participants)
       ? (o.participants[0] as Record<string, unknown>)
       : (o.participants as Record<string, unknown> | null);
-    const payment = paymentByOrder.get(oid) ?? { method: null, status: "pending" };
+    const payment = paymentByOrder.get(oid) ?? { method: null, status: "pending", chargedAmount: null, customerFee: 0 };
     const items = itemsByOrder.get(oid) ?? [];
     const productItems = productItemsByOrder.get(oid) ?? [];
     const categoryNames = [...new Set(items.map((i) => i.categoryName).filter(Boolean))] as string[];
     const issuedTicketCount = countIssuedTickets(items);
+    const itemsAmount = Number(o.final_amount ?? 0);
+    const charge = orderChargeBreakdown({
+      itemsAmount,
+      customerFee: payment.customerFee,
+      chargedAmount: payment.chargedAmount,
+    });
 
     return {
       id: oid,
       orderNumber: orderDisplayReference(o.display_number, o.order_number),
+      storedOrderNumber: o.order_number ? String(o.order_number) : null,
+      displayNumber: o.display_number == null ? null : Number(o.display_number),
       buyerName: buyer?.full_name ? String(buyer.full_name) : "—",
       buyerEmail: buyer?.email ? String(buyer.email) : "",
       buyerPhone: buyer?.phone ? String(buyer.phone) : "",
@@ -174,7 +185,9 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
       status: String(o.status ?? "pending"),
       baseAmount: Number(o.base_amount ?? 0),
       discountAmount: Number(o.discount_amount ?? 0),
-      finalAmount: Number(o.final_amount ?? 0),
+      finalAmount: itemsAmount,
+      customerFee: charge.customerFee,
+      chargedAmount: charge.chargedAmount,
       createdAt: String(o.created_at ?? ""),
       confirmedAt: o.confirmed_at ? String(o.confirmed_at) : null,
       paymentMethod: payment.method,
@@ -191,14 +204,17 @@ export async function listOrdersAction(params: OrdersFilterInput): Promise<Order
   });
 
   // Filtros
-  const q = params.q?.toLowerCase().trim() ?? "";
+  const q = params.q?.trim() ?? "";
   if (q) {
-    rows = rows.filter(
-      (r) =>
-        r.orderNumber.toLowerCase().includes(q) ||
-        r.buyerName.toLowerCase().includes(q) ||
-        r.buyerEmail.toLowerCase().includes(q) ||
-        r.buyerCpf.replace(/\D/g, "").includes(q.replace(/\D/g, "")),
+    rows = rows.filter((r) =>
+      orderMatchesAdminSearch(q, {
+        displayNumber: r.displayNumber,
+        orderNumber: r.storedOrderNumber,
+        publicCode: r.orderNumber,
+        buyerName: r.buyerName,
+        buyerEmail: r.buyerEmail,
+        buyerCpf: r.buyerCpf,
+      }),
     );
   }
   if (params.paymentStatus) rows = rows.filter((r) => r.paymentStatus === params.paymentStatus);

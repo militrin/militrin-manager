@@ -51,6 +51,7 @@ import {
   type CheckoutItemPricingResult,
 } from '@/lib/checkout/checkout-items';
 import { getStatusLabel } from '@/lib/status-labels';
+import { publicOrderCode } from '@/lib/display-reference';
 import { StoreCart } from '@/components/store/StoreCart';
 import type { StoreItemForPurchase } from '@/lib/store/get-store-items';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
@@ -3263,7 +3264,7 @@ export function RegistrationWizard({
                   </p>
                   {registration.order_number ? (
                     <p>
-                      Pedido: <strong>{registration.order_number ? `#${String(Number(registration.order_number.match(/(\d+)$/)?.[1] ?? 0)).padStart(6, '0')}` : 'em processamento'}</strong>
+                      Pedido: <strong>{publicOrderCode(null, registration.order_number)}</strong>
                     </p>
                   ) : null}
                 </div>

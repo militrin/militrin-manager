@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasPermission } from "@/lib/admin/permissions";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
+import { orderChargeBreakdown } from "@/lib/orders/charge-breakdown";
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from "@/lib/payments/gateway-environment";
@@ -28,7 +29,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   const { data: payment, error } = await supabase
     .from("payments")
-    .select("id,organization_id,order_id,event_id,provider,payment_status,payment_method,price_origin,gateway_payment_id,gateway_account_key,gateway_environment,final_amount,amount,refund_status,refunded_at,paid_at,created_at,orders(order_number,display_number,status,user_id),participants(full_name,cpf),events(name)")
+    .select("id,organization_id,order_id,event_id,provider,payment_status,payment_method,price_origin,gateway_payment_id,gateway_account_key,gateway_environment,final_amount,amount,payment_fee_customer_amount,refund_status,refunded_at,paid_at,created_at,orders(order_number,display_number,status,user_id,final_amount),participants(full_name,cpf),events(name)")
     .eq("id", paymentId)
     .maybeSingle();
   if (error) throw error;
@@ -72,6 +73,11 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   const amountLabel = formatImportedHistoricalAmount(Number(payment.final_amount ?? payment.amount ?? 0), payment.price_origin);
   const orderLabel = order ? orderDisplayReference(order.display_number, order.order_number) : "—";
   const buyerName = participant?.full_name ? String(participant.full_name) : "—";
+  const charge = orderChargeBreakdown({
+    itemsAmount: order?.final_amount ?? payment.amount,
+    customerFee: payment.payment_fee_customer_amount,
+    chargedAmount: payment.final_amount,
+  });
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -100,7 +106,11 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               <Field label="Pedido" value={orderLabel} />
               <Field label="Comprador" value={buyerName} />
               <Field label="Método" value={formatImportedPaymentMethod(payment.payment_method)} />
-              <Field label="Valor" value={amountLabel} />
+              <Field label="Valor do pedido" value={formatImportedHistoricalAmount(charge.itemsAmount, payment.price_origin)} />
+              {charge.hasCustomerFee ? (
+                <Field label="Taxa de pagamento" value={formatImportedHistoricalAmount(charge.customerFee, payment.price_origin)} />
+              ) : null}
+              <Field label="Total cobrado" value={amountLabel} />
               <Field label="Ambiente" value={environment ?? "—"} />
               <Field label="Status" value={adminRefundVisualLabel(visual)} />
               <Field label="Provider" value={String(payment.provider ?? "—")} />

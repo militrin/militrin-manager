@@ -10,7 +10,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
 import { ContactAccountCard } from "../contact-account-card";
-import { ticketDisplayReference } from "@/lib/display-reference";
+import { ticketDisplayReference, publicOrderCode } from "@/lib/display-reference";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
@@ -166,7 +166,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       holderName: canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, "Titular não definido"),
       holderUnassigned: !hasCanonicalHolderName(orderItem?.holder_full_name),
       shirt: [orderItem?.shirt_type, orderItem?.shirt_size].filter(Boolean).join(" · "),
-      orderNumber: order?.order_number ? String(order.order_number) : null,
+      orderNumber: order ? publicOrderCode(order.display_number, order.order_number) : null,
       shortCode: ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number).replace(/^#/, ""),
       checkinDone: Boolean(row.used_at) || String(row.status) === "used",
       kitStatus: kitItems.length === 0 ? null : kitItems.every((item) => item.status === "delivered") ? "Entregue" : "Pendente",

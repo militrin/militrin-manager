@@ -27,7 +27,7 @@ import { REASON_CODES } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { formatStoreVariantLabel, parseStoreOrderScanRef } from "@/lib/operations/store-order-scan-ref";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
-import { orderDisplayReference, ticketDisplayReference, canonicalTicketDisplayCode, ticketMatchesExactDisplayCode } from "@/lib/display-reference";
+import { orderDisplayReference, ticketDisplayReference, canonicalTicketDisplayCode, ticketMatchesExactDisplayCode, publicOrderCode } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
 import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
@@ -1803,7 +1803,7 @@ export async function getOperationTicketViewAction(ticketId: string) {
       eventDate: event?.starts_at ? String(event.starts_at) : null,
       eventLocation: event?.location ? String(event.location) : null,
       token: String(row.token ?? ""),
-      orderNumber: order?.order_number ? String(order.order_number) : null,
+      orderNumber: order ? publicOrderCode(order.display_number, order.order_number) : null,
       ticketCode: canonicalTicketDisplayCode(order?.display_number, orderItem?.item_position, order?.order_number),
     },
   };

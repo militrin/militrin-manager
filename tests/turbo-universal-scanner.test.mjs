@@ -42,9 +42,13 @@ test("3. QR Loja por ITEM- token continua reconhecido", () => {
 test("4. QR equivalente ao #001121 (display e order_number do comprovante) e reconhecido", () => {
   assert.deepEqual(parseStoreOrderScanRef("#001121"), { displayNumber: 1121, orderNumber: null });
   assert.deepEqual(parseStoreOrderScanRef("001121"), { displayNumber: 1121, orderNumber: null });
-  assert.deepEqual(parseStoreOrderScanRef("ADMIN-20260909-abc3bda0"), {
-    displayNumber: null,
-    orderNumber: "ADMIN-20260909-abc3bda0",
+  assert.deepEqual(parseStoreOrderScanRef("MIL-2026-00001121"), {
+    displayNumber: 1121,
+    orderNumber: "MIL-2026-00001121",
+  });
+  assert.deepEqual(parseStoreOrderScanRef("Pedido MIL-2026-00001121"), {
+    displayNumber: 1121,
+    orderNumber: "MIL-2026-00001121",
   });
   assert.deepEqual(parseStoreOrderScanRef("ITEM-95F7F18C8796"), { displayNumber: null, orderNumber: null });
   assert.deepEqual(parseStoreOrderScanRef("UNIT-AABBCCDDEEFF"), { displayNumber: null, orderNumber: null });

@@ -16,6 +16,7 @@ import { shirtDisplayLabel } from '@/lib/constants/shirts';
 import { isOrderStillEditable } from '@/lib/orders/order-editability';
 import { canContinuePendingCardCheckout } from '@/lib/checkout/pix-payment-status';
 import { canonicalTicketDisplayCode, orderDisplayReference } from '@/lib/display-reference';
+import { orderChargeBreakdown } from '@/lib/orders/charge-breakdown';
 import { canContinueCommercialPayment, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
 import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 
@@ -64,6 +65,7 @@ type CartOrderPayment = {
   amount: number;
   discount_amount: number;
   final_amount: number;
+  payment_fee_customer_amount?: number;
   payment_method: string | null;
   payment_status: string;
   pix_code: string | null;
@@ -169,6 +171,11 @@ export default async function OrderDetailPage({
   // mostrar QR de um item ainda nao pago).
   const canShowProductQr = order.order_status === 'confirmed';
   const orderReference = orderDisplayReference(orderCreatedRow?.display_number, orderCreatedRow?.order_number ?? order.order_number);
+  const charge = orderChargeBreakdown({
+    itemsAmount: order.final_amount,
+    customerFee: order.payment?.payment_fee_customer_amount,
+    chargedAmount: order.payment?.final_amount,
+  });
 
   const receiptItemsSummary = [
     ...ticketItems.map((item) => `${item.holder_full_name ?? item.participant_name ?? 'Titular'}${item.category_name ? ` • ${item.category_name}` : ''}${item.ticket_status ? ` • ${getStatusLabel(item.ticket_status)}` : ''}`),
@@ -217,7 +224,9 @@ export default async function OrderDetailPage({
               <p>Valor original: {money(order.base_amount)}</p>
               <p>Desconto: {money(order.discount_amount)}</p>
               <p>Cupom: {order.applied_coupon_code ?? 'Sem cupom'}</p>
-              <p>Valor final: {money(order.final_amount)}</p>
+              <p>Valor do pedido: {money(charge.itemsAmount)}</p>
+              {charge.hasCustomerFee ? <p>Taxa de pagamento: {money(charge.customerFee)}</p> : null}
+              <p>Total cobrado: {money(charge.chargedAmount)}</p>
               <p className="inline-flex items-center gap-2">Pedido: <MilitrinStatusBadge status={commercialStatus} /></p>
               <p className="inline-flex items-center gap-2">Pagamento: <MilitrinStatusBadge status={displayPaymentStatus} /></p>
             </div>
@@ -414,7 +423,7 @@ export default async function OrderDetailPage({
           createdAt={orderCreatedRow?.created_at ? String(orderCreatedRow.created_at) : null}
           paymentStatus={normalizedPaymentStatus}
           paymentMethod={optionalDisplayValue(order.payment?.payment_method)}
-          finalAmount={money(order.final_amount)}
+          finalAmount={money(charge.chargedAmount)}
           itemsSummary={receiptItemsSummary}
           className="rounded-2xl border border-slate-600 px-4 py-2 text-sm text-slate-100"
         />

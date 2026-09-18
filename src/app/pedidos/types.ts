@@ -20,6 +20,8 @@ export type OrderProductItemRow = {
 export type OrderRow = {
   id: string;
   orderNumber: string;
+  storedOrderNumber: string | null;
+  displayNumber: number | null;
   buyerName: string;
   buyerEmail: string;
   buyerPhone: string;
@@ -29,6 +31,8 @@ export type OrderRow = {
   baseAmount: number;
   discountAmount: number;
   finalAmount: number;
+  customerFee: number;
+  chargedAmount: number;
   createdAt: string;
   confirmedAt: string | null;
   paymentMethod: string | null;

@@ -45,7 +45,7 @@ export function findActionableAccountOrder(orders: Array<Record<string, unknown>
 // pedido, orders.participant_id) e fica null em pedidos modernos -- nao e
 // mais selecionada aqui pra evitar reintroduzir essa fonte incorreta.
 export const ACCOUNT_ORDERS_SELECT =
-  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status, expires_at, created_at), tickets(id, token, status), order_items(id, item_position, status, item_kind, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
+  'id, order_number, display_number, status, base_amount, discount_amount, final_amount, created_at, confirmed_at, participant_id, event_id, user_id, buyer_type, participants(full_name, ticket_categories(name)), events(id, name, starts_at, location, registration_enabled, registration_open_at, registration_close_at), payments!payments_order_id_fkey(payment_method, payment_status, expires_at, created_at, final_amount, payment_fee_customer_amount), tickets(id, token, status), order_items(id, item_position, status, item_kind, ownership_status, holder_full_name, participants(full_name), tickets(id, status, token))';
 
 // Fonte canonica ticket x produto em toda a Minha Conta: order_items.item_kind
 // (nunca nome/preco/lote/QR -- mesma regra ja usada pelo detector de

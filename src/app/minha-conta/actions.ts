@@ -7,6 +7,7 @@ import { getEmailProvider } from '@/lib/email/fake-provider';
 import { generatePublicPixAction, simulateFakeOrderPaymentAction } from '@/app/inscricao/actions';
 import { formatDateBR, toISODateFromBR } from '@/lib/utils/date';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
+import { publicOrderCode } from '@/lib/display-reference';
 import { assertPermission } from '@/lib/admin/permissions';
 
 const emailProvider = getEmailProvider();
@@ -585,7 +586,7 @@ export async function resendTicketEmailAction(orderId: string) {
       name: String(item.item_name ?? ''),
       quantity: Number(item.quantity ?? 1),
     })),
-    orderNumber: String(order.order_number),
+    orderNumber: publicOrderCode(null, order.order_number),
     ticketToken: String(ticket.token),
     accountUrl: `${appBaseUrl()}/minha-conta/compras/${order.id}`,
   });

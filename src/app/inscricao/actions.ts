@@ -24,6 +24,7 @@ import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 import { cardPaymentReturnUrl } from '@/lib/payments/card-return-url';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
+import { publicOrderChargeDescription } from '@/lib/display-reference';
 import {
   eventOffersCardInstallments,
   normalizeMaxCardInstallments,
@@ -2216,7 +2217,7 @@ export async function generatePublicOrderPixAction(orderId: string) {
         cpfCnpj: payerCpf,
         phone: payerRow.payer_phone ? String(payerRow.payer_phone) : undefined,
       },
-      description: snapshotResult.snapshot.order_number ? `Pedido ${snapshotResult.snapshot.order_number}` : undefined,
+      description: publicOrderChargeDescription(snapshotResult.snapshot.order_number),
     });
   } catch (gatewayError) {
     await supabase.rpc('release_order_pix_generation', { p_order_id: orderId });
@@ -2530,7 +2531,7 @@ export async function generatePublicOrderCardAction(orderId: string) {
         cpfCnpj: payerCpf,
         phone: payerRow.payer_phone ? String(payerRow.payer_phone) : undefined,
       },
-      description: snapshotResult.snapshot.order_number ? `Pedido ${snapshotResult.snapshot.order_number}` : undefined,
+      description: publicOrderChargeDescription(snapshotResult.snapshot.order_number),
     });
   } catch (gatewayError) {
     await supabase.rpc("release_order_pix_generation", { p_order_id: orderId });

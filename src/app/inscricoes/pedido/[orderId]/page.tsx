@@ -7,6 +7,7 @@ import { getAdminAccessContext } from "@/lib/admin/access";
 import { hasPermission } from "@/lib/admin/permissions";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
+import { orderChargeBreakdown } from "@/lib/orders/charge-breakdown";
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from "@/lib/dashboard/commercial-status";
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
@@ -52,7 +53,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       .order("item_position", { ascending: true }),
     supabase
       .from("payments")
-      .select("id,payment_status,payment_method,final_amount,price_origin,created_at,paid_at,provider,gateway_payment_id,gateway_account_key,gateway_environment,refund_status")
+      .select("id,payment_status,payment_method,final_amount,amount,payment_fee_customer_amount,price_origin,created_at,paid_at,provider,gateway_payment_id,gateway_account_key,gateway_environment,refund_status")
       .eq("order_id", orderId)
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id,order_item_id,status,cancellation_replacement_required").eq("order_id", orderId),
@@ -81,6 +82,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // que parece funcionar mas nao muda nada.
   const ticketByItem = new Map((tickets ?? []).map((ticket) => [String(ticket.order_item_id ?? ""), { id: String(ticket.id), status: String(ticket.status ?? ""), replacementRequired: ticket.cancellation_replacement_required as boolean | null }]));
   const latestPayment = (payments ?? [])[0] ?? null;
+  const charge = orderChargeBreakdown({
+    itemsAmount: order.final_amount,
+    customerFee: latestPayment?.payment_fee_customer_amount,
+    chargedAmount: latestPayment?.final_amount,
+  });
 
   let buyerName: string | null = null;
   if (order.user_id) {
@@ -133,7 +139,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
               <Field label={buyerPresentation.label} value={buyerPresentation.name} />
               <Field label="Evento" value={eventRelation?.name ?? "—"} />
               <Field label="Forma de pagamento tentada" value={formatImportedPaymentMethod(latestPayment?.payment_method)} />
-              <Field label="Valor" value={canViewFinancial ? money(order.final_amount ?? 0, order.price_origin) : "Restrito"} />
+              <Field label="Valor do pedido" value={canViewFinancial ? money(charge.itemsAmount, order.price_origin) : "Restrito"} />
+              {canViewFinancial && charge.hasCustomerFee ? (
+                <Field label="Taxa de pagamento" value={money(charge.customerFee, order.price_origin)} />
+              ) : null}
+              <Field label="Total cobrado" value={canViewFinancial ? money(charge.chargedAmount, order.price_origin) : "Restrito"} />
               <Field label="Criado em" value={formatDateTimeBR(order.created_at) ?? "—"} />
               <Field label="Prazo de pagamento" value={firstItem?.reservation_expires_at ? formatDateTimeBR(firstItem.reservation_expires_at) ?? "—" : "—"} />
               <Field label="Confirmado em" value={order.confirmed_at ? formatDateTimeBR(order.confirmed_at) ?? "—" : "—"} />
@@ -268,13 +278,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
           {payments?.length ? (
             <AdminSection title="Tentativas de pagamento">
               <div className="grid gap-2 sm:grid-cols-2">
-                {payments.map((payment) => (
+                {payments.map((payment) => {
+                  const attemptCharge = orderChargeBreakdown({
+                    itemsAmount: order.final_amount,
+                    customerFee: payment.payment_fee_customer_amount,
+                    chargedAmount: payment.final_amount,
+                  });
+                  return (
                   <div key={payment.id} className="space-y-2">
                     <AdminStatCard
                       compact
                       label={formatImportedPaymentMethod(payment.payment_method)}
-                      value={canViewFinancial ? money(payment.final_amount ?? 0, payment.price_origin ?? order.price_origin) : "—"}
-                      hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}`}
+                      value={canViewFinancial ? money(attemptCharge.chargedAmount, payment.price_origin ?? order.price_origin) : "—"}
+                      hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}${canViewFinancial && attemptCharge.hasCustomerFee ? ` · taxa ${money(attemptCharge.customerFee, payment.price_origin ?? order.price_origin)}` : ""}`}
                     />
                     {canViewFinancial ? (
                       <Link
@@ -285,7 +301,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                       </Link>
                     ) : null}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </AdminSection>
           ) : null}

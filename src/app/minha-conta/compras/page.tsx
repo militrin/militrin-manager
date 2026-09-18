@@ -8,6 +8,7 @@ import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 import { getAccountStoreOrders } from '@/lib/store/get-account-store-orders';
 import { getPrimaryAccountHeaderEvent } from '@/lib/account/header-event';
 import { orderDisplayReference } from '@/lib/display-reference';
+import { orderChargeBreakdown } from '@/lib/orders/charge-breakdown';
 import { canContinueCommercialPayment, isClosedCommercialPurchase, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
 import { ClosedPurchasesSection } from './closed-purchases-section';
 import { PurchaseKindFilter, PurchaseKindItem } from './purchase-kind-filter';
@@ -88,6 +89,11 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
     paymentCreatedAt: (payment as Record<string, unknown> | null)?.created_at as string | null | undefined,
     paymentMethod: (payment as Record<string, unknown> | null)?.payment_method as string | null | undefined,
   });
+  const charge = orderChargeBreakdown({
+    itemsAmount: order.final_amount,
+    customerFee: (payment as Record<string, unknown> | null)?.payment_fee_customer_amount,
+    chargedAmount: (payment as Record<string, unknown> | null)?.final_amount,
+  });
 
   return (
     <MilitrinPurchaseCard
@@ -99,7 +105,7 @@ function TicketOrderCard({ order }: { order: Record<string, unknown> }) {
       location={optionalDisplayValue((eventObj as Record<string, unknown> | null)?.location as string | null)}
       summaryLine={summaryLine}
       paymentStatus={normalizedPaymentStatus}
-      finalAmount={money(Number(order.final_amount ?? 0))}
+      finalAmount={money(charge.chargedAmount)}
       paymentMethod={optionalDisplayValue((payment as Record<string, unknown> | null)?.payment_method as string | null)}
       expirationLabel={commercialStatus === 'expired' ? 'Expirou em' : 'Expira em'}
       expirationValue={showExpiration && paymentExpiresAt ? formatDateTimeBR(String(paymentExpiresAt), ' às ') : null}

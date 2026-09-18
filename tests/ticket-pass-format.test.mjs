@@ -19,8 +19,9 @@ test('data de calendario pura nao inventa horario 00:00', () => {
   assert.equal(parts?.time, null);
 });
 
-test('numero de pedido legado vira referencia de vitrine', () => {
-  assert.equal(formatEventPassOrderNumber('MIL-2026-1120'), '#001120');
+test('numero de pedido legado vira referencia publica MIL', () => {
+  assert.equal(formatEventPassOrderNumber('MIL-2026-1120'), 'MIL-2026-00001120');
+  assert.equal(formatEventPassOrderNumber('MIL-2026-00001827'), 'MIL-2026-00001827');
   assert.equal(formatEventPassOrderNumber('#001120'), '#001120');
   assert.equal(formatEventPassOrderNumber('sem número'), null);
 });

@@ -14,6 +14,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { formatDateBR, formatDateTimeBR } from '@/lib/utils/date';
 import { getAdminAccessContext } from '@/lib/admin/access';
 import { orderDisplayReference, ticketDisplayReference } from '@/lib/display-reference';
+import { orderChargeBreakdown } from '@/lib/orders/charge-breakdown';
 import { formatImportedHistoricalAmount } from '@/lib/imports/legacy-price';
 import { formatImportedPaymentMethod } from '@/lib/imports/payment-method';
 
@@ -48,7 +49,7 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
     participant.user_id ? supabase.rpc('get_customer_profile', { p_user_id: participant.user_id }) : Promise.resolve({ data: null }),
     supabase
       .from('payments')
-      .select('id, amount, discount_amount, final_amount, payment_method, payment_status, price_origin, created_at, paid_at, expires_at')
+      .select('id, amount, discount_amount, final_amount, payment_method, payment_status, payment_fee_customer_amount, price_origin, created_at, paid_at, expires_at')
       .eq('participant_id', participant.id)
       .order('created_at', { ascending: false })
       .limit(1),
@@ -276,7 +277,20 @@ export default async function ParticipantDetailPage({ params }: { params: Promis
                   <p><span className="text-slate-400">Status pedido:</span> <AdminStatusBadge status={mapStatus(String(order?.status ?? participant.registration_status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Valor original:</span> {money(Number(order?.base_amount ?? participant.base_amount ?? 0), order?.price_origin)}</p>
                   <p><span className="text-slate-400">Desconto:</span> {money(Number(order?.discount_amount ?? participant.discount_amount ?? 0), order?.price_origin)}</p>
-                  <p><span className="text-slate-400">Valor final:</span> {money(Number(order?.final_amount ?? payment?.final_amount ?? participant.final_amount ?? 0), order?.price_origin)}</p>
+                  <p><span className="text-slate-400">Valor do pedido:</span> {money(Number(order?.final_amount ?? participant.final_amount ?? 0), order?.price_origin)}</p>
+                  {(() => {
+                    const charge = orderChargeBreakdown({
+                      itemsAmount: order?.final_amount ?? participant.final_amount,
+                      customerFee: payment?.payment_fee_customer_amount,
+                      chargedAmount: payment?.final_amount,
+                    });
+                    return (
+                      <>
+                        {charge.hasCustomerFee ? <p><span className="text-slate-400">Taxa de pagamento:</span> {money(charge.customerFee, order?.price_origin)}</p> : null}
+                        <p><span className="text-slate-400">Total cobrado:</span> {money(charge.chargedAmount, order?.price_origin)}</p>
+                      </>
+                    );
+                  })()}
                   <p><span className="text-slate-400">Método:</span> {formatImportedPaymentMethod(payment?.payment_method)}</p>
                   <p><span className="text-slate-400">Status pagamento:</span> <AdminStatusBadge status={mapStatus(String(payment?.payment_status ?? 'pending'))} /></p>
                   <p><span className="text-slate-400">Pagamento em:</span> {payment?.paid_at ? formatDateTimeBR(String(payment.paid_at), ' às ') : '-'}</p>
