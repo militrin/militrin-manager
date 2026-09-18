@@ -29,7 +29,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   const { data: payment, error } = await supabase
     .from("payments")
-    .select("id,organization_id,order_id,event_id,provider,payment_status,payment_method,price_origin,gateway_payment_id,gateway_account_key,gateway_environment,final_amount,amount,payment_fee_customer_amount,refund_status,refunded_at,paid_at,created_at,orders(order_number,display_number,status,user_id,final_amount),participants(full_name,cpf),events(name)")
+    .select("id,organization_id,order_id,event_id,provider,payment_status,payment_method,price_origin,gateway_payment_id,gateway_account_key,gateway_environment,final_amount,amount,payment_fee_customer_amount,refund_status,refunded_at,paid_at,created_at,orders!payments_order_id_fkey(order_number,display_number,status,user_id,final_amount),participants(full_name,cpf),events(name)")
     .eq("id", paymentId)
     .maybeSingle();
   if (error) throw error;
