@@ -20,6 +20,7 @@ test('checkout nomeado ignora CPF/e-mail/telefone e nao cria identidade', async 
   assert.match(self, /insert into public\.registration_contacts/);
   assert.match(self, /holder_full_name=v_buyer_name/);
   assert.doesNotMatch(self, /insert into public\.participants/);
+  assert.doesNotMatch(self, /intended_owner_contact_id/);
 });
 
 test('wizard de titular nomeado pede so o nome', async () => {

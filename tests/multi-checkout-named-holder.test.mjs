@@ -27,6 +27,7 @@ test('checkout nomeado atual grava somente holder_full_name e nao cria Cadastro'
   assert.doesNotMatch(named, /holder_cpf/);
   assert.doesNotMatch(named, /assert_ticket_holder_contact_available/);
   assert.doesNotMatch(named, /update public\.tickets[\s\S]{0,80}owner_user_id\s*=/);
+  assert.doesNotMatch(named, /intended_owner_contact_id/);
 });
 
 test('normalizacao preserva named e remove identidade do titular textual', () => {

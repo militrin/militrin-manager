@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { assignTicketAccountOwnerAction, searchTicketAccountOwnerContactsAction } from "@/app/cadastros/shared-email-actions";
 import { TICKET_ACCOUNT_OWNER_REASON_OPTIONS } from "@/lib/account/shared-email-ownership";
+import { TicketIdentitySummary } from "@/components/tickets/TicketIdentitySummary";
+import type { TicketIdentityView } from "@/lib/registrations/contact-tickets";
 
 type Candidate = {
   registration_contact_id: string;
@@ -17,11 +19,8 @@ export function ChangeTicketAccountOwnerCard(props: {
   ticketId: string;
   ticketCode?: string | null;
   eventName?: string | null;
-  holderName: string;
-  currentOwnerName: string;
+  identity: TicketIdentityView;
   canManage: boolean;
-  awaitingFirstAccess?: boolean;
-  intendedOwnerName?: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -44,14 +43,8 @@ export function ChangeTicketAccountOwnerCard(props: {
             <p className="font-mono tracking-[0.08em]">{props.ticketCode}</p>
           </div>
         ) : null}
-        <div>
-          <p className="text-xs text-slate-500">Titular atual</p>
-          <p className="font-medium">{props.holderName}</p>
-        </div>
-        <div>
-          <p className="text-xs text-slate-500">{props.awaitingFirstAccess ? "Proprietário pretendido" : "Conta proprietária atual"}</p>
-          <p className="font-medium">{props.awaitingFirstAccess ? (props.intendedOwnerName ?? props.currentOwnerName) : props.currentOwnerName}</p>
-          {props.awaitingFirstAccess ? <p className="mt-1 text-xs text-amber-200">Conta: Aguardando primeiro acesso</p> : null}
+        <div className="sm:col-span-2">
+          <TicketIdentitySummary identity={props.identity} className="space-y-1 text-sm text-slate-200" />
         </div>
       </div>
       <p className="mt-3 text-sm text-slate-400">Quem vê o ingresso em Minha Conta. O titular do ingresso não será alterado.</p>
@@ -72,8 +65,10 @@ export function ChangeTicketAccountOwnerCard(props: {
             <div className="mt-4 grid gap-3 text-sm">
               {props.ticketCode ? <p>Código do ingresso: <strong className="font-mono tracking-[0.08em]">{props.ticketCode}</strong></p> : null}
               {props.eventName ? <p>Evento: <strong>{props.eventName}</strong></p> : null}
-              <p>Titular atual: <strong>{props.holderName}</strong></p>
-              <p>Conta proprietária atual: <strong>{props.currentOwnerName}</strong></p>
+              <p>Titular atual: <strong>{props.identity.holderName}</strong></p>
+              <p>Conta do titular: <strong>{props.identity.holderAccountLabel}</strong></p>
+              <p>Conta proprietária atual: <strong>{props.identity.ownerName}</strong></p>
+              {props.identity.intendedOwnerName ? <p>Pretendido: <strong>{props.identity.intendedOwnerName}</strong></p> : null}
             </div>
             <div className="mt-4 flex gap-2">
               <input

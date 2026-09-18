@@ -19,6 +19,7 @@ const labels = new Map<string,string>([
   ["family_responsible","Responsável familiar"],
   ["account_correction","Correção de conta"],
   ["administrative_transfer","Transferência administrativa"],
+  ["intended_owner_materialized","Materialização do proprietário pretendido"],
 ]);
 
 export function sensitiveActionReasonLabel(code: string | null | undefined) {

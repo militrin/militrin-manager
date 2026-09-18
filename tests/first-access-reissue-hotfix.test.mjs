@@ -28,6 +28,7 @@ const [
   callback,
   destinations,
   claimMigration,
+  canonicalMigration,
   existingAuthTests,
 ] = await Promise.all([
   read('src/lib/account/first-access-invite-dispatch.ts'),
@@ -36,6 +37,7 @@ const [
   read('src/app/auth/callback/AuthCallbackClient.tsx'),
   read('src/lib/auth/callback-destinations.ts'),
   read('supabase/migrations/20261105000000_first_access_reissue_correlation.sql'),
+  read('supabase/migrations/20261106000000_canonical_ticket_ownership_invariant.sql'),
   read('tests/first-access-existing-auth-cpf.test.mjs'),
 ]);
 
@@ -149,7 +151,7 @@ test('CASO 7 — prepare reutiliza pending em vez de revogar e criar id novo', (
   assert.match(page, /chooseFirstAccessInviteId/);
 });
 
-test('CASO 8/9 — claim de conta nao escreve tickets.owner_user_id', () => {
+test('CASO 8/9 — 20261105 pulava ownership; 20261106 materializa so intended_owner', () => {
   const claimStart = claimMigration.indexOf('create or replace function public.claim_registration_contact_account_invite');
   const claimEnd = claimMigration.indexOf('\n$$;', claimStart);
   const claim = claimMigration.slice(claimStart, claimEnd);
@@ -158,6 +160,10 @@ test('CASO 8/9 — claim de conta nao escreve tickets.owner_user_id', () => {
   assert.match(claimMigration, /if current_setting\('app.skip_ticket_ownership_on_account_claim', true\) = '1' then\s+return 0;/);
   assert.match(claimMigration, /current_setting\('app.skip_ticket_ownership_on_account_claim', true\) is distinct from '1'/);
   assert.doesNotMatch(claim, /update public\.tickets/);
+  assert.match(canonicalMigration, /reconcile_registration_contact_account\(v_contact\.id, v_actor\)/);
+  assert.match(canonicalMigration, /trg_materialize_tickets_when_contact_account_linked/);
+  assert.doesNotMatch(canonicalMigration, /skip_ticket_ownership_on_account_claim/);
+  assert.match(canonicalMigration, /where t\.intended_owner_contact_id = p_contact_id\s+and t\.owner_user_id is null/);
 });
 
 test('redirect/confirmar preservam invite do convite atual', () => {

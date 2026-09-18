@@ -1,5 +1,5 @@
 // E2E controlado do ciclo de ownership (Pessoa sem Auth → ingresso pretendido →
-// primeiro acesso NÃO preenche owner_user_id → QR intacto).
+// primeiro acesso materializa owner_user_id a partir de intended_owner → QR intacto).
 // Roda contra o Supabase remoto do .env.local. Nao usa Jordan nem participante real.
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -433,7 +433,7 @@ test('ciclo ownership E2E: Pessoa sem Auth, primeiro acesso materializa owner e 
     assert.equal(afterClaim.token, qrBefore, 'QR/token mudou apos o primeiro acesso');
     assert.equal(afterClaim.issued_at, issuedAt);
     assert.equal(afterClaim.status, 'active');
-    assert.equal(afterClaim.owner_user_id, null, 'ativacao de conta nao pode preencher owner_user_id');
+    assert.equal(afterClaim.owner_user_id, authUserId, 'primeiro acesso materializa owner a partir do intended');
     assert.equal(afterClaim.intended_owner_contact_id, contactId);
     const { count: ticketsAfterClaim } = await service.from('tickets').select('id', { count: 'exact', head: true }).eq('order_item_id', orderItemId);
     assert.equal(ticketsAfterClaim, 1, 'houve reemissao: mais de um ticket no mesmo item');
@@ -448,10 +448,14 @@ test('ciclo ownership E2E: Pessoa sem Auth, primeiro acesso materializa owner e 
       service.from('ticket_owner_history').select('id,operation,previous_owner_user_id,new_owner_user_id,ticket_id').eq('ticket_id', ticketId),
       'owner history',
     );
-    assert.equal(history.filter((row) => row.operation === 'owner_assigned').length, 0, 'claim nao pode gravar owner_assigned');
+    assert.equal(history.filter((row) => row.operation === 'owner_assigned').length, 1, 'materializacao inicial grava owner_assigned');
+    assert.equal(history.filter((row) => row.operation === 'owner_transferred').length, 0, 'nao e transferencia');
+    const assigned = history.find((row) => row.operation === 'owner_assigned');
+    assert.equal(assigned.previous_owner_user_id, null);
+    assert.equal(assigned.new_owner_user_id, authUserId);
 
     const mine = await portalTickets(guest.client, authUserId);
-    assert.equal(mine.some((row) => row.id === ticketId), false, 'ingresso sem owner nao deve aparecer como propriedade da conta');
+    assert.equal(mine.some((row) => row.id === ticketId), true, 'depois da materializacao o ingresso aparece na Minha Conta');
 
     const keep = process.env.OWNERSHIP_E2E_KEEP === '1';
     if (!keep) {
@@ -467,7 +471,7 @@ test('ciclo ownership E2E: Pessoa sem Auth, primeiro acesso materializa owner e 
       const afterCancel = await ticketSnapshot(service, ticketId);
       assert.equal(afterCancel.status, 'cancelled');
       assert.equal(afterCancel.token, qrBefore, 'cancelamento nao pode rotacionar o QR');
-      assert.equal(afterCancel.owner_user_id, null);
+      assert.equal(afterCancel.owner_user_id, authUserId, 'cancelamento preserva owner materializado');
       const historyAfter = await must(
         service.from('ticket_owner_history').select('id').eq('ticket_id', ticketId),
         'history after cancel',

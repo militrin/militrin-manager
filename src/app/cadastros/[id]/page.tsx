@@ -5,7 +5,10 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { CopyableId } from "@/components/CopyableId";
 import { hasPermission, requireAnyPermission } from "@/lib/admin/permissions";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
-import { contactTicketRoleLabel, groupContactTickets, rolesForContactTicket, ticketAwaitsFirstAccess } from "@/lib/registrations/contact-tickets";
+import { resolveOperatorNames } from "@/lib/admin/operator-names";
+import { isUuidLike } from "@/lib/admin/operator-display";
+import { TicketIdentitySummary } from "@/components/tickets/TicketIdentitySummary";
+import { buildTicketIdentityView, contactIdForTicket, contactTicketRoleLabel, groupContactTickets, rolesForContactTicket } from "@/lib/registrations/contact-tickets";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
@@ -137,40 +140,92 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     ? { status: String(latestInvite.status), expiresAt: latestInvite.expires_at ? String(latestInvite.expires_at) : null, authLinkExpiresAt: latestInvite.auth_link_expires_at ? String(latestInvite.auth_link_expires_at) : null }
     : null;
 
-  const tickets = (ticketRows ?? []).flatMap((row) => {
+  const relatedTicketRows = (ticketRows ?? []).flatMap((row) => {
     const orderItem = relation(row.order_items);
     const participant = relation(row.participants);
     const event = relation(row.events);
     const link = {
-      ticketId: String(row.id), orderItemId: String(row.order_item_id), eventId: String(row.event_id), eventName: String(event?.name ?? "Evento"),
+      ticketId: String(row.id),
+      eventId: String(row.event_id),
+      eventName: String(event?.name ?? "Evento"),
       ownerUserId: row.owner_user_id ? String(row.owner_user_id) : null,
       intendedOwnerContactId: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,
       orderItemContactId: orderItem?.registration_contact_id ? String(orderItem.registration_contact_id) : null,
       participantContactId: participant?.registration_contact_id ? String(participant.registration_contact_id) : null,
     };
-    const roles = rolesForContactTicket(link,id,linkedAccountIds);
-    if (roles.length===0) return [];
+    const roles = rolesForContactTicket(link, id, linkedAccountIds);
+    if (roles.length === 0) return [];
+    return [{ row, orderItem, participant, event, link, roles }];
+  });
+  const extraContactIds = Array.from(new Set(relatedTicketRows.flatMap(({ link }) => (
+    [contactIdForTicket(link), link.intendedOwnerContactId].filter((value): value is string => Boolean(value) && value !== id)
+  ))));
+  const ownerUserIds = Array.from(new Set(relatedTicketRows.flatMap(({ link }) => (link.ownerUserId ? [link.ownerUserId] : []))));
+  const [{ data: extraContacts, error: extraContactsError }, ownerNames] = await Promise.all([
+    extraContactIds.length
+      ? supabase.from("registration_contacts").select("id,full_name,user_id").eq("organization_id", organization.id).in("id", extraContactIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; full_name?: string | null; user_id?: string | null }>, error: null }),
+    ownerUserIds.length ? resolveOperatorNames(ownerUserIds) : Promise.resolve(new Map<string, string>()),
+  ]);
+  if (extraContactsError) throw extraContactsError;
+  const extraContactsById = new Map((extraContacts ?? []).map((row) => [String(row.id), row]));
+  const unlinkedHolderIds = Array.from(new Set(relatedTicketRows.flatMap(({ link }) => {
+    const holderId = contactIdForTicket(link);
+    if (!holderId || holderId === id) return [];
+    return extraContactsById.get(holderId)?.user_id ? [] : [holderId];
+  })));
+  const { data: extraInvites, error: extraInvitesError } = unlinkedHolderIds.length
+    ? await supabase.from("participant_account_invites").select("registration_contact_id,status,created_at").in("registration_contact_id", unlinkedHolderIds).order("created_at", { ascending: false })
+    : { data: [] as Array<{ registration_contact_id?: string | null; status?: string | null }>, error: null };
+  if (extraInvitesError) throw extraInvitesError;
+  const extraInviteStatusByContact = new Map<string, string>();
+  for (const invite of extraInvites ?? []) {
+    const contactId = invite.registration_contact_id ? String(invite.registration_contact_id) : "";
+    if (!contactId || extraInviteStatusByContact.has(contactId)) continue;
+    extraInviteStatusByContact.set(contactId, String(invite.status ?? ""));
+  }
+  const tickets = relatedTicketRows.map(({ row, orderItem, participant, event, link, roles }) => {
     const order = relation(row.orders);
     const category = relation(orderItem?.ticket_categories);
     const batch = relation(orderItem?.registration_batches);
     const kitItems = (Array.isArray(row.participant_kit_items) ? row.participant_kit_items : []) as Array<{ status?: string | null }>;
-    return [{
+    const holderId = contactIdForTicket(link);
+    const holderIsThisContact = holderId === id;
+    const extraHolder = holderId && !holderIsThisContact ? extraContactsById.get(holderId) : null;
+    const extraIntended = link.intendedOwnerContactId && link.intendedOwnerContactId !== id ? extraContactsById.get(link.intendedOwnerContactId) : null;
+    const holderContactUserId = holderIsThisContact
+      ? contactUserId
+      : extraHolder?.user_id ? String(extraHolder.user_id) : null;
+    const resolvedOwnerName = link.ownerUserId ? String(ownerNames.get(link.ownerUserId) ?? "").trim() : "";
+    return {
       ticketId: String(row.id), orderItemId: String(row.order_item_id), eventId: String(row.event_id), eventName: String(event?.name ?? "Evento"),
       participantContactId: participant?.registration_contact_id ? String(participant.registration_contact_id) : null,
       orderItemContactId: orderItem?.registration_contact_id ? String(orderItem.registration_contact_id) : null,
       ownerUserId: link.ownerUserId, intendedOwnerContactId: link.intendedOwnerContactId,
-      awaitingFirstAccess: ticketAwaitsFirstAccess(link, id),
       roles, roleLabel: contactTicketRoleLabel(roles),
       status: String(row.status ?? "pending"), issuedAt: row.issued_at ? String(row.issued_at) : null,
       categoryName: String(category?.name ?? "Ingresso único"), batchName: String(batch?.name ?? "Sem lote"),
       holderName: canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, "Titular não definido"),
       holderUnassigned: !hasCanonicalHolderName(orderItem?.holder_full_name),
+      identity: buildTicketIdentityView({
+        holderName: canonicalHolderName(orderItem?.holder_full_name, participant?.full_name, "Titular não definido"),
+        holderContactUserId,
+        holderAccountState: holderIsThisContact ? accountBlock.state : (holderContactUserId ? "active" : "none"),
+        holderInviteStatus: holderIsThisContact ? inviteRecord?.status : (holderId ? extraInviteStatusByContact.get(holderId) ?? null : null),
+        ownerUserId: link.ownerUserId,
+        ownerName: resolvedOwnerName && !isUuidLike(resolvedOwnerName) ? resolvedOwnerName : (link.ownerUserId ? "Conta vinculada" : null),
+        intendedOwnerContactId: link.intendedOwnerContactId,
+        intendedOwnerName: link.intendedOwnerContactId === id
+          ? String(contact.full_name)
+          : extraIntended?.full_name ? String(extraIntended.full_name) : null,
+        ticketStatus: String(row.status ?? ""),
+      }),
       shirt: [orderItem?.shirt_type, orderItem?.shirt_size].filter(Boolean).join(" · "),
       orderNumber: order ? publicOrderCode(order.display_number, order.order_number) : null,
       shortCode: ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number).replace(/^#/, ""),
       checkinDone: Boolean(row.used_at) || String(row.status) === "used",
       kitStatus: kitItems.length === 0 ? null : kitItems.every((item) => item.status === "delivered") ? "Entregue" : "Pendente",
-    }];
+    };
   });
   const groups = groupContactTickets(tickets);
   const imported = (linkedParticipants ?? []).some((row) => (Array.isArray(row.participation_history) ? row.participation_history : []).some((entry) => entry.source === "import"));
@@ -246,7 +301,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Ingressos</h2><p className="text-sm text-slate-400">{tickets.length} ingresso(s) em {groups.length} evento(s)</p></div></div>
       {importedRights.length ? <div className="mt-5 grid gap-3">{importedRights.map((right) => { const order=relation(right.orders); const event=relation(right.events); const paymentId=String(order?.payment_id ?? ""); const unknownPrice=String(order?.price_origin ?? "")==="legacy_unknown"; const awaitingPayment=!unknownPrice && paymentStatusById.get(paymentId)==="pending"; const blockerMessages=formatIssuanceBlockerMessages(importedIssuesByItem.get(String(right.id)) ?? []); return <div key={String(right.id)} className={awaitingPayment ? "rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4" : "rounded-2xl border border-slate-700 bg-slate-950/50 p-4"}>{awaitingPayment ? <><p className="font-semibold text-amber-100">Ingresso importado aguardando pagamento</p><p className="mt-1 text-sm text-amber-100/80">{String(event?.name ?? "Evento")} · o ingresso não foi emitido porque o pagamento importado está pendente.</p></> : <><p className="font-semibold text-slate-100">Compra importada preservada</p><p className="mt-1 text-sm text-slate-300">{formatImportedPurchaseWithoutTicketCopy({ eventName: String(event?.name ?? "Evento"), blockerMessages })}</p></>}<div className="mt-3 flex flex-wrap gap-3"><Link href={`/inscricoes/pedido/${String(order?.id ?? right.order_id)}`} className="rounded-xl border border-amber-400/40 px-3 py-2 text-sm text-amber-100">Abrir pedido</Link></div>{awaitingPayment && canConfirmPayment && paymentId ? <ImportedPaymentConfirmation paymentId={paymentId}/> : awaitingPayment ? <p className="mt-3 text-xs text-slate-300">Peça a um administrador com permissão financeira para confirmar o pagamento.</p> : null}</div>; })}</div> : null}
-      {groups.length === 0 && importedRights.length === 0 ? <p className="mt-6 rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Esta pessoa ainda não possui ingressos nem direitos importados pendentes.</p> : <div className="mt-5 grid gap-5 xl:grid-cols-2">{groups.map((group) => <article key={group.eventId} className="rounded-3xl border border-slate-700/80 bg-slate-950/50 p-4 shadow-lg shadow-black/10"><div className="mb-3 border-b border-slate-800 pb-3"><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Evento</p><h3 className="mt-1 text-lg font-semibold text-emerald-200">{group.eventName}</h3><p className="text-xs text-slate-400">{group.tickets.length} ingresso(s)</p></div><div className="grid gap-2">{group.tickets.map((ticket) => <div key={ticket.ticketId} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{ticket.categoryName}</p><p className="mt-0.5 font-mono text-xs text-slate-500">#{ticket.shortCode}</p></div><span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs">{ticket.status}</span></div><p className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-300">{ticket.roleLabel}</p><p className="mt-2 text-sm text-slate-300">Titular: {ticket.holderName}</p>{ticket.awaitingFirstAccess ? <><p className="mt-1 text-sm text-slate-300">Proprietário pretendido: {String(contact.full_name)}</p><p className="text-xs text-amber-200">Conta: Aguardando primeiro acesso</p></> : null}{ticket.holderUnassigned ? <p className="mt-1 text-xs text-slate-400">{additionalTicketHolderUnassignedCopy()}</p> : null}<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">{ticket.kitStatus ? <span>Kit: {ticket.kitStatus}</span> : null}<span>Check-in: {ticket.checkinDone ? "Realizado" : "Pendente"}</span>{ticket.shirt ? <span>{ticket.shirt}</span> : null}</div><div className="mt-3 flex items-center gap-4"><Link href={`/ingressos/${ticket.ticketId}?from=cadastro&contactId=${id}`} className="text-xs font-semibold text-emerald-300">Ver ingresso</Link>{canCancelTickets ? <OwnerCancelTicketButton contactId={id} ticketId={ticket.ticketId} alreadyCancelled={ticket.status === "cancelled"} details={[`${ticket.categoryName}`,`#${ticket.shortCode}`,`Status: ${ticket.status}`,`Check-in: ${ticket.checkinDone ? "Realizado" : "Pendente"}`,`Kit: ${ticket.kitStatus ?? "Sem itens"}`]}/> : null}</div></div>)}</div></article>)}</div>}
+      {groups.length === 0 && importedRights.length === 0 ? <p className="mt-6 rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Esta pessoa ainda não possui ingressos nem direitos importados pendentes.</p> : <div className="mt-5 grid gap-5 xl:grid-cols-2">{groups.map((group) => <article key={group.eventId} className="rounded-3xl border border-slate-700/80 bg-slate-950/50 p-4 shadow-lg shadow-black/10"><div className="mb-3 border-b border-slate-800 pb-3"><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Evento</p><h3 className="mt-1 text-lg font-semibold text-emerald-200">{group.eventName}</h3><p className="text-xs text-slate-400">{group.tickets.length} ingresso(s)</p></div><div className="grid gap-2">{group.tickets.map((ticket) => <div key={ticket.ticketId} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{ticket.categoryName}</p><p className="mt-0.5 font-mono text-xs text-slate-500">#{ticket.shortCode}</p></div><span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs">{ticket.status}</span></div><p className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-300">{ticket.roleLabel}</p><TicketIdentitySummary identity={ticket.identity} />{ticket.holderUnassigned ? <p className="mt-1 text-xs text-slate-400">{additionalTicketHolderUnassignedCopy()}</p> : null}<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">{ticket.kitStatus ? <span>Kit: {ticket.kitStatus}</span> : null}<span>Check-in: {ticket.checkinDone ? "Realizado" : "Pendente"}</span>{ticket.shirt ? <span>{ticket.shirt}</span> : null}</div><div className="mt-3 flex items-center gap-4"><Link href={`/ingressos/${ticket.ticketId}?from=cadastro&contactId=${id}`} className="text-xs font-semibold text-emerald-300">Ver ingresso</Link>{canCancelTickets ? <OwnerCancelTicketButton contactId={id} ticketId={ticket.ticketId} alreadyCancelled={ticket.status === "cancelled"} details={[`${ticket.categoryName}`,`#${ticket.shortCode}`,`Status: ${ticket.status}`,`Check-in: ${ticket.checkinDone ? "Realizado" : "Pendente"}`,`Kit: ${ticket.kitStatus ?? "Sem itens"}`]}/> : null}</div></div>)}</div></article>)}</div>}
     </section>
   </div></div></main>;
 }

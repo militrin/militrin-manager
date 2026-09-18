@@ -15,6 +15,7 @@ import { ChangeTicketAccountOwnerCard } from "./change-ticket-account-owner";
 import { canonicalHolderName } from "@/lib/tickets/holder-name";
 import { canonicalTicketDisplayCode } from "@/lib/display-reference";
 import { CopyableId } from "@/components/CopyableId";
+import { buildTicketIdentityView } from "@/lib/registrations/contact-tickets";
 
 type Search = { from?: string; to?: string; type?: string; scope?: "ticket" | "account"; eventId?: string; page?: string; contactId?: string; returnTo?: string };
 
@@ -52,14 +53,41 @@ export default async function AdministrativeTicketDetailPage({ params, searchPar
   const timeline = await getAdministrativeTicketTimeline(supabase, resolved.ticketId, organization.id, { from:filters.from,to:filters.to,type:filters.type,scope:filters.scope,eventId:filters.eventId,page:Number(filters.page??1),pageSize:25,canViewTechnicalAudit });
   const canManageAccountOwner = await hasPermission("participants.edit_basic") || await hasPermission("tickets.transfer_ownership");
   const holderName = canonicalHolderName(orderItem?.holder_full_name, participant?.full_name);
-  const intendedOwner = data.intended_owner_contact_id
-    ? await supabase.from("registration_contacts").select("full_name,user_id").eq("id", data.intended_owner_contact_id).maybeSingle()
-    : null;
-  const awaitingFirstAccess = !data.owner_user_id && Boolean(intendedOwner?.data?.full_name);
-  const ownerName = data.owner_user_id
-    ? await resolveLinkedAccountLabel(String(data.owner_user_id))
-    : awaitingFirstAccess
-      ? String(intendedOwner?.data?.full_name)
-      : "Conta proprietária não definida";
-  return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6"><TopBar title="Ficha administrativa do ingresso" subtitle={ticketLabel} breadcrumbs={breadcrumbs} backHref={listHref} fallbackHref="/ingressos"/>{ticketCode ? <CopyableId label="Código do ingresso" value={ticketCode} /> : null}<ChangeTicketAccountOwnerCard ticketId={resolved.ticketId} ticketCode={ticketCode} eventName={String(eventName ?? "Evento")} holderName={holderName} currentOwnerName={ownerName} awaitingFirstAccess={awaitingFirstAccess} intendedOwnerName={awaitingFirstAccess ? String(intendedOwner?.data?.full_name) : null} canManage={canManageAccountOwner}/><TicketDetailPage params={Promise.resolve(resolved)} showTimeline={false} adminEditHref={editHref}/><TicketCancellationRegularization ticketId={resolved.ticketId} status={String(data.status ?? "")} replacementRequired={data.cancellation_replacement_required as boolean | null} reasonText={data.cancellation_reason_text as string | null} canRegularize={canRegularizeCancellation}/><AdministrativeTicketTimeline result={timeline} filters={{...filters,from:filters.from}}/></div></div></main>;
+  const holderContactId = orderItem?.registration_contact_id
+    ? String(orderItem.registration_contact_id)
+    : participant?.registration_contact_id
+      ? String(participant.registration_contact_id)
+      : null;
+  const intendedOwnerContactId = data.intended_owner_contact_id ? String(data.intended_owner_contact_id) : null;
+  const identityContactIds = Array.from(new Set([holderContactId, intendedOwnerContactId].filter((value): value is string => Boolean(value))));
+  const { data: identityContacts, error: identityContactsError } = identityContactIds.length
+    ? await supabase.from("registration_contacts").select("id,full_name,user_id").eq("organization_id", organization.id).in("id", identityContactIds)
+    : { data: [] as Array<{ id: string; full_name?: string | null; user_id?: string | null }>, error: null };
+  if (identityContactsError) throw identityContactsError;
+  const identityContactsById = new Map((identityContacts ?? []).map((row) => [String(row.id), row]));
+  const holderContact = holderContactId ? identityContactsById.get(holderContactId) : null;
+  const intendedContact = intendedOwnerContactId ? identityContactsById.get(intendedOwnerContactId) : null;
+  const holderContactUserId = holderContact?.user_id ? String(holderContact.user_id) : null;
+  let holderInviteStatus: string | null = null;
+  if (!holderContactUserId && holderContactId) {
+    const { data: holderInvite, error: holderInviteError } = await supabase.from("participant_account_invites")
+      .select("status")
+      .eq("registration_contact_id", holderContactId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (holderInviteError) throw holderInviteError;
+    holderInviteStatus = holderInvite?.status ? String(holderInvite.status) : null;
+  }
+  const identity = buildTicketIdentityView({
+    holderName,
+    holderContactUserId,
+    holderInviteStatus,
+    ownerUserId: data.owner_user_id ? String(data.owner_user_id) : null,
+    ownerName: data.owner_user_id ? await resolveLinkedAccountLabel(String(data.owner_user_id)) : null,
+    intendedOwnerContactId,
+    intendedOwnerName: intendedContact?.full_name ? String(intendedContact.full_name) : null,
+    ticketStatus: String(data.status ?? ""),
+  });
+  return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6"><TopBar title="Ficha administrativa do ingresso" subtitle={ticketLabel} breadcrumbs={breadcrumbs} backHref={listHref} fallbackHref="/ingressos"/>{ticketCode ? <CopyableId label="Código do ingresso" value={ticketCode} /> : null}<ChangeTicketAccountOwnerCard ticketId={resolved.ticketId} ticketCode={ticketCode} eventName={String(eventName ?? "Evento")} identity={identity} canManage={canManageAccountOwner}/><TicketDetailPage params={Promise.resolve(resolved)} showTimeline={false} adminEditHref={editHref}/><TicketCancellationRegularization ticketId={resolved.ticketId} status={String(data.status ?? "")} replacementRequired={data.cancellation_replacement_required as boolean | null} reasonText={data.cancellation_reason_text as string | null} canRegularize={canRegularizeCancellation}/><AdministrativeTicketTimeline result={timeline} filters={{...filters,from:filters.from}}/></div></div></main>;
 }
