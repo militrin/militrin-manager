@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { turboGenderLabel } from '@/lib/operations/turbo-gender-label';
+import { turboGenderFromTicket } from '@/lib/operations/turbo-gender-label';
 import type { OperationEvent, OperationTicketDetails, OperationTicketRow, PickupCapabilities, TurboSearchHit } from '../types';
 import type { OperationalProductItem } from '@/lib/operations/operational-product-item';
 import { SOURCE_LABEL } from '@/lib/operations/operational-product-item';
@@ -23,6 +23,7 @@ import { QrScanner } from './QrScanner';
 import { ReasonDialog } from './ReasonDialog';
 
 const AUTO_RETURN_MS = 1600;
+const BACK_TO_READER_LABEL = '← VOLTAR AO LEITOR';
 
 function isBrowserOffline() {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -209,6 +210,34 @@ function BigButton({
   );
 }
 
+function BackToReaderButton({
+  onClick,
+  disabled,
+  prominent = false,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  prominent?: boolean;
+}) {
+  if (prominent) {
+    return (
+      <BigButton tone="neutral" onClick={onClick} disabled={disabled}>
+        {BACK_TO_READER_LABEL}
+      </BigButton>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="min-h-14 w-full rounded-3xl border-2 border-slate-400 bg-slate-900 px-5 text-lg font-black text-slate-100 disabled:cursor-not-allowed disabled:opacity-55"
+    >
+      {BACK_TO_READER_LABEL}
+    </button>
+  );
+}
+
 function StatusBanner({
   tone,
   label,
@@ -251,6 +280,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   const [canDeliverStoreItems, setCanDeliverStoreItems] = useState(true);
   const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin' | 'canDeliverKit' | 'canCheckin' | 'canCombined'> | null>(null);
   const [offline, setOffline] = useState(false);
+  const [scannerEpoch, setScannerEpoch] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -287,13 +317,6 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     };
   }, []);
 
-  const scheduleReturn = useCallback(() => {
-    if (returnTimerRef.current) window.clearTimeout(returnTimerRef.current);
-    returnTimerRef.current = window.setTimeout(() => {
-      dispatch({ type: 'RESET' });
-    }, AUTO_RETURN_MS);
-  }, []);
-
   const beginBusy = useCallback((label: string) => {
     processingRef.current = true;
     setBusyLabel(label);
@@ -311,8 +334,16 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
     }
     processingRef.current = false;
     setBusyLabel(null);
+    setScannerEpoch((n) => n + 1);
     dispatch({ type: 'RESET' });
   }, []);
+
+  const scheduleReturn = useCallback(() => {
+    if (returnTimerRef.current) window.clearTimeout(returnTimerRef.current);
+    returnTimerRef.current = window.setTimeout(() => {
+      backToScanner();
+    }, AUTO_RETURN_MS);
+  }, [backToScanner]);
 
   const otherEventMessage = useCallback((name: string | null | undefined) => {
     return name ? `Este QR pertence a outro evento. ${name}.` : 'Este QR pertence a outro evento.';
@@ -531,7 +562,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
 
       {screen.kind === 'scanning_initial' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <QrScanner title="Aponte para o QR" onRead={handleInitialScan} square hideManual />
+          <QrScanner key={scannerEpoch} title="Aponte para o QR" onRead={handleInitialScan} square hideManual />
           <button
             type="button"
             onClick={() => dispatch({ type: 'OPEN_SEARCH' })}
@@ -573,9 +604,10 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
           <StatusBanner tone="attention" label={busyLabel === 'VINCULANDO PULSEIRA...' ? 'VINCULANDO PULSEIRA...' : 'Pulseira necessária'} />
           <p className="text-center text-lg font-black leading-tight">{displayName(screen.participant)}</p>
           <p className="text-center text-sm text-slate-400">{shirtLabel(screen.participant)}</p>
-          <p className="text-center text-lg font-black leading-tight">{turboGenderLabel(screen.participant.gender)}</p>
+          <p className="text-center text-lg font-black leading-tight">{turboGenderFromTicket(screen.participant)}</p>
           <div className={busyLabel ? 'pointer-events-none opacity-60' : undefined}>
             <QrScanner
+              key={`wristband-${scannerEpoch}`}
               title="Escaneie a pulseira"
               onRead={(value) => handleWristbandScan(value, screen.participant)}
               onCancel={busyLabel ? undefined : backToScanner}
@@ -591,6 +623,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
               {busyLabel}
             </p>
           ) : null}
+          {busyLabel ? null : <BackToReaderButton onClick={backToScanner} />}
         </div>
       ) : null}
 
@@ -648,12 +681,10 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
                 <BigButton onClick={() => dispatch({ type: 'RETRY_WRISTBAND', participant: screen.participant as OperationTicketDetails })}>
                   Tentar outra pulseira
                 </BigButton>
-                <BigButton tone="neutral" onClick={backToScanner}>
-                  VOLTAR AO SCANNER
-                </BigButton>
+                <BackToReaderButton onClick={backToScanner} />
               </>
             ) : (
-              <BigButton onClick={backToScanner}>VOLTAR AO SCANNER</BigButton>
+              <BackToReaderButton prominent onClick={backToScanner} />
             )}
             {screen.ticketId ? (
               <details className="rounded-2xl border border-slate-800 px-3 py-2">
@@ -762,7 +793,7 @@ function TicketReview({
         ? 'ENTREGAR + CHECK-IN'
         : remainingAction === 'checkin'
           ? 'CHECK-IN'
-          : 'VOLTAR AO SCANNER';
+          : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -772,7 +803,7 @@ function TicketReview({
         <p className="text-base text-slate-400">{participant.category_name || 'Categoria não informada'}</p>
 
         <Fact label="Camiseta" value={shirtLabel(participant)} />
-        <Fact label="Gênero" value={turboGenderLabel(participant.gender)} />
+        <Fact label="Gênero" value={turboGenderFromTicket(participant)} />
         <Fact
           label="Kit"
           value={pendingKit ? 'Kit pendente' : participant.event_kit_enabled || participant.kit_items.length > 0 ? 'Kit entregue' : 'Sem kit'}
@@ -826,21 +857,14 @@ function TicketReview({
             {busy ? busyLabel ?? 'PROCESSANDO...' : primaryLabel}
           </BigButton>
         ) : remainingAction && !canCompleteTicket ? (
-          <>
-            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-              Ingresso identificado. Este perfil não entrega kit nem faz check-in. Use a Central ou um operador com permissão.
-            </div>
-            <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
-          </>
-        ) : (
-          <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
-        )}
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            Ingresso identificado. Este perfil não entrega kit nem faz check-in. Use a Central ou um operador com permissão.
+          </div>
+        ) : null}
+        <BackToReaderButton onClick={onCancel} disabled={busy} prominent={!remainingAction || !canCompleteTicket} />
         <details className="rounded-2xl border border-slate-800 px-3 py-2">
           <summary className="cursor-pointer text-sm font-semibold text-slate-500">Mais ações</summary>
           <div className="mt-2 flex flex-col gap-2">
-            <button type="button" onClick={onCancel} disabled={busy} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold disabled:opacity-40">
-              Cancelar leitura
-            </button>
             <button type="button" onClick={onOpenAdmin} disabled={busy} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold disabled:opacity-40">
               Abrir operação completa
             </button>
@@ -1015,9 +1039,9 @@ function OperationSearch({
           </div>
         ) : null}
       </div>
-      <button type="button" onClick={onCancel} className="mt-3 min-h-12 w-full rounded-2xl border border-slate-700 font-semibold">
-        Voltar ao scanner
-      </button>
+      <div className="mt-3">
+        <BackToReaderButton prominent onClick={onCancel} />
+      </div>
     </div>
   );
 }
@@ -1051,7 +1075,7 @@ function ProductChoices({
         ))}
       </div>
       <div className="mt-auto pt-4">
-        <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
+        <BackToReaderButton prominent onClick={onCancel} />
       </div>
     </div>
   );
@@ -1093,11 +1117,14 @@ function ProductReview({
       ) : null}
       <div className="mt-auto flex flex-col gap-2 pt-4">
         {canDeliver ? (
-          <BigButton onClick={onConfirm} busy={busy} disabled={busy}>
-            {busy ? busyLabel ?? 'PROCESSANDO...' : 'ENTREGAR ITEM'}
-          </BigButton>
+          <>
+            <BigButton onClick={onConfirm} busy={busy} disabled={busy}>
+              {busy ? busyLabel ?? 'PROCESSANDO...' : 'ENTREGAR ITEM'}
+            </BigButton>
+            <BackToReaderButton onClick={onCancel} disabled={busy} />
+          </>
         ) : (
-          <BigButton onClick={onCancel}>VOLTAR AO SCANNER</BigButton>
+          <BackToReaderButton prominent onClick={onCancel} />
         )}
       </div>
     </div>
@@ -1129,7 +1156,7 @@ function ProductAlreadyDelivered({
         ) : null}
       </div>
       <div className="mt-auto flex flex-col gap-2 pt-4">
-        <BigButton onClick={onBack}>VOLTAR AO SCANNER</BigButton>
+        <BackToReaderButton prominent onClick={onBack} />
         {canUndoDelivery ? (
           <details className="rounded-2xl border border-slate-800 px-3 py-2">
             <summary className="cursor-pointer text-sm font-semibold text-slate-500">Mais ações</summary>

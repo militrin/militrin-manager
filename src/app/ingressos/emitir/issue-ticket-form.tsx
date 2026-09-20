@@ -25,7 +25,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [reason, setReason] = useState<IssueTicketReason>("courtesy");
   const [quantity, setQuantity] = useState("1");
-  const [pricingGender, setPricingGender] = useState("Masculino");
+  const [pricingGender, setPricingGender] = useState("male");
   const [shirtType, setShirtType] = useState("");
   const [shirtSize, setShirtSize] = useState("");
   const [shirtOptions, setShirtOptions] = useState<ShirtOption[]>([]);
@@ -234,8 +234,8 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
         <label className="space-y-2">
           <span>Regra de preço</span>
           <select value={pricingGender} onChange={(e) => setPricingGender(e.target.value)} className={inputClass}>
-            <option>Masculino</option>
-            <option>Feminino</option>
+            <option value="male">Masculino</option>
+            <option value="female">Feminino</option>
           </select>
         </label>
 

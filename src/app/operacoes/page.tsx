@@ -248,6 +248,7 @@ function detailToListItem(detail: PickupDetails): PickupListItem {
     phone: detail.phone,
     city: detail.city,
     gender: detail.gender,
+    pricing_gender: detail.pricing_gender,
     birth_date: detail.birth_date,
     payment_status: detail.payment_status,
     payment_method: detail.payment_method,

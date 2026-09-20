@@ -60,14 +60,15 @@ test("falta de conexao e QR invalido usam banner de bloqueio, nao so texto peque
   assert.match(turbo, /tone === 'attention'/);
 });
 
-test("estados bloqueados usam VOLTAR AO SCANNER como acao principal, sucesso usa LER PROXIMO QR", () => {
+test("estados bloqueados usam VOLTAR AO LEITOR como acao principal, sucesso usa LER PROXIMO QR", () => {
   const review = turbo.slice(turbo.indexOf("function TicketReview("), turbo.indexOf("function OperationSearch("));
-  assert.match(review, /VOLTAR AO SCANNER/);
+  assert.match(review, /BackToReaderButton/);
+  assert.match(turbo, /← VOLTAR AO LEITOR/);
   assert.match(review, /remainingAction && canCompleteTicket \?/);
   assert.match(review, /onCancel/);
   assert.doesNotMatch(review, /disabled=\{!canProceed\}/);
   const error = turbo.slice(turbo.indexOf("{screen.kind === 'error'"), turbo.indexOf("function SuccessStation("));
-  assert.match(error, /VOLTAR AO SCANNER/);
+  assert.match(error, /BackToReaderButton/);
   assert.doesNotMatch(error, /LER PRÓXIMO QR/);
   const success = turbo.slice(turbo.indexOf("function SuccessStation("), turbo.indexOf("function TicketReview("));
   assert.match(success, /LER PRÓXIMO QR/);

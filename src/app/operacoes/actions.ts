@@ -7,6 +7,7 @@ import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
 import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
 import { resolveOperationalPaymentState } from "@/lib/operations/payment-operational-state";
 import { resolveTicketOperationGate } from "@/lib/operations/ticket-operation-gate";
+import { resolveTurboOperationalGender } from "@/lib/operations/turbo-gender-label";
 import { canonicalHolderName } from "@/lib/tickets/holder-name";
 import type {
   OperationGroup,
@@ -434,6 +435,8 @@ function mapTicketRow(params: {
     : orderItemParticipant?.gender
       ? String(orderItemParticipant.gender)
       : null;
+  const pricingGenderRaw = String(orderItemRelation?.pricing_gender ?? "").trim();
+  const pricing_gender = pricingGenderRaw || null;
   const birthDate = participantRelation?.birth_date
     ? String(participantRelation.birth_date)
     : orderItemParticipant?.birth_date
@@ -495,6 +498,7 @@ function mapTicketRow(params: {
     phone,
     city,
     gender,
+    pricing_gender,
     birth_date: birthDate,
     registration_status: registrationStatus,
     event_id: String(row.event_id ?? ""),
@@ -854,6 +858,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
           shirt_size,
           ticket_category_id,
           item_position,
+          pricing_gender,
           ticket_categories(id,name)
         ),
         orders(
@@ -1137,6 +1142,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
       phone: String(row.phone ?? ""),
       city: String(row.city ?? ""),
       gender: row.gender ? String(row.gender) : null,
+      pricing_gender: null,
       birth_date: row.birth_date ? String(row.birth_date) : null,
       registration_status: String(row.registration_status ?? "pending"),
       event_id: eventId,
@@ -1272,6 +1278,7 @@ async function buildTicketDetails(
           shirt_size,
           ticket_category_id,
           item_position,
+          pricing_gender,
           participants(
             id,
             full_name,
@@ -1715,11 +1722,24 @@ async function buildTicketDetails(
     return (Array.isArray(relation) ? relation[0] : relation) ?? null;
   })();
   const registrationContactPin = registrationContact?.public_pin ? String(registrationContact.public_pin) : null;
-  const storedGender = String(baseRow.gender ?? "").trim() || String(registrationContact?.gender ?? "").trim() || null;
+  const participantGender = String(baseRow.gender ?? "").trim() || null;
+  const contactGender = String(registrationContact?.gender ?? "").trim() || null;
+  const storedGender = participantGender || contactGender || null;
+  const detailOrder = getRelation(ticketRow.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
+  const turboGender = resolveTurboOperationalGender({
+    pricing_gender: baseRow.pricing_gender,
+    participant_gender: participantGender,
+    contact_gender: contactGender,
+    import_batch_id: baseRow.import_batch_id,
+    order_buyer_type: detailOrder?.buyer_type ? String(detailOrder.buyer_type) : null,
+  });
 
   const participantDetails: OperationTicketDetails = {
     ...baseRow,
     gender: storedGender,
+    pricing_gender: baseRow.pricing_gender,
+    contact_gender: contactGender,
+    turbo_gender: turboGender,
     event_kit_enabled: eventHasKit,
     last_checkin_at: latestCheckin?.created_at ? String(latestCheckin.created_at) : baseRow.ticket_used_at,
     last_checkin_actor: lastCheckinActor,
@@ -1897,7 +1917,7 @@ export async function getOperationParticipantDetailsAction(participantId: string
   const details: OperationParticipantDetails = {
     kind: "participant_without_ticket", id: participantId, ticket_id: null, ticket_token: null, ticket_status: null, ticket_used_at: null, ticket_issued_at: null,
     participant_id: participantId, participant_name: String(row.full_name ?? "Participante"), participant_email: String(row.email ?? ""), full_name: String(row.full_name ?? "Participante"),
-    cpf: String(row.cpf ?? ""), phone: String(row.phone ?? ""), city: String(row.city ?? ""), gender: row.gender ? String(row.gender) : null, birth_date: row.birth_date ? String(row.birth_date) : null,
+    cpf: String(row.cpf ?? ""), phone: String(row.phone ?? ""), city: String(row.city ?? ""), gender: row.gender ? String(row.gender) : null, pricing_gender: null, birth_date: row.birth_date ? String(row.birth_date) : null,
     registration_status: String(row.registration_status ?? "pending"), event_id: String(row.event_id), event_name: String(event?.name ?? "Evento"), category_id: row.ticket_category_id ? String(row.ticket_category_id) : null,
     category_name: String(category?.name ?? "Ingresso único"), order_id: null, order_number: null, ticket_display_code: null, order_created_at: null, buyer_user_id: null, buyer_name: "", buyer_cpf: "", buyer_phone: "", buyer_email: "",
     buyer_type: importBatchIds.length ? "imported_holder" : "account", import_batch_id: importBatchIds[0] ?? null, payment_status: payment.paymentStatus, payment_method: paymentState.methodLabel, payment_kind: paymentState.kind, payment_label: paymentState.label, price_origin: payment.priceOrigin,

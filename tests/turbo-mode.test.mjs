@@ -108,7 +108,7 @@ test("ficha QR identificado inclui Gênero entre Camiseta e Kit", () => {
   const kit = review.indexOf('label="Kit"');
   assert.ok(camiseta !== -1 && genero !== -1 && kit !== -1);
   assert.ok(camiseta < genero && genero < kit);
-  assert.match(review, /turboGenderLabel\(participant\.gender\)/);
+  assert.match(review, /turboGenderFromTicket\(participant\)/);
 });
 
 test("Proximo bloqueia ingresso cancelado, ja concluido, com pendencia de check-in/kit ou camiseta sem estoque fisico", () => {
@@ -120,7 +120,8 @@ test("Proximo bloqueia ingresso cancelado, ja concluido, com pendencia de check-
   const review = slice(turbo, "function TicketReview(", "function ProductReview(");
   assert.match(review, /canProceed = blockers\.length === 0/);
   assert.match(review, /remainingAction && canCompleteTicket \?/);
-  assert.match(review, /VOLTAR AO SCANNER/);
+  assert.match(review, /BackToReaderButton/);
+  assert.match(turbo, /← VOLTAR AO LEITOR/);
   assert.doesNotMatch(review, /disabled=\{!canProceed\}/);
 });
 

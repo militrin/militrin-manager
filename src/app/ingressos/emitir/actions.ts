@@ -6,6 +6,7 @@ import { getCurrentOrganizationContext } from "@/lib/organizations/current-organ
 import { buildShirtInventoryVariants, getShirtTypeOrder } from "@/lib/constants/shirts";
 import { registrationContactHasActiveTicket } from "@/lib/registrations/active-ticket-holder";
 import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
+import { normalizePricingGenderInput } from "@/lib/checkout/pricing";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const pinPattern = /^[A-Z0-9]{10}$/;
@@ -152,6 +153,10 @@ export async function issueTicketAction(input: {
       return { success: false as const, message: "Não foi possível validar a titularidade desta pessoa." };
     }
   }
+  const pricingGender = normalizePricingGenderInput(input.pricingGender);
+  if (!pricingGender) {
+    return { success: false as const, message: "Selecione a regra de preço Masculino ou Feminino." };
+  }
   const shirtType = input.shirtType.trim() || null;
   const shirtSize = input.shirtSize.trim() || null;
   const notes = input.notes.trim() || null;
@@ -161,7 +166,7 @@ export async function issueTicketAction(input: {
     p_ticket_category_id: categoryId,
     p_batch_id: input.batchId,
     p_quantity: quantity,
-    p_pricing_gender: input.pricingGender,
+    p_pricing_gender: pricingGender,
     p_shirt_type: shirtType,
     p_shirt_size: shirtSize,
     p_payment_method: input.reason,

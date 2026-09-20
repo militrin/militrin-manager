@@ -1,5 +1,6 @@
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import type { OperationalPaymentKind } from "@/lib/operations/payment-operational-state";
+import type { TurboOperationalGender } from "@/lib/operations/turbo-gender-label";
 
 /** Shape comum devolvido pelos handlers de acao (page.tsx, via runAction) --
  * usado pelos componentes pra decidir se abrem o modal obrigatorio de
@@ -198,6 +199,7 @@ type OperationEntryBase = {
   phone: string;
   city: string;
   gender: string | null;
+  pricing_gender: string | null;
   birth_date: string | null;
   registration_status: string;
   event_id: string;
@@ -294,6 +296,8 @@ export type OperationTicketDetails = TicketBackedOperationEntry & {
   last_checkin_actor: string | null;
   all_kit_delivered: boolean;
   allow_checkin_during_kit_delivery: boolean;
+  contact_gender: string | null;
+  turbo_gender: TurboOperationalGender;
   issues: Array<{
     id: string;
     field_code: string;

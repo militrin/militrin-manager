@@ -89,7 +89,7 @@ test("7. QR inexistente vira invalido", () => {
   const fn = slice(actions, "export async function resolveTurboScanAction", "export async function searchTurboOperationsAction");
   assert.match(fn, /QR Code não corresponde a nenhum ingresso ou produto\./);
   assert.match(turbo, /title: 'QR não reconhecido'/);
-  assert.match(turbo, /VOLTAR AO SCANNER/);
+  assert.match(turbo, /← VOLTAR AO LEITOR/);
 });
 
 test("8. sem permissao identifica e nao executa", () => {
