@@ -45,7 +45,7 @@ const navigationGroups: Array<{ title: string; items: NavItem[] }> = [
   {
     title: 'Eventos',
     items: [
-      { href: '/minha-conta/comprar', label: 'Eventos', icon: CalendarDays, isCart: false },
+      { href: '/minha-conta/eventos', label: 'Eventos', icon: CalendarDays, isCart: false },
       { href: '/fotos', label: 'Fotos', icon: Images, isCart: false },
     ],
   },
@@ -286,7 +286,7 @@ export function AccountMobileNav({ administrativeLandingPage, isSponsorUser }: {
             <MobileNavLink href="/minha-conta" label="Início" icon={LayoutDashboard} active={isActivePath(pathname, '/minha-conta')} />
           </li>
           <li>
-            <MobileNavLink href="/minha-conta/comprar" label="Eventos" icon={CalendarDays} active={isActivePath(pathname, '/minha-conta/comprar')} />
+            <MobileNavLink href="/minha-conta/eventos" label="Eventos" icon={CalendarDays} active={isActivePath(pathname, '/minha-conta/eventos')} />
           </li>
           <li>
             <MobileNavLink href="/minha-conta/loja" label="Loja" icon={Store} active={isActivePath(pathname, '/minha-conta/loja')} />

@@ -57,7 +57,7 @@ test('venda ativa oferece Comprar ingresso; venda encerrada não inventa CTA', (
   const closed = resolveAccountHeaderCta(event({
     registration_enabled: false,
   }), now);
-  assert.equal(closed.showBuyButton, false);
+  assert.deepEqual(closed, { showBuyButton: false, buyHref: '/minha-conta/eventos' });
 
   const noSlug = resolveAccountHeaderCta(event({ slug: '' }), now);
   assert.equal(noSlug.showBuyButton, false);

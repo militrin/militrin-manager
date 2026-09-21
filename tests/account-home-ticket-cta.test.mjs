@@ -53,7 +53,7 @@ test('CTA do evento em destaque compra quando a venda esta aberta, sem apontar p
 test('CTA do evento em destaque usa Ver evento quando a venda nao esta aberta', () => {
   assert.deepEqual(resolveHomeFeaturedEventCta({
     showBuyButton: false,
-    buyHref: '/minha-conta/comprar',
+    buyHref: '/minha-conta/eventos',
     eventHref: '/eventos/militrin',
   }), { label: 'Ver evento', href: '/eventos/militrin' });
 });
@@ -61,7 +61,7 @@ test('CTA do evento em destaque usa Ver evento quando a venda nao esta aberta', 
 test('CTA do evento em destaque some quando nao ha venda aberta nem pagina do evento', () => {
   assert.equal(resolveHomeFeaturedEventCta({
     showBuyButton: false,
-    buyHref: '/minha-conta/comprar',
+    buyHref: '/minha-conta/eventos',
   }), null);
 });
 

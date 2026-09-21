@@ -5,6 +5,7 @@ const EVENT_SLUG_ROUTE_PATTERNS = [
   /^\/eventos\/([^/]+)/,
   /^\/inscricao\/([^/]+)/,
   /^\/minha-conta\/comprar\/([^/]+)/,
+  /^\/minha-conta\/eventos\/([^/]+)/,
 ];
 
 export function extractEventSlugFromPath(pathname: string): string | null {

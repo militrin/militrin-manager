@@ -277,7 +277,7 @@ export default async function IngressosPage({
         <MilitrinEmptyState
           title="Você ainda não possui acessos Militrin."
           description="Assim que seu pagamento for confirmado, o pacote aparece aqui automaticamente."
-          actionHref="/minha-conta/comprar"
+          actionHref="/minha-conta/eventos"
           actionLabel="Ver eventos"
         />
       ) : visibleItems.length === 0 ? (
@@ -290,7 +290,7 @@ export default async function IngressosPage({
                 ? 'Acessos de eventos encerrados, cancelados ou inativos ficam em Anteriores e inativos.'
                 : 'Assim que seu pagamento for confirmado, o pacote aparece aqui automaticamente.'
           }
-          actionHref={showArchived ? '/minha-conta/ingressos' : archived.length > 0 ? '/minha-conta/ingressos?ver=anteriores' : '/minha-conta/comprar'}
+          actionHref={showArchived ? '/minha-conta/ingressos' : archived.length > 0 ? '/minha-conta/ingressos?ver=anteriores' : '/minha-conta/eventos'}
           actionLabel={showArchived ? 'Ver acessos ativos' : archived.length > 0 ? `Anteriores e inativos (${archived.length})` : 'Ver eventos'}
         />
       ) : (

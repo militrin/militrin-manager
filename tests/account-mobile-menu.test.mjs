@@ -33,7 +33,7 @@ test("bottom nav do usuario tem exatamente 5 slots, nesta ordem: Inicio / Evento
     assert.ok(indices[i - 1] < indices[i], `ordem incorreta -- ${order[i - 1]} precisa vir antes de ${order[i]}`);
   }
   assert.match(ul, /href="\/minha-conta"[^>]*label="Início"/s);
-  assert.match(ul, /href="\/minha-conta\/comprar"[^>]*label="Eventos"/s);
+  assert.match(ul, /href="\/minha-conta\/eventos"[^>]*label="Eventos"/s);
   assert.match(ul, /href="\/minha-conta\/loja"[^>]*label="Loja"/s);
   assert.match(ul, /<MobileCartLink/);
 });

@@ -39,7 +39,7 @@ function HopWatermark({ className }: { className: string }) {
  */
 export function MilitrinHeader({ event, showBuyButton, buyHref, className }: MilitrinHeaderProps) {
   const canBuy = showBuyButton ?? event.showBuyButton ?? false;
-  const href = buyHref ?? event.buyHref ?? '/minha-conta/comprar';
+  const href = buyHref ?? event.buyHref ?? '/minha-conta/eventos';
 
   return (
     <header

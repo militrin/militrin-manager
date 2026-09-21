@@ -176,7 +176,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
             <Link href="/eventos" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
               Voltar aos eventos
             </Link>
-            <Link href="/minha-conta/comprar" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
+            <Link href="/minha-conta/eventos" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
               Ver opções de compra
             </Link>
           </div>
@@ -197,7 +197,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
             <Link href="/eventos" className="inline-flex h-10 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950">
               Voltar aos eventos
             </Link>
-            <Link href="/minha-conta/comprar" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
+            <Link href="/minha-conta/eventos" className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700 px-4 text-sm text-slate-100">
               Ver opções de compra
             </Link>
           </div>

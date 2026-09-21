@@ -103,7 +103,7 @@ export default async function HistoricoPage() {
           <MilitrinEmptyState
             title="Seu historico ainda esta vazio"
             description="Assim que houver compras ou emissao de ingressos, os eventos aparecerao nesta linha do tempo."
-            actionHref="/minha-conta/comprar"
+            actionHref="/minha-conta/eventos"
             actionLabel="Comprar ingresso"
           />
         ) : (

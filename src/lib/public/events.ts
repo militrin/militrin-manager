@@ -1,5 +1,6 @@
 import { withTimeout } from '@/lib/auth/middleware-guard';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { sortPublicEventsForDiscovery } from '@/lib/public/event-discovery';
 
 const PUBLIC_EVENTS_TIMEOUT_MS = 3000;
 
@@ -127,7 +128,7 @@ export async function getPublicEvents() {
     return { events: [] as PublicEvent[], error: error.message };
   }
 
-  const events = (data ?? []).map((event) => ({
+  const events = sortPublicEventsForDiscovery((data ?? []).map((event) => ({
     id: String(event.id),
     name: String(event.name ?? 'Evento'),
     slug: String(event.slug ?? ''),
@@ -143,7 +144,7 @@ export async function getPublicEvents() {
     organizationId: event.organization_id ? String(event.organization_id) : null,
     bannerHeroUrl: event.banner_hero_url ? String(event.banner_hero_url) : null,
     bannerCardUrl: event.banner_card_url ? String(event.banner_card_url) : null,
-  }));
+  })));
 
   return { events, error: null as string | null };
 }

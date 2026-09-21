@@ -210,6 +210,7 @@ export function EventsManager({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm text-slate-400">{eventCountLabel}</p>
+            <p className="mt-1 text-sm text-slate-400">Evento ativo e vendas abertas são independentes. Ativar publica o evento; Abrir vendas libera inscrições.</p>
             <p className="text-sm text-slate-400">Eventos ativos: <span className="text-slate-200">{activeEvents.length ? activeEvents.map((event) => event.name).join(", ") : "Nenhum"}</span></p>
           </div>
           {canCreate ? <Link href="/painel/eventos/novo" className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950">
@@ -286,12 +287,15 @@ export function EventsManager({
                 <p className="text-sm text-slate-400">Inscritos: {item.participants_count}</p>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
-                <span className={`rounded-full border px-3 py-1 ${item.registration_enabled ? "border-emerald-500/40 text-emerald-300" : "border-slate-700 text-slate-400"}`}>{item.registration_enabled ? "Vendas abertas" : "Vendas fechadas"}</span>
+                <span className={`rounded-full border px-3 py-1 ${item.is_active ? "border-amber-500/40 text-amber-300" : "border-slate-700 text-slate-400"}`}>Evento: {item.is_active ? "Ativo" : "Inativo"}</span>
+                <span className={`rounded-full border px-3 py-1 ${item.registration_enabled ? "border-emerald-500/40 text-emerald-300" : "border-slate-700 text-slate-400"}`}>Vendas: {item.registration_enabled ? "Abertas" : "Fechadas"}</span>
                 <span className={`rounded-full border px-3 py-1 ${item.kit_enabled ? "border-cyan-500/40 text-cyan-300" : "border-slate-700 text-slate-400"}`}>{item.kit_enabled ? "Kit ativo" : "Sem kit"}</span>
-                <span className={`rounded-full border px-3 py-1 ${item.is_active ? "border-amber-500/40 text-amber-300" : "border-slate-700 text-slate-400"}`}>{item.is_active ? "Evento ativo" : "Inativo"}</span>
                 <span className="rounded-full border border-slate-700 px-3 py-1 text-slate-400">{item.min_age > 0 ? `${item.min_age}+` : "Todas as idades"}</span>
               </div>
             </div>
+            {item.is_active && !item.registration_enabled && !item.archived_at ? (
+              <p className="mt-2 text-xs text-amber-200">Evento publicado, mas as vendas ainda não foram abertas. Use Abrir vendas quando quiser receber inscrições.</p>
+            ) : null}
 
             <div className="mt-3 flex flex-wrap gap-2">
               {!item.archived_at && canEdit ? <Link
@@ -350,6 +354,7 @@ export function EventsManager({
 
             {canEdit ? <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">Eventos em destaque</p>
+              <p className="mt-1 text-[11px] text-slate-400">Controla só o bloco de destaques da Home. Não esconde o evento da página Eventos.</p>
               <div className="mt-2 flex flex-wrap items-end gap-3 text-sm">
                 <label className="flex items-center gap-2 text-slate-300">
                   <input

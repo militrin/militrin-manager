@@ -6,6 +6,11 @@ test('reconhece slug em rotas de evento conhecidas', () => {
   assert.equal(extractEventSlugFromPath('/eventos/esquenta-militrin'), 'esquenta-militrin');
   assert.equal(extractEventSlugFromPath('/inscricao/esquenta-militrin'), 'esquenta-militrin');
   assert.equal(extractEventSlugFromPath('/minha-conta/comprar/esquenta-militrin'), 'esquenta-militrin');
+  assert.equal(extractEventSlugFromPath('/minha-conta/eventos/esquenta-militrin'), 'esquenta-militrin');
+});
+
+test('listagem /minha-conta/eventos nao e tratada como slug de evento', () => {
+  assert.equal(extractEventSlugFromPath('/minha-conta/eventos'), null);
 });
 
 test('pega so o primeiro segmento apos o prefixo da rota', () => {

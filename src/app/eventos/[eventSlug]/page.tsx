@@ -4,7 +4,8 @@ import { MilitrinEventArtwork } from '@/components/militrin';
 import { PublicSiteFooter } from '@/components/public/PublicSiteFooter';
 import { formatDateTimeBR } from '@/lib/utils/date';
 import type { PublicAttraction, PublicBenefit, PublicCategory, PublicKitItem } from '@/lib/public/events';
-import { getPublicEventDetails, isEventOpen } from '@/lib/public/events';
+import { presentPublicEventDiscovery } from '@/lib/public/event-discovery';
+import { getPublicEventDetails } from '@/lib/public/events';
 
 type Params = Promise<{ eventSlug: string }>;
 
@@ -41,7 +42,7 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
     notFound();
   }
 
-  const open = isEventOpen(event);
+  const discovery = presentPublicEventDiscovery(event);
 
   return (
     <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_var(--brand-glow),_transparent_35%),linear-gradient(180deg,_#020617,_#0b1220)] px-4 py-6 text-slate-100 sm:px-6">
@@ -58,12 +59,23 @@ export default async function EventDetailsPage({ params }: { params: Params }) {
           <div className="mt-4 grid gap-2 text-sm text-slate-300 sm:grid-cols-3">
             <p>{event.startsAt ? formatDateTimeBR(event.startsAt, ' às ') : 'Data a confirmar'}</p>
             <p>{event.location ?? 'Local a confirmar'}</p>
-            <p>{open ? 'Inscricoes abertas' : 'Inscricoes fechadas'}</p>
+            <p>{discovery.statusLabel}</p>
           </div>
+          {discovery.footnote ? (
+            <p className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              {discovery.footnote}
+            </p>
+          ) : null}
           <div className="mt-5 flex flex-wrap gap-3">
-            <Link href={`/inscricao/${event.slug}`} prefetch={false} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
-              Comprar pacote Militrin
-            </Link>
+            {discovery.buyHref ? (
+              <Link href={discovery.buyHref} prefetch={false} className="inline-flex h-11 items-center justify-center rounded-2xl bg-emerald-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300">
+                Comprar ingresso
+              </Link>
+            ) : discovery.status === 'ended' ? (
+              <span className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900/40 px-5 text-sm font-semibold text-slate-400">
+                Evento encerrado
+              </span>
+            ) : null}
             <Link href="/eventos" className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-700 px-5 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:text-white">
               Ver outros eventos
             </Link>

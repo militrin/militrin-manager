@@ -41,7 +41,7 @@ export function resolveAccountHeaderCta(
 ): { showBuyButton: boolean; buyHref: string } {
   const slug = String(event.slug ?? '').trim();
   if (!isEventSaleOpen(event, now) || !slug) {
-    return { showBuyButton: false, buyHref: '/minha-conta/comprar' };
+    return { showBuyButton: false, buyHref: '/minha-conta/eventos' };
   }
   return { showBuyButton: true, buyHref: `/inscricao/${slug}` };
 }

@@ -246,7 +246,7 @@ export default async function MinhasComprasPage() {
             <MilitrinEmptyState
               title="Você ainda não possui compras."
               description="Assim que você criar um pedido, ele aparece aqui com status e detalhes."
-              actionHref="/minha-conta/comprar"
+              actionHref="/minha-conta/eventos"
               actionLabel="Ver eventos"
             />
           ) : (

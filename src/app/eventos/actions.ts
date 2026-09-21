@@ -190,6 +190,7 @@ async function revalidateEventsPages() {
   revalidatePath("/operacoes");
   revalidatePath("/");
   revalidatePath('/minha-conta');
+  revalidatePath('/minha-conta/eventos');
 }
 
 export async function setEventHighlightAction(payload: { event_id: string; sort_order: number; is_active?: boolean }) {
@@ -348,7 +349,7 @@ export async function activateEventAction(eventId: string) {
     const { error } = await supabase.rpc("set_event_active", { p_event_id: eventId });
     if (error) throw error;
     await revalidateEventsPages();
-    return { success: true, message: "Evento ativado." };
+    return { success: true, message: "Evento ativado. As vendas continuam fechadas até você usar Abrir vendas." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao ativar evento." };
   }

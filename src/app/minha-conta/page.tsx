@@ -192,7 +192,7 @@ export default async function MinhaContaPage() {
   const featuredHeroCta = headerEvent
     ? resolveHomeFeaturedEventCta({
       showBuyButton: Boolean(headerEvent.showBuyButton),
-      buyHref: headerEvent.buyHref ?? '/minha-conta/comprar',
+      buyHref: headerEvent.buyHref ?? '/minha-conta/eventos',
       eventHref: headerEvent.slug ? `/eventos/${headerEvent.slug}` : null,
     })
     : null;
@@ -351,7 +351,7 @@ export default async function MinhaContaPage() {
           <section className={sponsors.length > 0 ? 'order-3 lg:order-none lg:col-span-2 lg:row-start-2' : 'order-3 lg:order-none'}>
             <div className="mb-2 flex items-center justify-between gap-3 sm:mb-3">
               <h2 className="text-sm font-semibold text-white sm:text-base">Eventos</h2>
-              <Link href="/eventos" className="text-xs font-semibold text-emerald-200 transition hover:text-emerald-100 sm:text-sm">
+              <Link href="/minha-conta/eventos" className="text-xs font-semibold text-emerald-200 transition hover:text-emerald-100 sm:text-sm">
                 Ver todos →
               </Link>
             </div>
