@@ -758,7 +758,9 @@ test('ticketId administrativo abre ficha unica protegida pela organizacao', asyn
 
 test('ficha administrativa preserva campos imutaveis e operacoes protegidas', async () => {
   const detail = await readFile(new URL('../src/app/minha-conta/ingressos/[ticketId]/page.tsx', import.meta.url), 'utf8');
-  for (const field of ['Evento', 'Titular', 'Comprador', 'Categoria', 'Lote', 'Pedido', 'Pagamento', 'Camiseta', 'Check-in realizado', 'Histórico']) assert.match(detail, new RegExp(field, 'i'));
+  const timeline = await readFile(new URL('../src/lib/account/access-timeline.ts', import.meta.url), 'utf8');
+  const haystack = `${detail}\n${timeline}`;
+  for (const field of ['Evento', 'Titular', 'Comprador', 'Categoria', 'Lote', 'Pedido', 'Pagamento', 'Camiseta', 'Check-in realizado', 'Histórico']) assert.match(haystack, new RegExp(field, 'i'));
   for (const permission of ['participants.edit_basic', 'inventory.change_participant_shirt', 'kits.deliver', 'checkin.scan']) assert.match(detail, new RegExp(permission.replace('.', '\\.')));
   assert.doesNotMatch(detail, /name=["'](?:event_id|order_id|payment_id|token|batch_id|unit_price|final_amount)["']/);
 });

@@ -4,6 +4,7 @@ export type MilitrinTimelineItem = {
   id: string;
   title: string;
   subtitle?: string;
+  meta?: string;
   date?: string;
   status?: string;
 };
@@ -24,7 +25,8 @@ export function MilitrinTimeline({ items }: MilitrinTimelineProps) {
               {item.status ? <MilitrinStatusBadge status={item.status} /> : null}
             </div>
             {item.subtitle ? <p className="mt-1 text-sm text-slate-300">{item.subtitle}</p> : null}
-            {item.date ? <p className="mt-1 text-xs text-slate-400">{item.date}</p> : null}
+            {item.meta ? <p className="mt-1 text-xs text-slate-400">{item.meta}</p> : null}
+            {item.date ? <p className="mt-1 text-xs text-slate-500">{item.date}</p> : null}
           </div>
         </li>
       ))}

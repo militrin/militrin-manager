@@ -30,8 +30,13 @@ import { CategoryContextAction, HolderContextAction, ParticipantShirtChangeActio
 import { optionalDisplayValue } from '@/lib/optional-display';
 import { canonicalHolderName, hasCanonicalHolderName } from '@/lib/tickets/holder-name';
 import { canonicalTicketDisplayCode, orderDisplayReference } from '@/lib/display-reference';
-import { resolveLinkedAccountLabel } from '@/lib/admin/operator-names';
+import { resolveLinkedAccountLabel, resolveOperatorNames } from '@/lib/admin/operator-names';
 import { CopyableId } from '@/components/CopyableId';
+import {
+  accessTimelineActorLine,
+  buildAccountAccessTimeline,
+  collectAccessTimelineActorIds,
+} from '@/lib/account/access-timeline';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -176,13 +181,18 @@ export default async function TicketDetailPage({
   const [kitItemsResult, timelineResult, categoriesResult, itemRequestsResult, shirtOptionsResult] = await Promise.all([
     supabase.rpc('get_ticket_kit_items', { p_ticket_id: ticket.id }),
     Promise.all([
-      supabase.from('audit_logs').select('id, action, created_at, details').eq('entity_type', 'tickets').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(20),
+      supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').eq('entity_type', 'tickets').eq('entity_id', ticket.id).order('created_at', { ascending: false }).limit(50),
       participantId
-        ? supabase.from('audit_logs').select('id, action, created_at, details').eq('entity_type', 'participants').eq('entity_id', participantId).order('created_at', { ascending: false }).limit(20)
+        ? supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').eq('entity_type', 'participants').eq('entity_id', participantId).order('created_at', { ascending: false }).limit(50)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       orderItemId
-        ? supabase.from('audit_logs').select('id, action, created_at, details').eq('entity_type', 'order_items').eq('entity_id', orderItemId).order('created_at', { ascending: false }).limit(20)
+        ? supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').eq('entity_type', 'order_items').eq('entity_id', orderItemId).order('created_at', { ascending: false }).limit(50)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      orderId
+        ? supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').eq('entity_type', 'orders').eq('entity_id', orderId).order('created_at', { ascending: false }).limit(50)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      supabase.from('ticket_holder_history').select('id,operation,previous_holder_name,new_holder_name,actor_user_id,actor_origin,reason,reason_code,reason_text,created_at').eq('ticket_id', ticketId).order('created_at', { ascending: true }).limit(50),
+      supabase.from('ticket_owner_history').select('id,operation,previous_owner_user_id,new_owner_user_id,actor_user_id,reason_code,reason_text,created_at').eq('ticket_id', ticketId).order('created_at', { ascending: true }).limit(50),
     ]),
     canAdminEdit && eventId
       ? supabase.rpc('get_event_ticket_categories', { p_event_id: eventId })
@@ -217,7 +227,10 @@ export default async function TicketDetailPage({
     && shirtKitItemId
     && shirtType
     && shirtSize);
-  const [ticketLogsResult, participantLogsResult, orderItemLogsResult] = timelineResult as [
+  const [ticketLogsResult, participantLogsResult, orderItemLogsResult, orderLogsResult, holderHistoryResult, ownerHistoryResult] = timelineResult as [
+    { data: Array<Record<string, unknown>> | null },
+    { data: Array<Record<string, unknown>> | null },
+    { data: Array<Record<string, unknown>> | null },
     { data: Array<Record<string, unknown>> | null },
     { data: Array<Record<string, unknown>> | null },
     { data: Array<Record<string, unknown>> | null },
@@ -273,6 +286,11 @@ export default async function TicketDetailPage({
   // agregado, que ja e a fonte existente.
   const kitItemsForDisplay = kitItems.filter((item) => String(item.status ?? '') !== 'cancelled');
   const kitDeliveredAt = kitItems.find((item) => String(item.status ?? '') === 'delivered')?.delivered_at as string | null | undefined;
+  const kitLinkIds = kitItems.map((item) => String(item.id ?? '')).filter(Boolean);
+  const kitLogsResult = kitLinkIds.length
+    ? await supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').eq('entity_type', 'participant_kit_items').in('entity_id', kitLinkIds).order('created_at', { ascending: false }).limit(50)
+    : { data: [] as Array<Record<string, unknown>> };
+  const wristbandLogsResult = await supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').in('action', ['wristband_linked', 'wristband_unlinked', 'wristband_blocked']).filter('details->>ticket_id', 'eq', String(ticket.id)).order('created_at', { ascending: false }).limit(20);
   // Secao "Administracao" -- so o que exige permissao administrativa
   // (participants.edit_basic ou kits/checkin). Definir/transferir titular
   // (TicketHolderActions) e uma capacidade do PROPRIO dono do ingresso
@@ -281,80 +299,44 @@ export default async function TicketDetailPage({
   const hasAdminSection = Boolean(canAdminEdit || canManageOperationalFlow);
   const showHolderActions = isOwner && ((!hasHolder && Boolean(eventObj?.allow_holder_change)) || (hasHolder && Boolean(eventObj?.allow_ticket_transfer)));
 
-  const timelineItems = [
-    {
-      id: `ticket-issued-${ticket.id}`,
-      title: 'Acesso emitido',
-      subtitle: `Pedido ${orderDisplayReference(order?.display_number, order?.order_number)}`,
-      date: ticket.issued_at ? formatDateTimeBR(String(ticket.issued_at), ' às ') : undefined,
-      status: 'confirmed',
-    },
-    ...(ticket.used_at
-      ? [
-          {
-            id: `ticket-used-${ticket.id}`,
-            title: 'Check-in realizado',
-            subtitle: `Check-in em ${String(eventObj?.name ?? 'evento')}`,
-            date: formatDateTimeBR(String(ticket.used_at), ' às '),
-            status: 'used',
-          },
-        ]
-      : []),
-    ...(order?.confirmed_at
-      ? [
-          {
-            id: `order-confirmed-${order.id}`,
-            title: 'Pagamento confirmado',
-            subtitle: payment?.payment_method ? `Via ${String(payment.payment_method).toUpperCase()}` : undefined,
-            date: formatDateTimeBR(String(order.confirmed_at), ' às '),
-            status: 'confirmed',
-          },
-        ]
-      : []),
-    ...(kitItems.length > 0 && order?.confirmed_at
-      ? [
-          kitFullyDelivered
-            ? {
-                id: `kit-delivered-${ticket.id}`,
-                title: 'Kit retirado',
-                subtitle: undefined,
-                date: kitDeliveredAt ? formatDateTimeBR(String(kitDeliveredAt), ' às ') : undefined,
-                status: 'confirmed',
-              }
-            : {
-                id: `kit-pending-${ticket.id}`,
-                title: 'Aguardando retirada do kit',
-                subtitle: 'Apresente o QR Code no ponto de retirada do Militrin.',
-                date: undefined,
-                status: 'pending',
-              },
-        ]
-      : []),
-    ...([...((ticketLogsResult.data ?? []) as Array<Record<string, unknown>>), ...((participantLogsResult.data ?? []) as Array<Record<string, unknown>>), ...((orderItemLogsResult.data ?? []) as Array<Record<string, unknown>>)]
-      .map((row, index) => ({
-        id: String(row.id ?? `${row.action ?? 'event'}-${row.created_at ?? index}`),
-        title: (() => {
-          const action = String(row.action ?? 'event');
-          if (action === 'ticket_shirt_changed') return 'Camiseta alterada';
-          if (action === 'ticket_category_changed') return 'Categoria alterada';
-          if (action === 'ticket_notes_updated') return 'Observações atualizadas';
-          if (action === 'participant_checkin_entry') return 'Check-in registrado';
-          if (action.includes('kit')) return 'Kit atualizado';
-          return 'Ação registrada';
-        })(),
-        subtitle: (() => {
-          const details = row.details as Record<string, unknown> | null | undefined;
-          if (!details || typeof details !== 'object') return undefined;
-          if (details.next_type && details.next_size) return `${String(details.next_type)} / ${String(details.next_size)}`;
-          if (details.notes) return String(details.notes);
-          return undefined;
-        })(),
-        date: row.created_at ? formatDateTimeBR(String(row.created_at), ' às ') : undefined,
-        status: 'confirmed',
-      }))
-      .sort((a, b) => (a.date && b.date ? new Date(b.date).getTime() - new Date(a.date).getTime() : 0))
-      .slice(0, 20)),
-  ] satisfies MilitrinTimelineItem[];
+  const auditRows = [
+    ...((ticketLogsResult.data ?? []) as Array<Record<string, unknown>>),
+    ...((participantLogsResult.data ?? []) as Array<Record<string, unknown>>),
+    ...((orderItemLogsResult.data ?? []) as Array<Record<string, unknown>>),
+    ...((orderLogsResult.data ?? []) as Array<Record<string, unknown>>),
+    ...((kitLogsResult.data ?? []) as Array<Record<string, unknown>>),
+    ...((wristbandLogsResult.data ?? []) as Array<Record<string, unknown>>),
+  ];
+  const holderRows = (holderHistoryResult.data ?? []) as Array<Record<string, unknown>>;
+  const ownerRows = (ownerHistoryResult.data ?? []) as Array<Record<string, unknown>>;
+  const operatorNames = await resolveOperatorNames(collectAccessTimelineActorIds({ auditRows, holderRows, ownerRows }));
+  const timelineItems = buildAccountAccessTimeline({
+    ticketId: String(ticket.id),
+    orderId: orderId || null,
+    orderItemId: orderItemId || null,
+    ownerUserId: ticket.owner_user_id ? String(ticket.owner_user_id) : null,
+    issuedAt: ticket.issued_at ? String(ticket.issued_at) : null,
+    usedAt: ticket.used_at ? String(ticket.used_at) : null,
+    confirmedAt: order?.confirmed_at ? String(order.confirmed_at) : null,
+    paidAt: payment?.paid_at ? String(payment.paid_at) : null,
+    paymentMethod: payment?.payment_method ? String(payment.payment_method) : null,
+    orderReference: orderDisplayReference(order?.display_number, order?.order_number),
+    eventName: eventObj?.name ? String(eventObj.name) : null,
+    kitFullyDelivered: kitItems.length > 0 ? kitFullyDelivered : undefined,
+    kitDeliveredAt: kitDeliveredAt ? String(kitDeliveredAt) : null,
+    shirtLabel: shirtType && shirtSize ? `${shirtType} ${shirtSize}` : shirtSize,
+    auditRows,
+    holderRows,
+    ownerRows,
+    operatorNames,
+  }).map((event) => ({
+    id: event.id,
+    title: event.title,
+    subtitle: event.description ?? undefined,
+    meta: accessTimelineActorLine(event) ?? undefined,
+    date: formatDateTimeBR(event.occurredAt, ' às '),
+    status: event.showStatus ? event.status ?? undefined : undefined,
+  })) satisfies MilitrinTimelineItem[];
 
   async function submitItemRequestReview(formData: FormData) { 'use server'; await reviewTicketItemChangeAction(formData); }
 
