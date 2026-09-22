@@ -81,8 +81,12 @@ test('F) conflito incompativel usa mensagem administrativa sem vazar org', () =>
   assert.doesNotMatch(cadastroPage, /from\("auth\.users"\)/);
   assert.doesNotMatch(cadastroListPage, /auth\.users/);
   assert.doesNotMatch(accountCard, /Resolver situação/);
-  const attentionBlock = accountCard.slice(accountCard.indexOf('state === "attention"'));
+  const attentionBlock = accountCard.slice(accountCard.lastIndexOf('state === "attention"'));
   assert.doesNotMatch(attentionBlock, /<button/);
+  const linkedBlock = accountCard.slice(accountCard.lastIndexOf('state === "linked_to_other_account" ? ('));
+  assert.doesNotMatch(linkedBlock, /<button/);
+  assert.doesNotMatch(linkedBlock, /Enviar convite/);
+  assert.doesNotMatch(linkedBlock, /Reenviar convite/);
 });
 
 test('G) resend canonico usa GoTrue, redirect seguro e anti-enumeracao publica', () => {

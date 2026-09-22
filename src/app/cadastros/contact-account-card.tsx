@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { resendCadastroSignupConfirmationAction } from "./actions";
 import { InviteAccountButton } from "./invite-account-button";
-import { adminAttentionCopy, contactAccountStateView, type ContactAccountState } from "@/lib/account/contact-account-state";
+import { adminAttentionCopy, contactAccountStateView, linkedOtherAccountLabel, type ContactAccountState } from "@/lib/account/contact-account-state";
 import { PENDING_CONFIRMATION_ADMIN_COPY } from "@/lib/account/first-access-invite-copy";
 
 type ContactAccountCardProps = {
@@ -14,6 +14,7 @@ type ContactAccountCardProps = {
   reason: string;
   canInvite: boolean;
   canResendConfirmation: boolean;
+  linkedAccountOwnerName?: string | null;
   inviteRecord?: {
     status: string;
     expiresAt: string | null;
@@ -29,6 +30,7 @@ export function ContactAccountCard({
   reason,
   canInvite,
   canResendConfirmation,
+  linkedAccountOwnerName,
   inviteRecord,
 }: ContactAccountCardProps) {
   const view = contactAccountStateView(state);
@@ -60,7 +62,7 @@ export function ContactAccountCard({
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Conta</p>
           <p className="mt-1 text-base font-semibold text-slate-100">
             <span className="mr-2 text-emerald-300" aria-hidden="true">{view.marker}</span>
-            {view.label}
+            {state === "linked_to_other_account" ? linkedOtherAccountLabel(linkedAccountOwnerName) : view.label}
           </p>
           {email ? <p className="mt-1 text-sm text-slate-400">E-mail: {email}</p> : null}
         </div>
@@ -103,6 +105,12 @@ export function ContactAccountCard({
 
       {state === "active" ? (
         <p className="mt-3 text-sm text-slate-400">Conta vinculada a este Cadastro. Nenhuma ação de criação duplicada.</p>
+      ) : null}
+
+      {state === "linked_to_other_account" ? (
+        <p className="mt-3 text-sm text-slate-300" data-account-feedback="true">
+          {adminAttentionCopy(reasonCode)}
+        </p>
       ) : null}
 
       {state === "attention" ? (

@@ -3,7 +3,8 @@ export type ContactAccountState =
   | 'pending_confirmation'
   | 'existing_confirmed'
   | 'none'
-  | 'attention';
+  | 'attention'
+  | 'linked_to_other_account';
 
 export type ContactAccountStateView = {
   state: ContactAccountState;
@@ -50,6 +51,13 @@ const VIEWS: Record<ContactAccountState, Omit<ContactAccountStateView, 'state'>>
     canInvite: false,
     inviteCreatesAuth: false,
   },
+  linked_to_other_account: {
+    label: 'Conta vinculada a outro cadastro',
+    marker: '✓',
+    canResendConfirmation: false,
+    canInvite: false,
+    inviteCreatesAuth: false,
+  },
 };
 
 export function contactAccountStateView(state: ContactAccountState): ContactAccountStateView {
@@ -69,6 +77,7 @@ export function mapEligibilityToAccountState(input: {
     return 'existing_confirmed';
   }
   if (reason === 'eligible' && input.eligible) return 'none';
+  if (reason === 'email_already_has_account') return 'linked_to_other_account';
   if (
     reason === 'account_attention'
     || reason === 'email_conflict'
@@ -91,10 +100,18 @@ export function adminAttentionCopy(reasonCode?: string | null) {
   if (reason === 'cpf_conflict') {
     return 'Esta conta requer tratamento administrativo.';
   }
+  if (reason === 'email_already_has_account') {
+    return 'Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.';
+  }
   if (reason === 'email_conflict' || reason === 'account_attention' || reason === 'account_conflict' || reason === 'shared_email') {
     return 'Esta conta requer tratamento administrativo.';
   }
   return 'Esta conta requer tratamento administrativo.';
+}
+
+export function linkedOtherAccountLabel(principalName?: string | null) {
+  const name = String(principalName ?? "").trim();
+  return name ? `Conta: vinculada a ${name}` : "Conta: vinculada a outro cadastro";
 }
 
 export function isPendingEmailConfirmationReason(reasonCode?: string | null) {

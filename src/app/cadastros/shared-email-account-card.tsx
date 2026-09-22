@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { SharedEmailGroupView } from "@/lib/account/load-shared-email-group";
 
-function inviteLabel(status: "linked" | "pending" | "none") {
-  if (status === "linked") return "Conta ativa";
-  if (status === "pending") return "Convite pendente";
+function inviteLabel(person: SharedEmailGroupView["people"][number], principalName: string | null) {
+  if (person.hasValidAuth) return "Conta ativa";
+  if (principalName) return `Conta: vinculada a ${principalName}`;
+  if (person.inviteStatus === "pending") return "Convite pendente";
   return "Sem convite";
 }
 
@@ -66,7 +67,7 @@ export function SharedEmailAccountCard({
               <span>{person.ticketCount}</span>
               <span>{person.isHolder ? "Titular" : "—"}</span>
               <span className={person.isPrincipal ? "text-violet-200" : "text-slate-400"}>{person.isPrincipal ? "Sim" : "Não"}</span>
-              <p className="col-span-5 text-xs text-slate-500">{inviteLabel(person.inviteStatus)}</p>
+              <p className="col-span-5 text-xs text-slate-500">{inviteLabel(person, group.currentPrincipalName)}</p>
             </div>
           ))}
         </div>

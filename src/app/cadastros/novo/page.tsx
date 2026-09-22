@@ -7,7 +7,7 @@ import { ContactAccountCard } from "../contact-account-card";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { ContactAccountState } from "@/lib/account/contact-account-state";
 
-const ACCOUNT_STATES = new Set(["active", "pending_confirmation", "existing_confirmed", "none", "attention"]);
+const ACCOUNT_STATES = new Set(["active", "pending_confirmation", "existing_confirmed", "none", "attention", "linked_to_other_account"]);
 
 export default async function NewContactPage({ searchParams }: { searchParams: Promise<Record<string,string|undefined>> }) {
   const query = await searchParams;

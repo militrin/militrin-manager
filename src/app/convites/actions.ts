@@ -123,9 +123,13 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
     return { success: resend.ok, sent: resend.requested, message: resend.message };
   }
   if (eligibility.error || !row?.eligible) {
+    const raw = eligibility.error?.message ?? row?.reason_message ?? 'Cadastro não elegível para reenvio.';
+    const reasonCode = String(row?.reason_code ?? '');
     return {
       success: false as const,
-      message: eligibility.error?.message ?? row?.reason_message ?? 'Cadastro não elegível para reenvio.',
+      message: reasonCode === 'email_already_has_account' || String(raw).includes('já está vinculado a outra conta')
+        ? 'Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.'
+        : raw,
     };
   }
 

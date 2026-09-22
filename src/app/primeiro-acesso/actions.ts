@@ -88,6 +88,15 @@ function translateFirstAccessPersistError(rawMessage: string) {
     return 'Nao foi possivel concluir seu cadastro por incompatibilidade temporaria do banco. Tente novamente.';
   }
 
+  if (normalized.includes('ux_registration_contacts_one_user_per_normalized_email')
+    || (normalized.includes('duplicate key') && normalized.includes('normalized_email'))) {
+    return 'Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.';
+  }
+
+  if (normalized.includes('já está vinculado a outra conta')) {
+    return 'Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.';
+  }
+
   if (normalized.includes('duplicate key') || normalized.includes('unique constraint')) {
     return 'Nao foi possivel concluir seu cadastro por conflito de dados. Tente novamente.';
   }
@@ -294,7 +303,13 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     const { error: claimError } = inviteContext?.anchorKind === 'contact'
       ? await supabase.rpc('claim_registration_contact_account_invite', { p_invite_id: inviteId })
       : await supabase.rpc('claim_participant_account_invite', { p_invite_id: inviteId });
-    if (claimError) return { success: false, message: claimError.message };
+    if (claimError) {
+      const claimMessage = String(claimError.message ?? '');
+      if (claimMessage.includes('já está vinculado a outra conta')) {
+        return { success: false, message: 'Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.' };
+      }
+      return { success: false, message: claimError.message };
+    }
   }
 
   const { error: contactError } = await supabase.rpc('ensure_registration_contact_for_user', {
@@ -309,13 +324,16 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
       contactError.message === 'CPF_ALREADY_LINKED_TO_ANOTHER_USER'
       || contactError.message === 'REGISTRATION_CONTACT_REQUIRES_INVITE'
       || contactError.message === 'CPF_COLLISION_REQUIRES_ADMIN'
+      || contactError.message === 'EMAIL_ALREADY_LINKED_TO_ANOTHER_USER'
     ) {
       return {
         success: false,
         code: contactError.message,
         message: contactError.message === 'CPF_COLLISION_REQUIRES_ADMIN'
           ? 'Este CPF já identifica outra Pessoa. A organização precisa revisar antes de ativar a conta.'
-          : 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+          : contactError.message === 'EMAIL_ALREADY_LINKED_TO_ANOTHER_USER' || contactError.message.includes('já está vinculado a outra conta')
+            ? 'Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.'
+            : 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
       };
     }
     return { success: false, message: translateFirstAccessPersistError(contactError.message) };

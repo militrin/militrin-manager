@@ -162,12 +162,24 @@ export async function inviteCadastroFirstAccessAction(id: string, anchor: "parti
   }
   if (eligibilityResult.error || !eligibility?.eligible) {
     const reasonCode = eligibilityResult.error ? "evaluation_error" : String(eligibility?.reason_code ?? "account_conflict");
-    return { success: false as const, inviteState: reasonCode === "already_linked" ? "linked" as const : "conflict" as const, reasonCode, message: eligibilityResult.error?.message ?? String(eligibility?.reason_message ?? "Cadastro não elegível.") };
+    const rawMessage = eligibilityResult.error?.message ?? String(eligibility?.reason_message ?? "Cadastro não elegível.");
+    const message = reasonCode === "email_already_has_account" || rawMessage.includes("já está vinculado a outra conta")
+      ? "Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail."
+      : rawMessage.includes("ux_registration_contacts_one_user_per_normalized_email")
+        ? "Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail."
+        : rawMessage;
+    return { success: false as const, inviteState: reasonCode === "already_linked" ? "linked" as const : "conflict" as const, reasonCode, message };
   }
   const { data, error } = anchor === "contact"
     ? await supabase.rpc("prepare_registration_contact_account_invite", { p_registration_contact_id: id })
     : await supabase.rpc("prepare_participant_account_invite", { p_participant_id: id });
-  if (error) return { success: false as const, message: error.message };
+  if (error) {
+    const raw = String(error.message ?? "");
+    const message = raw.includes("já está vinculado a outra conta") || raw.includes("ux_registration_contacts_one_user_per_normalized_email")
+      ? "Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail."
+      : raw;
+    return { success: false as const, message };
+  }
   const prepared = (Array.isArray(data) ? data[0] : data) as { invite_id?: string; email?: string } | null;
   if (!prepared?.invite_id || !prepared.email) return { success: false as const, message: "Convite não preparado." };
   const reasonCode = String(eligibility.reason_code ?? "eligible");

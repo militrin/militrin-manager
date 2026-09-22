@@ -91,7 +91,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     teamRoleOptions = (rolesData ?? []).map((role: { id: string; name: string }) => ({ id: String(role.id), name: String(role.name) }));
   }
   let accountBlock = {
-    state: (contact.user_id ? "active" : "none") as "active" | "pending_confirmation" | "existing_confirmed" | "none" | "attention",
+    state: (contact.user_id ? "active" : "none") as "active" | "pending_confirmation" | "existing_confirmed" | "none" | "attention" | "linked_to_other_account",
     reasonCode: contact.user_id ? "already_linked" : "evaluation_error",
     reason: contact.user_id ? "Conta vinculada." : "Sem permissao para enviar convites.",
     canInvite: false,
@@ -184,6 +184,8 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     if (!contactId || extraInviteStatusByContact.has(contactId)) continue;
     extraInviteStatusByContact.set(contactId, String(invite.status ?? ""));
   }
+  const sharedEmailGroup = await loadSharedEmailGroup(supabase, organization.id, id);
+  const groupHasLinkedAccount = Boolean(sharedEmailGroup?.people.some((person) => person.hasValidAuth));
   const tickets = relatedTicketRows.map(({ row, orderItem, participant, event, link, roles }) => {
     const order = relation(row.orders);
     const category = relation(orderItem?.ticket_categories);
@@ -212,6 +214,11 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
         holderContactUserId,
         holderAccountState: holderIsThisContact ? accountBlock.state : (holderContactUserId ? "active" : "none"),
         holderInviteStatus: holderIsThisContact ? inviteRecord?.status : (holderId ? extraInviteStatusByContact.get(holderId) ?? null : null),
+        emailOwnedByOtherAccount: Boolean(
+          groupHasLinkedAccount
+          && holderId
+          && sharedEmailGroup?.people.some((person) => person.id === holderId && !person.hasValidAuth),
+        ),
         ownerUserId: link.ownerUserId,
         ownerName: resolvedOwnerName && !isUuidLike(resolvedOwnerName) ? resolvedOwnerName : (link.ownerUserId ? "Conta vinculada" : null),
         intendedOwnerContactId: link.intendedOwnerContactId,
@@ -275,7 +282,11 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     if (!key) continue;
     importedIssuesByItem.set(key, [...(importedIssuesByItem.get(key) ?? []), issue]);
   }
-  const sharedEmailGroup = await loadSharedEmailGroup(supabase, organization.id, id);
+  const linkedAccountOwner = sharedEmailGroup?.people.find((person) => person.hasValidAuth && person.id !== id) ?? null;
+  const cardState = (!contact.user_id && (linkedAccountOwner || accountBlock.state === "linked_to_other_account"))
+    ? "linked_to_other_account" as const
+    : accountBlock.state;
+  const cardCanInvite = cardState === "linked_to_other_account" ? false : accountBlock.canInvite;
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
     <TopBar title={String(contact.full_name)} subtitle="Ficha global da pessoa" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contact.full_name)}]} backHref="/cadastros" fallbackHref="/cadastros"/>
@@ -286,12 +297,13 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       <ContactAccountCard
         contactId={id}
         email={accountBlock.email}
-        state={accountBlock.state}
-        reasonCode={accountBlock.reasonCode}
+        state={cardState}
+        reasonCode={cardState === "linked_to_other_account" ? "email_already_has_account" : accountBlock.reasonCode}
         reason={accountBlock.reason}
-        canInvite={accountBlock.canInvite}
-        canResendConfirmation={accountBlock.canResendConfirmation}
-        inviteRecord={inviteRecord}
+        canInvite={cardCanInvite}
+        canResendConfirmation={cardState === "linked_to_other_account" ? false : accountBlock.canResendConfirmation}
+        linkedAccountOwnerName={linkedAccountOwner?.name ?? null}
+        inviteRecord={cardState === "linked_to_other_account" ? null : inviteRecord}
       />
     </section>
     {sharedEmailGroup ? <SharedEmailAccountCard group={sharedEmailGroup} contactId={id} /> : null}

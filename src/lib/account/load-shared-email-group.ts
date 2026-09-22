@@ -119,6 +119,7 @@ export async function loadSharedEmailGroup(
   });
 
   const principal = currentSharedEmailPrincipalId(tickets);
+  const groupHasAccount = people.some((row) => Boolean(row.user_id));
   const peopleView: SharedEmailGroupPerson[] = people.map((row) => {
     const id = String(row.id);
     const userId = row.user_id ? String(row.user_id) : null;
@@ -131,11 +132,17 @@ export async function loadSharedEmailGroup(
       isHolder: tickets.some((ticket) => ticket.holderContactId === id),
       hasValidAuth: Boolean(userId),
       userId,
-      inviteStatus: (userId ? "linked" : pendingInviteIds.has(id) ? "pending" : "none") as SharedEmailGroupPerson["inviteStatus"],
+      inviteStatus: (userId
+        ? "linked"
+        : groupHasAccount
+          ? "none"
+          : pendingInviteIds.has(id) ? "pending" : "none") as SharedEmailGroupPerson["inviteStatus"],
     };
   }).sort((left, right) => Number(right.isPrincipal) - Number(left.isPrincipal) || left.name.localeCompare(right.name, "pt-BR"));
 
-  const principalPerson = peopleView.find((person) => person.id === principal.id) ?? null;
+  const principalPerson = peopleView.find((person) => person.hasValidAuth)
+    ?? peopleView.find((person) => person.id === principal.id)
+    ?? null;
   const accountStatus = principalPerson?.hasValidAuth ? "active" : "pending_activation";
   const inviteStatusLabel = !principalPerson
     ? "Conta principal ainda não definida"
@@ -149,7 +156,7 @@ export async function loadSharedEmailGroup(
     email,
     peopleCount: peopleView.length,
     ticketCount: tickets.length,
-    currentPrincipalId: principal.id,
+    currentPrincipalId: principalPerson?.id ?? principal.id,
     currentPrincipalName: principalPerson?.name ?? null,
     principalUnanimous: principal.unanimous,
     accountStatus,

@@ -19,7 +19,10 @@ export function SharedEmailAccountManageForm({ group }: { group: SharedEmailGrou
     () => group.people.find((person) => person.id === principalId) ?? null,
     [group.people, principalId],
   );
-  const canSubmit = Boolean(principalId && reasonCode && (reasonCode !== "other" || reasonText.trim()));
+  const linkedAccountName = group.people.find((person) => person.hasValidAuth)?.name ?? group.currentPrincipalName;
+  const groupHasAccount = group.people.some((person) => person.hasValidAuth);
+  const selectedBlockedByExistingAccount = Boolean(groupHasAccount && selected && !selected.hasValidAuth);
+  const canSubmit = Boolean(principalId && reasonCode && (reasonCode !== "other" || reasonText.trim()) && !selectedBlockedByExistingAccount);
 
   return (
     <div className="space-y-6">
@@ -33,7 +36,7 @@ export function SharedEmailAccountManageForm({ group }: { group: SharedEmailGrou
               <div className="min-w-0">
                 <p className="font-medium">{person.name}{person.isPrincipal ? " · atual" : ""}</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  PIN {person.pin ?? "—"} · {person.ticketCount} ingresso(s) · {person.hasValidAuth ? "Conta ativa" : "Conta ainda não ativada"}
+                  PIN {person.pin ?? "—"} · {person.ticketCount} ingresso(s) · {person.hasValidAuth ? "Conta ativa" : linkedAccountName ? `Conta: vinculada a ${linkedAccountName}` : "Sem conta"}
                 </p>
               </div>
             </label>
@@ -77,6 +80,8 @@ export function SharedEmailAccountManageForm({ group }: { group: SharedEmailGrou
           </p>
           {selected.hasValidAuth ? (
             <p className="text-sm text-emerald-200">Conta ativa. Ao confirmar, a propriedade será materializada imediatamente.</p>
+          ) : selectedBlockedByExistingAccount ? (
+            <p className="text-sm text-slate-300">Este e-mail já está vinculado a outra conta. Esta pessoa pode permanecer como titular, mas não pode criar uma segunda conta com o mesmo e-mail.</p>
           ) : (
             <p className="text-sm text-amber-100">Conta ainda não ativada. Ownership será concluído após o primeiro acesso.</p>
           )}

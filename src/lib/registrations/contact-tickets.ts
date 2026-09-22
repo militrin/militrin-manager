@@ -34,15 +34,6 @@ export type TicketIdentityView = {
   intendedOwnerName: string | null;
 };
 
-const CLOSED_ACCOUNT_INVITE_STATUSES = new Set([
-  "claimed",
-  "revoked",
-  "cancelled",
-  "canceled",
-  "expired",
-  "failed",
-]);
-
 export function contactIdForTicket(ticket: ContactTicketLink) {
   return ticket.orderItemContactId ?? ticket.participantContactId ?? null;
 }
@@ -65,20 +56,20 @@ export function contactTicketRoleLabel(roles: ContactTicketRole[]) {
 }
 
 export function isPendingFirstAccessInvite(status?: string | null) {
-  const value = String(status ?? "").trim().toLowerCase();
-  if (!value) return false;
-  return !CLOSED_ACCOUNT_INVITE_STATUSES.has(value);
+  return String(status ?? "").trim().toLowerCase() === "pending";
 }
 
 export function classifyTicketHolderAccount(input: {
   holderContactUserId?: string | null;
   accountState?: ContactAccountState | null;
   inviteStatus?: string | null;
+  emailOwnedByOtherAccount?: boolean;
 }): TicketHolderAccountKind {
   if (input.holderContactUserId) return "active";
   if (input.accountState === "active") return "active";
   if (input.accountState === "pending_confirmation") return "pending_confirmation";
   if (input.accountState === "existing_confirmed") return "existing_confirmed";
+  if (input.accountState === "linked_to_other_account" || input.emailOwnedByOtherAccount) return "unlinked";
   if (input.accountState === "attention") return "attention";
   if (isPendingFirstAccessInvite(input.inviteStatus)) return "pending_first_access";
   return "unlinked";
@@ -121,11 +112,13 @@ export function buildTicketIdentityView(input: {
   intendedOwnerName?: string | null;
   ticketStatus?: string | null;
   buyerType?: string | null;
+  emailOwnedByOtherAccount?: boolean;
 }): TicketIdentityView {
   const holderAccountKind = classifyTicketHolderAccount({
     holderContactUserId: input.holderContactUserId,
     accountState: input.holderAccountState,
     inviteStatus: input.holderInviteStatus,
+    emailOwnedByOtherAccount: input.emailOwnedByOtherAccount,
   });
   return {
     holderName: input.holderName,

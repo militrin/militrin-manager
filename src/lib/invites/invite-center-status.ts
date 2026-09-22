@@ -77,6 +77,7 @@ export type InviteCenterClassifyInput = {
   cadastralIncomplete: boolean;
   jobStatus: 'sent' | 'skipped' | 'failed' | 'pending' | 'processing' | null;
   skipReason?: string | null;
+  groupHasLinkedAccount?: boolean;
 };
 
 function hasTimestamp(value: string | Date | null | undefined) {
@@ -90,6 +91,7 @@ function isFirstAccessComplete(input: InviteCenterClassifyInput) {
   if (input.cadastralIncomplete && input.inviteStatus === 'claimed') return false;
   if (input.activationCompletedAt) return true;
   if (String(input.accountStatus ?? '') === 'active') return true;
+  if (input.groupHasLinkedAccount) return true;
   return input.inviteStatus === 'claimed' && hasTimestamp(input.passwordSetupCompletedAt);
 }
 
