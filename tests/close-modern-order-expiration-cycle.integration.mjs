@@ -9,7 +9,7 @@
 // Roda contra o Supabase local (`supabase start` / `supabase db reset`).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 
 function generateValidCpf() {
@@ -27,17 +27,7 @@ function generateValidCpf() {
 }
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -305,7 +295,7 @@ test('pedido pago nao e tocado pela expiracao', async () => {
   const gatewayPaymentId = await fx.startAsaasPix(orderId, PAST);
 
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 100,
   }), 'confirma pagamento antes da expiracao rodar');
 
   await fx.must(fx.service.rpc('expire_stale_order_payments', { p_organization_id: fx.org.id }), 'expire depois do pagamento confirmado');
@@ -508,7 +498,7 @@ test('estorno de pagamento nao libera produto; cancelar entitlements sim', async
   const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
 
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 100,
   }), 'confirma pagamento');
   assert.equal((await fx.storeInventoryOf(storeItemId)).reserved_quantity, 4, 'reserva permanece apos confirmar pagamento (so libera na entrega fisica)');
 
@@ -546,7 +536,7 @@ test('confirmar pagamento normalmente NAO libera a reserva do produto por aciden
   const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
 
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 100,
   }), 'confirma pagamento');
 
   const inv = await fx.storeInventoryOf(storeItemId);
@@ -559,7 +549,7 @@ test('produto ja entregue nao sofre liberacao indevida quando o pagamento e esto
   const itemId = await fx.addProduct(orderId, storeItemId, 2);
   const gatewayPaymentId = await fx.startAsaasPix(orderId, FUTURE);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 100,
   }), 'confirma pagamento');
 
   // Simula a entrega fisica (deliver_store_item_stock move reserved->delivered).
@@ -662,7 +652,7 @@ test('reconciliacao nunca toca delivered_quantity, mesmo com entrega parcial no 
   const deliveredOrder = await fx.createProductOnlyOrder();
   const deliveredItem = await fx.addProduct(deliveredOrder, storeItemId, 2);
   const gatewayPaymentId = await fx.startAsaasPix(deliveredOrder, FUTURE);
-  await fx.must(fx.service.rpc('apply_gateway_payment_status', { p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid' }), 'paga');
+  await fx.must(fx.service.rpc('apply_gateway_payment_status', { p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 100 }), 'paga');
   await fx.must(fx.service.rpc('deliver_store_item_stock', { p_store_item_id: storeItemId, p_variant_id: null, p_quantity: 2 }), 'entrega fisica');
   await fx.must(fx.service.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', deliveredItem), 'marca entregue');
 

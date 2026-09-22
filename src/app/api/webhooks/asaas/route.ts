@@ -3,6 +3,7 @@ import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { resolveAsaasWebhookAccountKey } from "@/lib/payments/asaas-account-registry";
 import { parseAsaasWebhookPayload } from "@/lib/payments/asaas-provider";
 import { sanitizePaymentGatewayEventPayload } from "@/lib/payments/sanitize-gateway-event-payload";
+import { parseAsaasGatewayAmount } from "@/lib/payments/gateway-amount";
 
 /**
  * Webhook Asaas multi-conta. Uma URL: POST /api/webhooks/asaas
@@ -97,6 +98,11 @@ export async function POST(request: Request) {
   }
 
   try {
+    const gatewayAmount = event.amount ?? parseAsaasGatewayAmount(
+      event.rawPayload && typeof event.rawPayload === "object"
+        ? (event.rawPayload as { payment?: { value?: unknown } }).payment?.value
+        : null,
+    );
     const { data: applyData, error: applyError } = await supabase.rpc("apply_gateway_payment_status", {
       p_provider: "asaas",
       p_provider_payment_id: event.providerPaymentId,
@@ -104,6 +110,7 @@ export async function POST(request: Request) {
       p_internal_status: event.status,
       p_expected_gateway_account_key: accountKey,
       p_event_type: event.eventType,
+      p_gateway_amount: gatewayAmount,
     });
 
     if (applyError) {
@@ -119,6 +126,7 @@ export async function POST(request: Request) {
           p_expected_gateway_account_key: accountKey,
           p_event_type: event.eventType,
           p_external_reference: event.externalReference ?? null,
+          p_gateway_amount: gatewayAmount,
         });
 
         if (!storeError) {
@@ -196,15 +204,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Falha ao aplicar status do pagamento." }, { status: 500 });
     }
 
-    const applied = (Array.isArray(applyData) ? applyData[0] : applyData) as { organization_id: string | null } | null;
+    const applied = (Array.isArray(applyData) ? applyData[0] : applyData) as {
+      organization_id: string | null;
+      applied_status?: string | null;
+      previous_status?: string | null;
+    } | null;
+
+    const amountMismatch =
+      event.status === "paid" &&
+      String(applied?.applied_status ?? applied?.previous_status ?? "") !== "paid";
+
+    if (amountMismatch) {
+      console.error("[webhook:asaas] gateway_amount_mismatch", {
+        provider_payment_id: event.providerPaymentId,
+        event_type: event.eventType,
+        gateway_amount: gatewayAmount,
+        applied_status: applied?.applied_status ?? null,
+        previous_status: applied?.previous_status ?? null,
+        event_id: eventId,
+      });
+    }
 
     await supabase.rpc("mark_payment_gateway_event_processed", {
       p_event_id: eventId,
       p_status: "processed",
       p_organization_id: applied?.organization_id ?? null,
+      p_error: amountMismatch ? "GATEWAY_AMOUNT_MISMATCH: liquidacao rejeitada; pedido permanece pending sem ticket." : null,
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, amount_mismatch: amountMismatch || undefined });
   } catch (error) {
     console.error("[webhook:asaas] unexpected_error", error);
     await supabase.rpc("mark_payment_gateway_event_processed", {

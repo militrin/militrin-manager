@@ -31,7 +31,7 @@ function methodDisplay(method: string | null | undefined, priceOrigin?: string |
   if (isLegacyImportPriceOrigin(priceOrigin)) return 'Não informado';
   const normalized = String(method ?? '').trim();
   if (!normalized || normalized === '-') return 'Não informado';
-  if (normalized === 'courtesy' || normalized === 'admin_courtesy') return 'Cortesia';
+  if (normalized === 'courtesy' || normalized === 'admin_courtesy') return 'Cortesia / emissão administrativa';
   if (normalized === 'pix') return 'PIX';
   if (normalized === 'credit_card') return 'Cartão';
   if (normalized === 'cash') return 'Dinheiro';
@@ -73,8 +73,8 @@ export function resolveOperationalPaymentState(input: {
   if (isCourtesyMethod(method) && (status === 'paid' || status === 'confirmed' || !status)) {
     return {
       kind: 'courtesy',
-      label: 'Cortesia',
-      methodLabel: 'Cortesia',
+      label: 'Cortesia / emissão administrativa',
+      methodLabel: 'Cortesia / emissão administrativa',
       operational: true,
       blockReason: null,
     };

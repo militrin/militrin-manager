@@ -25,6 +25,7 @@ import { appBaseUrl } from '@/lib/urls/app-base-url';
 import { cardPaymentReturnUrl } from '@/lib/payments/card-return-url';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
 import { publicOrderChargeDescription } from '@/lib/display-reference';
+import { isGatewayChargeUnpersistedError } from '@/lib/payments/gateway-charge-unpersisted';
 import {
   eventOffersCardInstallments,
   normalizeMaxCardInstallments,
@@ -2225,8 +2226,31 @@ export async function generatePublicOrderPixAction(orderId: string) {
       order_id: orderId,
       provider: gateway.name,
       error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
+      unpersisted: isGatewayChargeUnpersistedError(gatewayError),
+      cancelled: isGatewayChargeUnpersistedError(gatewayError) ? gatewayError.cancelled : null,
+      provider_payment_id: isGatewayChargeUnpersistedError(gatewayError) ? gatewayError.providerPaymentId : null,
     });
-    return { success: false as const, message: 'Nao foi possivel gerar o PIX agora. Tente novamente em instantes.' };
+    if (isGatewayChargeUnpersistedError(gatewayError) && gatewayError.providerPaymentId) {
+      const persist = await supabase.rpc('record_unpersisted_gateway_charge', {
+        p_order_id: orderId,
+        p_provider: gateway.name,
+        p_gateway_payment_id: gatewayError.providerPaymentId,
+        p_gateway_account_key: getPaymentGatewayAccountKeyForMethod('pix'),
+        p_cancelled: gatewayError.cancelled,
+        p_reason: gatewayError.message,
+      });
+      if (persist.error) {
+        console.error('[checkout:pix] unpersisted_charge_record_failed', {
+          order_id: orderId,
+          provider_payment_id: gatewayError.providerPaymentId,
+          error: persist.error.message,
+        });
+      }
+    }
+    if (gatewayError instanceof Error && /deve ser maior que zero/i.test(gatewayError.message)) {
+      return { success: false as const, message: 'Nao foi possivel gerar o PIX: valor da cobranca invalido.' };
+    }
+    return { success: false as const, message: 'Nao foi possivel gerar o PIX agora. Tente novamente neste mesmo pedido.' };
   }
 
   const { data, error } = await supabase.rpc('start_order_payment_pix', {

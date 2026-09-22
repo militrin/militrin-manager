@@ -5,20 +5,11 @@
 // RPCs SQL diretamente via @supabase/supabase-js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -144,21 +135,29 @@ test('provider_payment_id duplicado: UNIQUE(provider, gateway_payment_id) impede
   assert.match(p2.error.message, /duplicate key|unique/i);
 });
 
-test('valor divergente: apply_gateway_payment_status nao confia em nenhum valor vindo do payload -- so em provider_payment_id/status', async () => {
-  // Documentacao viva da garantia: a funcao nao recebe "amount" como
-  // parametro de decisao nenhuma -- o valor cobrado e sempre o gravado em
-  // payments.final_amount no momento da criacao do PIX (RPC start_order_payment_pix),
-  // nunca o que vier solto no payload do webhook. Prova indireta: chamar com
-  // um provider_payment_id valido funciona sem exigir nenhum "amount" de entrada.
+test('valor divergente: webhook com valor diferente do expected nao liquida e nao altera final_amount', async () => {
   const localPayment = await fx.must(fx.service.from('payments').insert({
     organization_id: fx.org.id, event_id: fx.event.id, amount: 77, final_amount: 77, payment_status: 'pending',
     payment_method: 'pix', provider: 'asaas', gateway_payment_id: `amt-${fx.suffix}`,
   }).select('id').single(), 'payment valor');
-  const result = await fx.service.rpc('apply_gateway_payment_status', {
+  const mismatch = await fx.service.rpc('apply_gateway_payment_status', {
     p_provider: 'asaas', p_provider_payment_id: `amt-${fx.suffix}`, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_gateway_amount: 0,
   });
-  assert.equal(result.error, null, result.error?.message);
-  const { data: after } = await fx.service.from('payments').select('final_amount').eq('id', localPayment.id).single();
+  assert.equal(mismatch.error, null, mismatch.error?.message);
+  const mismatchRow = Array.isArray(mismatch.data) ? mismatch.data[0] : mismatch.data;
+  assert.equal(mismatchRow.applied_status, 'pending');
+  const { data: afterMismatch } = await fx.service.from('payments').select('payment_status, final_amount').eq('id', localPayment.id).single();
+  assert.equal(afterMismatch.payment_status, 'pending');
+  assert.equal(Number(afterMismatch.final_amount), 77);
+
+  const match = await fx.service.rpc('apply_gateway_payment_status', {
+    p_provider: 'asaas', p_provider_payment_id: `amt-${fx.suffix}`, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_gateway_amount: 77,
+  });
+  assert.equal(match.error, null, match.error?.message);
+  const { data: after } = await fx.service.from('payments').select('payment_status, final_amount').eq('id', localPayment.id).single();
+  assert.equal(after.payment_status, 'paid');
   assert.equal(Number(after.final_amount), 77, 'final_amount permanece o valor local original, nunca sobrescrito pelo webhook');
 });
 
@@ -176,6 +175,7 @@ test('organization divergente: apply_gateway_payment_status resolve o pagamento 
 
   const result = await fx.must(fx.service.rpc('apply_gateway_payment_status', {
     p_provider: 'asaas', p_provider_payment_id: sameExternalId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_gateway_amount: 40,
   }), 'apply status orgB');
   const row = Array.isArray(result) ? result[0] : result;
   assert.equal(row.organization_id, orgTwo.id, 'so a organizacao dona da cobranca e afetada');
@@ -233,6 +233,7 @@ test('evento pending depois de paid nao regride o pagamento', async () => {
 
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
     p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'RECEIVED', p_internal_status: 'paid',
+    p_gateway_amount: 80,
   }), 'apply paid');
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
     p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'PENDING', p_internal_status: 'pending',

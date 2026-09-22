@@ -85,6 +85,8 @@ export async function issueTicketAction(input: {
   shirtSize: string;
   notes: string;
   assignHolder?: boolean;
+  acknowledgeExisting?: boolean;
+  idempotencyKey?: string | null;
 }) {
   await assertPermission("participants.create");
 
@@ -139,6 +141,7 @@ export async function issueTicketAction(input: {
     return { success: false as const, message: "Cadastro não encontrado nesta organização. Confira o PIN digitado." };
   }
   const assignHolder = input.assignHolder !== false;
+  const idempotencyKey = String(input.idempotencyKey ?? "").trim() || crypto.randomUUID();
   if (assignHolder) {
     try {
       const holderState = await registrationContactHasActiveTicket(supabase, input.eventId, String(contactResult.data.id));
@@ -172,8 +175,31 @@ export async function issueTicketAction(input: {
     p_payment_method: input.reason,
     p_notes: notes,
     p_assign_holder: assignHolder,
+    p_acknowledge_existing: Boolean(input.acknowledgeExisting),
+    p_idempotency_key: idempotencyKey,
   });
-  if (error) return { success: false as const, message: error.message ?? "Falha ao emitir ingressos." };
+  if (error) {
+    const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+    if (serialized.includes("EXISTING_OPERATIONAL_TICKET")) {
+      let ticketCode = "";
+      let message = "Esta pessoa já possui um ingresso ativo/usado para este evento. Deseja realmente emitir outro ingresso?";
+      try {
+        const detail = JSON.parse(error.details ?? "{}") as { ticket_code?: string; message?: string };
+        ticketCode = String(detail.ticket_code ?? "").trim();
+        if (detail.message) message = detail.message;
+      } catch {
+        /* keep default */
+      }
+      return {
+        success: false as const,
+        requiresExistingTicketConfirmation: true as const,
+        ticketCode,
+        message,
+        idempotencyKey,
+      };
+    }
+    return { success: false as const, message: error.message ?? "Falha ao emitir ingressos." };
+  }
   const ticketRows = (data ?? []) as Array<{ ticket_id: unknown }>;
   const ticketIds = ticketRows.map((row) => String(row.ticket_id)).filter((id) => uuid.test(id));
   if (ticketIds.length !== quantity) {

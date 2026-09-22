@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { getEventCategoriesAndBatchesAction } from "@/app/operacoes/actions";
 import { getEventShirtOptionsAction, issueTicketAction, lookupRegistrationContactAction, type IssueTicketReason } from "./actions";
 
@@ -33,8 +33,18 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const [limitToStock, setLimitToStock] = useState(false);
   const [notes, setNotes] = useState("");
   const [pending, startTransition] = useTransition();
-  const [result, setResult] = useState<{ success: boolean; message: string; ticketIds?: string[]; ownerName?: string; holderLabel?: string; requiresHolderDecision?: boolean } | null>(null);
+  const [result, setResult] = useState<{
+    success: boolean;
+    message: string;
+    ticketIds?: string[];
+    ownerName?: string;
+    holderLabel?: string;
+    requiresHolderDecision?: boolean;
+    requiresExistingTicketConfirmation?: boolean;
+    ticketCode?: string;
+  } | null>(null);
   const [contactLookup, setContactLookup] = useState<ContactLookup>(initialContact ? { status: "found", name: initialContact.name } : { status: "idle" });
+  const idempotencyKeyRef = useRef(crypto.randomUUID());
 
   useEffect(() => {
     const trimmed = pin.trim();
@@ -92,9 +102,12 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const categoryUnsellable = hasCategories && Boolean(categoryId) && selectedCategory !== null && !selectedCategory.sellable;
   const canSubmit = contactLookup.status === "found" && eventId && (!hasCategories || categoryId) && !categoryUnsellable && batchId && (!notesRequired || notes.trim()) && (!hasShirts || (shirtType && shirtSize));
 
-  function submit(assignHolder = true) {
+  function submit(assignHolder = true, acknowledgeExisting = false) {
     setResult(null);
     if (!canSubmit) return;
+    if (acknowledgeExisting) {
+      idempotencyKeyRef.current = crypto.randomUUID();
+    }
     startTransition(async () => {
       const response = await issueTicketAction({
         pin: pin.trim(),
@@ -109,7 +122,12 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
         shirtSize,
         notes,
         assignHolder,
+        acknowledgeExisting,
+        idempotencyKey: idempotencyKeyRef.current,
       });
+      if (response.success) {
+        idempotencyKeyRef.current = crypto.randomUUID();
+      }
       setResult(response);
     });
   }
@@ -128,6 +146,16 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
                 </Link>
               ))}
               {registrationContactId ? <Link href={`/cadastros/${registrationContactId}`} className="text-xs font-semibold underline">Voltar para {contactLookup.name}</Link> : null}
+            </div>
+          ) : null}
+          {!result.success && result.requiresExistingTicketConfirmation ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" disabled={pending} onClick={() => submit(true, true)} className="rounded-lg bg-amber-300 px-3 py-2 font-semibold text-slate-950">
+                Emitir mesmo assim
+              </button>
+              <button type="button" disabled={pending} onClick={() => setResult(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-slate-200">
+                Cancelar
+              </button>
             </div>
           ) : null}
           {!result.success && result.requiresHolderDecision ? (

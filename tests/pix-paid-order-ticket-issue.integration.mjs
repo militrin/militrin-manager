@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveOrCreateAdminRole } from './helpers/resolve-or-create-admin-role.mjs';
 
@@ -22,17 +22,7 @@ function generateValidCpf() {
 }
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -137,12 +127,14 @@ async function buildFixture() {
   }
 
   async function expireAndPay(orderId, gatewayPaymentId) {
+    const { data: payment } = await service.from('payments').select('final_amount').eq('order_id', orderId).single();
     await must(service.rpc('expire_stale_order_payments', { p_organization_id: orgA.id }), 'expire');
     await must(service.rpc('apply_gateway_payment_status', {
       p_provider: 'asaas',
       p_provider_payment_id: gatewayPaymentId,
       p_provider_status: 'RECEIVED',
       p_internal_status: 'paid',
+      p_gateway_amount: Number(payment.final_amount),
     }), 'late paid');
     return orderId;
   }

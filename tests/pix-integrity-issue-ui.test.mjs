@@ -27,7 +27,7 @@ test('menu Integridade e descobrivel para quem confirma pagamento', () => {
 
 test('comprador encontra PIX, continua pagamento e percebe confirmacao sem URL oculta', () => {
   assert.match(wizard, /PixPaymentCard/);
-  assert.match(pixCard, /Gerar pagamento PIX|Gerar novo pagamento/);
+  assert.match(pixCard, /Tentar gerar PIX novamente|Gerar novo pagamento/);
   assert.match(pixCard, /Copiar/);
   assert.match(minhaConta, /Continuar pagamento/);
   assert.match(minhaConta, /PendingPixPaymentWatcher/);

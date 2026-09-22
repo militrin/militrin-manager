@@ -56,7 +56,7 @@ test('3. courtesy/admin: Cortesia e operação permitida', () => {
     ticketStatus: 'active',
   });
   assert.equal(state.kind, 'courtesy');
-  assert.equal(state.label, 'Cortesia');
+  assert.equal(state.label, 'Cortesia / emissão administrativa');
   assert.equal(state.operational, true);
 });
 

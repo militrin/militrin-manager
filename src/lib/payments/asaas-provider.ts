@@ -14,6 +14,8 @@ import { mapAsaasPaymentStatus, mapAsaasWebhookProviderStatus, mapAsaasWebhookTo
 import { earlierIsoTimestamp, pixDueDateEndOfDay } from "./pix-due-date.ts";
 import { verifyAsaasWebhookToken } from "./asaas-webhook-token.ts";
 import { ASAAS_REFUND_TIMEOUT_MS, GatewayTimeoutError, isGatewayTimeoutError } from "./gateway-timeout.ts";
+import { assertPositiveGatewayAmount, parseAsaasGatewayAmount } from "./gateway-amount.ts";
+import { GatewayChargeUnpersistedError } from "./gateway-charge-unpersisted.ts";
 
 export type AsaasEnvironment = "sandbox" | "production";
 
@@ -72,6 +74,7 @@ export function parseAsaasWebhookPayload(rawBody: string): ParsedWebhookEvent {
     rawPayload: payload,
     gatewayAccountId: readAsaasAccountId(payload),
     externalReference: payment.externalReference ? String(payment.externalReference) : null,
+    amount: parseAsaasGatewayAmount(payment.value),
   };
 }
 
@@ -182,6 +185,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
   }
 
   async createPixPayment(input: CreatePixPaymentInput): Promise<CreatePixPaymentResult> {
+    const amount = assertPositiveGatewayAmount(input.amount, "createPixPayment");
     const customerId = await this.findOrCreateCustomer(input.payer, input.organizationId);
 
     const payment = await this.request<AsaasPayment>("/payments", {
@@ -189,16 +193,36 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       body: JSON.stringify({
         customer: customerId,
         billingType: "PIX",
-        value: input.amount,
+        value: amount,
         dueDate: input.dueDate,
         description: input.description,
         externalReference: input.orderId,
       }),
     });
 
-    const qrCode = await this.request<{ encodedImage: string; payload: string; expirationDate: string | null }>(
-      `/payments/${payment.id}/pixQrCode`,
-    );
+    let qrCode;
+    try {
+      qrCode = await this.request<{ encodedImage: string; payload: string; expirationDate: string | null }>(
+        `/payments/${payment.id}/pixQrCode`,
+      );
+    } catch (error) {
+      let cancelled = false;
+      try {
+        await this.cancelPayment({
+          organizationId: input.organizationId,
+          providerPaymentId: payment.id,
+          reason: "Falha ao obter QR PIX apos criar cobranca.",
+        });
+        cancelled = true;
+      } catch {
+        cancelled = false;
+      }
+      throw new GatewayChargeUnpersistedError(
+        error instanceof Error ? error.message : "Falha ao obter QR PIX apos criar cobranca.",
+        payment.id,
+        cancelled,
+      );
+    }
 
     return {
       providerPaymentId: payment.id,
@@ -210,6 +234,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
   }
 
   async createCardPayment(input: CreateCardPaymentInput): Promise<CreateCardPaymentResult> {
+    const amount = assertPositiveGatewayAmount(input.amount, "createCardPayment");
     const customerId = await this.findOrCreateCustomer(input.payer, input.organizationId);
     const installments = Math.max(1, Math.floor(input.installments ?? 1));
 
@@ -219,7 +244,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       const body: Record<string, unknown> = {
         customer: customerId,
         billingType: "CREDIT_CARD",
-        value: input.amount,
+        value: amount,
         dueDate: input.dueDate,
         description: input.description,
         externalReference: input.orderId,
@@ -231,7 +256,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
         // evento e aplicado antes desta chamada; o Asaas so oferece o
         // numero enviado aqui.
         body.installmentCount = installments;
-        body.installmentValue = installmentValue(input.amount, installments);
+        body.installmentValue = installmentValue(amount, installments);
       }
 
       const successUrl = String(input.successUrl ?? "").trim();
@@ -271,14 +296,14 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
 
     let charges;
     try {
-      charges = await this.listCardCharges(payment, installmentId, installments, input.amount);
+      charges = await this.listCardCharges(payment, installmentId, installments, amount);
     } catch {
       charges = [{
         providerPaymentId: payment.id,
         gatewayInstallmentId: installmentId,
         installmentNumber: 1,
         installmentCount: 1,
-        amount: Number(payment.value ?? input.amount),
+        amount: Number(payment.value ?? amount),
       }];
     }
 

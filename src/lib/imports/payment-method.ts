@@ -32,7 +32,7 @@ const IMPORTED_PAYMENT_METHOD_LABELS: Record<ImportedPaymentMethod, string> = {
   pix: 'PIX',
   credit_card: 'Cartão',
   cash: 'Dinheiro',
-  courtesy: 'Cortesia',
+  courtesy: 'Cortesia / emissão administrativa',
 };
 
 /**

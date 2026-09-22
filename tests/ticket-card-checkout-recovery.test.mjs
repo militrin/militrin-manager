@@ -118,7 +118,7 @@ test('erro depois da criacao preserva a cobranca existente e nao cancela orfao',
 
 test('webhook posterior reconcilia pelo gateway_payment_id persistido', () => {
   assert.match(webhook, /apply_gateway_payment_status/);
-  assert.match(webhook, /p_provider_payment_id: event\.providerPaymentId/);
+  assert.match(webhook, /p_gateway_amount: gatewayAmount/);
   assert.match(webhook, /PAYMENT_NOT_FOUND/);
   assert.match(persistHelper, /p_gateway_payment_id: input\.payload\.providerPaymentId/);
 });

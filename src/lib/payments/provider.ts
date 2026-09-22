@@ -146,6 +146,8 @@ export type ParsedWebhookEvent = {
   gatewayAccountId?: string | null;
   /** `payment.externalReference` do Asaas (orderId / store_order.id). */
   externalReference?: string | null;
+  /** `payment.value` do Asaas, valor efetivo da cobranca. */
+  amount?: number | null;
 };
 
 /**

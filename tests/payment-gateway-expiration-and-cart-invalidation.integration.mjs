@@ -5,7 +5,7 @@
 // (`supabase start`).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveOrCreateAdminRole } from './helpers/resolve-or-create-admin-role.mjs';
 
@@ -24,17 +24,7 @@ function generateValidCpf() {
 }
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -154,7 +144,7 @@ test('corrida: expiracao roda primeiro, webhook PAID chega depois -- dinheiro e 
   assert.equal(order.status, 'expired');
 
   const applyResult = await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 120,
   }), 'webhook paid tardio');
   const row = Array.isArray(applyResult) ? applyResult[0] : applyResult;
   assert.equal(row.applied_status, 'paid', 'o fato financeiro (dinheiro recebido) e sempre registrado');
@@ -181,7 +171,7 @@ test('corrida: webhook PAID chega primeiro -- expiracao que rodar depois NAO des
   const gatewayPaymentId = await fx.startAsaasPix(orderId, PAST);
 
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 120,
   }), 'webhook paid primeiro');
 
   let { data: order } = await fx.service.from('orders').select('status').eq('id', orderId).single();
@@ -224,7 +214,7 @@ test('alteracao do carrinho invalida o pagamento anterior e prepara o cancelamen
   // localmente) -- reforca que o local e a fonte da verdade sobre qual
   // gateway_payment_id ainda esta "vivo".
   const staleWebhook = await fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 120,
   });
   assert.ok(staleWebhook.error, 'webhook para a cobranca orfa deve falhar (PAYMENT_NOT_FOUND) -- nunca reativa nada');
   assert.match(staleWebhook.error.message, /PAYMENT_NOT_FOUND/);

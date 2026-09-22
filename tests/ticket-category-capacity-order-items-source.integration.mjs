@@ -234,7 +234,7 @@ test('pagamento confirmado continua ocupando as 3 vagas; emissao dos tickets nao
 
   const gatewayPaymentId = await fx.startAsaasPix(buyer, orderId, FUTURE);
   const applyResult = await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 100,
   }), 'confirma pagamento');
   const row = Array.isArray(applyResult) ? applyResult[0] : applyResult;
   assert.equal(row.applied_status, 'paid');

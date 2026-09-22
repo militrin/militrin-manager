@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createClient } from '@supabase/supabase-js';
 
 const HOTFIX = 'supabase/migrations/20261027000000_fix_store_gateway_status_ambiguous_columns.sql';
-const LOCAL_URL = 'http://127.0.0.1:54321';
+const LOCAL_URL = 'http://127.0.0.1:15421';
 const LOCAL_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
 
 function functionBody(sql) {
@@ -149,6 +149,7 @@ test('runtime: pending+reserved+PAYMENT_RECEIVED confirma sem ticket/cobranca e 
     p_provider_payment_id: gatewayId,
     p_provider_status: 'RECEIVED',
     p_internal_status: 'paid',
+    p_gateway_amount: 60,
     p_expected_gateway_account_key: 'asaas-conta-live-01',
     p_event_type: 'PAYMENT_RECEIVED',
     p_external_reference: order.id,
@@ -188,6 +189,7 @@ test('runtime: pending+reserved+PAYMENT_RECEIVED confirma sem ticket/cobranca e 
     p_provider_payment_id: gatewayId,
     p_provider_status: 'RECEIVED',
     p_internal_status: 'paid',
+    p_gateway_amount: 60,
     p_expected_gateway_account_key: 'asaas-conta-live-01',
     p_event_type: 'PAYMENT_RECEIVED',
     p_external_reference: order.id,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveOrCreateAdminRole } from './helpers/resolve-or-create-admin-role.mjs';
 
@@ -22,17 +22,7 @@ function generateValidCpf() {
 }
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -138,6 +128,7 @@ test('cartao 2x: 1 order, 1 payment, installment, 2 charges, 1 ticket, sem diver
     p_provider_payment_id: pay1,
     p_provider_status: 'CONFIRMED',
     p_internal_status: 'paid',
+    p_gateway_amount: 40,
     p_expected_gateway_account_key: 'conta-card',
     p_event_type: 'PAYMENT_CONFIRMED',
   }), 'parcela 1');
@@ -150,6 +141,7 @@ test('cartao 2x: 1 order, 1 payment, installment, 2 charges, 1 ticket, sem diver
     p_provider_payment_id: pay2,
     p_provider_status: 'CONFIRMED',
     p_internal_status: 'paid',
+    p_gateway_amount: 40,
     p_expected_gateway_account_key: 'conta-card',
     p_event_type: 'PAYMENT_CONFIRMED',
   }), 'parcela 2');
@@ -193,6 +185,7 @@ test('CAPTURE_REFUSED com PENDING nao falha o payment; CONFIRMED posterior emite
     p_provider_payment_id: payId,
     p_provider_status: 'CONFIRMED',
     p_internal_status: 'paid',
+    p_gateway_amount: 80,
     p_expected_gateway_account_key: 'conta-card',
     p_event_type: 'PAYMENT_CONFIRMED',
   }), 'approved after refuse');
@@ -243,6 +236,7 @@ test('webhook da parcela 2 com conta errada e mismatch, nao divergencia orfa', a
     p_provider_payment_id: pay2,
     p_provider_status: 'CONFIRMED',
     p_internal_status: 'paid',
+    p_gateway_amount: 40,
     p_expected_gateway_account_key: 'conta-pix',
     p_event_type: 'PAYMENT_CONFIRMED',
   });

@@ -601,6 +601,7 @@ test('webhook/gateway permanece service-only e confirma legitimamente', async ()
     p_provider_payment_id: gatewayPaymentId,
     p_provider_status: 'CONFIRMED',
     p_internal_status: 'paid',
+    p_gateway_amount: 100,
   };
   assert.ok((await fx.anonymous.rpc('apply_gateway_payment_status', gatewayArgs)).error);
   assert.ok((await fx.buyer.client.rpc('apply_gateway_payment_status', gatewayArgs)).error);

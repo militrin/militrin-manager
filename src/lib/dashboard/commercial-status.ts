@@ -145,10 +145,10 @@ export function resolveBuyerPresentation(input: {
   const isOperatorOrigin = isImportedHolder || isAdministrative;
 
   if (input.buyerName) {
-    return { label: "Comprador", name: isCourtesy ? `${input.buyerName} (Cortesia)` : input.buyerName, isCourtesy };
+    return { label: "Comprador", name: isCourtesy ? `${input.buyerName} (Cortesia / emissão administrativa)` : input.buyerName, isCourtesy };
   }
   if (isCourtesy && input.holderName) {
-    return { label: "Destinatário", name: `${input.holderName} (Cortesia)`, isCourtesy: true };
+    return { label: "Destinatário", name: `${input.holderName} (Cortesia / emissão administrativa)`, isCourtesy: true };
   }
   if (isOperatorOrigin && input.holderName) {
     return { label: "Destinatário", name: input.holderName, isCourtesy: false };

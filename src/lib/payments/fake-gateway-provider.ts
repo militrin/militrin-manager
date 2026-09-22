@@ -11,6 +11,7 @@ import type {
   RefundPaymentInput,
 } from "@/lib/payments/provider";
 import { getHeader } from "@/lib/payments/http-headers";
+import { assertPositiveGatewayAmount } from "@/lib/payments/gateway-amount";
 
 /**
  * Implementacao "fake" do contrato canonico `PaymentGatewayProvider` (nao
@@ -29,8 +30,9 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
   }
 
   async createPixPayment(input: CreatePixPaymentInput): Promise<CreatePixPaymentResult> {
+    const amount = assertPositiveGatewayAmount(input.amount, "createPixPayment");
     const providerPaymentId = `fake_${input.orderId}_${Date.now()}`;
-    const pixCode = `00020126FAKEPIX${providerPaymentId}5204000053039865406${input.amount.toFixed(2)}5802BR`;
+    const pixCode = `00020126FAKEPIX${providerPaymentId}5204000053039865406${amount.toFixed(2)}5802BR`;
     return {
       providerPaymentId,
       status: "pending",
@@ -43,6 +45,7 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
   }
 
   async createCardPayment(input: CreateCardPaymentInput): Promise<CreateCardPaymentResult> {
+    const amount = assertPositiveGatewayAmount(input.amount, "createCardPayment");
     const providerPaymentId = `fake_card_${input.orderId}_${Date.now()}`;
     const installments = Math.max(1, Math.floor(input.installments ?? 1));
     const charges = Array.from({ length: installments }, (_, index) => ({
@@ -51,8 +54,8 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
       installmentNumber: index + 1,
       installmentCount: installments,
       amount: installments >= 2
-        ? Math.round((input.amount / installments) * 100) / 100
-        : input.amount,
+        ? Math.round((amount / installments) * 100) / 100
+        : amount,
     }));
     return {
       providerPaymentId,

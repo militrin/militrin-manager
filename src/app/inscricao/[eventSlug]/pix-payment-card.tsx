@@ -191,7 +191,7 @@ export function PixPaymentCard({
             disabled={isRegeneratingPix}
             className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950 disabled:opacity-50"
           >
-            {isRegeneratingPix ? 'Gerando PIX...' : 'Gerar pagamento PIX'}
+            {isRegeneratingPix ? 'Gerando PIX...' : 'Tentar gerar PIX novamente'}
           </button>
         </div>
       ) : (

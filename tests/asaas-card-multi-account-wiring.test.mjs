@@ -101,8 +101,9 @@ test('generatePublicOrderCardAction reusa cobranca viva, persiste invoice e usa 
   assert.match(fn, /isReusableLiveGatewayCharge\(payment\)/);
   assert.match(fn, /claim_order_pix_generation/);
   assert.match(fn, /createCardPayment/);
-  assert.match(fn, /p_checkout_url: payload.checkoutUrl/);
-  assert.match(fn, /getPaymentGatewayAccountKeyForMethod\('credit_card'\)/);
+  assert.match(fn, /persistOrderCardCharge/);
+  assert.match(actions, /p_checkout_url: input\.payload\.checkoutUrl/);
+  assert.match(actions, /getPaymentGatewayAccountKeyForMethod\(["']credit_card["']\)/);
   assert.match(fn, /cardPaymentReturnUrl\(orderId\)/);
 });
 

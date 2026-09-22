@@ -21,6 +21,7 @@ import {
 import { PixPaymentCard } from './pix-payment-card';
 import { CardPaymentCard } from './card-payment-card';
 import { isReusableLiveGatewayCharge } from '@/lib/checkout/pix-payment-status';
+import { buildCheckoutIntentKey } from '@/lib/checkout/checkout-intent-key';
 import {
   beginCardCheckoutRedirect,
   endCardCheckoutRedirect,
@@ -1747,7 +1748,20 @@ export function RegistrationWizard({
       return;
     }
 
-    const requestId = `${event.id}:${effectiveCategoryId ?? 'single'}:${removeCpfMask(form.cpf)}:${form.quantity}:${Date.now()}`;
+    const requestId = buildCheckoutIntentKey({
+      eventId: event.id,
+      categoryId: effectiveCategoryId,
+      cpf: removeCpfMask(form.cpf),
+      quantity: form.quantity,
+      paymentMethod: form.payment_method,
+      couponCode: form.coupon_code,
+      items: localItems.map((item) => ({
+        pricing_gender: item.pricingGender,
+        shirt_type: item.shirtType,
+        shirt_size: item.shirtSize,
+        ownership_mode: item.ownershipMode,
+      })),
+    });
 
     const resolvedRequestGender = resolvePricingGender({
       itemGender: localItems[0]?.pricingGender,
@@ -1942,11 +1956,11 @@ export function RegistrationWizard({
     if (form.payment_method === 'pix') {
       const pix = await generatePublicOrderPixAction(createdRegistration.order_id || '');
       if (!pix.success) {
-        setErrors([pix.message || 'Falha ao gerar PIX.']);
+        setErrors([pix.message || 'Não foi possível gerar o PIX. Tente novamente neste mesmo pedido.']);
         return;
       }
       if (!pix.payment) {
-        setErrors(['Falha ao gerar PIX.']);
+        setErrors(['Não foi possível gerar o PIX. Tente novamente neste mesmo pedido.']);
         return;
       }
       setRegistration((prev) =>

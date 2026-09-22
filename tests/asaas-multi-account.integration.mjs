@@ -1,19 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -47,7 +38,7 @@ test('webhook da conta PIX nao atualiza payment da conta CARD mesmo com o mesmo 
     p_provider: 'asaas',
     p_provider_payment_id: payId,
     p_provider_status: 'CONFIRMED',
-    p_internal_status: 'paid',
+    p_internal_status: 'paid', p_gateway_amount: 80,
     p_expected_gateway_account_key: 'conta-pix',
   });
   assert.equal(mismatch.error?.message, 'GATEWAY_ACCOUNT_MISMATCH');
@@ -59,7 +50,7 @@ test('webhook da conta PIX nao atualiza payment da conta CARD mesmo com o mesmo 
     p_provider: 'asaas',
     p_provider_payment_id: payId,
     p_provider_status: 'CONFIRMED',
-    p_internal_status: 'paid',
+    p_internal_status: 'paid', p_gateway_amount: 80,
     p_expected_gateway_account_key: 'conta-card',
   }), 'card account can apply');
 });

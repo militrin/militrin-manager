@@ -4,7 +4,7 @@
 // por reprocessamento tardio). Roda contra o Supabase local (`supabase start`).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { resolveLocalSupabase } from './helpers/local-supabase-env.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveOrCreateAdminRole } from './helpers/resolve-or-create-admin-role.mjs';
 
@@ -23,17 +23,7 @@ function generateValidCpf() {
 }
 
 async function environment() {
-  const text = await readFile(new URL('../.env.local', import.meta.url), 'utf8').catch(() => '');
-  const local = Object.fromEntries(text.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1).replace(/^['"]|['"]$/g, '')];
-  }));
-  return {
-    url: 'http://127.0.0.1:54321',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
-    serviceKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    ...local,
-  };
+  return resolveLocalSupabase();
 }
 
 async function buildFixture() {
@@ -145,7 +135,7 @@ test('paid confirma order/order_items e emite ticket', async () => {
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   const result = await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid');
   const row = Array.isArray(result) ? result[0] : result;
   assert.equal(row.applied_status, 'paid');
@@ -161,12 +151,12 @@ test('paid repetido (retry do mesmo webhook) nao duplica ticket nem muda paid_at
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid 1');
   const { data: paymentAfterFirst } = await fx.service.from('payments').select('id,paid_at').eq('gateway_payment_id', gatewayPaymentId).single();
 
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'RECEIVED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'RECEIVED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid 2 (retry/segundo evento aprovado)');
 
   const { data: tickets } = await fx.service.from('tickets').select('id').eq('order_id', orderId);
@@ -179,7 +169,7 @@ test('ticket cancelado por decisao administrativa NAO e reativado por reprocessa
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid');
 
   const { data: ticketBefore } = await fx.service.from('tickets').select('id,status').eq('order_id', orderId).single();
@@ -224,7 +214,7 @@ test('ticket ja usado (check-in feito) NAO e alterado por reprocessamento tardio
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid');
 
   const { data: ticket } = await fx.service.from('tickets').select('id').eq('order_id', orderId).single();
@@ -257,7 +247,7 @@ test('ticket active nao falha ao reconfirmar (segunda confirmacao direta retorna
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid');
 
   const { data: ticketBefore } = await fx.service.from('tickets').select('id,status').eq('order_id', orderId).single();
@@ -278,7 +268,7 @@ test('10 reconfirmacoes sequenciais do mesmo order_item continuam com exatamente
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid');
   const { data: ticketBefore } = await fx.service.from('tickets').select('id').eq('order_id', orderId).single();
 
@@ -297,7 +287,7 @@ test('duas reconfirmacoes concorrentes do mesmo order_item continuam com exatame
   const orderId = await fx.createOrder();
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid');
   const { data: ticketBefore } = await fx.service.from('tickets').select('id').eq('order_id', orderId).single();
 
@@ -318,7 +308,7 @@ test('segundo ticket diferente para a MESMA pessoa no mesmo evento continua bloq
   const firstOrderId = await fx.createOrder({ cpf });
   const firstGatewayPaymentId = await fx.startAsaasPix(firstOrderId);
   await fx.must(fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: firstGatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: firstGatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   }), 'apply paid (primeiro pedido)');
 
   // materialize_self_checkout_holder ja bloqueia na propria criacao do
@@ -344,10 +334,10 @@ test('titulares diferentes no mesmo evento continuam permitidos (sem falso posit
   const gatewayB = await fx.startAsaasPix(orderB);
 
   const resultA = await fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayA, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayA, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   });
   const resultB = await fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayB, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayB, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   });
   assert.equal(resultA.error, null, resultA.error?.message);
   assert.equal(resultB.error, null, resultB.error?.message);
@@ -363,7 +353,7 @@ test('ingresso sem titular (sem registration_contact) continua valido e reconfir
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
 
   const result = await fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   });
   assert.equal(result.error, null, result.error?.message);
 
@@ -384,14 +374,14 @@ test('webhook duplicado de pagamento paid passa sem erro e sem duplicar ticket (
   const gatewayPaymentId = await fx.startAsaasPix(orderId);
 
   const first = await fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'CONFIRMED', p_internal_status: 'paid', p_gateway_amount: 150,
   });
   assert.equal(first.error, null, first.error?.message);
 
   // Webhook duplicado real: Asaas reenvia o MESMO evento (ou um segundo
   // evento de pagamento aprovado) para a MESMA cobranca.
   const duplicate = await fx.service.rpc('apply_gateway_payment_status', {
-    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'RECEIVED', p_internal_status: 'paid',
+    p_provider: 'asaas', p_provider_payment_id: gatewayPaymentId, p_provider_status: 'RECEIVED', p_internal_status: 'paid', p_gateway_amount: 150,
   });
   assert.equal(duplicate.error, null, duplicate.error?.message);
 
