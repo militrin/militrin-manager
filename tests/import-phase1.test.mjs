@@ -1244,7 +1244,7 @@ test('primeiro acesso E — finaliza de forma idempotente e segue para ingressos
   // dispatchFirstAccessEmail -- ver teste "migration 099...".
   const dispatchLib = await readFile(new URL('../src/lib/account/first-access-invite-dispatch.ts', import.meta.url), 'utf8');
   assert.match(action, /claim_participant_account_invite[\s\S]*reconcile_imported_ticket_issuance_for_user/);
-  assert.match(dispatchLib, /\/minha-conta\/ingressos/);
+  assert.match(dispatchLib, /firstAccessOnboardingPath\(inviteId\)/);
   assert.doesNotMatch(action, /from\('(orders|payments|order_items|tickets)'\)\.(insert|update)/);
 });
 
@@ -1281,8 +1281,13 @@ test('contrato de convite — pending valido', () => {
 test('contrato de convite — pending expirado', () => {
   assert.equal(evaluateParticipantInviteAccess({
     ...invitePolicyBase,
+    authUserId: null,
     expiresAt: '2028-01-01T00:00:00.000Z',
   }), 'inactive');
+  assert.equal(evaluateParticipantInviteAccess({
+    ...invitePolicyBase,
+    expiresAt: '2028-01-01T00:00:00.000Z',
+  }), null);
 });
 
 test('contrato de convite — claimed pelo mesmo usuario', () => {

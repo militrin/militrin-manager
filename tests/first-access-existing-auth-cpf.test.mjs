@@ -28,7 +28,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('reenvio de Auth confirmada associa o convite atual e atualiza a referencia canonica', () => {
   const resend = dispatch.slice(
-    dispatch.indexOf('if (isResend)'),
+    dispatch.indexOf('if (isResend || associatedAuthId)'),
     dispatch.indexOf('const result = await admin.auth.admin.inviteUserByEmail'),
   );
   assert.match(resend, /find_auth_email_confirmation_status/);

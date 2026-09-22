@@ -61,16 +61,24 @@ export async function listLiveFirstAccessInviteIdsForUser(user: AuthenticatedInv
   const email = String(user.email ?? '').trim().toLowerCase();
   if (!user.id || !email) return [];
   const admin = createServiceRoleSupabaseClient();
-  const { data } = await admin.from('participant_account_invites')
-    .select('id,auth_user_id,auth_email_sent_at,updated_at')
-    .eq('status', 'pending')
-    .gt('expires_at', new Date().toISOString())
-    .ilike('email', email)
-    .or(`auth_user_id.eq.${user.id},auth_user_id.is.null`)
-    .order('auth_email_sent_at', { ascending: false, nullsFirst: false });
-  const rows = (data ?? []).filter((row) => !row.auth_user_id || row.auth_user_id === user.id);
-  const associated = rows.filter((row) => row.auth_user_id === user.id);
-  return (associated.length ? associated : rows)
+  const nowIso = new Date().toISOString();
+  const [{ data: boundRows }, { data: metadataRows }] = await Promise.all([
+    admin.from('participant_account_invites')
+      .select('id,auth_user_id,auth_email_sent_at,updated_at')
+      .eq('status', 'pending')
+      .eq('auth_user_id', user.id)
+      .order('auth_email_sent_at', { ascending: false, nullsFirst: false }),
+    admin.from('participant_account_invites')
+      .select('id,auth_user_id,auth_email_sent_at,updated_at')
+      .eq('status', 'pending')
+      .is('auth_user_id', null)
+      .gt('expires_at', nowIso)
+      .ilike('email', email)
+      .order('auth_email_sent_at', { ascending: false, nullsFirst: false }),
+  ]);
+  const bound = (boundRows ?? []).filter((row) => row.auth_user_id === user.id);
+  const rows = bound.length ? bound : (metadataRows ?? []);
+  return rows
     .map((row) => parseInviteId(String(row.id)))
     .filter((id): id is string => Boolean(id));
 }

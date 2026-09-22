@@ -284,7 +284,7 @@ if (!availableUrl) {
     const eligibilityRow = Array.isArray(eligibilityB.data) ? eligibilityB.data[0] : eligibilityB.data;
     assert.equal(eligibilityB.error, null, eligibilityB.error?.message);
     assert.equal(eligibilityRow.eligible, false, 'Enviar acesso de B deve ser bloqueado');
-    assert.match(String(eligibilityRow.reason_code), /email_conflict|account_attention|shared_email/);
+    assert.match(String(eligibilityRow.reason_code), /email_already_has_account|email_conflict|account_attention|shared_email/);
 
     const prepareB = await admin.client.rpc('prepare_registration_contact_account_invite', {
       p_registration_contact_id: personB.contact.id,
@@ -489,7 +489,145 @@ if (!availableUrl) {
       void otherAuth;
     });
 
-    await t.test('Ana-like: Auth nao confirmada, link expirado, resend signup, mesma Auth, claim, healthy', async () => {
+    await t.test('Julia-like: convite interno expirado com auth_user_id correlacionado reivindica o mesmo Cadastro', async () => {
+      const email = `julia-like-${suffix}@qa.local`;
+      const cpf = generateValidCpf();
+      const identity = await createImportedIdentity('Julia Like', email, cpf);
+      const created = await must(service.auth.admin.createUser({ email, password, email_confirm: true }), 'julia auth');
+      const authUserId = created.user.id;
+      await must(service.from('customer_profiles').upsert({
+        user_id: authUserId, account_status: 'pending_activation',
+        must_change_password: true, must_complete_profile: true,
+      }, { onConflict: 'user_id' }), 'julia empty profile');
+      const invite = await must(service.from('participant_account_invites').insert({
+        organization_id: org.id, registration_contact_id: identity.contact.id, email,
+        status: 'pending', invited_by: admin.userId, auth_user_id: authUserId,
+        requires_password_setup: true,
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+      }).select('id').single(), 'julia expired invite');
+      const guest = await clientFor(email);
+      const conflict = await guest.rpc('find_conflicting_registration_contact', {
+        p_cpf: cpf, p_exclude_user_id: authUserId, p_organization_id: org.id,
+      });
+      const conflictRow = Array.isArray(conflict.data) ? conflict.data[0] : conflict.data;
+      assert.equal(conflict.error, null, conflict.error?.message);
+      assert.equal(conflictRow.has_conflict, false, 'CPF do proprio Cadastro correlacionado nao e conflito');
+      await must(guest.rpc('upsert_customer_profile', {
+        p_user_id: authUserId, p_full_name: 'Julia Like', p_cpf: cpf,
+        p_birth_date: '1988-03-15', p_gender: 'female', p_phone: '11988887777', p_city: 'Itapiranga',
+      }), 'julia profile');
+      const claimed = await must(guest.rpc('claim_registration_contact_account_invite', { p_invite_id: invite.id }), 'julia claim');
+      assert.equal(String(claimed), String(identity.contact.id));
+      await must(guest.rpc('ensure_registration_contact_for_user', { p_user_id: authUserId }), 'julia ensure');
+      const again = await must(guest.rpc('claim_registration_contact_account_invite', { p_invite_id: invite.id }), 'julia claim idempotent');
+      assert.equal(String(again), String(identity.contact.id));
+      const linked = await must(service.from('registration_contacts').select('id,user_id').eq('id', identity.contact.id).single(), 'julia linked');
+      const duplicates = await must(service.from('registration_contacts').select('id').eq('organization_id', org.id).eq('cpf', cpf), 'julia unique cpf');
+      assert.equal(linked.user_id, authUserId);
+      assert.equal(duplicates.length, 1);
+    });
+
+    await t.test('CPF de outro Cadastro continua bloqueado apos Auth confirmada', async () => {
+      const email = `cpf-other-${suffix}@qa.local`;
+      const self = await createImportedIdentity('Cpf Self', email, generateValidCpf());
+      const other = await createImportedIdentity('Cpf Other', `cpf-other-b-${suffix}@qa.local`, generateValidCpf());
+      const created = await must(service.auth.admin.createUser({ email, password, email_confirm: true }), 'cpf other auth');
+      const invite = await must(service.from('participant_account_invites').insert({
+        organization_id: org.id, registration_contact_id: self.contact.id, email,
+        status: 'pending', invited_by: admin.userId, auth_user_id: created.user.id,
+        expires_at: new Date(Date.now() + 86400000 * 7).toISOString(),
+      }).select('id').single(), 'cpf self invite');
+      const guest = await clientFor(email);
+      const conflict = await guest.rpc('find_conflicting_registration_contact', {
+        p_cpf: other.cpf, p_exclude_user_id: created.user.id, p_organization_id: org.id,
+      });
+      const conflictRow = Array.isArray(conflict.data) ? conflict.data[0] : conflict.data;
+      assert.equal(conflictRow.has_conflict, true);
+      const availability = await guest.rpc('assert_registration_contact_cpf_available', {
+        p_registration_contact_id: self.contact.id, p_cpf: other.cpf,
+      });
+      const payload = availability.data && typeof availability.data === 'object' ? availability.data : null;
+      assert.equal(payload?.ok, false);
+      assert.equal(payload?.code, 'CPF_COLLISION_REQUIRES_ADMIN');
+      void invite;
+    });
+
+    await t.test('shared email: convite A reivindica so o Cadastro A', async () => {
+      const shared = `shared-two-${suffix}@qa.local`;
+      const personA = await createImportedIdentity('Shared A', shared, generateValidCpf());
+      const personB = await createImportedIdentity('Shared B', shared, generateValidCpf());
+      const created = await must(service.auth.admin.createUser({ email: shared, password, email_confirm: true }), 'shared auth');
+      const inviteA = await must(service.from('participant_account_invites').insert({
+        organization_id: org.id, registration_contact_id: personA.contact.id, email: shared,
+        status: 'pending', invited_by: admin.userId, auth_user_id: created.user.id,
+        expires_at: new Date(Date.now() + 86400000 * 7).toISOString(),
+      }).select('id').single(), 'shared invite A');
+      await must(service.from('customer_profiles').upsert({
+        user_id: created.user.id, full_name: 'Shared A', cpf: personA.cpf,
+        birth_date: '1988-03-15', phone: '11988887777', city: 'Itapiranga', gender: 'female',
+      }, { onConflict: 'user_id' }), 'shared profile');
+      const guest = await clientFor(shared);
+      await must(guest.rpc('claim_registration_contact_account_invite', { p_invite_id: inviteA.id }), 'claim A');
+      const afterA = await must(service.from('registration_contacts').select('user_id').eq('id', personA.contact.id).single(), 'A linked');
+      const afterB = await must(service.from('registration_contacts').select('user_id').eq('id', personB.contact.id).single(), 'B unlinked');
+      assert.equal(afterA.user_id, created.user.id);
+      assert.equal(afterB.user_id, null);
+    });
+
+    await t.test('Ana-equivalent: invite.email plus-address nao impede claim da Auth correlacionada', async () => {
+      const email = `ana-eq-${suffix}@qa.local`;
+      const plus = `ana-eq+h.dogui-${suffix}@qa.local`;
+      const identity = await createImportedIdentity('Ana Eq', email, generateValidCpf());
+      const created = await must(service.auth.admin.createUser({ email, password, email_confirm: true }), 'ana eq auth');
+      await must(service.auth.admin.createUser({ email: plus, password, email_confirm: false }), 'ana plus auth unused');
+      const invite = await must(service.from('participant_account_invites').insert({
+        organization_id: org.id, registration_contact_id: identity.contact.id, email: plus,
+        status: 'pending', invited_by: admin.userId, auth_user_id: created.user.id,
+        expires_at: new Date(Date.now() + 86400000 * 7).toISOString(),
+        requires_password_setup: true,
+      }).select('id').single(), 'ana eq invite');
+      await must(service.from('customer_profiles').upsert({
+        user_id: created.user.id, full_name: 'Ana Eq', cpf: identity.cpf,
+        birth_date: '1988-03-15', phone: '11988887777', city: 'Itapiranga', gender: 'female',
+      }, { onConflict: 'user_id' }), 'ana eq profile');
+      const guest = await clientFor(email);
+      const claimed = await must(guest.rpc('claim_registration_contact_account_invite', { p_invite_id: invite.id }), 'ana eq claim');
+      assert.equal(String(claimed), String(identity.contact.id));
+      const linked = await must(service.from('registration_contacts').select('user_id').eq('id', identity.contact.id).single(), 'ana eq linked');
+      assert.equal(linked.user_id, created.user.id);
+      const listed = await must(service.rpc('find_auth_email_confirmation_status', { p_email: email }), 'ana eq unique real');
+      const sameEmail = Array.isArray(listed) ? listed : [listed];
+      assert.equal(sameEmail.length, 1);
+      assert.equal(sameEmail[0].user_id, created.user.id);
+    });
+
+    await t.test('reissue: convite revogado antigo nao reivindica o Cadastro', async () => {
+      const email = `reissue-${suffix}@qa.local`;
+      const identity = await createImportedIdentity('Reissue', email, generateValidCpf());
+      const created = await must(service.auth.admin.createUser({ email, password, email_confirm: true }), 'reissue auth');
+      const oldInvite = await must(service.from('participant_account_invites').insert({
+        organization_id: org.id, registration_contact_id: identity.contact.id, email,
+        status: 'revoked', invited_by: admin.userId, auth_user_id: created.user.id,
+        expires_at: new Date(Date.now() + 86400000 * 7).toISOString(),
+      }).select('id').single(), 'old revoked');
+      const liveInvite = await must(service.from('participant_account_invites').insert({
+        organization_id: org.id, registration_contact_id: identity.contact.id, email,
+        status: 'pending', invited_by: admin.userId, auth_user_id: created.user.id,
+        expires_at: new Date(Date.now() + 86400000 * 7).toISOString(),
+      }).select('id').single(), 'live reissue');
+      await must(service.from('customer_profiles').upsert({
+        user_id: created.user.id, full_name: 'Reissue', cpf: identity.cpf,
+        birth_date: '1988-03-15', phone: '11988887777', city: 'Itapiranga', gender: 'female',
+      }, { onConflict: 'user_id' }), 'reissue profile');
+      const guest = await clientFor(email);
+      const oldClaim = await guest.rpc('claim_registration_contact_account_invite', { p_invite_id: oldInvite.id });
+      assert.ok(oldClaim.error, 'convite revogado nao reivindica');
+      await must(guest.rpc('claim_registration_contact_account_invite', { p_invite_id: liveInvite.id }), 'live claim');
+      const linked = await must(service.from('registration_contacts').select('user_id').eq('id', identity.contact.id).single(), 'reissue linked');
+      assert.equal(linked.user_id, created.user.id);
+    });
+
+      await t.test('Ana-like: Auth nao confirmada, link expirado, resend signup, mesma Auth, claim, healthy', async () => {
       const email = `ana-like-${suffix}@qa.local`;
       const identity = await createImportedIdentity('Ana Like', email, generateValidCpf());
       const created = await must(service.auth.admin.createUser({

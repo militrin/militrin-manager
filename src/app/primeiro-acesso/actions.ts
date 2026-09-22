@@ -163,38 +163,40 @@ export async function completeFirstAccessAction(formData: FormData): Promise<Com
     return { success: false, message: getParticipantInviteFailureCopy(inviteContext?.reason).actionMessage };
   }
 
-  // Mesma checagem de src/app/inscricao/actions.ts (signUpPublicAccountAction):
-  // se este CPF ja pertence a OUTRA conta, bloqueia aqui. p_exclude_user_id
-  // exclui o proprio contato desta conta (ex.: ja vinculado por um convite/
-  // importacao anterior) da checagem. Fail-closed: erro na propria checagem
-  // nunca vira "segue como se nao houvesse conflito" (ver comentario
-  // identico em signUpPublicAccountAction sobre o bug real que isso causou).
-  const { data: conflictData, error: conflictError } = await supabase.rpc('find_conflicting_registration_contact', {
-    p_cpf: cpf,
-    p_exclude_user_id: user.id,
-  });
-  if (conflictError) {
-    console.error('[first-access:cpf-conflict-check-error]', {
-      userIdPresent: Boolean(user.id),
-      message: conflictError.message,
-      code: conflictError.code ?? null,
-    });
-    return { success: false, message: 'Não foi possível validar seu CPF agora. Tente novamente em instantes.' };
-  }
-  const conflict = Array.isArray(conflictData) ? conflictData[0] : conflictData;
-  if (conflict?.has_conflict) {
-    return {
-      success: false,
-      code: 'CPF_ALREADY_LINKED_TO_ANOTHER_USER',
-      message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
-    };
-  }
-
   const invitedContactId = inviteContext?.valid
     ? (inviteContext.anchorKind === 'contact'
       ? String(inviteContext.participant?.id ?? '')
       : String(inviteContext.participant?.registration_contact_id ?? ''))
     : '';
+
+  // Com convite valido, o CPF do proprio Cadastro reivindicado nao e conflito.
+  // find_conflicting_registration_contact so entra no caminho sem convite
+  // (conclusao de perfil de conta nova). Com convite, a RPC
+  // assert_registration_contact_cpf_available distingue o mesmo Cadastro
+  // (ok) de outro Cadastro distinto (bloqueio).
+  if (!inviteContext?.valid) {
+    const { data: conflictData, error: conflictError } = await supabase.rpc('find_conflicting_registration_contact', {
+      p_cpf: cpf,
+      p_exclude_user_id: user.id,
+    });
+    if (conflictError) {
+      console.error('[first-access:cpf-conflict-check-error]', {
+        userIdPresent: Boolean(user.id),
+        message: conflictError.message,
+        code: conflictError.code ?? null,
+      });
+      return { success: false, message: 'Não foi possível validar seu CPF agora. Tente novamente em instantes.' };
+    }
+    const conflict = Array.isArray(conflictData) ? conflictData[0] : conflictData;
+    if (conflict?.has_conflict) {
+      return {
+        success: false,
+        code: 'CPF_ALREADY_LINKED_TO_ANOTHER_USER',
+        message: 'Este CPF já está vinculado a outra conta. Entre com a conta existente ou recupere sua senha.',
+      };
+    }
+  }
+
   if (invitedContactId) {
     const availability = await supabase.rpc('assert_registration_contact_cpf_available', {
       p_registration_contact_id: invitedContactId,

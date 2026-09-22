@@ -185,9 +185,10 @@ test('redirect/confirmar preservam invite do convite atual', () => {
   assert.match(callback, /stampFirstAccessAuthFromSessionAction\(inviteIdFromAuthDestination\(destination\)\)/);
 });
 
-test('markFirstAccessAuthConfirmed nao carimba convite revogado', () => {
+test('markFirstAccessAuthConfirmed renova expires_at e nao exige convite interno ainda vigente', () => {
   assert.match(dispatch, /\.eq\('status', 'pending'\)/);
-  assert.match(dispatch, /\.gt\('expires_at', now\)/);
+  assert.match(dispatch, /expires_at: inviteExpiresAt/);
+  assert.doesNotMatch(dispatch, /\.gt\('expires_at', now\)/);
 });
 
 test('metadata deixa de ser a unica fonte do onboarding', () => {

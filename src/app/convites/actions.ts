@@ -116,8 +116,21 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
     reason_message?: string;
     email?: string;
   } | null;
+
+  const { data: currentInvite } = await supabase
+    .from('participant_account_invites')
+    .select('id,status,expires_at,claimed_at,auth_user_id,claimed_user_id,auth_link_expires_at,auth_confirmed_at,password_setup_completed_at')
+    .eq('registration_contact_id', contactId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   if (String(row?.reason_code ?? '') === 'pending_email_confirmation' && row?.email) {
-    const resend = await resendSignupConfirmation({ email: row.email, audience: 'admin' });
+    const resend = await resendSignupConfirmation({
+      email: row.email,
+      audience: 'admin',
+      inviteId: currentInvite?.id ? String(currentInvite.id) : null,
+    });
     revalidatePath('/convites');
     revalidatePath(`/cadastros/${contactId}`);
     return { success: resend.ok, sent: resend.requested, message: resend.message };
@@ -132,14 +145,6 @@ export async function resendInviteCenterAction(contactId: string, origin: 'indiv
         : raw,
     };
   }
-
-  const { data: currentInvite } = await supabase
-    .from('participant_account_invites')
-    .select('id,status,expires_at,claimed_at,auth_user_id,claimed_user_id,auth_link_expires_at,auth_confirmed_at,password_setup_completed_at')
-    .eq('registration_contact_id', contactId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
 
   const classified = classifyInviteCenterRow({
     mixedIntendedOwners: String(row.reason_code ?? '') === 'mixed_intended_owner_single_login',

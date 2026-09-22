@@ -75,12 +75,24 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
   const participantRelation = Array.isArray(invitePerson?.participants) ? invitePerson?.participants[0] : invitePerson?.participants;
   const contactRelation = Array.isArray(participantRelation?.registration_contacts) ? participantRelation?.registration_contacts[0] : participantRelation?.registration_contacts;
   const canonicalFullName = String(directContactRelation?.full_name ?? contactRelation?.full_name ?? '').trim();
+  const associatedAuthId = invitePerson?.auth_user_id ? String(invitePerson.auth_user_id) : null;
 
-  if (isResend) {
-    const existingAuth = await admin.rpc('find_auth_email_confirmation_status', { p_email: input.email });
-    const existingAuthId = String(
-      (Array.isArray(existingAuth.data) ? existingAuth.data[0] : existingAuth.data)?.user_id ?? '',
-    ) || null;
+  if (isResend || associatedAuthId) {
+    let existingAuthId = associatedAuthId;
+    let deliveryEmail = input.email;
+    if (associatedAuthId) {
+      const bound = await admin.auth.admin.getUserById(associatedAuthId);
+      if (bound.error || !bound.data.user) {
+        return { error: bound.error ?? { message: 'INVITE_AUTH_USER_MISSING' }, authUserId: null, resent: true };
+      }
+      deliveryEmail = String(bound.data.user.email ?? input.email);
+      existingAuthId = associatedAuthId;
+    } else {
+      const existingAuth = await admin.rpc('find_auth_email_confirmation_status', { p_email: input.email });
+      existingAuthId = String(
+        (Array.isArray(existingAuth.data) ? existingAuth.data[0] : existingAuth.data)?.user_id ?? '',
+      ) || null;
+    }
     let correlatableAuthId: string | null = null;
     if (existingAuthId) {
       const inviteContactId = String(
@@ -110,7 +122,7 @@ export async function dispatchFirstAccessEmail(input: { inviteId: string; email:
       }
     }
     const result = await admin.auth.signInWithOtp({
-      email: input.email,
+      email: deliveryEmail,
       options: { shouldCreateUser: false, emailRedirectTo: redirectTo },
     });
     if (!result.error) {
@@ -160,10 +172,12 @@ export async function stampInviteAuthEmailSent(inviteId: string) {
   const admin = createServiceRoleSupabaseClient();
   const sentAt = new Date();
   const expiresAt = authLinkExpiresAtFromSend(sentAt);
+  const inviteExpiresAt = new Date(sentAt.getTime() + 7 * 24 * 60 * 60 * 1000);
   const result = await admin.from('participant_account_invites')
     .update({
       auth_email_sent_at: sentAt.toISOString(),
       auth_link_expires_at: expiresAt ? expiresAt.toISOString() : null,
+      expires_at: inviteExpiresAt.toISOString(),
       updated_at: sentAt.toISOString(),
     })
     .eq('id', inviteId);
@@ -173,23 +187,28 @@ export async function stampInviteAuthEmailSent(inviteId: string) {
 export async function markFirstAccessAuthConfirmed(userId: string, inviteId?: string | null) {
   if (!userId) return null;
   const admin = createServiceRoleSupabaseClient();
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  const inviteExpiresAt = new Date(nowDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const result = inviteId
     ? await admin.from('participant_account_invites')
       .update({
         auth_confirmed_at: now,
         updated_at: now,
         auth_user_id: userId,
+        expires_at: inviteExpiresAt,
       })
       .eq('id', inviteId)
       .eq('status', 'pending')
-      .gt('expires_at', now)
       .is('password_setup_completed_at', null)
       .or(`auth_user_id.is.null,auth_user_id.eq.${userId}`)
     : await admin.from('participant_account_invites')
-      .update({ auth_confirmed_at: now, updated_at: now })
+      .update({
+        auth_confirmed_at: now,
+        updated_at: now,
+        expires_at: inviteExpiresAt,
+      })
       .eq('status', 'pending')
-      .gt('expires_at', now)
       .is('auth_confirmed_at', null)
       .is('password_setup_completed_at', null)
       .or(`auth_user_id.eq.${userId},claimed_user_id.eq.${userId}`);
