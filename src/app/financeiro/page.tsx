@@ -20,8 +20,17 @@ import {
 } from "./actions";
 import { listPaidOrdersAwaitingTicketIssueAction } from "@/app/painel/integridade/actions";
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
-import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from "@/lib/payments/gateway-environment";
+import {
+  formatSettlementMethodLabel,
+  matchesSalesSettlementFilter,
+  resolveSettlementNature,
+  SALES_SETTLEMENT_FILTERS,
+  salesSettlementFilterLabel,
+  settlementDisplayAmount,
+  type SalesSettlementFilter,
+} from "@/lib/finance/settlement-nature";
+import { confirmedRevenueAmount, shouldIncludeInConfirmedRevenue } from "@/lib/finance/confirmed-revenue";
 
 const tabs = [
   ["overview", "Visão geral"], ["sales", "Receitas"], ["expenses", "Despesas"],
@@ -40,7 +49,28 @@ type Settlement = { id: string; expense_entry_id: string; amount: number; paid_o
 type Reversal = { id: string; original_entry_id: string; amount: number; created_at: string };
 type Allocation = { entry_id: string; event_id: string; amount: number };
 type TicketMetric = { eventId: string; issuedAt: string; kind: "sold" | "courtesy" };
-type PaymentRow = { id: string; final_amount: number; payment_method: string | null; payment_status: string; refund_status?: string | null; price_origin?: string | null; provider?: string | null; gateway_payment_id?: string | null; gateway_account_key?: string | null; gateway_environment?: string | null; created_at: string; paid_at: string | null; participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null };
+type PaymentRow = {
+  id: string;
+  amount?: number | null;
+  discount_amount?: number | null;
+  final_amount: number;
+  payment_method: string | null;
+  payment_status: string;
+  refund_status?: string | null;
+  price_origin?: string | null;
+  provider?: string | null;
+  gateway_payment_id?: string | null;
+  gateway_account_key?: string | null;
+  gateway_environment?: string | null;
+  settlement_nature?: string | null;
+  off_gateway_method?: string | null;
+  off_gateway_amount?: number | null;
+  off_gateway_received_at?: string | null;
+  off_gateway_recorded_at?: string | null;
+  created_at: string;
+  paid_at: string | null;
+  participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null;
+};
 
 async function loadContext(eventId: string | null) {
   const supabase = await createServerSupabaseClient();
@@ -59,16 +89,18 @@ async function loadContext(eventId: string | null) {
   return { supabase, events: eventList, selected, organizationId };
 }
 
-async function loadSales(status: string, eventId: string | null) {
+async function loadSales(status: string, eventId: string | null, settlement: SalesSettlementFilter | "") {
   const context = await loadContext(eventId);
-  if (!context.selected) return { ...context, rows: [] };
-  const paymentStatus = status === "courtesy" ? "paid" : status;
+  if (!context.selected) return { ...context, rows: [] as PaymentRow[] };
+  const paymentStatus = status === "courtesy" || settlement ? "paid" : status;
   let query = context.supabase.from("payments")
-    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,refund_status,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,created_at,paid_at,participants!inner(full_name,cpf)")
+    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,refund_status,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,created_at,paid_at,participants!inner(full_name,cpf)")
     .eq("event_id", context.selected.id).eq("payment_status", paymentStatus).order("created_at", { ascending: false }).limit(200);
-  if (status === "courtesy") query = query.eq("payment_method", "courtesy");
+  if (!settlement && status === "courtesy") query = query.eq("payment_method", "courtesy");
   const { data } = await query;
-  return { ...context, rows: data ?? [] };
+  let rows = (data ?? []) as PaymentRow[];
+  if (settlement) rows = rows.filter((row) => matchesSalesSettlementFilter(row, settlement));
+  return { ...context, rows };
 }
 
 async function loadLedger(eventId: string | null, includeAllEvents = false) {
@@ -85,7 +117,7 @@ async function loadLedger(eventId: string | null, includeAllEvents = false) {
     context.supabase.from("financial_event_allocations").select("entry_id,event_id,amount").eq("organization_id", organizationId),
     context.supabase.from("tickets").select("id,event_id,status,issued_at,order_id").eq("organization_id", organizationId).neq("status", "cancelled").range(0, 4999),
     context.supabase.from("orders").select("id,event_id,payment_id").eq("organization_id", organizationId).range(0, 4999),
-    context.supabase.from("payments").select("id,payment_method,payment_status").eq("organization_id", organizationId).range(0, 4999),
+    context.supabase.from("payments").select("id,payment_method,payment_status,settlement_nature,off_gateway_recorded_at,amount,discount_amount,final_amount").eq("organization_id", organizationId).range(0, 4999),
   ]);
   const error = accounts.error ?? categories.error ?? suppliers.error ?? entries.error ?? reversals.error ?? allocations.error ?? tickets.error ?? orders.error ?? payments.error;
   const applicableAllocations = (allocations.data ?? []).filter((row) => includeAllEvents || !context.selected || String(row.event_id) === String(context.selected.id)) as Allocation[];
@@ -97,7 +129,7 @@ async function loadLedger(eventId: string | null, includeAllEvents = false) {
   const ticketMetrics = (tickets.data ?? []).flatMap((ticket) => {
     const order=orderById.get(String(ticket.order_id)); const payment=order?.payment_id ? paymentById.get(String(order.payment_id)) : null;
     if (!payment || String(payment.payment_status)!=="paid") return [];
-    return [{ eventId:String(ticket.event_id), issuedAt:String(ticket.issued_at), kind:String(payment.payment_method).toLowerCase()==="courtesy" ? "courtesy" : "sold" }] as TicketMetric[];
+    return [{ eventId:String(ticket.event_id), issuedAt:String(ticket.issued_at), kind:String(payment.settlement_nature ?? payment.payment_method).toLowerCase()==="courtesy" ? "courtesy" : "sold" }] as TicketMetric[];
   });
   return { ...context, available: !error, simpleAvailable: !settlements.error, accounts: (accounts.data ?? []) as Account[], categories: (categories.data ?? []) as Category[], suppliers: (suppliers.data ?? []) as Supplier[], entries: eventEntries, settlements: (settlements.data ?? []).filter((row) => eventIds.has(String(row.expense_entry_id))) as Settlement[], reversals: (reversals.data ?? []).filter((row) => eventIds.has(String(row.original_entry_id))) as Reversal[], allocations: applicableAllocations, ticketMetrics };
 }
@@ -155,7 +187,7 @@ function parseComparisonPeriod(value: string) {
   return { key:value, from, to, label:from||to ? `${format(from)} a ${format(to)}` : "Todo o período" };
 }
 
-export default async function FinanceiroPage({ searchParams }: { searchParams: Promise<{ tab?: string; status?: string; eventId?: string; dateFrom?: string; dateTo?: string; compareEvent?: string | string[]; comparePeriod?: string | string[]; viewEvent?: string | string[]; compareRow?: string | string[] }> }) {
+export default async function FinanceiroPage({ searchParams }: { searchParams: Promise<{ tab?: string; status?: string; settlement?: string; eventId?: string; dateFrom?: string; dateTo?: string; compareEvent?: string | string[]; comparePeriod?: string | string[]; viewEvent?: string | string[]; compareRow?: string | string[] }> }) {
   const params = await searchParams;
   const canCreateEvent = await hasPermission("events.create");
   const canOpenIntegrityIssueQueue = (await Promise.all([
@@ -166,9 +198,10 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
   const awaitingIssueCount = awaitingIssue.success ? awaitingIssue.orders.length : 0;
   const active = tabs.some(([code]) => code === params.tab) ? params.tab as Tab : "overview";
   const status = params.status && (statusOptions as readonly string[]).includes(params.status) ? params.status : "pending";
+  const settlement = SALES_SETTLEMENT_FILTERS.includes(params.settlement as SalesSettlementFilter) ? params.settlement as SalesSettlementFilter : "";
   const dateFrom = validDate(params.dateFrom);
   const dateTo = validDate(params.dateTo);
-  const sales = active === "sales" ? await loadSales(status, params.eventId ?? null) : null;
+  const sales = active === "sales" ? await loadSales(status, params.eventId ?? null, settlement) : null;
   const ledger = active !== "sales" ? await loadLedger(active === "overview" ? null : params.eventId ?? null, active === "overview") : null;
   const context = sales ?? ledger!;
   const organizationId = context.organizationId ?? "";
@@ -209,7 +242,11 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
     ) : (
       <EventContextSelector events={eventOptions} selectedEventId={selectedEventId || null} pathname="/financeiro"/>
     )}
-    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="SANDBOX permanece visível para auditoria e não entra na Receita confirmada operacional. Composição do card: /painel/detalhes?metric=revenue_confirmed. Estorno administrativo: abra o pagamento."><div className="mb-4 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="admin-table-zebra min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Ambiente</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th><th className="p-3">Ação</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; const environment = gatewayEnvironmentLabel(resolveGatewayEnvironment(row)); const statusLabel = row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : row.payment_status === "refunded" ? "Estornado" : "Cancelado"; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">{formatImportedHistoricalAmount(row.final_amount, row.price_origin)}</td><td className="p-3">{formatImportedPaymentMethod(row.payment_method)}</td><td className="p-3">{environment ? <span className={`rounded-full border px-2 py-0.5 text-xs ${environment === "LIVE" ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}>{environment}</span> : "—"}</td><td className="p-3">{statusLabel}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td><td className="p-3"><Link href={`/financeiro/pagamento/${row.id}`} className="text-emerald-300 hover:underline">{row.payment_status === "paid" ? "Estornar pagamento" : "Abrir"}</Link></td></tr>; })}</tbody></table></div></SectionCard> : null}
+    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Receita confirmada usa a natureza financeira, não só payment_method. SANDBOX permanece visível para auditoria. Estorno e regularização fora do gateway: abra o pagamento.">
+      <div className="mb-3 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${!settlement && status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div>
+      <div className="mb-4 flex flex-wrap gap-2">{SALES_SETTLEMENT_FILTERS.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=paid&settlement=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${settlement === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{salesSettlementFilterLabel(option)}</Link>)}</div>
+      <div className="overflow-x-auto rounded-xl border border-slate-800"><table className="admin-table-zebra min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Ambiente</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th><th className="p-3">Ação</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; const environment = gatewayEnvironmentLabel(resolveGatewayEnvironment(row)); const statusLabel = row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : row.payment_status === "refunded" ? "Estornado" : "Cancelado"; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">{formatImportedHistoricalAmount(shouldIncludeInConfirmedRevenue(row) ? confirmedRevenueAmount(row) : settlementDisplayAmount(row), row.price_origin)}</td><td className="p-3">{formatSettlementMethodLabel(row)}</td><td className="p-3">{resolveSettlementNature(row) === "off_gateway" ? "Nenhum" : environment ? <span className={`rounded-full border px-2 py-0.5 text-xs ${environment === "LIVE" ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}>{environment}</span> : "—"}</td><td className="p-3">{statusLabel}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td><td className="p-3"><Link href={`/financeiro/pagamento/${row.id}`} className="text-emerald-300 hover:underline">{row.payment_status === "paid" ? "Abrir pagamento" : "Abrir"}</Link></td></tr>; })}</tbody></table></div>
+    </SectionCard> : null}
     {active !== "sales" && ledger && !ledger.available ? <LedgerUnavailable/> : null}
     {ledger?.available && organizationId && (selectedEventId || active === "overview") ? (() => {
       const inRange = (value: string | null, from: string, to: string) => Boolean(value) && (!from || value!.slice(0,10) >= from) && (!to || value!.slice(0, 10) <= to);

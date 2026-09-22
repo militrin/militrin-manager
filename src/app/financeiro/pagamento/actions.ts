@@ -6,6 +6,7 @@ import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { executeAdminPaymentRefund } from "@/lib/payments/admin-refund";
 import { tryGetPaymentGatewayProviderForAccountKey } from "@/lib/payments/get-gateway-provider";
+import { datetimeLocalInEventTimeZoneToIso } from "@/lib/utils/date";
 
 export type AdminRefundActionState = {
   success: boolean;
@@ -146,4 +147,83 @@ export async function requestAdminPaymentRefundFromForm(_: AdminRefundActionStat
     }
     return fail(error instanceof Error ? error.message : "Falha ao estornar pagamento.");
   }
+}
+
+export type OffGatewayRegularizeActionState = {
+  success: boolean;
+  status: string;
+  message: string;
+  idempotent?: boolean;
+};
+
+function failOffGateway(message: string, status = "failed"): OffGatewayRegularizeActionState {
+  return { success: false, status, message };
+}
+
+function parseReceivedAmount(raw: string) {
+  const normalized = String(raw ?? "").trim().replace(/\s/g, "").replace(",", ".");
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount)) return null;
+  return amount;
+}
+
+export async function regularizeOffGatewayPaymentAction(input: {
+  paymentId: string;
+  method: string;
+  amountReceived: string;
+  receivedAt: string;
+  reason: string;
+  reference?: string | null;
+  destinationNote?: string | null;
+  replace?: boolean;
+}): Promise<OffGatewayRegularizeActionState> {
+  try {
+    await assertPermission("finance.confirm_payment");
+  } catch (error) {
+    if (error instanceof PermissionDeniedError) {
+      return failOffGateway("Sem permissão para registrar pagamento fora do gateway.", "forbidden");
+    }
+    throw error;
+  }
+
+  const paymentId = String(input.paymentId ?? "").trim();
+  const method = String(input.method ?? "").trim().toLowerCase();
+  const amount = parseReceivedAmount(input.amountReceived);
+  const receivedAtIso = datetimeLocalInEventTimeZoneToIso(String(input.receivedAt ?? ""));
+  const reason = String(input.reason ?? "").trim();
+  const reference = String(input.reference ?? "").trim() || null;
+  const destinationNote = String(input.destinationNote ?? "").trim() || null;
+
+  if (!paymentId) return failOffGateway("Pagamento não encontrado.");
+  if (method !== "pix") return failOffGateway("Nesta versão só é permitido PIX fora do gateway.");
+  if (amount == null || amount <= 0) return failOffGateway("O valor recebido deve ser maior que zero.");
+  if (!receivedAtIso) return failOffGateway("Informe a data e hora reais do recebimento.");
+  if (!reason) return failOffGateway("O motivo é obrigatório.");
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("regularize_off_gateway_payment", {
+    p_payment_id: paymentId,
+    p_method: method,
+    p_amount_received: amount,
+    p_received_at: receivedAtIso,
+    p_reason: reason,
+    p_reference: reference,
+    p_destination_note: destinationNote,
+    p_replace: Boolean(input.replace),
+  });
+  if (error) {
+    return failOffGateway(error.message);
+  }
+
+  revalidatePath(`/financeiro/pagamento/${paymentId}`);
+  revalidatePath("/financeiro");
+  revalidatePath("/painel");
+
+  const payload = (data ?? {}) as Record<string, unknown>;
+  return {
+    success: true,
+    status: payload.idempotent ? "idempotent" : payload.replaced ? "replaced" : "recorded",
+    idempotent: Boolean(payload.idempotent),
+    message: String(payload.message ?? "Pagamento fora do gateway registrado. Ingressos não foram alterados."),
+  };
 }

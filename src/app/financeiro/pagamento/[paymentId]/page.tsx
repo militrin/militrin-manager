@@ -11,6 +11,13 @@ import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from "@/lib/payments/gateway-environment";
 import {
+  canRegisterOffGatewayPayment,
+  formatSettlementMethodLabel,
+  resolveSettlementNature,
+  settlementDisplayAmount,
+  settlementNatureLabel,
+} from "@/lib/finance/settlement-nature";
+import {
   adminRefundVisualLabel,
   adminRefundVisualStatus,
   evaluateAdminRefundEligibility,
@@ -18,6 +25,7 @@ import {
 import { classifyAdminRefundTicket, defaultCancelTicketsChecked } from "@/lib/payments/admin-refund-tickets";
 import { tryGetPaymentGatewayProviderForAccountKey } from "@/lib/payments/get-gateway-provider";
 import { AdminRefundPaymentModal } from "../admin-refund-modal";
+import { OffGatewayPaymentModal } from "../off-gateway-modal";
 
 type Row = Record<string, unknown>;
 const one = (value: unknown): Row | null => (Array.isArray(value) ? (value[0] as Row | undefined) ?? null : (value as Row | null));
@@ -26,10 +34,11 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   const { paymentId } = await params;
   const supabase = await createServerSupabaseClient();
   const canRefund = await hasPermission("finance.refund");
+  const canConfirmPayment = await hasPermission("finance.confirm_payment");
 
   const { data: payment, error } = await supabase
     .from("payments")
-    .select("id,organization_id,order_id,event_id,provider,payment_status,payment_method,price_origin,gateway_payment_id,gateway_account_key,gateway_environment,final_amount,amount,payment_fee_customer_amount,refund_status,refunded_at,paid_at,created_at,orders!payments_order_id_fkey(order_number,display_number,status,user_id,final_amount),participants(full_name,cpf),events(name)")
+    .select("id,organization_id,order_id,event_id,provider,payment_status,payment_method,price_origin,gateway_payment_id,gateway_account_key,gateway_environment,final_amount,amount,discount_amount,payment_fee_customer_amount,refund_status,refunded_at,paid_at,created_at,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,off_gateway_recorded_by,off_gateway_reason,off_gateway_reference,off_gateway_destination_note,orders!payments_order_id_fkey(order_number,display_number,status,user_id,final_amount,buyer_type),participants(full_name,cpf),events(name)")
     .eq("id", paymentId)
     .maybeSingle();
   if (error) throw error;
@@ -73,6 +82,15 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   const amountLabel = formatImportedHistoricalAmount(Number(payment.final_amount ?? payment.amount ?? 0), payment.price_origin);
   const orderLabel = order ? orderDisplayReference(order.display_number, order.order_number) : "—";
   const buyerName = participant?.full_name ? String(participant.full_name) : "—";
+  const settlement = resolveSettlementNature(payment);
+  const settlementAmount = settlementDisplayAmount(payment);
+  const settlementAmountLabel = formatImportedHistoricalAmount(settlementAmount, payment.price_origin);
+  const offGatewayEligibility = canRegisterOffGatewayPayment(payment);
+  const recordedById = payment.off_gateway_recorded_by ? String(payment.off_gateway_recorded_by) : "";
+  const { data: recordedByProfile } = recordedById
+    ? await supabase.from("customer_profiles").select("full_name").eq("user_id", recordedById).maybeSingle()
+    : { data: null };
+  const recordedByName = recordedByProfile?.full_name ? String(recordedByProfile.full_name) : recordedById || "—";
   const charge = orderChargeBreakdown({
     itemsAmount: order?.final_amount ?? payment.amount,
     customerFee: payment.payment_fee_customer_amount,
@@ -105,22 +123,55 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Pedido" value={orderLabel} />
               <Field label="Comprador" value={buyerName} />
-              <Field label="Método" value={formatImportedPaymentMethod(payment.payment_method)} />
+              <Field label="Natureza" value={settlementNatureLabel(settlement)} />
+              <Field label="Método" value={formatSettlementMethodLabel(payment)} />
               <Field label="Valor do pedido" value={formatImportedHistoricalAmount(charge.itemsAmount, payment.price_origin)} />
               {charge.hasCustomerFee ? (
                 <Field label="Taxa de pagamento" value={formatImportedHistoricalAmount(charge.customerFee, payment.price_origin)} />
               ) : null}
-              <Field label="Total cobrado" value={amountLabel} />
-              <Field label="Ambiente" value={environment ?? "—"} />
+              <Field label={settlement === "off_gateway" ? "Valor recebido" : "Total cobrado"} value={settlement === "off_gateway" ? settlementAmountLabel : amountLabel} />
+              <Field label="Ambiente" value={settlement === "off_gateway" ? "Nenhum" : environment ?? "—"} />
               <Field label="Status" value={adminRefundVisualLabel(visual)} />
-              <Field label="Provider" value={String(payment.provider ?? "—")} />
+              <Field label="Provider" value={settlement === "off_gateway" ? "Sem cobrança Asaas" : String(payment.provider ?? "—")} />
               <Field label="Conta" value={String(payment.gateway_account_key ?? "—")} />
-              <Field label="Gateway id" value={String(payment.gateway_payment_id ?? "—")} />
+              <Field label="Gateway id" value={settlement === "off_gateway" ? "Nenhum" : String(payment.gateway_payment_id ?? "—")} />
               <Field label="Pago em" value={payment.paid_at ? formatDateTimeBR(String(payment.paid_at)) ?? "—" : "—"} />
               <Field label="Estornado em" value={payment.refunded_at ? formatDateTimeBR(String(payment.refunded_at)) ?? "—" : "—"} />
               <Field label="Criado em" value={formatDateTimeBR(String(payment.created_at)) ?? "—"} />
+              <Field label="Método original da emissão" value={formatImportedPaymentMethod(payment.payment_method)} />
             </div>
+            {settlement === "off_gateway" ? (
+              <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
+                <p className="text-xs uppercase tracking-wide text-emerald-300">Pago</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-100">{formatSettlementMethodLabel(payment)}</p>
+                <p className="mt-1 font-semibold text-white">{settlementAmountLabel}</p>
+                <p className="mt-2 text-emerald-100">Recebido em: {payment.off_gateway_received_at ? formatDateTimeBR(String(payment.off_gateway_received_at)) ?? "—" : "—"}</p>
+                <p className="text-emerald-100">Registrado por: {recordedByName}</p>
+                <p className="text-emerald-100">Sem cobrança Asaas</p>
+                {payment.off_gateway_reason ? <p className="mt-2 text-slate-200">Motivo: {String(payment.off_gateway_reason)}</p> : null}
+                {payment.off_gateway_reference ? <p className="text-slate-300">Referência: {String(payment.off_gateway_reference)}</p> : null}
+                {payment.off_gateway_destination_note ? <p className="text-slate-300">Destino: {String(payment.off_gateway_destination_note)}</p> : null}
+              </div>
+            ) : null}
+            {String(order?.buyer_type ?? "") === "administrative" || String(payment.payment_method ?? "") === "courtesy" ? (
+              <p className="mt-3 text-xs text-slate-400">
+                Emissão original administrativa preservada: {formatImportedPaymentMethod(payment.payment_method)}
+                {payment.amount != null ? ` · catálogo ${formatImportedHistoricalAmount(Number(payment.amount), payment.price_origin)}` : ""}
+                {payment.discount_amount != null ? ` · desconto ${formatImportedHistoricalAmount(Number(payment.discount_amount), payment.price_origin)}` : ""}
+                {` · final ${amountLabel}`}.
+              </p>
+            ) : null}
             <div className="mt-4 flex flex-wrap items-center gap-3">
+              {canConfirmPayment && offGatewayEligibility.allowed ? (
+                <OffGatewayPaymentModal
+                  paymentId={String(payment.id)}
+                  orderLabel={orderLabel}
+                  buyerName={buyerName}
+                  replace={offGatewayEligibility.replace}
+                />
+              ) : canConfirmPayment && offGatewayEligibility.reason ? (
+                <p className="text-sm text-slate-400">{offGatewayEligibility.reason}</p>
+              ) : null}
               {canRefund && eligibility.eligible && eligibility.needsConfirmPhrase ? (
                 <AdminRefundPaymentModal
                   paymentId={String(payment.id)}

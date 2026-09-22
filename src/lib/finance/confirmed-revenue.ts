@@ -3,8 +3,12 @@ import {
   resolveGatewayEnvironment,
   type GatewayEnvironmentSource,
 } from '../payments/gateway-environment.ts';
+import {
+  resolveSettlementNature,
+  type SettlementSource,
+} from './settlement-nature.ts';
 
-export type ConfirmedRevenuePayment = GatewayEnvironmentSource & {
+export type ConfirmedRevenuePayment = GatewayEnvironmentSource & SettlementSource & {
   payment_status?: string | null;
   payment_method?: string | null;
   price_origin?: string | null;
@@ -28,6 +32,9 @@ export function isSandboxGatewayPayment(payment: ConfirmedRevenuePayment) {
 }
 
 function isOperationalCandidate(payment: ConfirmedRevenuePayment) {
+  const nature = resolveSettlementNature(payment);
+  if (nature === 'off_gateway') return true;
+  if (nature === 'courtesy' || nature === 'coupon_zero' || nature === 'legacy') return false;
   if (String(payment.payment_method ?? '') === 'courtesy') return false;
   if (!shouldIncludeAmountInFinancialTotals(payment.price_origin)) return false;
   if (isSyntheticGatewayPayment(payment)) return false;
@@ -36,13 +43,19 @@ function isOperationalCandidate(payment: ConfirmedRevenuePayment) {
 }
 
 /**
- * Receita confirmada operacional = pagamentos LIVE, paid/confirmed,
- * sem legacy_unknown, fake, cortesia, cancelled/expired ou refunded.
- * SANDBOX nunca entra. Ticket cancelado sem refund nao retira LIVE paid.
+ * Receita confirmada operacional = pagamentos LIVE liquidados no gateway
+ * + pagamentos off-gateway registrados e auditados.
+ * Nao entram: cortesia, cupom 100%, legado sem valor comprovado, SANDBOX, fake.
+ * Ticket cancelado sem refund nao retira LIVE paid.
  */
 export function shouldIncludeInConfirmedRevenue(payment: ConfirmedRevenuePayment) {
   if (String(payment.payment_status ?? '') !== 'paid') return false;
   return isOperationalCandidate(payment);
+}
+
+export function confirmedRevenueBucket(payment: ConfirmedRevenuePayment): 'gateway' | 'off_gateway' | null {
+  if (!shouldIncludeInConfirmedRevenue(payment)) return null;
+  return resolveSettlementNature(payment) === 'off_gateway' ? 'off_gateway' : 'gateway';
 }
 
 /**
@@ -61,7 +74,25 @@ export function shouldIncludeInPendingRevenue(payment: ConfirmedRevenuePayment) 
 
 export function confirmedRevenueAmount(payment: ConfirmedRevenuePayment) {
   if (!shouldIncludeInConfirmedRevenue(payment)) return 0;
+  if (resolveSettlementNature(payment) === 'off_gateway') {
+    return Number(payment.off_gateway_amount ?? 0);
+  }
   return Number(payment.final_amount ?? 0);
+}
+
+export function confirmedRevenueBreakdown(payments: ConfirmedRevenuePayment[]) {
+  let gateway = 0;
+  let offGateway = 0;
+  for (const payment of payments) {
+    const bucket = confirmedRevenueBucket(payment);
+    if (bucket === 'gateway') gateway += confirmedRevenueAmount(payment);
+    if (bucket === 'off_gateway') offGateway += confirmedRevenueAmount(payment);
+  }
+  return {
+    confirmed: gateway + offGateway,
+    gateway,
+    offGateway,
+  };
 }
 
 export function refundedRevenueAmount(payment: ConfirmedRevenuePayment) {
@@ -84,8 +115,11 @@ export function confirmedRevenueExclusionReason(payment: ConfirmedRevenuePayment
   if (status === 'cancelled' || status === 'canceled') return 'Pagamento cancelado';
   if (status === 'expired') return 'Pagamento expirado';
   if (status !== 'paid') return 'Pagamento nao confirmado';
-  if (String(payment.payment_method ?? '') === 'courtesy') return 'Cortesia: nao e receita financeira';
-  if (!shouldIncludeAmountInFinancialTotals(payment.price_origin)) return 'Preço histórico não informado';
+  const nature = resolveSettlementNature(payment);
+  if (nature === 'off_gateway') return null;
+  if (nature === 'courtesy' || String(payment.payment_method ?? '') === 'courtesy') return 'Cortesia: nao e receita financeira';
+  if (nature === 'coupon_zero') return 'Cupom 100%: nao e receita financeira';
+  if (nature === 'legacy' || !shouldIncludeAmountInFinancialTotals(payment.price_origin)) return 'Preço histórico não informado';
   if (isSyntheticGatewayPayment(payment)) return 'Pagamento sintético isolado da receita confirmada';
   if (isSandboxGatewayPayment(payment)) return 'SANDBOX: fora da receita operacional LIVE';
   if (!isLiveGatewayPayment(payment)) return 'Sem ambiente LIVE demonstrável: fora da receita operacional';

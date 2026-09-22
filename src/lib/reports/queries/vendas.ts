@@ -2,6 +2,7 @@ import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "../
 import { dateRangeLabel, money, pct, reportError, reportSuccess, resolveRequiredEvent } from "../helpers";
 import { formatImportedHistoricalAmount, shouldIncludeAmountInFinancialTotals } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
+import { formatSettlementMethodLabel, settlementDisplayAmount } from "@/lib/finance/settlement-nature";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
 
@@ -165,7 +166,7 @@ export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQ
 
   let query = supabase
     .from("orders")
-    .select("order_number,display_number,status,final_amount,price_origin,created_at,participants(full_name,cpf),payments(payment_method)")
+    .select("order_number,display_number,status,final_amount,price_origin,created_at,participants(full_name,cpf),payments(payment_method,payment_status,amount,discount_amount,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_recorded_at)")
     .eq("event_id", resolved.event.id)
     .order("created_at", { ascending: false })
     .limit(2001);
@@ -181,8 +182,8 @@ export async function vendasPedidos(supabase: ReportSupabaseClient, ctx: ReportQ
       pedido: orderDisplayReference(order.display_number, order.order_number),
       status: STATUS_LABELS[String(order.status ?? "")] ?? String(order.status ?? ""),
       comprador: participant?.full_name ? String(participant.full_name) : "Sem titular definido",
-      valor: formatImportedHistoricalAmount(Number(order.final_amount ?? 0), (order as { price_origin?: string | null }).price_origin),
-      pagamento: formatImportedPaymentMethod(payment?.payment_method),
+      valor: formatImportedHistoricalAmount(settlementDisplayAmount(payment ?? { final_amount: Number(order.final_amount ?? 0), price_origin: (order as { price_origin?: string | null }).price_origin }), (order as { price_origin?: string | null }).price_origin),
+      pagamento: formatSettlementMethodLabel(payment ?? { payment_method: null }),
       criado_em: formatDateTimeBR(String(order.created_at ?? "")),
     };
   });

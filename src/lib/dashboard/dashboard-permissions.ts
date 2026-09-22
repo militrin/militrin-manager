@@ -30,5 +30,6 @@ export const DASHBOARD_METRIC_SECTIONS = {
   tickets: 'operations', checkins: 'operations', complete_kits: 'operations', shirt_coherence: 'operations',
   shirts_received: 'inventory', shirts_reserved: 'inventory', shirts_kit_reserved: 'inventory', shirts_additional: 'inventory',
   shirts_delivered: 'inventory', shirts_available: 'inventory', shirts_deficit: 'inventory',
-  revenue_confirmed: 'finance', revenue_pending: 'finance', revenue_refunded: 'finance', pix: 'finance', card: 'finance', courtesy: 'finance',
+  revenue_confirmed: 'finance', revenue_gateway: 'finance', revenue_off_gateway: 'finance',
+  revenue_pending: 'finance', revenue_refunded: 'finance', pix: 'finance', card: 'finance', courtesy: 'finance', coupon_zero: 'finance',
 } as const satisfies Record<string, DashboardSection>;

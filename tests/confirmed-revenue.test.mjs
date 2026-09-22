@@ -144,3 +144,46 @@ test('drill-down da receita confirmada soma igual ao card', () => {
   assert.equal(card, drill);
   assert.equal(Number(card.toFixed(2)), 212.49);
 });
+
+test('K: off_gateway PIX 215 entra na receita confirmada', () => {
+  const offGateway = {
+    payment_status: 'paid',
+    payment_method: 'courtesy',
+    settlement_nature: 'off_gateway',
+    off_gateway_method: 'pix',
+    off_gateway_amount: 215,
+    off_gateway_recorded_at: '2026-09-20T12:00:00.000Z',
+    final_amount: 0,
+    amount: 200,
+    discount_amount: 200,
+  };
+  assert.equal(shouldIncludeInConfirmedRevenue(offGateway), true);
+  assert.equal(confirmedRevenueAmount(offGateway), 215);
+  assert.equal(confirmedRevenueExclusionReason(offGateway), null);
+});
+
+test('L: cortesia 200/0 nao entra na receita confirmada', () => {
+  const courtesy = {
+    payment_status: 'paid',
+    payment_method: 'courtesy',
+    amount: 200,
+    discount_amount: 200,
+    final_amount: 0,
+  };
+  assert.equal(shouldIncludeInConfirmedRevenue(courtesy), false);
+  assert.equal(confirmedRevenueAmount(courtesy), 0);
+  assert.match(confirmedRevenueExclusionReason(courtesy) ?? '', /Cortesia/i);
+});
+
+test('M: cupom 100% com payment_method pix nao entra e nao e PIX recebido', () => {
+  const coupon = {
+    payment_status: 'paid',
+    payment_method: 'pix',
+    amount: 200,
+    discount_amount: 200,
+    final_amount: 0,
+  };
+  assert.equal(shouldIncludeInConfirmedRevenue(coupon), false);
+  assert.equal(confirmedRevenueAmount(coupon), 0);
+  assert.match(confirmedRevenueExclusionReason(coupon) ?? '', /Cupom 100%/i);
+});

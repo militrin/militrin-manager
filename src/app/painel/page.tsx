@@ -131,15 +131,18 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             </AdminSection> : null}
 
             {canViewFinanceSection ? <AdminSection compact title="Financeiro" actions={<AdminStatusBadge status="confirmed" />}>
-              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-                <AdminStatCard compact label="Receita confirmada" value={money(metric('revenue_confirmed').value)} hint="Somente pagamentos LIVE pagos. SANDBOX, fake, cortesia e estorno ficam de fora." href={href('revenue_confirmed')} actionLabel="Ver composição" icon={Banknote} tone="success" />
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                <AdminStatCard compact label="Receita confirmada" value={money(metric('revenue_confirmed').value)} hint="Gateway LIVE liquidado + PIX fora do gateway registrado. Cortesia, cupom 100% e legado sem comprovação ficam de fora." href={href('revenue_confirmed')} actionLabel="Ver composição" icon={Banknote} tone="success" />
+                <AdminStatCard compact label="Gateway" value={money(metric('revenue_gateway').value)} hint="Pagamentos LIVE liquidados no Asaas." href={href('revenue_gateway')} icon={WalletCards} />
+                <AdminStatCard compact label="Fora do gateway" value={money(metric('revenue_off_gateway').value)} hint="Dinheiro real recebido fora do Asaas, com auditoria." href={href('revenue_off_gateway')} icon={Banknote} />
                 <AdminStatCard compact label="Receita pendente" value={money(metric('revenue_pending').value)} hint="LIVE aguardando confirmação. SANDBOX não entra." href={href('revenue_pending')} icon={Clock3} tone="warning" />
                 <AdminStatCard compact label="Receita estornada" value={money(metric('revenue_refunded').value)} hint="LIVE efetivamente refunded. Histórico; não é receita atual." href={href('revenue_refunded')} icon={RotateCcw} />
-                <AdminStatCard compact label="PIX" value={metric('pix').value} href={href('pix')} icon={QrCode} />
-                <AdminStatCard compact label="Cartão" value={metric('card').value} href={href('card')} icon={CreditCard} />
+                <AdminStatCard compact label="PIX · Asaas" value={metric('pix').value} href={href('pix')} icon={QrCode} />
+                <AdminStatCard compact label="Cartão · Asaas" value={metric('card').value} href={href('card')} icon={CreditCard} />
                 <AdminStatCard compact label="Cortesias" value={metric('courtesy').value} href={href('courtesy')} icon={Gift} />
+                <AdminStatCard compact label="Cupom 100%" value={metric('coupon_zero').value} href={href('coupon_zero')} icon={Gift} />
               </div>
-              <p className="mt-2 text-[11px] leading-4 text-slate-400">Receita confirmada é LIVE pago. SANDBOX permanece armazenado para auditoria e não entra nas métricas. Cancelar ingresso sem estorno não remove receita LIVE. Estorno LIVE sai da confirmada e entra em Receita estornada.</p>
+              <p className="mt-2 text-[11px] leading-4 text-slate-400">Receita confirmada = gateway LIVE pago + pagamento fora do gateway auditado. Cortesia, cupom 100% e legado sem valor comprovado não entram. SANDBOX fica só para auditoria. Cancelar ingresso sem estorno não remove receita LIVE.</p>
             </AdminSection> : null}
 
             {quickActions.length ? <section aria-labelledby="quick-actions-title" className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/60 px-4 py-3">

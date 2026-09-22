@@ -5,7 +5,6 @@ import type { DashboardSection } from '@/lib/dashboard/dashboard-permissions';
 import { makeShirtInventoryKey } from '@/lib/constants/shirts';
 import { orderDisplayReference } from '@/lib/display-reference';
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from '@/lib/dashboard/commercial-status';
-import { formatImportedPaymentMethod } from '@/lib/imports/payment-method';
 import { additionalTicketHolderUnassignedCopy } from '@/lib/imports/issuance-presentation';
 import { canonicalHolderName, hasCanonicalHolderName } from '@/lib/tickets/holder-name';
 import { shouldIncludeAmountInFinancialTotals } from '@/lib/imports/legacy-price';
@@ -18,6 +17,10 @@ import {
   shouldIncludeInPendingRevenue,
   shouldIncludeInRefundedRevenue,
 } from '@/lib/finance/confirmed-revenue';
+import {
+  formatSettlementMethodLabel,
+  resolveSettlementNature,
+} from '@/lib/finance/settlement-nature';
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from '@/lib/payments/gateway-environment';
 import { resolveShirtVariant } from '@/lib/imports/shirt-variant';
 import {
@@ -36,7 +39,8 @@ export type DashboardMetricKey =
   | 'tickets' | 'checkins' | 'complete_kits' | 'shirt_coherence'
   | 'shirts_received' | 'shirts_reserved' | 'shirts_kit_reserved' | 'shirts_additional'
   | 'shirts_delivered' | 'shirts_available' | 'shirts_deficit'
-  | 'revenue_confirmed' | 'revenue_pending' | 'revenue_refunded' | 'pix' | 'card' | 'courtesy';
+  | 'revenue_confirmed' | 'revenue_gateway' | 'revenue_off_gateway' | 'revenue_pending' | 'revenue_refunded'
+  | 'pix' | 'card' | 'courtesy' | 'coupon_zero';
 
 export type DashboardDetailRow = {
   id: string; primary: string; secondary: string; status: string; value?: number;
@@ -114,7 +118,7 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
     enabled.has('people') || enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,store_item_id,store_item_variant_id,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
     enabled.has('people') || enabled.has('operations') || enabled.has('finance') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
-    enabled.has('finance') ? fetchAllScoped(() => supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
+    enabled.has('finance') ? fetchAllScoped(() => supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,amount,discount_amount,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
     // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
     // o snapshot legado, nao mantido pelo fluxo ticket-first (ver reconciliacao
@@ -338,14 +342,16 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       secondary: [
         environmentLabel,
         order?.id ? orderDisplayReference(order.display_number, order.order_number) : null,
-        formatImportedPaymentMethod(payment.payment_method),
+        formatSettlementMethodLabel(payment),
         payment.provider ? String(payment.provider) : null,
         payment.gateway_account_key ? String(payment.gateway_account_key) : null,
         payment.gateway_payment_id ? String(payment.gateway_payment_id) : null,
         ticketNote,
       ].filter(Boolean).join(' · '),
       status: String(payment.payment_status),
-      value: shouldIncludeAmountInFinancialTotals(payment.price_origin) ? Number(payment.final_amount ?? 0) : undefined,
+      value: resolveSettlementNature(payment) === 'off_gateway' || shouldIncludeAmountInFinancialTotals(payment.price_origin)
+        ? (shouldIncludeInConfirmedRevenue(payment) ? confirmedRevenueAmount(payment) : Number(payment.off_gateway_amount ?? payment.final_amount ?? 0))
+        : undefined,
       issue: exclusion ?? (cancelledTicketWithoutRefund ? 'Ticket cancelado sem estorno: permanece na receita confirmada' : undefined),
       href: `/financeiro/pagamento/${payment.id}`,
       actionLabel: 'Ver pagamento',
@@ -477,6 +483,12 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const pendingPayments = payments.filter((payment) => shouldIncludeInPendingRevenue(payment));
   const refundedPayments = payments.filter((payment) => shouldIncludeInRefundedRevenue(payment));
   const confirmedPayments = paid.filter((payment) => shouldIncludeInConfirmedRevenue(payment));
+  const courtesyPayments = paid.filter((row) => resolveSettlementNature(row) === 'courtesy');
+  const couponZeroPayments = paid.filter((row) => resolveSettlementNature(row) === 'coupon_zero');
+  const gatewayConfirmed = confirmedPayments.filter((row) => resolveSettlementNature(row) !== 'off_gateway');
+  const offGatewayConfirmed = confirmedPayments.filter((row) => resolveSettlementNature(row) === 'off_gateway');
+  const pixAsaas = gatewayConfirmed.filter((row) => row.payment_method === 'pix');
+  const cardAsaas = gatewayConfirmed.filter((row) => row.payment_method === 'credit_card');
   const received = inventory.reduce((sum, row) => sum + Number(row.total_quantity ?? 0), 0);
   const reserved = inventory.reduce((sum, row) => sum + Number(row.reserved_quantity ?? 0), 0);
   const delivered = inventory.reduce((sum, row) => sum + Number(row.delivered_quantity ?? 0), 0);
@@ -508,11 +520,14 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   put('shirts_available', 'Saldo líquido', available, inventory.map((row) => inventoryRow(row, 'available', rowBalance(row).free)));
   put('shirts_deficit', 'Falta encomendar', deficit, inventory.filter((row) => rowBalance(row).toOrder > 0).map((row) => inventoryRow(row, 'deficit', rowBalance(row).toOrder)));
   put('revenue_confirmed', 'Receita confirmada', confirmedPayments.reduce((sum, row) => sum + confirmedRevenueAmount(row), 0), confirmedPayments.map(paymentRow));
+  put('revenue_gateway', 'Receita gateway', gatewayConfirmed.reduce((sum, row) => sum + confirmedRevenueAmount(row), 0), gatewayConfirmed.map(paymentRow));
+  put('revenue_off_gateway', 'Receita fora do gateway', offGatewayConfirmed.reduce((sum, row) => sum + confirmedRevenueAmount(row), 0), offGatewayConfirmed.map(paymentRow));
   put('revenue_pending', 'Receita pendente', pendingPayments.reduce((sum, row) => sum + pendingRevenueAmount(row), 0), pendingPayments.map(paymentRow));
   put('revenue_refunded', 'Receita estornada', refundedPayments.reduce((sum, row) => sum + refundedRevenueAmount(row), 0), refundedPayments.map(paymentRow));
-  put('pix', 'Pagamentos via PIX', confirmedPayments.filter((row) => row.payment_method === 'pix').length, confirmedPayments.filter((row) => row.payment_method === 'pix').map(paymentRow));
-  put('card', 'Pagamentos via cartão', confirmedPayments.filter((row) => row.payment_method === 'credit_card').length, confirmedPayments.filter((row) => row.payment_method === 'credit_card').map(paymentRow));
-  put('courtesy', 'Cortesias', paid.filter((row) => row.payment_method === 'courtesy').length, paid.filter((row) => row.payment_method === 'courtesy').map(paymentRow));
+  put('pix', 'PIX · Asaas', pixAsaas.length, pixAsaas.map(paymentRow));
+  put('card', 'Cartão · Asaas', cardAsaas.length, cardAsaas.map(paymentRow));
+  put('courtesy', 'Cortesias', courtesyPayments.length, courtesyPayments.map(paymentRow));
+  put('coupon_zero', 'Cupom 100%', couponZeroPayments.length, couponZeroPayments.map(paymentRow));
   return { organization, events: eventOptions, selectedEvent, metrics, hasData: items.length > 0 || tickets.length > 0 || payments.length > 0 };
 }
 

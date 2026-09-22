@@ -9,7 +9,7 @@ import { DASHBOARD_METRIC_SECTIONS, DASHBOARD_SECTION_PERMISSIONS } from '@/lib/
 const metricKeys = new Set<DashboardMetricKey>([
   'people', 'registrations', 'confirmed', 'pending', 'expired', 'cancelled', 'tickets', 'checkins', 'complete_kits', 'shirt_coherence',
   'shirts_received', 'shirts_reserved', 'shirts_kit_reserved', 'shirts_additional', 'shirts_delivered', 'shirts_available', 'shirts_deficit',
-  'revenue_confirmed', 'revenue_pending', 'revenue_refunded', 'pix', 'card', 'courtesy',
+  'revenue_confirmed', 'revenue_gateway', 'revenue_off_gateway', 'revenue_pending', 'revenue_refunded', 'pix', 'card', 'courtesy', 'coupon_zero',
 ]);
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -26,7 +26,7 @@ export default async function DashboardDetailsPage({ searchParams }: { searchPar
   const requiredPermissions = [...new Set((metric?.rows ?? []).flatMap((row) => row.requiredPermission ? [row.requiredPermission] : []))];
   const grantedPermissions = new Set((await Promise.all(requiredPermissions.map(async (permission) => [permission, await hasPermission(permission)] as const))).filter(([, granted]) => granted).map(([permission]) => permission));
   const backParams = params.eventId && params.eventId !== 'all' ? `?eventId=${encodeURIComponent(params.eventId)}` : '';
-  const isMoney = key === 'revenue_confirmed' || key === 'revenue_pending' || key === 'revenue_refunded';
+  const isMoney = key === 'revenue_confirmed' || key === 'revenue_gateway' || key === 'revenue_off_gateway' || key === 'revenue_pending' || key === 'revenue_refunded';
 
   return <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
     <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:flex-row">
@@ -35,7 +35,11 @@ export default async function DashboardDetailsPage({ searchParams }: { searchPar
         <AdminPageHeader title={metric?.label ?? 'Detalhes do indicador'} subtitle={`Registros que formam o indicador em ${data.selectedEvent?.name ?? 'todos os eventos'}.`} actions={<Link href={`/painel${backParams}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500"><ArrowLeft className="size-4" />Voltar ao painel</Link>} />
         {!metric ? <AdminEmptyState title="Indicador indisponível" description="O indicador solicitado não existe para este contexto." /> : <>
           <AdminSection title={isMoney ? money(metric.value) : String(metric.value)} description={key === 'revenue_confirmed'
-            ? `${metric.rows.length} pagamento(s). Soma das linhas = card. Somente LIVE pago; SANDBOX, fake, cortesia, legado desconhecido e estorno ficam de fora.`
+            ? `${metric.rows.length} pagamento(s). Soma das linhas = card. Gateway LIVE + fora do gateway auditado. Cortesia, cupom 100%, legado sem comprovação, SANDBOX, fake e estorno ficam de fora.`
+            : key === 'revenue_gateway'
+              ? `${metric.rows.length} pagamento(s) LIVE no Asaas.`
+            : key === 'revenue_off_gateway'
+              ? `${metric.rows.length} pagamento(s) recebidos fora do gateway, com auditoria.`
             : key === 'revenue_refunded'
               ? `${metric.rows.length} pagamento(s) LIVE estornado(s). Histórico financeiro; não é receita atual. SANDBOX refunded não entra.`
             : key === 'shirt_coherence'
