@@ -56,7 +56,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
     payment.order_id
       ? supabase
         .from("tickets")
-        .select("id,token,status,used_at,order_item_id,participants(full_name),order_items(holder_full_name,item_position),participant_kit_items(status)")
+        .select("id,token,status,used_at,order_item_id,intended_owner_contact_id,participants(full_name),order_items(holder_full_name,item_position),participant_kit_items(status)")
         .eq("order_id", payment.order_id)
       : Promise.resolve({ data: [] as Row[] }),
     supabase
@@ -66,8 +66,22 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
       .order("requested_at", { ascending: false }),
   ]);
 
+  const contactIds = [...new Set((tickets ?? [])
+    .map((ticket) => ticket.intended_owner_contact_id)
+    .filter((id) => Boolean(id))
+    .map((id) => String(id)))];
+  const { data: contacts } = contactIds.length
+    ? await supabase.from("registration_contacts").select("id,full_name").in("id", contactIds)
+    : { data: [] as Row[] };
+  const contactNameById = new Map(
+    (contacts ?? []).map((row) => [String(row.id), String(row.full_name ?? "").trim()] as const)
+      .filter((entry) => Boolean(entry[1])),
+  );
+
   const ticketViews = (tickets ?? []).map((ticket) => {
-    const holder = one(ticket.order_items)?.holder_full_name ?? one(ticket.participants)?.full_name;
+    const holder = one(ticket.order_items)?.holder_full_name
+      ?? one(ticket.participants)?.full_name
+      ?? contactNameById.get(String(ticket.intended_owner_contact_id ?? ""));
     const kitRows = Array.isArray(ticket.participant_kit_items) ? ticket.participant_kit_items : ticket.participant_kit_items ? [ticket.participant_kit_items] : [];
     return classifyAdminRefundTicket({
       id: String(ticket.id),
@@ -81,7 +95,13 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   const amountLabel = formatImportedHistoricalAmount(Number(payment.final_amount ?? payment.amount ?? 0), payment.price_origin);
   const orderLabel = order ? orderDisplayReference(order.display_number, order.order_number) : "—";
-  const buyerName = participant?.full_name ? String(participant.full_name) : "—";
+  const confirmOrderLabel = Number.isSafeInteger(Number(order?.display_number)) && Number(order?.display_number) > 0
+    ? String(Number(order?.display_number))
+    : orderLabel;
+  const namedTicketHolder = ticketViews
+    .map((ticket) => ticket.holderName.trim())
+    .find((name) => name && name !== "Titular não informado");
+  const buyerName = String(participant?.full_name ?? "").trim() || namedTicketHolder || "—";
   const settlement = resolveSettlementNature(payment);
   const settlementAmount = settlementDisplayAmount(payment);
   const settlementAmountLabel = formatImportedHistoricalAmount(settlementAmount, payment.price_origin);
@@ -165,7 +185,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               {canConfirmPayment && offGatewayEligibility.allowed ? (
                 <OffGatewayPaymentModal
                   paymentId={String(payment.id)}
-                  orderLabel={orderLabel}
+                  orderLabel={confirmOrderLabel}
                   buyerName={buyerName}
                   replace={offGatewayEligibility.replace}
                 />
