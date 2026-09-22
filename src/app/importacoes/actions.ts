@@ -41,7 +41,6 @@ import {
 import {
   classifyCurrentEventPurchase,
   classifyIntraFileSharedEmails,
-  SHARED_EMAIL_CONTACT_WARNING,
 } from '@/lib/imports/classify-current-event-purchase';
 import {
   isCommerciallyCompletedImportStatus,
@@ -50,6 +49,9 @@ import {
 } from '@/lib/imports/batch-operational-state';
 import { importRowIdentityMode, isTextualHolderImport, resolveSharedEmailReviewAfterMaterialization } from '@/lib/imports/identity-review';
 import { resolveShirtVariant, shirtVariantReviewIssue } from '@/lib/imports/shirt-variant';
+
+const SHARED_EMAIL_CONTACT_WARNING =
+  'E-mail compartilhado. Pessoas permanecem separadas; revise a conta proprietaria dos ingressos.';
 
 const importTypeSchema = z.enum([
   'historical_participations',
