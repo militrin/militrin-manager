@@ -9,7 +9,11 @@ import {
   fichaIncludesOwnedTicket,
   holderOnlyTicketPointers,
   importIdentityMode,
+  legacyHolderOwnerLookupIds,
   matchesCadastroListingQuery,
+  relatedLegacyHolderTickets,
+  singleLegacyHolderOwnerContactId,
+  uniqueLegacyHolderOwnerKeys,
   visibleCadastroUniverseSize,
 } from '../src/lib/registrations/cadastro-listing.ts';
 import { isImportRowReadyToImport } from '../src/lib/imports/batch-operational-state.ts';
@@ -248,7 +252,7 @@ test('N. listagem nao altera ownership para resolver problema visual', async () 
   assert.doesNotMatch(listing, /\.update\(|DELETE FROM|from\("tickets"\)\.update/i);
   assert.doesNotMatch(page, /\.update\(|\.delete\(/);
   assert.match(ficha, /Esta pessoa não é um Cadastro/);
-  assert.match(ficha, /uniqueOwners\.length > 1/);
+  assert.match(ficha, /uniqueOwnerKeys\.length > 1/);
   assert.equal(countCadastroOwnedOperationalTickets(danieli, danieliTickets).ticketCount, 2);
   assert.equal(classifyCadastroListing(jean, allTickets), 'E');
 });
@@ -292,4 +296,124 @@ test('dashboard Pessoas no evento permanece titular/pessoa fisica, link vai ao o
   assert.match(dashboard, /Titular no evento/);
   assert.match(dashboard, /cadastroHrefForOwnedTicket/);
   assert.match(dashboard, /put\('people', 'Pessoas no evento'/);
+});
+
+test('hotfix E: lookup de owners nao usa tickets da organizacao inteira', async () => {
+  const noise = Array.from({ length: 80 }, (_, index) => ({
+    ticketId: `noise-${index}`,
+    eventId: `event-${index}`,
+    status: 'active',
+    ownerUserId: `owner-user-${index}`,
+    intendedOwnerContactId: `owner-contact-${index}`,
+    holderContactId: `holder-${index}`,
+  }));
+  const tickets = [...allTickets, ...noise];
+  const lookup = legacyHolderOwnerLookupIds(JEAN_CONTACT, tickets);
+  assert.deepEqual(lookup.ownerUserIds, [DANIELI_USER]);
+  assert.deepEqual(lookup.intendedOwnerIds, [DANIELI_CONTACT]);
+  assert.equal(relatedLegacyHolderTickets(JEAN_CONTACT, tickets).length, 1);
+  const ficha = await read('src/app/cadastros/[id]/page.tsx');
+  assert.match(ficha, /legacyHolderOwnerLookupIds\(id, listingTickets\)/);
+  assert.doesNotMatch(ficha, /listingTickets\.flatMap\(\(ticket\) => \(ticket\.ownerUserId/);
+  assert.match(ficha, /Titular de ingresso/);
+});
+
+test('A. classe E + um ticket + um owner renderiza sem 500 e aponta Danieli', () => {
+  const ownerMap = new Map([[DANIELI_USER, DANIELI_CONTACT]]);
+  const pointers = holderOnlyTicketPointers(JEAN_CONTACT, allTickets, ownerMap);
+  assert.equal(classifyCadastroListing(jean, allTickets), 'E');
+  assert.equal(pointers.length, 1);
+  assert.equal(pointers[0].ticketId, '1574');
+  assert.equal(pointers[0].ownerContactId, DANIELI_CONTACT);
+  assert.equal(singleLegacyHolderOwnerContactId(pointers), DANIELI_CONTACT);
+  assert.equal(cadastroHrefForOwnedTicket({
+    ownerContactId: singleLegacyHolderOwnerContactId(pointers),
+    ticketId: pointers[0].ticketId,
+  }), `/cadastros/${DANIELI_CONTACT}`);
+});
+
+test('B. classe E + multiplos tickets mesmo owner mostra owner unico', () => {
+  const sameOwner = [
+    ...danieliTickets,
+    {
+      ticketId: '1575',
+      eventId: EVENT_MILITRIN,
+      status: 'used',
+      ownerUserId: DANIELI_USER,
+      intendedOwnerContactId: DANIELI_CONTACT,
+      holderContactId: JEAN_CONTACT,
+    },
+  ];
+  const pointers = holderOnlyTicketPointers(JEAN_CONTACT, sameOwner, new Map([[DANIELI_USER, DANIELI_CONTACT]]));
+  assert.equal(pointers.length, 2);
+  assert.deepEqual(uniqueLegacyHolderOwnerKeys(pointers), [DANIELI_CONTACT]);
+  assert.equal(singleLegacyHolderOwnerContactId(pointers), DANIELI_CONTACT);
+});
+
+test('C. classe E + multiplos owners nao escolhe Cadastro arbitrario', () => {
+  const otherUser = 'other-owner-user';
+  const otherContact = 'other-owner-contact';
+  const multi = [
+    ...danieliTickets,
+    {
+      ticketId: '2002',
+      eventId: 'other-event',
+      status: 'active',
+      ownerUserId: otherUser,
+      intendedOwnerContactId: otherContact,
+      holderContactId: JEAN_CONTACT,
+    },
+  ];
+  const pointers = holderOnlyTicketPointers(JEAN_CONTACT, multi, new Map([
+    [DANIELI_USER, DANIELI_CONTACT],
+    [otherUser, otherContact],
+  ]));
+  assert.equal(pointers.length, 2);
+  assert.equal(uniqueLegacyHolderOwnerKeys(pointers).length, 2);
+  assert.equal(singleLegacyHolderOwnerContactId(pointers), null);
+});
+
+test('D. classe A ficha continua so com tickets owned', () => {
+  assert.equal(classifyCadastroListing(barbara, barbaraTickets), 'A');
+  assert.equal(fichaIncludesOwnedTicket({ listingClass: 'A', hasUserId: true, roles: ['owner'] }), true);
+  assert.equal(fichaIncludesOwnedTicket({ listingClass: 'A', hasUserId: true, roles: ['holder'] }), false);
+  assert.equal(fichaIncludesOwnedTicket({ listingClass: 'E', hasUserId: false, roles: ['holder'] }), false);
+});
+
+test('E. classe B/C permanecem Cadastro normal', () => {
+  assert.equal(classifyCadastroListing(pendingInvite, allTickets), 'B');
+  assert.equal(cadastroAppearsInListing('B'), true);
+  const ownUnowned = [{
+    ticketId: 'legacy-1',
+    eventId: EVENT_MILITRIN,
+    status: 'active',
+    ownerUserId: null,
+    intendedOwnerContactId: legacyImported.contactId,
+    holderContactId: legacyImported.contactId,
+  }];
+  assert.equal(classifyCadastroListing(legacyImported, ownUnowned), 'C');
+  assert.equal(cadastroAppearsInListing('C'), true);
+});
+
+test('F. Jean continua invisivel na busca de Cadastros', () => {
+  const contacts = [
+    { ...barbara, name: 'Bárbara Züge' },
+    { ...danieli, name: 'Danieli Weber da Conceição' },
+    { ...jean, name: 'Jean Lucas Pinheiro Rodrigues' },
+    { ...pendingInvite, name: 'Pessoa convite' },
+    { ...legacyImported, name: 'Maria Eduarda' },
+  ];
+  const visible = listingUniverse(contacts, allTickets)
+    .filter((contact) => matchesCadastroListingQuery(contact, 'Jean'));
+  assert.equal(visible.length, 0);
+});
+
+test('G. Bárbara continua 2 ingressos / 1 evento', () => {
+  const stats = countCadastroOwnedOperationalTickets(barbara, barbaraTickets);
+  assert.equal(stats.ticketCount, 2);
+  assert.equal(stats.eventCount, 1);
+});
+
+test('H. Danieli continua 2', () => {
+  assert.equal(countCadastroOwnedOperationalTickets(danieli, danieliTickets).ticketCount, 2);
 });

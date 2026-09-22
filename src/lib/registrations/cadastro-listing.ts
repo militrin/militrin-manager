@@ -123,26 +123,65 @@ export function fichaIncludesOwnedTicket(input: {
 
 export type HolderOnlyTicketPointer = {
   ticketId: string;
+  eventId: string;
+  status: string | null;
   ownerContactId: string | null;
   ownerUserId: string | null;
 };
+
+export function relatedLegacyHolderTickets(
+  contactId: string,
+  tickets: readonly CadastroListingTicket[],
+) {
+  return tickets.filter((ticket) => (
+    ticket.holderContactId === contactId && isCadastroOperationalTicketStatus(ticket.status)
+  ));
+}
+
+export function legacyHolderOwnerLookupIds(
+  contactId: string,
+  tickets: readonly CadastroListingTicket[],
+) {
+  const related = relatedLegacyHolderTickets(contactId, tickets);
+  return {
+    ownerUserIds: Array.from(new Set(related.flatMap((ticket) => (
+      ticket.ownerUserId ? [ticket.ownerUserId] : []
+    )))),
+    intendedOwnerIds: Array.from(new Set(related.flatMap((ticket) => (
+      ticket.intendedOwnerContactId ? [ticket.intendedOwnerContactId] : []
+    )))),
+  };
+}
 
 export function holderOnlyTicketPointers(
   contactId: string,
   tickets: readonly CadastroListingTicket[],
   ownerContactByUserId: ReadonlyMap<string, string>,
 ): HolderOnlyTicketPointer[] {
-  return tickets
-    .filter((ticket) => (
-      ticket.holderContactId === contactId && isCadastroOperationalTicketStatus(ticket.status)
-    ))
-    .map((ticket) => ({
-      ticketId: ticket.ticketId,
-      ownerUserId: ticket.ownerUserId ?? null,
-      ownerContactId: ticket.ownerUserId
-        ? ownerContactByUserId.get(ticket.ownerUserId) ?? ticket.intendedOwnerContactId ?? null
-        : ticket.intendedOwnerContactId ?? null,
-    }));
+  return relatedLegacyHolderTickets(contactId, tickets).map((ticket) => ({
+    ticketId: ticket.ticketId,
+    eventId: ticket.eventId,
+    status: ticket.status ?? null,
+    ownerUserId: ticket.ownerUserId ?? null,
+    ownerContactId: ticket.ownerUserId
+      ? ownerContactByUserId.get(ticket.ownerUserId) ?? ticket.intendedOwnerContactId ?? null
+      : ticket.intendedOwnerContactId ?? null,
+  }));
+}
+
+export function uniqueLegacyHolderOwnerKeys(pointers: readonly HolderOnlyTicketPointer[]) {
+  return Array.from(new Set(pointers.flatMap((pointer) => {
+    const key = pointer.ownerContactId ?? pointer.ownerUserId;
+    return key ? [key] : [];
+  })));
+}
+
+export function singleLegacyHolderOwnerContactId(pointers: readonly HolderOnlyTicketPointer[]) {
+  if (!pointers.length) return null;
+  const contactIds = pointers.map((pointer) => pointer.ownerContactId);
+  if (contactIds.some((value) => !value)) return null;
+  const unique = new Set(contactIds as string[]);
+  return unique.size === 1 ? contactIds[0] : null;
 }
 
 export function importIdentityMode(details: unknown): "cadastro" | "textual_holder" {
