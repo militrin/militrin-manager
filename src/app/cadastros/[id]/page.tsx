@@ -8,7 +8,8 @@ import { getCurrentOrganizationContext } from "@/lib/organizations/current-organ
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { isUuidLike } from "@/lib/admin/operator-display";
 import { TicketIdentitySummary } from "@/components/tickets/TicketIdentitySummary";
-import { buildTicketIdentityView, contactIdForTicket, contactTicketRoleLabel, groupContactTickets, rolesForContactTicket } from "@/lib/registrations/contact-tickets";
+import { buildTicketIdentityView, contactIdForTicket, contactTicketRoleLabel, groupContactTickets, isPendingFirstAccessInvite, rolesForContactTicket } from "@/lib/registrations/contact-tickets";
+import { cadastroHrefForOwnedTicket, classifyCadastroListing, fichaIncludesOwnedTicket, holderOnlyTicketPointers } from "@/lib/registrations/cadastro-listing";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
@@ -140,6 +141,81 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     ? { status: String(latestInvite.status), expiresAt: latestInvite.expires_at ? String(latestInvite.expires_at) : null, authLinkExpiresAt: latestInvite.auth_link_expires_at ? String(latestInvite.auth_link_expires_at) : null }
     : null;
 
+  const listingTickets = (ticketRows ?? []).map((row) => {
+    const orderItem = relation(row.order_items);
+    const participant = relation(row.participants);
+    return {
+      ticketId: String(row.id),
+      eventId: String(row.event_id),
+      status: row.status ? String(row.status) : null,
+      ownerUserId: row.owner_user_id ? String(row.owner_user_id) : null,
+      intendedOwnerContactId: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,
+      holderContactId: orderItem?.registration_contact_id
+        ? String(orderItem.registration_contact_id)
+        : participant?.registration_contact_id
+          ? String(participant.registration_contact_id)
+          : null,
+    };
+  });
+  const listingClass = classifyCadastroListing({
+    contactId: id,
+    userId: contact.user_id ? String(contact.user_id) : null,
+    hasPendingFirstAccessInvite: isPendingFirstAccessInvite(inviteRecord?.status),
+  }, listingTickets);
+
+  if (listingClass === "E") {
+    const ownerUserIds = Array.from(new Set(listingTickets.flatMap((ticket) => (ticket.ownerUserId ? [ticket.ownerUserId] : []))));
+    const intendedIds = Array.from(new Set(listingTickets.flatMap((ticket) => (
+      ticket.holderContactId === id && ticket.intendedOwnerContactId ? [ticket.intendedOwnerContactId] : []
+    ))));
+    const [{ data: ownerContacts, error: ownerContactsError }, { data: intendedContacts, error: intendedContactsError }, ownerNames] = await Promise.all([
+      ownerUserIds.length
+        ? supabase.from("registration_contacts").select("id,full_name,user_id").eq("organization_id", organization.id).in("user_id", ownerUserIds)
+        : Promise.resolve({ data: [] as Array<{ id: string; full_name?: string | null; user_id?: string | null }>, error: null }),
+      intendedIds.length
+        ? supabase.from("registration_contacts").select("id,full_name").eq("organization_id", organization.id).in("id", intendedIds)
+        : Promise.resolve({ data: [] as Array<{ id: string; full_name?: string | null }>, error: null }),
+      ownerUserIds.length ? resolveOperatorNames(ownerUserIds) : Promise.resolve(new Map<string, string>()),
+    ]);
+    if (ownerContactsError) throw ownerContactsError;
+    if (intendedContactsError) throw intendedContactsError;
+    const ownerContactByUserId = new Map((ownerContacts ?? []).flatMap((row) => (
+      row.user_id ? [[String(row.user_id), String(row.id)] as const] : []
+    )));
+    const ownerNameByContactId = new Map((ownerContacts ?? []).map((row) => [String(row.id), String(row.full_name ?? "")]));
+    for (const row of intendedContacts ?? []) ownerNameByContactId.set(String(row.id), String(row.full_name ?? ""));
+    const pointers = holderOnlyTicketPointers(id, listingTickets, ownerContactByUserId);
+    const uniqueOwners = Array.from(new Map(pointers.map((pointer) => [pointer.ownerContactId ?? pointer.ownerUserId ?? pointer.ticketId, pointer])).values());
+    return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
+      <TopBar title={String(contact.full_name)} subtitle="Somente titular de ingresso" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contact.full_name)}]} backHref="/cadastros" fallbackHref="/cadastros"/>
+      <section className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6">
+        <h2 className="text-lg font-semibold text-amber-100">Esta pessoa não é um Cadastro</h2>
+        <p className="mt-2 text-sm text-amber-50/90">{String(contact.full_name)} aparece somente como titular de ingresso pertencente a outra conta. Não possui conta autenticável e não deve ser listada em Cadastros.</p>
+        <ul className="mt-4 space-y-2 text-sm">
+          {pointers.map((pointer) => {
+            const ownerName = pointer.ownerContactId
+              ? (ownerNameByContactId.get(pointer.ownerContactId) || (pointer.ownerUserId ? ownerNames.get(pointer.ownerUserId) : null) || "Conta proprietária")
+              : (pointer.ownerUserId ? ownerNames.get(pointer.ownerUserId) ?? "Conta vinculada" : "Conta proprietária");
+            const cadastroHref = cadastroHrefForOwnedTicket({
+              ownerContactId: pointer.ownerContactId,
+              intendedOwnerContactId: pointer.ownerContactId,
+              ticketId: pointer.ticketId,
+            });
+            return <li key={pointer.ticketId} className="rounded-2xl border border-amber-400/20 bg-slate-950/40 p-4">
+              <p>Titular: {String(contact.full_name)}</p>
+              <p className="mt-1 text-slate-300">Conta / Cadastro: {ownerName}</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <Link href={`/ingressos/${pointer.ticketId}`} className="rounded-xl border border-amber-400/40 px-3 py-2 text-amber-100">Abrir ingresso</Link>
+                {uniqueOwners.length === 1 && pointer.ownerContactId ? <Link href={cadastroHref} className="rounded-xl border border-slate-600 px-3 py-2 text-slate-200">Abrir cadastro da conta</Link> : null}
+              </div>
+            </li>;
+          })}
+        </ul>
+        {uniqueOwners.length > 1 ? <p className="mt-4 text-xs text-slate-400">Há mais de um ingresso/conta associados. Abra o ingresso correspondente em vez de um redirecionamento único.</p> : null}
+      </section>
+    </div></div></main>;
+  }
+
   const relatedTicketRows = (ticketRows ?? []).flatMap((row) => {
     const orderItem = relation(row.order_items);
     const participant = relation(row.participants);
@@ -154,7 +230,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       participantContactId: participant?.registration_contact_id ? String(participant.registration_contact_id) : null,
     };
     const roles = rolesForContactTicket(link, id, linkedAccountIds);
-    if (roles.length === 0) return [];
+    if (!fichaIncludesOwnedTicket({ listingClass, hasUserId: Boolean(contactUserId), roles })) return [];
     return [{ row, orderItem, participant, event, link, roles }];
   });
   const extraContactIds = Array.from(new Set(relatedTicketRows.flatMap(({ link }) => (

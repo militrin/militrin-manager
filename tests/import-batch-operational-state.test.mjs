@@ -95,6 +95,7 @@ test('5) contador global de outro batch nao faz o batch atual parecer ter revisa
 test('row review resolvida volta a ser importavel; imported nunca reexecuta', () => {
   assert.equal(isImportRowReadyToImport('review_required', 'create_new'), true);
   assert.equal(isImportRowReadyToImport('review_required', 'link_existing'), true);
+  assert.equal(isImportRowReadyToImport('review_required', 'textual_holder'), true);
   assert.equal(isImportRowReadyToImport('imported', 'create_new'), false);
   assert.equal(isImportRowReadyToImport('error', 'pending'), false);
   const mixed = resolveImportBatchOperationalState({

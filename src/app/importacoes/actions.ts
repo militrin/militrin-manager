@@ -41,13 +41,14 @@ import {
 import {
   classifyCurrentEventPurchase,
   classifyIntraFileSharedEmails,
+  SHARED_EMAIL_CONTACT_WARNING,
 } from '@/lib/imports/classify-current-event-purchase';
 import {
   isCommerciallyCompletedImportStatus,
   isImportRowReadyToImport,
   resolveImportBatchOperationalState,
 } from '@/lib/imports/batch-operational-state';
-import { resolveSharedEmailReviewAfterMaterialization } from '@/lib/imports/identity-review';
+import { importRowIdentityMode, isTextualHolderImport, resolveSharedEmailReviewAfterMaterialization } from '@/lib/imports/identity-review';
 import { resolveShirtVariant, shirtVariantReviewIssue } from '@/lib/imports/shirt-variant';
 
 const importTypeSchema = z.enum([
@@ -871,10 +872,10 @@ export async function parseImportFileAction(formData: FormData) {
             identityMatchDetails = {
               ...identityMatchDetails,
               account_review: 'shared_email',
+              account_review_blocking: false,
               reason: String((identityMatchDetails as { reason?: string }).reason ?? 'shared_email_account_review'),
             };
-            errorMessage = errorMessage
-              ?? 'E-mail compartilhado. Pessoas permanecem separadas; revise a conta proprietaria dos ingressos.';
+            errorMessage = errorMessage ?? SHARED_EMAIL_CONTACT_WARNING;
           }
           if (purchase.status === 'data_pending' && status !== 'error') {
             status = 'data_pending';
@@ -1182,16 +1183,21 @@ export async function resolveImportReviewAction(formData: FormData) {
       'provide_alternate_cpf',
       'assign_owner_contact',
       'keep_people_separate',
+      'keep_shared_contact_email',
+      'provide_own_email',
+      'import_as_textual_holder',
     ]),
     registrationContactId: z.string().uuid().nullable(),
     cpf: z.string().optional(),
     ownerRegistrationContactId: z.string().uuid().nullable(),
+    email: z.string().optional(),
   }).safeParse({
     rowId: String(formData.get('row_id') ?? ''),
     decision: String(formData.get('decision') ?? ''),
     registrationContactId: String(formData.get('registration_contact_id') ?? '').trim() || null,
     cpf: String(formData.get('cpf') ?? '').trim() || undefined,
     ownerRegistrationContactId: String(formData.get('owner_registration_contact_id') ?? '').trim() || null,
+    email: String(formData.get('email') ?? '').trim() || undefined,
   });
   if (!parsed.success) return { success: false as const, message: 'Decisao de revisao invalida.' };
   const supabase = await createServerSupabaseClient();
@@ -1199,6 +1205,29 @@ export async function resolveImportReviewAction(formData: FormData) {
   if (!row?.import_batch_id) return { success: false as const, message: 'Linha de importacao nao encontrada.' };
   const access = await resolveImportBatchAccess(supabase, String(row.import_batch_id));
   if (!access.ok) return { success: false as const, message: access.message };
+  if (parsed.data.decision === 'keep_shared_contact_email' || parsed.data.decision === 'provide_own_email') {
+    const { error } = await supabase.rpc('resolve_import_shared_email_choice', {
+      p_row_id: parsed.data.rowId,
+      p_decision: parsed.data.decision,
+      p_email: parsed.data.email ?? null,
+    });
+    if (error) return { success: false as const, message: error.message };
+    revalidatePath('/importacoes/revisoes');
+    revalidatePath('/importacoes');
+    return { success: true as const };
+  }
+  if (parsed.data.decision === 'import_as_textual_holder') {
+    const ownerId = parsed.data.ownerRegistrationContactId ?? parsed.data.registrationContactId;
+    if (!ownerId) return { success: false as const, message: 'Selecione a conta proprietaria do ingresso.' };
+    const { error: holderModeError } = await supabase.rpc('apply_shared_email_textual_holders', {
+      p_row_id: parsed.data.rowId,
+      p_owner_contact_id: ownerId,
+    });
+    if (holderModeError) return { success: false as const, message: holderModeError.message };
+    revalidatePath('/importacoes/revisoes');
+    revalidatePath('/importacoes');
+    return { success: true as const };
+  }
   const { error } = await supabase.rpc('resolve_import_batch_row_review', {
     p_row_id: parsed.data.rowId,
     p_decision: parsed.data.decision,
@@ -1209,6 +1238,16 @@ export async function resolveImportReviewAction(formData: FormData) {
     },
   });
   if (error) return { success: false as const, message: error.message };
+  if (parsed.data.decision === 'assign_owner_contact') {
+    const ownerId = parsed.data.ownerRegistrationContactId ?? parsed.data.registrationContactId;
+    if (ownerId) {
+      const { error: holderModeError } = await supabase.rpc('apply_shared_email_textual_holders', {
+        p_row_id: parsed.data.rowId,
+        p_owner_contact_id: ownerId,
+      });
+      if (holderModeError) return { success: false as const, message: holderModeError.message };
+    }
+  }
   revalidatePath('/importacoes/revisoes');
   revalidatePath('/importacoes');
   return { success: true as const };
@@ -1455,6 +1494,9 @@ export async function executeImportBatchAction(
         }
 
         const issues = Array.isArray(row.data_issues) ? row.data_issues as ImportDataIssue[] : [];
+        const identityMode = isTextualHolderImport({ resolution, identity_match_details: row.identity_match_details })
+          ? 'textual_holder'
+          : importRowIdentityMode(row.identity_match_details);
         const { data: upserted, error: upsertError } = await supabase.rpc('import_current_event_contact_first', {
           p_import_batch_id: batchId,
           p_import_batch_row_id: String(row.id),
@@ -1474,6 +1516,7 @@ export async function executeImportBatchAction(
           p_import_issues: issues,
           p_assign_holder: true,
           p_intended_owner_contact_id: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,
+          p_identity_mode: identityMode,
         });
         if (upsertError) throw upsertError;
         const upsertResult = upserted as Record<string, unknown> | null;
@@ -1489,12 +1532,13 @@ export async function executeImportBatchAction(
           updatedRows += 1;
         }
 
-        if (!participantId || !registrationContactId || !orderItemId) {
+        if (!orderItemId || (identityMode !== 'textual_holder' && (!participantId || !registrationContactId))) {
           throw new Error('Falha ao criar o ingresso importado.');
         }
 
         // No MVP do importador administrativo, não criamos nem convidamos contas.
         // O participante importado continua utilizável no painel, entrega de kits e check-in.
+        if (participantId) {
         await ensureParticipationHistoryForCurrentParticipant({
           participantId,
           userId: participantUserId,
@@ -1505,6 +1549,7 @@ export async function executeImportBatchAction(
           email,
           importBatchId: batchId,
         });
+        }
 
         if (!hasBlockingDataIssues) {
           const { data: finalization, error: finalizationError } = await supabase.rpc(

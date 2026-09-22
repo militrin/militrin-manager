@@ -33,8 +33,10 @@ export default async function AdministrativeTicketDetailPage({ params, searchPar
   const participant = Array.isArray(data.participants) ? data.participants[0] : data.participants;
   const contactId = orderItem?.registration_contact_id ?? participant?.registration_contact_id ?? null;
   const requestedContactId = filters.from === "cadastro" && isSafeContextUuid(filters.contactId) ? filters.contactId : null;
-  const ownerContactResult=requestedContactId&&data.owner_user_id?await supabase.from("participants").select("id").eq("organization_id",organization.id).eq("registration_contact_id",requestedContactId).eq("user_id",data.owner_user_id).limit(1):null;
-  const fromCadastro = Boolean(requestedContactId && (requestedContactId === contactId || ownerContactResult?.data?.length));
+  const ownerContactResult = requestedContactId && data.owner_user_id
+    ? await supabase.from("registration_contacts").select("id").eq("id", requestedContactId).eq("organization_id", organization.id).eq("user_id", data.owner_user_id).maybeSingle()
+    : null;
+  const fromCadastro = Boolean(requestedContactId && (requestedContactId === contactId || ownerContactResult?.data?.id || requestedContactId === (data.intended_owner_contact_id ? String(data.intended_owner_contact_id) : "")));
   const contactResult = fromCadastro ? await supabase.from("registration_contacts").select("full_name").eq("id", requestedContactId).eq("organization_id", organization.id).maybeSingle() : null;
   const category = Array.isArray(orderItem?.ticket_categories) ? orderItem.ticket_categories[0] : orderItem?.ticket_categories;
   const eventName = event?.name;

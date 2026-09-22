@@ -8,6 +8,7 @@ export type ImportIdentityMatchDetails = {
   reason?: string | null;
   candidates?: ImportIdentityCandidate[] | null;
   account_review?: string | null;
+  account_review_blocking?: boolean | null;
   account_review_resolved?: string | null;
 } | null | undefined;
 
@@ -55,6 +56,14 @@ export function isSharedEmailOwnershipReview(
     || details?.reason === 'shared_email_account_review';
 }
 
+export function isInheritedSharedEmailReview(
+  details: ImportIdentityMatchDetails,
+) {
+  if (!isSharedEmailOwnershipReview(details)) return false;
+  const resolved = String(details?.account_review_resolved ?? '');
+  return resolved === '' || resolved === 'null';
+}
+
 /**
  * Email compartilhado nao e identidade. Depois que a linha materializou
  * pessoas distintas, a fila nao pode continuar pedindo fusao.
@@ -78,4 +87,19 @@ export function resolveSharedEmailReviewAfterMaterialization(details: unknown) {
     current.account_review_resolved = 'materialized_distinct_identities';
   }
   return current;
+}
+
+export function importRowIdentityMode(details: unknown): 'cadastro' | 'textual_holder' {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return 'cadastro';
+  return String((details as Record<string, unknown>).identity_mode ?? '') === 'textual_holder'
+    ? 'textual_holder'
+    : 'cadastro';
+}
+
+export function isTextualHolderImport(row: {
+  resolution?: string | null;
+  identity_match_details?: unknown;
+}) {
+  return String(row.resolution ?? '') === 'textual_holder'
+    || importRowIdentityMode(row.identity_match_details) === 'textual_holder';
 }

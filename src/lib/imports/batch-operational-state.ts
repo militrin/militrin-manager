@@ -25,7 +25,9 @@ export function isImportRowReadyToImport(status: string, resolution: string) {
   // Ja materializada -- reprocessar o lote nunca deve tentar de novo.
   if (status === 'imported') return false;
   if (status === 'duplicate') return resolution === 'create_new';
-  if (status === 'review_required') return resolution === 'link_existing' || resolution === 'create_new';
+  if (status === 'review_required') {
+    return resolution === 'link_existing' || resolution === 'create_new' || resolution === 'textual_holder';
+  }
   return true;
 }
 

@@ -62,7 +62,7 @@ test('relatório com revisão pendente mostra CTA e mensagem correta', () => {
 
 test('ticket não é emitido antes da revisão', () => {
   assert.match(actions, /if \(!isImportRowReadyToImport\(status, resolution\)\)/);
-  assert.match(operationalState, /status === 'review_required'\) return resolution === 'link_existing' \|\| resolution === 'create_new'/);
+  assert.match(operationalState, /resolution === 'link_existing' \|\| resolution === 'create_new' \|\| resolution === 'textual_holder'/);
 });
 
 test('depois da revisão o fluxo continua pela importação e reconciliação canônicas', () => {

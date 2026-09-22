@@ -4,18 +4,14 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { hasPermission } from "@/lib/admin/permissions";
-import { contactIdForTicket } from "@/lib/registrations/contact-tickets";
 import { countSharedEmails, matchesSharedEmailFilter, normalizeSharedEmail, parseSharedEmailFilter, sharedEmailCountersLabel, sharedEmailGroupStatus } from "@/lib/account/shared-email-ownership";
+import { cadastroAppearsInListing, classifyCadastroListing, countCadastroOwnedOperationalTickets, isCadastroOperationalTicketStatus, matchesCadastroListingQuery } from "@/lib/registrations/cadastro-listing";
 import { CadastroList } from "./cadastro-list";
 
 type Params = { q?: string; origin?: string; import_batch_id?: string; shared_email?: string };
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
-}
-
-function contains(value: unknown, query: string) {
-  return String(value ?? "").toLocaleLowerCase("pt-BR").includes(query.toLocaleLowerCase("pt-BR"));
 }
 
 export default async function CadastrosPage({ searchParams }: { searchParams: Promise<Params> }) {
@@ -30,15 +26,15 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
     return <main className="p-8 text-slate-200">Selecione uma organização para visualizar os cadastros.</main>;
   }
 
-  const [{ data: contacts, error: contactsError }, { data: tickets, error: ticketsError }, { data: participantOrigins, error: originsError }] = await Promise.all([
+  const [{ data: contacts, error: contactsError }, { data: tickets, error: ticketsError }, { data: participantOrigins, error: originsError }, { data: pendingInvites, error: invitesError }] = await Promise.all([
     supabase
       .from("registration_contacts")
-      .select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin")
+      .select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin,user_id")
       .eq("organization_id", organization.id)
       .order("created_at", { ascending: false }),
     supabase
       .from("tickets")
-      .select("id,event_id,status,intended_owner_contact_id,order_items(registration_contact_id),participants(registration_contact_id),events(name)")
+      .select("id,event_id,status,owner_user_id,intended_owner_contact_id,order_items(registration_contact_id),participants(registration_contact_id)")
       .eq("organization_id", organization.id)
       .range(0, 4999),
     supabase
@@ -47,31 +43,47 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
       .eq("organization_id", organization.id)
       .not("registration_contact_id", "is", null)
       .range(0, 4999),
+    supabase
+      .from("participant_account_invites")
+      .select("registration_contact_id,status")
+      .eq("status", "pending"),
   ]);
   if (contactsError) throw contactsError;
   if (ticketsError) throw ticketsError;
   if (originsError) throw originsError;
+  if (invitesError) throw invitesError;
 
-  const stats = new Map<string, { ticketIds: Set<string>; eventIds: Set<string> }>();
-  for (const row of tickets ?? []) {
+  const pendingInviteContactIds = new Set(
+    (pendingInvites ?? []).flatMap((invite) => invite.registration_contact_id ? [String(invite.registration_contact_id)] : []),
+  );
+  const listingTickets = (tickets ?? []).map((row) => {
     const orderItem = relation(row.order_items);
     const participant = relation(row.participants);
-    const holderContactId = contactIdForTicket({
+    return {
       ticketId: String(row.id),
       eventId: String(row.event_id),
-      eventName: String(relation(row.events)?.name ?? "Evento"),
-      orderItemContactId: orderItem?.registration_contact_id ? String(orderItem.registration_contact_id) : null,
-      participantContactId: participant?.registration_contact_id ? String(participant.registration_contact_id) : null,
-    });
-    const intendedOwnerContactId = row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null;
-    const contactIds = new Set([holderContactId, intendedOwnerContactId].filter(Boolean) as string[]);
-    for (const contactId of contactIds) {
-      const current = stats.get(contactId) ?? { ticketIds: new Set<string>(), eventIds: new Set<string>() };
-      current.ticketIds.add(String(row.id));
-      current.eventIds.add(String(row.event_id));
-      stats.set(contactId, current);
-    }
-  }
+      status: row.status ? String(row.status) : null,
+      ownerUserId: row.owner_user_id ? String(row.owner_user_id) : null,
+      intendedOwnerContactId: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,
+      holderContactId: orderItem?.registration_contact_id
+        ? String(orderItem.registration_contact_id)
+        : participant?.registration_contact_id
+          ? String(participant.registration_contact_id)
+          : null,
+    };
+  });
+  const listingByContact = new Map((contacts ?? []).map((contact) => {
+    const contactId = String(contact.id);
+    const evidence = {
+      contactId,
+      userId: contact.user_id ? String(contact.user_id) : null,
+      hasPendingFirstAccessInvite: pendingInviteContactIds.has(contactId),
+    };
+    return [contactId, {
+      listingClass: classifyCadastroListing(evidence, listingTickets),
+      stats: countCadastroOwnedOperationalTickets(evidence, listingTickets),
+    }] as const;
+  }));
 
   const importedContactIds = new Set<string>();
   const importBatchIdsByContact = new Map<string, Set<string>>();
@@ -88,23 +100,18 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
 
   const query = params.q?.trim() ?? "";
   const sharedEmailFilter = parseSharedEmailFilter(params.shared_email);
-  const sharedEmailCounts = countSharedEmails((contacts ?? []).map((contact) => contact.email ? String(contact.email) : null));
-  const namesById = new Map((contacts ?? []).map((contact) => [String(contact.id), String(contact.full_name ?? "")]));
-  const emailByContactId = new Map((contacts ?? []).map((contact) => [String(contact.id), normalizeSharedEmail(contact.email ? String(contact.email) : null)]));
+  const visibleContacts = (contacts ?? []).filter((contact) => cadastroAppearsInListing(listingByContact.get(String(contact.id))?.listingClass ?? "C"));
+  const sharedEmailCounts = countSharedEmails(visibleContacts.map((contact) => contact.email ? String(contact.email) : null));
+  const namesById = new Map(visibleContacts.map((contact) => [String(contact.id), String(contact.full_name ?? "")]));
+  const emailByContactId = new Map(visibleContacts.map((contact) => [String(contact.id), normalizeSharedEmail(contact.email ? String(contact.email) : null)]));
   const ticketsByEmail = new Map<string, Array<{ intendedOwnerContactId: string | null }>>();
-  for (const row of tickets ?? []) {
-    if (["cancelled", "canceled", "void", "voided"].includes(String(row.status ?? ""))) continue;
-    const orderItem = relation(row.order_items);
-    const participant = relation(row.participants);
-    const holderId = participant?.registration_contact_id
-      ? String(participant.registration_contact_id)
-      : orderItem?.registration_contact_id
-        ? String(orderItem.registration_contact_id)
-        : "";
+  for (const row of listingTickets) {
+    if (!isCadastroOperationalTicketStatus(row.status)) continue;
+    const holderId = row.holderContactId ?? "";
     const email = emailByContactId.get(holderId) ?? null;
     if (!email || (sharedEmailCounts.get(email) ?? 0) <= 1) continue;
     const list = ticketsByEmail.get(email) ?? [];
-    list.push({ intendedOwnerContactId: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null });
+    list.push({ intendedOwnerContactId: row.intendedOwnerContactId });
     ticketsByEmail.set(email, list);
   }
   const groupStatusByEmail = new Map<string, { status: "pending" | "resolved"; principalName: string | null }>();
@@ -118,8 +125,8 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
   }
   const pendingGroups = [...groupStatusByEmail.values()].filter((group) => group.status === "pending").length;
   const resolvedGroups = [...groupStatusByEmail.values()].filter((group) => group.status === "resolved").length;
-  const rows = (contacts ?? []).map((contact) => {
-    const contactStats = stats.get(String(contact.id));
+  const rows = visibleContacts.map((contact) => {
+    const listing = listingByContact.get(String(contact.id));
     const origin = importedContactIds.has(String(contact.id)) ? "Importação" : "Cadastro global";
     const email = String(contact.email ?? "");
     const emailKey = normalizeSharedEmail(email);
@@ -135,15 +142,15 @@ export default async function CadastrosPage({ searchParams }: { searchParams: Pr
       city: String(contact.city ?? ""),
       publicPin: contact.public_pin ? String(contact.public_pin) : null,
       origin,
-      ticketCount: contactStats?.ticketIds.size ?? 0,
-      eventCount: contactStats?.eventIds.size ?? 0,
+      ticketCount: listing?.stats.ticketCount ?? 0,
+      eventCount: listing?.stats.eventCount ?? 0,
       sharedEmailCount: emailKey ? sharedEmailCounts.get(emailKey) ?? 0 : 0,
       sharedEmailStatus: group?.status ?? null,
       sharedEmailPrincipalName: group?.principalName ?? null,
       importBatchIds: Array.from(importBatchIdsByContact.get(String(contact.id)) ?? []),
     };
   }).filter((row) => {
-    if (query && ![row.name, row.cpf, row.email, row.phone].some((value) => contains(value, query))) return false;
+    if (query && !matchesCadastroListingQuery(row, query)) return false;
     if (params.origin === "import" && row.origin !== "Importação") return false;
     if (params.origin === "manual" && row.origin === "Importação") return false;
     if (params.import_batch_id && !row.importBatchIds.includes(params.import_batch_id)) return false;

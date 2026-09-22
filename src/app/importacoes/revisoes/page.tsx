@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { resolveImportReviewAction } from '../actions';
 import { redirect } from 'next/navigation';
-import { importRowHasExistingCpfIdentity, isPendingImportIdentityReview, isSharedEmailOwnershipReview } from '@/lib/imports/identity-review';
+import { importRowHasExistingCpfIdentity, isInheritedSharedEmailReview, isPendingImportIdentityReview, isSharedEmailOwnershipReview } from '@/lib/imports/identity-review';
 
 type Candidate = {
   registration_contact_id?: string;
@@ -116,6 +116,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
       });
       const hasExistingCpf = importRowHasExistingCpfIdentity(details, String(imported.cpf ?? imported.cpf_input ?? ''));
       const isOwnershipReview = isSharedEmailOwnershipReview(details);
+      const isInheritedEmailReview = isInheritedSharedEmailReview(details);
       const batch = Array.isArray(row.import_batches) ? row.import_batches[0] : row.import_batches;
       const event = batch && (Array.isArray(batch.events) ? batch.events[0] : batch.events);
       const reason = details?.reason ?? '';
@@ -129,7 +130,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
             <h2 className="mt-1 text-lg font-semibold">{String(imported.full_name ?? 'Sem nome')}</h2>
             <p className="text-xs text-slate-400">{event?.name ?? 'Evento'} · batch {String(row.import_batch_id).slice(0, 8)}</p>
           </div>
-          <span className="h-fit rounded-full bg-amber-400/15 px-3 py-1 text-xs text-amber-200">{labels[reason] ?? row.error_message}</span>
+          <span className="h-fit rounded-full bg-amber-400/15 px-3 py-1 text-xs text-amber-200">{isInheritedEmailReview ? 'E-mail compartilhado' : (labels[reason] ?? row.error_message)}</span>
         </div>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-700 p-4">
@@ -150,7 +151,24 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
                 <p className="font-semibold">{candidate.full_name || 'Cadastro sem nome'}</p>
                 <p className="text-xs text-emerald-300">{labels[candidate.reason ?? ''] ?? candidate.reason}</p>
                 <p className="mt-2 text-slate-400">CPF: {maskCpf(candidate.cpf ?? '')} · E-mail: {candidate.email || '-'}</p>
-                {reason !== 'possible_reimport' && reason !== 'excel_leading_zero' && !isOwnershipReview ? (
+                {isOwnershipReview ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <form action={submitReview}>
+                      <input type="hidden" name="row_id" value={row.id}/>
+                      <input type="hidden" name="filter_batch_id" value={batchId ?? ''}/>
+                      <input type="hidden" name="decision" value="assign_owner_contact"/>
+                      <input type="hidden" name="owner_registration_contact_id" value={candidate.registration_contact_id}/>
+                      <button className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-emerald-950">Esta Pessoa é a conta; os demais são só titulares</button>
+                    </form>
+                    <form action={submitReview}>
+                      <input type="hidden" name="row_id" value={row.id}/>
+                      <input type="hidden" name="filter_batch_id" value={batchId ?? ''}/>
+                      <input type="hidden" name="decision" value="import_as_textual_holder"/>
+                      <input type="hidden" name="owner_registration_contact_id" value={candidate.registration_contact_id}/>
+                      <button className="rounded-xl border border-emerald-500 px-4 py-2 text-sm text-emerald-200">Somente titular deste ingresso (sem Cadastro)</button>
+                    </form>
+                  </div>
+                ) : reason !== 'possible_reimport' && reason !== 'excel_leading_zero' ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <form action={submitReview}>
                       <input type="hidden" name="row_id" value={row.id}/>
@@ -166,6 +184,13 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
                       <input type="hidden" name="owner_registration_contact_id" value={candidate.registration_contact_id}/>
                       <button className="rounded-xl border border-emerald-500 px-4 py-2 text-sm text-emerald-200">Usar esta Pessoa como conta dos ingressos</button>
                     </form>
+                    <form action={submitReview}>
+                      <input type="hidden" name="row_id" value={row.id}/>
+                      <input type="hidden" name="filter_batch_id" value={batchId ?? ''}/>
+                      <input type="hidden" name="decision" value="import_as_textual_holder"/>
+                      <input type="hidden" name="owner_registration_contact_id" value={candidate.registration_contact_id}/>
+                      <button className="rounded-xl border border-slate-500 px-4 py-2 text-sm text-slate-200">Somente titular deste ingresso (sem Cadastro)</button>
+                    </form>
                   </div>
                 ) : null}
               </div>
@@ -173,6 +198,14 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
             {!candidates.length ? <p className="text-sm text-slate-500">Nenhum cadastro candidato além desta linha.</p> : null}
           </div>
         </div>
+
+        {isInheritedEmailReview ? (
+          <div className="mt-4 rounded-2xl border border-amber-700/40 bg-amber-950/30 p-4 text-sm">
+            <p className="font-semibold uppercase tracking-wide text-amber-200">E-mail compartilhado</p>
+            <p className="mt-2 text-slate-200">Este endereço também é utilizado por outra pessoa. Escolha explicitamente: criar Cadastro para esta Pessoa, ou importá-la só como titular textual do ingresso de outra conta.</p>
+            <p className="mt-2 text-slate-400">Titular adicional não gera Cadastro. “Manter Pessoas separadas” cria Cadastro para cada uma. Nenhuma conta Auth é criada automaticamente.</p>
+          </div>
+        ) : null}
 
         {reason === 'excel_leading_zero' ? (
           <div className="mt-4 rounded-2xl border border-amber-700/40 p-4 text-sm">
@@ -229,7 +262,7 @@ export default async function ImportReviewQueuePage({ searchParams }: { searchPa
         <div className="mt-4 rounded-2xl bg-slate-950/60 p-3 text-xs text-slate-400">
           {hasExistingCpf
             ? 'Este CPF já identifica um cadastro. Vincular reutiliza essa Pessoa e cria a compra adicional. Não é possível criar outra Pessoa com o mesmo CPF. A decisão fica registrada em auditoria.'
-            : 'Vincular reutiliza o cadastro e preserva a compra. Criar nova Pessoa só se o CPF ainda não existe. E-mail compartilhado não funde Pessoas: escolha a conta proprietária dos ingressos ou mantenha contas separadas. Ignorar encerra a linha sem criar pedido. A decisão fica registrada em auditoria.'}
+            : 'Vincular reutiliza o cadastro e preserva a compra. Criar nova Pessoa só se o CPF ainda não existe. E-mail compartilhado não funde Pessoas: escolha a conta proprietária e os titulares textuais, ou mantenha Cadastros separados. Ignorar encerra a linha sem criar pedido. A decisão fica registrada em auditoria.'}
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
           {reason === 'excel_leading_zero' || reason === 'possible_reimport' ? null : (

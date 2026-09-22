@@ -33,6 +33,7 @@ import {
   reservedShirtTotal,
   shirtDeficitQuantity,
 } from '@/lib/dashboard/operational-shirt-demand';
+import { cadastroHrefForOwnedTicket } from '@/lib/registrations/cadastro-listing';
 
 export type DashboardMetricKey =
   | 'people' | 'registrations' | 'confirmed' | 'pending' | 'expired' | 'cancelled'
@@ -115,9 +116,9 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const enabled = new Set(authorizedSections);
   const emptyResult = { data: [], error: null };
   const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult] = await Promise.all([
-    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,user_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
     enabled.has('people') || enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,store_item_id,store_item_variant_id,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
-    enabled.has('people') || enabled.has('operations') || enabled.has('finance') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') || enabled.has('finance') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,owner_user_id,intended_owner_contact_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
     enabled.has('finance') ? fetchAllScoped(() => supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,amount,discount_amount,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
     // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
@@ -152,6 +153,12 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const items = allOrderItems.filter((item) => (item.item_kind ?? 'ticket') === 'ticket');
   const productItems = allOrderItems.filter((item) => item.item_kind === 'product');
   const tickets = (ticketsResult.data ?? []) as Row[];
+  const ownerContactByUserId = new Map<string, string>();
+  for (const participant of (participantsResult.data ?? []) as Row[]) {
+    if (participant.user_id && participant.registration_contact_id) {
+      ownerContactByUserId.set(String(participant.user_id), String(participant.registration_contact_id));
+    }
+  }
   const payments = (paymentsResult.data ?? []) as Row[]; const rawInventory = (inventoryResult.data ?? []) as Row[]; const kits = (kitsResult.data ?? []) as Row[];
   const kitDefinitions = (kitDefinitionsResult.data ?? []) as Row[]; const issues = (issuesResult.data ?? []) as Row[]; const movements = (movementsResult.data ?? []) as Row[];
   const storeItems = ((storeItemsResult.data ?? []) as Row[]).filter((item) => kitDefinitions.some((definition) => definition.item_type === 'shirt' && String(definition.id) === String(item.linked_event_kit_item_id)));
@@ -263,7 +270,13 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
       // Pendencia do baseline e participant-scoped. Sem order_item_id persistido,
       // nunca escolhemos implicitamente um dos ingressos da pessoa.
       actionLabel = 'Abrir cadastro';
-      href = item.registration_contact_id ? `/cadastros/${item.registration_contact_id}` : '/cadastros';
+      href = cadastroHrefForOwnedTicket({
+        ownerContactId: ticket?.owner_user_id ? ownerContactByUserId.get(String(ticket.owner_user_id)) ?? null : null,
+        intendedOwnerContactId: ticket?.intended_owner_contact_id && String(ticket.intended_owner_contact_id) !== String(item.registration_contact_id ?? '')
+          ? String(ticket.intended_owner_contact_id)
+          : (item.registration_contact_id ? String(item.registration_contact_id) : null),
+        ticketId: ticket?.id ? String(ticket.id) : null,
+      });
       requiredPermission = 'participants.edit_basic';
     }
     else if (item.ownership_status === 'unassigned' && item.registration_contact_id && assignedHolderKeys.has(`${item.event_id}:${item.registration_contact_id}`)) {
@@ -388,8 +401,35 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const completeTickets = activeTickets.filter((ticket) => { const required = requiredKitByEvent.get(String(ticket.event_id)) ?? []; const linked = kitsByTicket.get(String(ticket.id)) ?? []; return required.length > 0 && required.every((id) => linked.some((kit) => String(kit.kit_item_id) === id && kit.status === 'delivered')); });
   const shirtAttention = activeTickets.filter((ticket) => { const required = shirtKitByEvent.get(String(ticket.event_id)) ?? []; if (!required.length) return false; const linked = kitsByTicket.get(String(ticket.id)) ?? [];
     return !required.some((id) => linked.some((kit) => String(kit.kit_item_id) === id && Boolean(kit.variant_data?.variant_id))); });
+  // "Pessoas no evento" = titulares/pessoas físicas projetadas no evento
+  // (participants com contact), NÃO contas de Cadastros. Bruno textual não
+  // entra; Jean histórico ainda entra até a conversão E→D. O link de Cadastro
+  // aponta para a conta owner, não para o titular-fantasma.
   const people = new Map<string, Row>(); for (const participant of participants) if (participant.registration_contact_id) people.set(String(participant.registration_contact_id), participant);
-  const peopleRows = [...people.entries()].map(([id, participant]) => ({ id, primary: String(one(participant.registration_contacts)?.full_name ?? 'Pessoa'), secondary: 'Cadastro global vinculado ao evento', status: 'active', href: `/cadastros/${id}`, actionLabel: 'Ver pessoa' }));
+  const peopleRows = [...people.entries()].map(([id, participant]) => {
+    const relatedTicket = tickets.find((ticket) => {
+      const item = one(ticket.order_items);
+      const ticketParticipant = one(ticket.participants);
+      return String(item?.registration_contact_id ?? '') === id
+        || String(ticketParticipant?.registration_contact_id ?? '') === id
+        || String(ticket.participant_id ?? '') === String(participant.id);
+    });
+    const ownerContactId = relatedTicket?.owner_user_id ? ownerContactByUserId.get(String(relatedTicket.owner_user_id)) ?? null : null;
+    const intended = relatedTicket?.intended_owner_contact_id ? String(relatedTicket.intended_owner_contact_id) : null;
+    const href = cadastroHrefForOwnedTicket({
+      ownerContactId,
+      intendedOwnerContactId: intended && intended !== id ? intended : null,
+      ticketId: relatedTicket?.id ? String(relatedTicket.id) : null,
+    });
+    return {
+      id,
+      primary: String(one(participant.registration_contacts)?.full_name ?? 'Pessoa'),
+      secondary: 'Titular no evento',
+      status: 'active',
+      href,
+      actionLabel: href.startsWith('/ingressos/') ? 'Ver ingresso' : 'Ver cadastro da conta',
+    };
+  });
   // Classificação de negócio via resolveCommercialStatus (fonte única,
   // reaproveitada pelo card e pelo drill-down) -- nunca mais checar
   // item.status sozinho: 'expired' quase nunca chega lá (ver comentário em
