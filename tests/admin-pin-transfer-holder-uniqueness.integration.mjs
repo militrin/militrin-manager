@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createClient } from '@supabase/supabase-js';
 
-const apiUrl = 'http://127.0.0.1:54321';
 const localEnvironment = Object.fromEntries(execFileSync('cmd.exe', ['/d', '/s', '/c', 'npx.cmd supabase status -o env'], { encoding: 'utf8' })
   .split(/\r?\n/).flatMap((line) => { const match = line.match(/^([A-Z_]+)="?([^"\r\n]+)"?$/); return match ? [[match[1], match[2]]] : []; }));
+const apiUrl = String(localEnvironment.API_URL || 'http://127.0.0.1:15421').replace(/\/$/, '');
 const anonKey = localEnvironment.ANON_KEY;
 const serviceKey = localEnvironment.SERVICE_ROLE_KEY;
 const options = { auth: { persistSession: false, autoRefreshToken: false } };
@@ -82,7 +82,7 @@ test('transferencia administrativa por PIN para pessoa ja titular de outro ingre
   const ticket2 = await admin.rpc('issue_manual_ticket_batch', {
     p_registration_contact_id: personAContact.data.id, p_event_id: event.data.id, p_ticket_category_id: category.data.id,
     p_batch_id: batch.data.id, p_quantity: 1, p_pricing_gender: 'male', p_shirt_type: null, p_shirt_size: null,
-    p_payment_method: 'courtesy', p_notes: null, p_assign_holder: false,
+    p_payment_method: 'courtesy', p_notes: null, p_assign_holder: false, p_acknowledge_existing: true,
   });
   assert.equal(ticket2.error, null, ticket2.error?.message);
   const ticket2Id = ticket2.data[0].ticket_id;

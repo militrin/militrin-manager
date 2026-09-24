@@ -72,7 +72,7 @@ test('3. cortesia real continua Cortesia', () => {
   assert.equal(courtesy.isCourtesy, true);
   assert.equal(courtesy.label, 'Destinatário');
   assert.match(courtesy.name, /Cortesia/);
-  assert.equal(formatImportedPaymentMethod('courtesy'), 'Cortesia');
+  assert.equal(formatImportedPaymentMethod('courtesy'), 'Cortesia / emissão administrativa');
   assert.equal(normalizeImportedPaymentMethod('Cortesia'), 'courtesy');
 });
 

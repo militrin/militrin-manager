@@ -163,15 +163,21 @@ test('T06 mesmo CPF, 3 compras continuam 3 compras', () => {
   assert.equal(third.status, 'ready');
 });
 
-test('T07 mesmo e-mail, CPFs diferentes permanecem Pessoas separadas', () => {
+test('T07 mesmo e-mail, CPFs diferentes permanecem Pessoas separadas sem fila obrigatoria', () => {
   const result = classifyPurchase({
     cpfInput: mariaCpf,
     email: 'familia@gmail.com',
     emailMatch: person('contact-joao', { cpf: joaoCpf, email: 'familia@gmail.com', reason: 'email_exact' }),
   });
   assert.equal(result.resolution, 'create_new');
+  assert.equal(result.status, 'ready');
   assert.equal(result.identityMatchDetails.account_review, 'shared_email');
-  assert.notEqual(result.status, 'review_required');
+  assert.equal(result.identityMatchDetails.account_review_blocking, false);
+  assert.match(String(result.errorMessage), /E-mail compartilhado/);
+  assert.match(String(result.errorMessage), /Os Cadastros permanecerão separados/);
+  assert.match(reviewQueue, /E-mail compartilhado/);
+  assert.match(reviewQueue, /Este endereço também é utilizado por outra pessoa/);
+  assert.doesNotMatch(reviewQueue, /keep_shared_contact_email/);
 });
 
 test('T08 nomes diferentes + mesmo e-mail geram revisao de conta, nao fusao', () => {

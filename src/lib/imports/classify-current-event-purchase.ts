@@ -16,6 +16,16 @@ export type IdentityCandidateRef = {
   reason: string;
 };
 
+/**
+ * REGRA FINAL DO IMPORTADOR
+ * Mesmo e-mail + CPF diferente nao e conflito de identidade e nao bloqueia a importacao.
+ * Pessoas permanecem separadas; o e-mail fica so como contato compartilhado.
+ * Nenhuma Auth e criada ou vinculada automaticamente para a segunda pessoa.
+ * Criar conta, convite, acesso ou vinculo Auth exigem resolucao na Central.
+ */
+export const SHARED_EMAIL_CONTACT_WARNING =
+  'E-mail compartilhado. Este endereço também é utilizado por outra pessoa. Os Cadastros permanecerão separados e este e-mail será tratado apenas como contato compartilhado para esta pessoa.';
+
 export type CurrentEventPurchaseClassification = {
   status: 'ready' | 'data_pending' | 'review_required' | 'error';
   resolution: 'pending' | 'create_new' | 'link_existing';
@@ -153,15 +163,19 @@ export function classifyCurrentEventPurchase(input: {
   }
 
   if (input.emailMatch) {
+    // Mesmo e-mail + CPF diferente nao e conflito de identidade e nao bloqueia
+    // a importacao. Pessoas permanecem separadas; o e-mail fica so como contato
+    // compartilhado. Criar/vincular Auth, convite e acesso exigem a Central.
     identityMatchDetails.reason = 'shared_email_account_review';
     identityMatchDetails.account_review = 'shared_email';
+    identityMatchDetails.account_review_blocking = false;
     identityMatchDetails.candidates = [input.emailMatch];
     return {
       status: identityIssues.length ? 'data_pending' : 'ready',
       resolution: 'create_new',
       errorMessage: identityIssues.length
         ? identityIssues.map((issue) => issue.message).join(' ')
-        : 'E-mail compartilhado. Pessoas permanecem separadas; revise a conta proprietaria dos ingressos.',
+        : SHARED_EMAIL_CONTACT_WARNING,
       identityMatchDetails,
       identityIssues,
       additionalPurchase: false,

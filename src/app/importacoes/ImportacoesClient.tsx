@@ -514,6 +514,9 @@ export function ImportacoesClient({ events, importOptions, canConfirmPayment = f
                       ) : (
                         <span className="text-slate-500">-</span>
                       )}
+                      {row.identity_match_details?.account_review === 'shared_email' ? (
+                        <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-200">E-mail compartilhado</p>
+                      ) : null}
                       {row.error_message ? <p className="mt-1 text-[11px] text-amber-300">{row.error_message}</p> : null}
                     </td>
                   </tr>

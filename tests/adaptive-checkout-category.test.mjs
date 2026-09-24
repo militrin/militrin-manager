@@ -46,5 +46,5 @@ test('relatório preserva ticket_category_id nulo como ingresso único', async (
 test('forma de pagamento sem alternativa é aplicada sem seletor redundante', async () => {
   const source = await readFile(wizardPath, 'utf8');
   assert.match(source, /itemTotals\.total > 0 && availablePaymentMethods\.length >= 2/);
-  assert.match(source, /Forma de pagamento: <strong>\{paymentMethodLabel\(form\.payment_method\)\}<\/strong>/);
+  assert.match(source, /Forma de pagamento: <strong>\{paymentMethodLabel\(form\.payment_method\)\}\{feeOptionSuffix\(feePreview, form\.payment_method, event\)\}<\/strong>/);
 });

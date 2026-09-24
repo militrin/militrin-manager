@@ -32,6 +32,7 @@ const emptyCounts = {
   possible_orphan: 0,
   possible_orphan_confirmed: 0,
   possible_orphan_unconfirmed: 0,
+  reviewed_without_account: 0,
 };
 
 export default async function AccountHealthPage({ searchParams }: { searchParams: Promise<Search> }) {
@@ -72,10 +73,11 @@ export default async function AccountHealthPage({ searchParams }: { searchParams
 
           {!result.success ? <p className="text-sm text-rose-200">{result.message}</p> : null}
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <AdminStatCard compact label="Saudáveis" value={counts.healthy} tone="success" href={accountHealthHref({ ...baseQuery, state: "healthy" })} />
             <AdminStatCard compact label="Aguardando confirmação" value={counts.pending_confirmation} tone="warning" href={accountHealthHref({ ...baseQuery, state: "pending_confirmation" })} />
             <AdminStatCard compact label="Sem conta" value={accountHealthNoAccountCount(counts)} href={accountHealthHref({ ...baseQuery, state: "no_account" })} />
+            <AdminStatCard compact label="Revisados" value={counts.reviewed_without_account} tone="success" href={accountHealthHref({ ...baseQuery, state: "reviewed_without_account" })} />
             <AdminStatCard compact label="Requer atenção" value={counts.attention} tone="danger" href={accountHealthHref({ ...baseQuery, state: "attention" })} />
           </div>
 

@@ -167,7 +167,7 @@ test('Turbo: delivery_status="delivered" abre a tela de resumo (product_already_
   assert.match(source, /function ProductAlreadyDelivered\(/);
 });
 
-test('Turbo: tela de resumo mostra produto/quantidade/variante/data, com botao VOLTAR AO SCANNER que reseta pro scanner', async () => {
+test('Turbo: tela de resumo mostra produto/quantidade/variante/data, com botao VOLTAR AO LEITOR que reseta pro scanner', async () => {
   const source = await fs.readFile(turboModeUrl, 'utf8');
   const fn = source.slice(source.indexOf('function ProductAlreadyDelivered('));
   assert.match(fn, /Item já entregue/);
@@ -175,7 +175,7 @@ test('Turbo: tela de resumo mostra produto/quantidade/variante/data, com botao V
   assert.match(fn, /item\.variant/);
   assert.match(fn, /label="Quantidade"/);
   assert.match(fn, /toLocaleString\('pt-BR'\)/);
-  assert.match(fn, /<BigButton onClick=\{onBack\}>VOLTAR AO SCANNER<\/BigButton>/);
+  assert.match(fn, /<BackToReaderButton prominent onClick=\{onBack\} \/>/);
   assert.match(source, /onBack=\{backToScanner\}/);
 });
 

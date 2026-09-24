@@ -19,6 +19,7 @@ export function moduleLabel(module: string) {
     team: 'Equipe e seguranca',
     security: 'Equipe e seguranca',
     settings: 'Equipe e seguranca',
+    accounts: 'Contas',
   };
   return map[module] ?? module;
 }

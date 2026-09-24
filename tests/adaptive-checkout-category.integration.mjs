@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createClient } from '@supabase/supabase-js';
 
-const apiUrl = 'http://127.0.0.1:54321';
 const localEnvironment = Object.fromEntries(execFileSync('cmd.exe', ['/d', '/s', '/c', 'npx.cmd supabase status -o env'], { encoding: 'utf8' })
   .split(/\r?\n/).flatMap((line) => { const match = line.match(/^([A-Z_]+)="?([^"\r\n]+)"?$/); return match ? [[match[1], match[2]]] : []; }));
+const apiUrl = String(localEnvironment.API_URL || 'http://127.0.0.1:15421').replace(/\/$/, '');
 const options = { auth: { persistSession: false, autoRefreshToken: false } };
 
 test('backend trata zero, uma e múltiplas categorias com a mesma regra adaptativa', async () => {

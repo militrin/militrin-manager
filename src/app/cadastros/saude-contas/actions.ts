@@ -4,12 +4,14 @@ import { revalidatePath } from "next/cache";
 import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import {
   ACCOUNT_HEALTH_PERMISSION,
+  ACCOUNT_HEALTH_RESOLVE_PERMISSION,
   accountHealthActionError,
   parseAccountHealthFilter,
   type AccountHealthAction,
   type AccountHealthCaseDetail,
   type AccountHealthListPayload,
 } from "@/lib/account/account-health";
+import { PermissionDeniedError } from "@/lib/admin/permissions";
 import { isPendingEmailConfirmationReason } from "@/lib/account/contact-account-state";
 import { resendSignupConfirmation } from "@/lib/account/resend-signup-confirmation";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
@@ -31,11 +33,21 @@ function pageSizeFrom(value: string | null | undefined) {
   return 25;
 }
 
+function healthErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof PermissionDeniedError) return "Sem permissão para resolver este caso.";
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 async function requireHealthView() {
   await assertPermission(ACCOUNT_HEALTH_PERMISSION);
   const organization = (await getCurrentOrganizationContext()).organization;
   if (!organization?.id) throw new Error("Selecione uma organização.");
-  return { organization, canAct: await hasPermission("participants.edit_basic") };
+  return {
+    organization,
+    canAct: await hasPermission("participants.edit_basic"),
+    canResolve: await hasPermission(ACCOUNT_HEALTH_RESOLVE_PERMISSION),
+  };
 }
 
 async function loadCase(caseId: string) {
@@ -74,7 +86,7 @@ async function recordHealthAction(input: {
 
 export async function loadAccountHealth(query: AccountHealthQuery) {
   try {
-    const { organization, canAct } = await requireHealthView();
+    const { organization, canAct, canResolve } = await requireHealthView();
     const supabase = await createServerSupabaseClient();
     const page = Math.max(1, Number(query.page || 1) || 1);
     const pageSize = pageSizeFrom(query.pageSize);
@@ -85,7 +97,7 @@ export async function loadAccountHealth(query: AccountHealthQuery) {
       p_limit: pageSize,
       p_offset: (page - 1) * pageSize,
     });
-    if (error) return { success: false as const, message: error.message, canAct };
+    if (error) return { success: false as const, message: error.message, canAct, canResolve };
     const payload = data as AccountHealthListPayload;
     const canViewOrphans = Boolean(payload?.can_view_orphans);
     if (parseAccountHealthFilter(query.state) === "possible_orphan" && !canViewOrphans) {
@@ -96,23 +108,24 @@ export async function loadAccountHealth(query: AccountHealthQuery) {
         p_limit: pageSize,
         p_offset: (page - 1) * pageSize,
       });
-      if (retried.error) return { success: false as const, message: retried.error.message, canAct };
-      return { success: true as const, data: { ...(retried.data as AccountHealthListPayload), can_view_orphans: false }, canAct };
+      if (retried.error) return { success: false as const, message: retried.error.message, canAct, canResolve };
+      return { success: true as const, data: { ...(retried.data as AccountHealthListPayload), can_view_orphans: false }, canAct, canResolve };
     }
-    return { success: true as const, data: { ...payload, can_view_orphans: canViewOrphans }, canAct };
+    return { success: true as const, data: { ...payload, can_view_orphans: canViewOrphans }, canAct, canResolve };
   } catch (error) {
-    return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão.", canAct: false };
+    return { success: false as const, message: healthErrorMessage(error, "Sem permissão."), canAct: false, canResolve: false };
   }
 }
 
 export async function loadAccountHealthCase(caseId: string) {
   try {
     const canAct = await hasPermission("participants.edit_basic");
+    const canResolve = await hasPermission(ACCOUNT_HEALTH_RESOLVE_PERMISSION);
     const result = await loadCase(caseId);
-    if (!result.success) return { ...result, canAct };
-    return { ...result, canAct };
+    if (!result.success) return { ...result, canAct, canResolve };
+    return { ...result, canAct, canResolve };
   } catch (error) {
-    return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão.", canAct: false };
+    return { success: false as const, message: healthErrorMessage(error, "Sem permissão."), canAct: false, canResolve: false };
   }
 }
 
@@ -197,6 +210,9 @@ async function sendAccountHealthInvite(caseId: string, expectedAction: "send_inv
   if (!row || !contactId || actionError) {
     return { success: false as const, message: actionError ?? "Esta ação não está disponível para o estado atual." };
   }
+  if (row.reason_code === "occupying_email_auth") {
+    return { success: false as const, message: "Esta ação não está disponível para o estado atual." };
+  }
   const invited = await inviteCadastroFirstAccessAction(contactId, "contact");
   if (invited.success) {
     await recordHealthAction({
@@ -229,5 +245,80 @@ export async function sendAccountHealthAccessAction(caseId: string) {
     return await sendAccountHealthInvite(caseId, "send_access");
   } catch (error) {
     return { success: false as const, message: error instanceof Error ? error.message : "Sem permissão." };
+  }
+}
+
+async function runHealthResolution(
+  caseId: string,
+  expectedAction: AccountHealthAction,
+  rpcName: "resolve_account_health_keep_without_account" | "reopen_account_health_resolution" | "correct_account_health_email",
+  params: Record<string, string | null>,
+  successMessage: string,
+) {
+  await assertPermission(ACCOUNT_HEALTH_RESOLVE_PERMISSION);
+  const result = await loadCase(caseId);
+  if (!result.success) return { success: false as const, message: result.message };
+  const row = result.data.case;
+  const actionError = accountHealthActionError(row, expectedAction);
+  if (!row || actionError) {
+    return { success: false as const, message: actionError ?? "Esta ação não está disponível para o estado atual." };
+  }
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc(rpcName, {
+    p_case_id: caseId,
+    p_organization_id: result.organizationId,
+    ...params,
+  });
+  if (error) return { success: false as const, message: error.message };
+  revalidatePath("/cadastros/saude-contas");
+  revalidatePath(`/cadastros/saude-contas/${caseId}`);
+  const contactId = row.registration_contact_id;
+  if (contactId) revalidatePath(`/cadastros/${contactId}`);
+  return {
+    success: true as const,
+    message: successMessage,
+    data: data as AccountHealthCaseDetail,
+  };
+}
+
+export async function keepAccountHealthWithoutAccountAction(caseId: string) {
+  try {
+    return await runHealthResolution(
+      caseId,
+      "keep_without_account",
+      "resolve_account_health_keep_without_account",
+      { p_notes: null },
+      "Este Cadastro permanecerá sem conta própria.",
+    );
+  } catch (error) {
+    return { success: false as const, message: healthErrorMessage(error, "Sem permissão.") };
+  }
+}
+
+export async function reopenAccountHealthResolutionAction(caseId: string) {
+  try {
+    return await runHealthResolution(
+      caseId,
+      "reopen_review",
+      "reopen_account_health_resolution",
+      { p_notes: null },
+      "A análise foi reaberta. Nada foi alterado no Cadastro nem na conta.",
+    );
+  } catch (error) {
+    return { success: false as const, message: healthErrorMessage(error, "Sem permissão.") };
+  }
+}
+
+export async function correctAccountHealthEmailAction(caseId: string, email: string, emailConfirm: string) {
+  try {
+    return await runHealthResolution(
+      caseId,
+      "provide_own_email",
+      "correct_account_health_email",
+      { p_email: email, p_email_confirm: emailConfirm },
+      "E-mail atualizado. Esta pessoa ainda não possui conta.",
+    );
+  } catch (error) {
+    return { success: false as const, message: healthErrorMessage(error, "Sem permissão.") };
   }
 }

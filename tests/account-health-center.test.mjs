@@ -50,7 +50,7 @@ test('A) estados e filtros humanos cobrem saudavel ate atencao', () => {
   assert.equal(parseAccountHealthFilter('nope'), 'all');
   assert.equal(accountHealthNoAccountCount({
     total: 10, healthy: 1, pending_confirmation: 1, no_account: 2, confirmed_unlinked: 3,
-    email_divergent: 0, attention: 0, auth_without_contact: 0, auth_without_contact_confirmed: 0,
+    email_divergent: 0, attention: 0, reviewed_without_account: 4, auth_without_contact: 0, auth_without_contact_confirmed: 0,
     possible_orphan: 0, possible_orphan_confirmed: 0, possible_orphan_unconfirmed: 0,
   }), 5);
 });
@@ -86,8 +86,9 @@ test('E/F) e-mail e participacao divergentes nao autorizam merge', () => {
 
 test('G) Auth pendente conflitante vira atencao sem correcao automatica', () => {
   assert.match(migration, /occupying_email_auth/);
-  assert.match(migration, /Este caso requer analise administrativa/);
-  assert.match(caseActions, /Este caso requer análise administrativa/);
+  assert.match(casePage, /Conflito de conta/);
+  assert.match(caseActions, /Revisar identidade/);
+  assert.match(caseActions, /tratamento excepcional/);
 });
 
 test('H) possivel orfa sem botao destrutivo', () => {
