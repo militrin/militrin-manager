@@ -83,14 +83,16 @@ export function ConfirmDeliverAndCheckinDialog({
             )}
           </div>
           <div>
-            <p className="text-xs text-slate-500">Pulseira</p>
-            <p className="text-slate-100">
-              {wristbandCode
-                ? `Vinculada: ${wristbandCode}`
-                : wristbandWillBeRequested
+            <p className="text-xs uppercase tracking-wide text-slate-500">Pulseira vinculada</p>
+            {wristbandCode ? (
+              <p className="mt-1 font-mono text-sm font-semibold text-cyan-100">{wristbandCode}</p>
+            ) : (
+              <p className="mt-1 text-slate-100">
+                {wristbandWillBeRequested
                   ? "Será solicitada antes da conclusão (obrigatória para este evento)."
                   : "Não vinculada (não obrigatória para este evento)."}
-            </p>
+              </p>
+            )}
           </div>
         </div>
 

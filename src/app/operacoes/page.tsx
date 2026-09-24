@@ -916,8 +916,13 @@ function KitPickupPageContent() {
     return runAction(ticketId, () => unlinkWristbandAction({ ticket_id: ticketId }));
   }
 
-  async function handleReplaceWristband(ticketId: string, code: string) {
-    return runAction(ticketId, () => replaceWristbandAction({ ticket_id: ticketId, new_code: code }));
+  async function handleReplaceWristband(ticketId: string, payload: { newCode: string; reasonCode: string; reasonText: string }) {
+    return runAction(ticketId, () => replaceWristbandAction({
+      ticket_id: ticketId,
+      new_code: payload.newCode,
+      reason_code: payload.reasonCode,
+      reason_text: payload.reasonText,
+    }));
   }
 
   async function handleConfirmPayment(ticketId: string, participantId: string) {

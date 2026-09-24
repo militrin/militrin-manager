@@ -123,6 +123,7 @@ const ACCOUNT_TITLES: Record<string, string> = {
   shared_email_account_owner_assigned: "Acesso vinculado à conta",
   unassigned_manual_ticket_owner_repaired: "Propriedade regularizada",
   wristband_linked: "Pulseira vinculada",
+  wristband_replaced: "Pulseira substituída",
   wristband_unlinked: "Pulseira desvinculada",
   wristband_blocked: "Pulseira bloqueada",
   store_order_item_delivered: "Item adicional entregue",
@@ -158,6 +159,10 @@ const REASON_LABELS: Record<string, string> = {
   administrative_transfer: "Transferência administrativa",
   shared_email: "E-mail compartilhado",
   other: "Outro",
+  damaged: "Danificada",
+  lost: "Perdida",
+  incorrectly_linked: "Vinculada incorretamente",
+  operational_swap: "Troca operacional",
 };
 
 // Maior = mais tarde no fluxo de negócio. Só desempata timestamp idêntico.
@@ -205,6 +210,7 @@ const TIE_RANK: Record<string, number> = {
   ticket_item_change_rejected: 42,
   ticket_shirt_admin_corrected_after_operation: 43,
   wristband_linked: 50,
+  wristband_replaced: 51,
   wristband_unlinked: 50,
   wristband_blocked: 50,
   store_item_admin_granted: 55,
@@ -351,7 +357,18 @@ export function presentAccessTimelineDescription(type: string, metadata: Record<
     if (previous && next) return `${previous} → ${next}`;
     return reasonLabel(metadata) ?? next ?? previous;
   }
+  if (type === "wristband_replaced") {
+    const previous = text(metadata.old_wristband_code);
+    const next = text(metadata.new_wristband_code);
+    const reason = reasonLabel(metadata);
+    if (previous && next) return reason ? `${previous} → ${next}. Motivo: ${reason}` : `${previous} → ${next}`;
+    return reason;
+  }
   if (type.startsWith("wristband_")) return wristbandCode(metadata);
+  if (CHECKIN_TYPES.has(type)) {
+    const code = text(metadata.wristband_code);
+    return code ? `Pulseira utilizada: ${code}` : null;
+  }
   if (PAYMENT_TYPES.has(type) || type === "payment_expired") return paymentMethodLabel(text(metadata.payment_method));
   if (ISSUANCE_TYPES.has(type)) return paymentMethodLabel(text(metadata.payment_method)) ?? text(metadata.order_reference);
   if (KIT_ITEM_TYPES.has(type) || type === "combined_kit_delivery_and_checkin") return text(metadata.shirt_label);

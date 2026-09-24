@@ -57,6 +57,7 @@ export const TICKET_EVENT_TAXONOMY: Record<string, TimelineActionDefinition> = {
   combined_kit_delivery_and_checkin: { label: "Kit entregue + check-in", description: "O kit foi entregue e o check-in realizado em uma única operação.", category: "kit", scopes: ticketAndAccount, previousKeys: ["previous_status"], nextKeys: ["new_status"] },
   ticket_shirt_admin_corrected_after_operation: { label: "Camiseta corrigida", description: "A camiseta foi corrigida administrativamente após entrega ou check-in.", category: "camiseta", scopes: ticketAndAccount, previousKeys: ["previous_variant_id"], nextKeys: ["new_variant_id", "variant_id"] },
   wristband_linked: { label: "Pulseira vinculada", description: "Uma pulseira foi vinculada ao ingresso.", category: "kit", scopes: ticketAndAccount },
+  wristband_replaced: { label: "Pulseira substituída", description: "A pulseira ativa do ingresso foi substituída.", category: "kit", scopes: ticketAndAccount, previousKeys: ["old_wristband_code"], nextKeys: ["new_wristband_code"] },
   wristband_unlinked: { label: "Pulseira desvinculada", description: "A pulseira foi desvinculada do ingresso.", category: "kit", scopes: ticketAndAccount },
   wristband_blocked: { label: "Pulseira bloqueada", description: "A pulseira foi bloqueada.", category: "kit", scopes: ticketAndAccount },
   store_order_item_delivered: { label: "Item adicional entregue", description: "Um item adicional (loja) foi entregue.", category: "kit", scopes: ticketAndAccount },

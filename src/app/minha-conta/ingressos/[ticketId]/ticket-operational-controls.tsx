@@ -7,11 +7,15 @@ import {
   checkinEntryAction,
   deliverFullKitAction,
   deliverKitAndCheckinAction,
+  replaceWristbandAction,
   undoCheckinEntryAction,
   undoFullKitDeliveryAction,
 } from "@/app/operacoes/actions";
 import { ReasonDialog } from "@/app/operacoes/components/ReasonDialog";
 import { WristbandCodeModal } from "@/app/operacoes/components/WristbandCodeModal";
+import { ConfirmCheckinDialog } from "@/app/operacoes/components/ConfirmCheckinDialog";
+import { ReplaceWristbandDialog } from "@/app/operacoes/components/ReplaceWristbandDialog";
+import { WristbandLinkedPanel } from "@/app/operacoes/components/WristbandLinkedPanel";
 
 type Result = { success: boolean; message?: string; code?: string };
 
@@ -24,16 +28,21 @@ export function TicketOperationalControls(props: {
   kitReadyForDelivery: boolean;
   checkinDone: boolean;
   hasActiveWristband: boolean;
+  wristbandCode: string | null;
+  wristbandRequiredForCheckin: boolean;
   canDeliverKit: boolean;
   canUndoKitDelivery: boolean;
   canCheckin: boolean;
   canUndoCheckin: boolean;
+  canReplaceWristband: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<Result | null>(null);
   const [wristbandPrompt, setWristbandPrompt] = useState<MandatoryWristbandMode>(null);
   const [undoPrompt, setUndoPrompt] = useState<UndoMode>(null);
+  const [showCheckinConfirm, setShowCheckinConfirm] = useState(false);
+  const [showReplaceWristband, setShowReplaceWristband] = useState(false);
 
   function run(operation: () => Promise<Result>, onWristbandRequired?: () => void) {
     if (pending) return;
@@ -67,7 +76,31 @@ export function TicketOperationalControls(props: {
     return { success: response.success, message: response.message };
   }
 
+  function handleCheckinClick() {
+    if (props.hasActiveWristband && props.wristbandCode) {
+      setShowCheckinConfirm(true);
+      return;
+    }
+    if (props.wristbandRequiredForCheckin && !props.hasActiveWristband) {
+      setWristbandPrompt("checkin");
+      return;
+    }
+    run(() => checkinEntryAction({ ticket_id: props.ticketId }), () => setWristbandPrompt("checkin"));
+  }
+
   return <div className="space-y-2">
+    {props.wristbandCode ? (
+      <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+        <WristbandLinkedPanel
+          code={props.wristbandCode}
+          canReplace={props.canReplaceWristband}
+          onReplace={() => setShowReplaceWristband(true)}
+        />
+      </div>
+    ) : props.wristbandRequiredForCheckin ? (
+      <p className="text-xs text-amber-200">Pulseira obrigatória para check-in. Vincule antes de confirmar.</p>
+    ) : null}
+
     <div className="flex flex-wrap gap-2">
       {props.canDeliverKit && !props.kitFullyDelivered ? (
         <MilitrinButton
@@ -83,7 +116,7 @@ export function TicketOperationalControls(props: {
       {props.canCheckin && !props.checkinDone ? (
         <MilitrinButton
           type="button" size="sm" variant="warning" disabled={pending}
-          onClick={() => run(() => checkinEntryAction({ ticket_id: props.ticketId }), () => setWristbandPrompt("checkin"))}
+          onClick={handleCheckinClick}
         >
           Fazer check-in
         </MilitrinButton>
@@ -116,11 +149,42 @@ export function TicketOperationalControls(props: {
       />
     ) : null}
 
+    {showCheckinConfirm && props.wristbandCode ? (
+      <ConfirmCheckinDialog
+        wristbandCode={props.wristbandCode}
+        onConfirm={async () => {
+          const response = await checkinEntryAction({ ticket_id: props.ticketId });
+          setResult(response);
+          if (response.success) router.refresh();
+          return response;
+        }}
+        onClose={() => setShowCheckinConfirm(false)}
+      />
+    ) : null}
+
+    {showReplaceWristband && props.wristbandCode ? (
+      <ReplaceWristbandDialog
+        currentCode={props.wristbandCode}
+        onSubmit={async ({ newCode, reasonCode, reasonText }) => {
+          const response = await replaceWristbandAction({
+            ticket_id: props.ticketId,
+            new_code: newCode,
+            reason_code: reasonCode,
+            reason_text: reasonText,
+          });
+          setResult(response);
+          if (response.success) router.refresh();
+          return { success: response.success, message: response.message };
+        }}
+        onClose={() => setShowReplaceWristband(false)}
+      />
+    ) : null}
+
     {undoPrompt === "checkin" ? (
       <ReasonDialog
         title="Desfazer check-in"
         submitLabel="Desfazer check-in"
-        extraOptionLabel={props.hasActiveWristband ? "Também desvincular a pulseira" : undefined}
+        wristbandKeepPrompt={props.hasActiveWristband && props.wristbandCode ? { code: props.wristbandCode } : null}
         onSubmit={async ({ reasonCode, reasonText, extraOption }) => {
           const response = await undoCheckinEntryAction({ ticket_id: props.ticketId, reason_code: reasonCode, reason_text: reasonText, also_unlink_wristband: extraOption });
           setResult(response);

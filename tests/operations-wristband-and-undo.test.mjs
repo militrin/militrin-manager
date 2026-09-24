@@ -146,13 +146,15 @@ test('actions.ts: pulseira vincula/troca/desvincula reusam as RPCs existentes (n
   assert.match(source, /supabase\.rpc\("replace_wristband_for_ticket"/);
 });
 
-test('ExpandedTicketDetails: "Também desvincular a pulseira" so aparece no modal de desfazer check-in e comeca desmarcada', async () => {
+test('ExpandedTicketDetails: undo de check-in oferece Manter/Desvincular (default manter) e undo de kit nao pergunta pulseira', async () => {
   const source = await readFile(expandedDetailsUrl, 'utf8');
   const undoCheckinBlock = source.match(/showUndoCheckin \? \(([\s\S]*?)\) : null/);
   assert.ok(undoCheckinBlock, 'bloco do modal de desfazer check-in nao encontrado');
-  assert.match(undoCheckinBlock[1], /extraOptionLabel=\{hasActiveWristband \? "Também desvincular a pulseira" : undefined\}/);
+  assert.match(undoCheckinBlock[1], /wristbandKeepPrompt=\{hasActiveWristband && detail\.wristband\?\.code \? \{ code: detail\.wristband\.code \} : null\}/);
+  assert.doesNotMatch(undoCheckinBlock[1], /extraOptionLabel/);
 
   const undoKitBlock = source.match(/showUndoKit \? \(([\s\S]*?)\) : null/);
   assert.ok(undoKitBlock, 'bloco do modal de desfazer entrega nao encontrado');
+  assert.doesNotMatch(undoKitBlock[1], /wristbandKeepPrompt/, 'desfazer entrega de kit nao deve ter opcao de pulseira');
   assert.doesNotMatch(undoKitBlock[1], /extraOptionLabel/, 'desfazer entrega de kit nao deve ter opcao de pulseira');
 });

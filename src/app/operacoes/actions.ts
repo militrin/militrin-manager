@@ -24,7 +24,8 @@ import type {
   TurboSearchHit,
   WristbandHistoryEntry,
 } from "./types";
-import { REASON_CODES } from "./types";
+import { REASON_CODES, WRISTBAND_REPLACE_REASON_CODES, WRISTBAND_REPLACE_REASON_CODE_LABELS } from "./types";
+import type { WristbandReplaceReasonCode } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { formatStoreVariantLabel, parseStoreOrderScanRef } from "@/lib/operations/store-order-scan-ref";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
@@ -80,11 +81,11 @@ function operationRpcError(error: { message?: string; details?: string | null } 
       const detail = JSON.parse(error.details ?? "{}") as { message?: string; holder_name?: string | null };
       return {
         code: "WRISTBAND_LINKED_TO_ANOTHER_TICKET",
-        message: detail.message ?? "Pulseira já vinculada a outro participante.",
+        message: "Esta pulseira já está vinculada a outro ingresso.",
         holder_name: detail.holder_name ?? null,
       };
     } catch {
-      return { code: "WRISTBAND_LINKED_TO_ANOTHER_TICKET", message: "Pulseira já vinculada a outro participante." };
+      return { code: "WRISTBAND_LINKED_TO_ANOTHER_TICKET", message: "Esta pulseira já está vinculada a outro ingresso." };
     }
   }
   if (serialized.includes("WRISTBAND_REQUIRED")) {
@@ -2516,7 +2517,12 @@ export async function undoCheckinEntryAction(payload: {
   if (error || data !== true) return { success: false, message: error?.message ?? "Não foi possível desfazer o check-in." };
   revalidatePath("/operacoes");
   revalidatePath(`/ingressos/${payload.ticket_id}`);
-  return { success: true, message: "Check-in desfeito com sucesso." };
+  return {
+    success: true,
+    message: payload.also_unlink_wristband
+      ? "Check-in desfeito e pulseira desvinculada."
+      : "Check-in desfeito. A pulseira permanece vinculada.",
+  };
 }
 
 export async function deliverKitAndCheckinAction(payload: { ticket_id: string; wristband_code?: string }) {
@@ -2600,25 +2606,37 @@ export async function unlinkWristbandAction(payload: { ticket_id: string; reason
   return { success: true, message: "Pulseira desvinculada com sucesso." };
 }
 
-export async function replaceWristbandAction(payload: { ticket_id: string; new_code: string; reason?: string }) {
+export async function replaceWristbandAction(payload: {
+  ticket_id: string;
+  new_code: string;
+  reason_code: string;
+  reason_text?: string;
+}) {
   await assertPermission("wristbands.replace");
   if (!isUuid(payload.ticket_id)) return invalidTicketId();
   const newCode = payload.new_code.trim();
   if (!newCode) return { success: false, message: "Informe o código da nova pulseira." };
+  if (!WRISTBAND_REPLACE_REASON_CODES.includes(payload.reason_code as WristbandReplaceReasonCode)) {
+    return { success: false, message: "Selecione um motivo válido." };
+  }
+  if (payload.reason_code === "other" && !payload.reason_text?.trim()) {
+    return { success: false, message: 'Descreva o motivo quando selecionar "Outro".' };
+  }
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("replace_wristband_for_ticket", {
     p_ticket_id: payload.ticket_id,
     p_new_code: newCode,
-    p_reason: payload.reason?.trim() || null,
+    p_reason_code: payload.reason_code,
+    p_reason_text: payload.reason_text?.trim() || null,
   });
-  if (error) return { success: false, message: error.message };
+  if (error) return { success: false, ...operationRpcError(error) };
   const result = data as { success?: boolean; wristband_id?: string; code?: string } | null;
   revalidatePath("/operacoes");
   revalidatePath(`/ingressos/${payload.ticket_id}`);
-  return { success: true, message: "Pulseira trocada com sucesso.", wristband_id: result?.wristband_id ?? null, code: result?.code ?? newCode };
+  return { success: true, message: "Pulseira substituída com sucesso.", wristband_id: result?.wristband_id ?? null, code: result?.code ?? newCode };
 }
 
-const WRISTBAND_HISTORY_ACTIONS = ["wristband_linked", "wristband_unlinked", "wristband_blocked"];
+const WRISTBAND_HISTORY_ACTIONS = ["wristband_linked", "wristband_unlinked", "wristband_blocked", "wristband_replaced"];
 
 export async function getWristbandHistoryAction(ticketId: string) {
   await assertPermission("wristbands.view");
@@ -2642,9 +2660,26 @@ export async function getWristbandHistoryAction(ticketId: string) {
     return {
       id: String(row.id ?? ""),
       action: String(row.action ?? ""),
-      code: details.code ? String(details.code) : null,
-      reason: details.reason ? String(details.reason) : null,
-      actorUserId: details.actor_user_id ? String(details.actor_user_id) : null,
+      code: details.new_wristband_code
+        ? String(details.new_wristband_code)
+        : details.code
+          ? String(details.code)
+          : null,
+      oldCode: details.old_wristband_code ? String(details.old_wristband_code) : null,
+      newCode: details.new_wristband_code ? String(details.new_wristband_code) : null,
+      reasonCode: details.reason_code ? String(details.reason_code) : null,
+      reason: details.reason_text
+        ? String(details.reason_text)
+        : details.reason
+          ? String(details.reason)
+          : details.reason_code
+            ? (WRISTBAND_REPLACE_REASON_CODE_LABELS as Record<string, string>)[String(details.reason_code)] ?? String(details.reason_code)
+            : null,
+      actorUserId: details.operator_user_id
+        ? String(details.operator_user_id)
+        : details.actor_user_id
+          ? String(details.actor_user_id)
+          : null,
       actorEmail: details.actor_email ? String(details.actor_email) : null,
       created_at: String(row.created_at ?? ""),
     };
@@ -2654,7 +2689,10 @@ export async function getWristbandHistoryAction(ticketId: string) {
     id: entry.id,
     action: entry.action,
     code: entry.code,
+    old_code: entry.oldCode,
+    new_code: entry.newCode,
     reason: entry.reason,
+    reason_code: entry.reasonCode,
     actor_email: formatOperatorDisplayName({
       resolvedName: entry.actorUserId ? historyNames.get(entry.actorUserId) : null,
       actorEmail: entry.actorEmail,

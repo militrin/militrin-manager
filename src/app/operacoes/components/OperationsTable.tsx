@@ -15,6 +15,7 @@ import type {
   PickupSortDirection,
   PickupSortField,
   ReasonPayload,
+  WristbandReplacePayload,
 } from "../types";
 
 const SORT_PRESETS: Array<{ field: PickupSortField; direction: PickupSortDirection; label: string }> = [
@@ -118,7 +119,7 @@ export function OperationsTable({
   onUndoKitDelivery: (ticketId: string, payload: ReasonPayload) => Promise<ActionResult>;
   onLinkWristband: (ticketId: string, code: string) => Promise<ActionResult>;
   onUnlinkWristband: (ticketId: string) => Promise<ActionResult>;
-  onReplaceWristband: (ticketId: string, code: string) => Promise<ActionResult>;
+  onReplaceWristband: (ticketId: string, payload: WristbandReplacePayload) => Promise<ActionResult>;
   onItemsMaterialized: (ticketId: string) => Promise<void>;
   onParticipantResolved: (participantId: string, result: { ticketId: string | null; finalization: string | null; message: string }) => Promise<void>;
   onConfirmPayment: (ticketId: string, participantId: string) => Promise<void>;
@@ -238,6 +239,7 @@ export function OperationsTable({
                         onDeliverFullKit={onDeliverFullKit}
                         onDeliverKitAndCheckin={onDeliverKitAndCheckin}
                       onCheckin={onCheckin}
+                      onReplaceWristband={onReplaceWristband}
                       onItemsMaterialized={onItemsMaterialized}
                       />
 

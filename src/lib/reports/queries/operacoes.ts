@@ -4,7 +4,7 @@ import { formatDateBR } from "@/lib/utils/date";
 import { ticketDisplayReference } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { sensitiveActionReasonLabel } from "@/lib/admin/sensitive-action-reasons";
-import { REASON_CODE_LABELS } from "@/app/operacoes/types";
+import { REASON_CODE_LABELS, WRISTBAND_REPLACE_REASON_CODE_LABELS } from "@/app/operacoes/types";
 import { createServiceRoleSupabaseClient } from "@/lib/supabase/admin";
 
 type Row = Record<string, unknown>;
@@ -46,6 +46,7 @@ const ACTION_ALLOWLIST: Record<string, ActionMeta> = {
   ticket_shirt_admin_changed: { label: "Camiseta corrigida (admin)", bucket: "correction" },
   ticket_shirt_admin_corrected_after_operation: { label: "Camiseta corrigida (pós-operação)", bucket: "correction" },
   wristband_linked: { label: "Pulseira vinculada", bucket: "correction" },
+  wristband_replaced: { label: "Pulseira substituída", bucket: "correction" },
   wristband_unlinked: { label: "Pulseira desvinculada", bucket: "correction" },
   wristband_blocked: { label: "Pulseira bloqueada", bucket: "correction" },
   store_order_item_delivered: { label: "Item adicional entregue", bucket: "additional_item" },
@@ -86,7 +87,10 @@ function reasonLabel(details: Row) {
   if (details.reason_text) return String(details.reason_text);
   const code = details.reason_code ? String(details.reason_code) : null;
   if (!code) return null;
-  return (REASON_CODE_LABELS as Record<string, string>)[code] ?? sensitiveActionReasonLabel(code) ?? code;
+  return (REASON_CODE_LABELS as Record<string, string>)[code]
+    ?? (WRISTBAND_REPLACE_REASON_CODE_LABELS as Record<string, string>)[code]
+    ?? sensitiveActionReasonLabel(code)
+    ?? code;
 }
 
 function operatorLabel(actorUserId: string | null, actorEmail: string | null, actorOrigin: string | null, names: Map<string, string>) {

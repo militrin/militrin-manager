@@ -4,11 +4,14 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { ParticipantIssuesDialog } from "@/app/inscricoes/participant-issues-dialog";
 import { CopyableId } from "@/components/CopyableId";
-import type { ActionResult, OperationTicketDetails, PickupCapabilities, PickupEvent, ReasonPayload } from "../types";
+import type { ActionResult, OperationTicketDetails, PickupCapabilities, PickupEvent, ReasonPayload, WristbandReplacePayload } from "../types";
 import { WristbandCodeModal } from "./WristbandCodeModal";
 import { ReasonDialog } from "./ReasonDialog";
 import { GrantStoreItemModal } from "./GrantStoreItemModal";
 import { ConfirmDeliverAndCheckinDialog } from "./ConfirmDeliverAndCheckinDialog";
+import { ConfirmCheckinDialog } from "./ConfirmCheckinDialog";
+import { ReplaceWristbandDialog } from "./ReplaceWristbandDialog";
+import { WristbandLinkedPanel } from "./WristbandLinkedPanel";
 import { TicketViewModal } from "./TicketViewModal";
 
 function getAge(birthDate: string | null) {
@@ -71,7 +74,7 @@ function Badge({
   );
 }
 
-type WristbandModalMode = "link" | "replace" | "mandatory-checkin" | "mandatory-deliver" | "mandatory-combined" | "mandatory-item" | null;
+type WristbandModalMode = "link" | "mandatory-checkin" | "mandatory-deliver" | "mandatory-combined" | "mandatory-item" | null;
 
 export function ExpandedTicketDetails({
   detail,
@@ -104,7 +107,7 @@ export function ExpandedTicketDetails({
   onUndoKitDelivery: (ticketId: string, payload: ReasonPayload) => Promise<ActionResult>;
   onLinkWristband: (ticketId: string, code: string) => Promise<ActionResult>;
   onUnlinkWristband: (ticketId: string) => Promise<ActionResult>;
-  onReplaceWristband: (ticketId: string, code: string) => Promise<ActionResult>;
+  onReplaceWristband: (ticketId: string, payload: WristbandReplacePayload) => Promise<ActionResult>;
   onConfirmPayment: (participantId: string) => Promise<void>;
   onIssueResolved: (result: { ticketId: string | null; finalization: string | null; message: string }) => void | Promise<void>;
   onGrantStoreItem: (payload: { storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string }) => Promise<ActionResult>;
@@ -122,6 +125,8 @@ export function ExpandedTicketDetails({
   const [showUndoCheckin, setShowUndoCheckin] = useState(false);
   const [showUndoKit, setShowUndoKit] = useState(false);
   const [showCombinedConfirm, setShowCombinedConfirm] = useState(false);
+  const [showCheckinConfirm, setShowCheckinConfirm] = useState(false);
+  const [showReplaceWristband, setShowReplaceWristband] = useState(false);
   const [showTicketView, setShowTicketView] = useState(false);
   const age = getAge(detail?.birth_date ?? null);
 
@@ -144,10 +149,15 @@ export function ExpandedTicketDetails({
     : null;
 
   async function handleCheckinClick() {
-    const result = await onCheckin(detail!.ticket_id);
-    if (result && "code" in result && result.code === "WRISTBAND_REQUIRED") {
-      setWristbandModal("mandatory-checkin");
+    if (hasActiveWristband) {
+      setShowCheckinConfirm(true);
+      return;
     }
+    if (wristbandRequiredForCheckin) {
+      setWristbandModal("mandatory-checkin");
+      return;
+    }
+    await onCheckin(detail!.ticket_id);
   }
 
   async function handleDeliverClick() {
@@ -319,34 +329,17 @@ export function ExpandedTicketDetails({
           </div>
         ) : null}
 
-        {selectedEvent?.wristband_enabled && capabilities.canViewWristband ? (
+        {selectedEvent?.wristband_enabled ? (
           <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Pulseira</p>
-            {hasActiveWristband ? (
-              <>
-                <p className="mt-1 text-sm font-semibold text-slate-100">{detail.wristband?.code} · Ativa</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {capabilities.canReplaceWristband ? (
-                    <button type="button" onClick={() => setWristbandModal("replace")} className="rounded-lg border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200">
-                      Trocar pulseira
-                    </button>
-                  ) : null}
-                  {capabilities.canUnlinkWristband ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!window.confirm("Desvincular a pulseira deste ingresso?")) return;
-                        void onUnlinkWristband(detail.ticket_id);
-                      }}
-                      className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-semibold text-rose-200"
-                    >
-                      Desvincular
-                    </button>
-                  ) : null}
-                </div>
-              </>
+            {hasActiveWristband && detail.wristband?.code ? (
+              <WristbandLinkedPanel
+                code={detail.wristband.code}
+                canReplace={capabilities.canReplaceWristband}
+                onReplace={() => setShowReplaceWristband(true)}
+              />
             ) : (
               <>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Pulseira</p>
                 <p className="mt-1 text-sm text-slate-300">Pulseira não vinculada</p>
                 {capabilities.canLinkWristband ? (
                   <button type="button" onClick={() => setWristbandModal("link")} className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200">
@@ -355,6 +348,18 @@ export function ExpandedTicketDetails({
                 ) : null}
               </>
             )}
+            {hasActiveWristband && capabilities.canUnlinkWristband ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!window.confirm("Desvincular a pulseira deste ingresso?")) return;
+                  void onUnlinkWristband(detail.ticket_id);
+                }}
+                className="mt-2 rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-semibold text-rose-200"
+              >
+                Desvincular
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -412,11 +417,16 @@ export function ExpandedTicketDetails({
                   Desfazer check-in
                 </button>
               ) : null}
+              {hasActiveWristband && detail.wristband?.code ? (
+                <p className="mt-2 text-[11px] text-cyan-200">Pulseira vinculada: <span className="font-mono">{detail.wristband.code}</span></p>
+              ) : null}
             </div>
           ) : (
             <div className="flex flex-col items-start gap-1">
               {wristbandRequiredForCheckin && !hasActiveWristband ? (
                 <span className="text-[11px] font-medium text-amber-300">Pulseira obrigatória para check-in</span>
+              ) : hasActiveWristband && detail.wristband?.code ? (
+                <p className="text-[11px] text-cyan-200">Pulseira vinculada: <span className="font-mono">{detail.wristband.code}</span></p>
               ) : null}
               <button
                 type="button"
@@ -617,13 +627,21 @@ export function ExpandedTicketDetails({
         />
       ) : null}
 
-      {wristbandModal === "replace" ? (
-        <WristbandCodeModal
-          title="Trocar pulseira"
-          description="A pulseira atual será substituída pela nova."
-          submitLabel="Trocar"
-          onSubmit={async (code) => (await onReplaceWristband(detail.ticket_id, code)) as { success: boolean; message?: string }}
-          onClose={() => setWristbandModal(null)}
+      {showReplaceWristband && detail.wristband?.code ? (
+        <ReplaceWristbandDialog
+          currentCode={detail.wristband.code}
+          onSubmit={async ({ newCode, reasonCode, reasonText }) =>
+            (await onReplaceWristband(detail.ticket_id, { newCode, reasonCode, reasonText })) as { success: boolean; message?: string }
+          }
+          onClose={() => setShowReplaceWristband(false)}
+        />
+      ) : null}
+
+      {showCheckinConfirm && detail.wristband?.code ? (
+        <ConfirmCheckinDialog
+          wristbandCode={detail.wristband.code}
+          onConfirm={() => onCheckin(detail.ticket_id)}
+          onClose={() => setShowCheckinConfirm(false)}
         />
       ) : null}
 
@@ -647,13 +665,13 @@ export function ExpandedTicketDetails({
           title="Desfazer check-in"
           description={`Ingresso de ${detail.participant_name || "titular não informado"}.`}
           submitLabel="Desfazer check-in"
-          extraOptionLabel={hasActiveWristband ? "Também desvincular a pulseira" : undefined}
+          wristbandKeepPrompt={hasActiveWristband && detail.wristband?.code ? { code: detail.wristband.code } : null}
           onSubmit={async ({ reasonCode, reasonText, extraOption }) => {
             const result = await onUndoCheckin(detail.ticket_id, { reasonCode, reasonText, alsoUnlinkWristband: extraOption });
             if (!result || !("success" in result) || !result.success) {
               return { success: false, message: (result && "message" in result ? result.message : null) ?? "Não foi possível desfazer o check-in." };
             }
-            return { success: true };
+            return { success: true, message: result.message };
           }}
           onClose={() => setShowUndoCheckin(false)}
         />

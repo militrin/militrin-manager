@@ -1,4 +1,4 @@
-import { REASON_CODE_LABELS } from "@/app/operacoes/types";
+import { REASON_CODE_LABELS, WRISTBAND_REPLACE_REASON_CODE_LABELS } from "@/app/operacoes/types";
 import { sensitiveActionReasonLabel } from "@/lib/admin/sensitive-action-reasons";
 
 /**
@@ -14,5 +14,7 @@ export function auditReasonFromDetails(details: Record<string, unknown> | null |
   }
   const code = String(details.reason_code ?? "").trim();
   if (!code) return null;
-  return (REASON_CODE_LABELS as Record<string, string>)[code] ?? sensitiveActionReasonLabel(code);
+  return (REASON_CODE_LABELS as Record<string, string>)[code]
+    ?? (WRISTBAND_REPLACE_REASON_CODE_LABELS as Record<string, string>)[code]
+    ?? sensitiveActionReasonLabel(code);
 }

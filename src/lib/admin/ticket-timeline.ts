@@ -100,8 +100,17 @@ function safeDetail(action: string, details: Row, variants: Map<string,string>) 
     return [type, size].filter(Boolean).join(" / ") || variants.get(String(details.variant_id ?? "")) || null;
   }
   if (action.includes("exported")) return state(details, ["format"]);
+  if (action === "ticket_checkin_entry") {
+    const code = state(details, ["wristband_code"]);
+    return code ? `Pulseira utilizada: ${code}` : null;
+  }
   if (action.startsWith("wristband_")) {
-    const code = state(details, ["code"]);
+    if (action === "wristband_replaced") {
+      const previous = state(details, ["old_wristband_code"]);
+      const next = state(details, ["new_wristband_code"]);
+      if (previous && next) return `${previous} → ${next}`;
+    }
+    const code = state(details, ["code", "new_wristband_code", "old_wristband_code"]);
     return code ? `Código ${code}` : null;
   }
   if (action.includes("kit")) return state(details, ["item_name", "kit_item_id"]);
@@ -158,7 +167,7 @@ export async function getAdministrativeTicketTimeline(supabase: Supabase, ticket
       .from("audit_logs")
       .select("id,action,entity_type,entity_id,event_id,details,created_at")
       .eq("event_id", String(ticket.event_id))
-      .in("action", ["wristband_linked", "wristband_unlinked", "wristband_blocked"])
+      .in("action", ["wristband_linked", "wristband_unlinked", "wristband_blocked", "wristband_replaced"])
       .filter("details->>ticket_id", "eq", ticketId)
       .order("created_at", { ascending: true })
       .limit(500);

@@ -89,6 +89,8 @@ export default async function TicketDetailPage({
     'checkin.undo',
     'orders.resend_ticket',
     'tickets.transfer_ownership',
+    'wristbands.replace',
+    'wristbands.view',
   ]);
   const canAdminEdit = Boolean(permissions['participants.edit_basic']);
   const canChangeShirt = Boolean(permissions['inventory.change_participant_shirt']);
@@ -96,11 +98,12 @@ export default async function TicketDetailPage({
   const canUndoKitDelivery = Boolean(permissions['kits.undo_delivery']);
   const canCheckin = Boolean(permissions['checkin.scan']);
   const canUndoCheckin = Boolean(permissions['checkin.undo']);
-  const canManageOperationalFlow = canDeliverKit || canCheckin || canUndoKitDelivery || canUndoCheckin;
+  const canReplaceWristband = Boolean(permissions['wristbands.replace']);
+  const canManageOperationalFlow = canDeliverKit || canCheckin || canUndoKitDelivery || canUndoCheckin || canReplaceWristband;
   const canTransferOwnership=Boolean(permissions['tickets.transfer_ownership']);
 
   const ticketSelect =
-  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, operational_notes, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), orders(id, order_number, display_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
+  'id, token, status, issued_at, used_at, owner_user_id, participant_id, event_id, order_id, order_item_id, operational_notes, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer, wristband_enabled, wristband_required_for_checkin, wristband_required_for_kit), orders(id, order_number, display_number, status, user_id, buyer_type, event_id, created_at, confirmed_at, base_amount, discount_amount, final_amount, events(id, name, location, starts_at, ends_at, shirt_order_deadline, allow_participant_item_changes, allow_holder_change, allow_ticket_transfer, wristband_enabled, wristband_required_for_checkin, wristband_required_for_kit), payments!orders_payment_id_fkey(id, payment_method, payment_status, paid_at, final_amount)), order_items(id, item_position, status, holder_full_name, shirt_type, shirt_size, ticket_category_id, batch_id, participant_id, participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, ticket_categories(name)), ticket_categories(name), registration_batches(name)), participants(id, full_name, email, user_id, shirt_type, shirt_size, ticket_category_id, notes, ticket_categories(name))';
   
   const ticketResult = await supabase
     .from('tickets')
@@ -290,7 +293,11 @@ export default async function TicketDetailPage({
   const kitLogsResult = kitLinkIds.length
     ? await supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').eq('entity_type', 'participant_kit_items').in('entity_id', kitLinkIds).order('created_at', { ascending: false }).limit(50)
     : { data: [] as Array<Record<string, unknown>> };
-  const wristbandLogsResult = await supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').in('action', ['wristband_linked', 'wristband_unlinked', 'wristband_blocked']).filter('details->>ticket_id', 'eq', String(ticket.id)).order('created_at', { ascending: false }).limit(20);
+  const wristbandResult = await supabase.from('participant_wristbands').select('id, code, status').eq('ticket_id', String(ticket.id)).eq('status', 'active').maybeSingle();
+  const activeWristbandCode = wristbandResult.data?.code ? String(wristbandResult.data.code) : null;
+  const hasActiveWristband = Boolean(activeWristbandCode);
+  const wristbandRequiredForCheckin = Boolean(eventObj?.wristband_enabled && eventObj?.wristband_required_for_checkin);
+  const wristbandLogsResult = await supabase.from('audit_logs').select('id, action, entity_type, entity_id, created_at, details').in('action', ['wristband_linked', 'wristband_unlinked', 'wristband_blocked', 'wristband_replaced']).filter('details->>ticket_id', 'eq', String(ticket.id)).order('created_at', { ascending: false }).limit(20);
   // Secao "Administracao" -- so o que exige permissao administrativa
   // (participants.edit_basic ou kits/checkin). Definir/transferir titular
   // (TicketHolderActions) e uma capacidade do PROPRIO dono do ingresso
@@ -493,7 +500,7 @@ export default async function TicketDetailPage({
             {canManageOperationalFlow ? (
               <div className="border-t border-slate-800 pt-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Ações de kit e check-in</p>
-                <TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} hasActiveWristband={false} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin}/>
+                <TicketOperationalControls ticketId={ticketId} kitFullyDelivered={kitFullyDelivered} kitReadyForDelivery={!shirtKitItem || shirtIsCanonicallyLinked} checkinDone={checkinDone} hasActiveWristband={hasActiveWristband} wristbandCode={activeWristbandCode} wristbandRequiredForCheckin={wristbandRequiredForCheckin} canDeliverKit={canDeliverKit} canUndoKitDelivery={canUndoKitDelivery} canCheckin={canCheckin} canUndoCheckin={canUndoCheckin} canReplaceWristband={canReplaceWristband}/>
               </div>
             ) : null}
 

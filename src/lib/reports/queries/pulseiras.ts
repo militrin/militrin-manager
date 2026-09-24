@@ -2,7 +2,7 @@ import type { ReportQueryContext, ReportResult, ReportSupabaseClient } from "../
 import { dateRangeLabel, pct, reportError, reportSuccess, resolveRequiredEvent } from "../helpers";
 import { formatDateTimeBR } from "@/lib/utils/date";
 
-const WRISTBAND_ACTIONS = ["wristband_linked", "wristband_unlinked", "wristband_blocked"];
+const WRISTBAND_ACTIONS = ["wristband_linked", "wristband_unlinked", "wristband_blocked", "wristband_replaced"];
 const STATUS_LABELS: Record<string, string> = {
   active: "Ativa",
   blocked: "Bloqueada",

@@ -11,6 +11,7 @@ import {
   deliverOperationalProductItemAction,
   getOperationCapabilitiesAction,
   getOperationTicketDetailsAction,
+  replaceWristbandAction,
   resolveTurboScanAction,
   searchTurboOperationsAction,
   undoCheckinEntryAction,
@@ -21,6 +22,7 @@ import { remainingTurboTicketAction } from '@/lib/operations/ticket-operation-ga
 import { describeTurboCaughtError, getOperationalErrorTitle } from '../error-messages';
 import { QrScanner } from './QrScanner';
 import { ReasonDialog } from './ReasonDialog';
+import { ReplaceWristbandDialog } from './ReplaceWristbandDialog';
 
 const AUTO_RETURN_MS = 1600;
 const BACK_TO_READER_LABEL = '← VOLTAR AO LEITOR';
@@ -278,7 +280,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   const returnTimerRef = useRef<number | null>(null);
   const [canUndoDelivery, setCanUndoDelivery] = useState(false);
   const [canDeliverStoreItems, setCanDeliverStoreItems] = useState(true);
-  const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin' | 'canDeliverKit' | 'canCheckin' | 'canCombined'> | null>(null);
+  const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin' | 'canDeliverKit' | 'canCheckin' | 'canCombined' | 'canReplaceWristband'> | null>(null);
   const [offline, setOffline] = useState(false);
   const [scannerEpoch, setScannerEpoch] = useState(0);
 
@@ -295,6 +297,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
             canDeliverKit: response.capabilities.canDeliverKit,
             canCheckin: response.capabilities.canCheckin,
             canCombined: response.capabilities.canCombined,
+            canReplaceWristband: response.capabilities.canReplaceWristband,
           });
         }
       })
@@ -589,6 +592,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
           participant={screen.participant}
           canUndoKit={Boolean(capabilities?.canUndoKit)}
           canUndoCheckin={Boolean(capabilities?.canUndoCheckin)}
+          canReplaceWristband={Boolean(capabilities?.canReplaceWristband)}
           canCompleteTicket={capabilities?.canCombined !== false}
           busy={Boolean(busyLabel)}
           busyLabel={busyLabel}
@@ -742,6 +746,7 @@ function TicketReview({
   participant,
   canUndoKit,
   canUndoCheckin,
+  canReplaceWristband,
   canCompleteTicket,
   busy,
   busyLabel,
@@ -754,6 +759,7 @@ function TicketReview({
   participant: OperationTicketDetails;
   canUndoKit: boolean;
   canUndoCheckin: boolean;
+  canReplaceWristband: boolean;
   canCompleteTicket: boolean;
   busy: boolean;
   busyLabel: string | null;
@@ -770,6 +776,8 @@ function TicketReview({
   const related = (participant.order_tickets ?? []).filter((ticket) => ticket.ticket_id !== participant.ticket_id);
   const [loadingRelatedId, setLoadingRelatedId] = useState<string | null>(null);
   const [undoKind, setUndoKind] = useState<'kit' | 'checkin' | null>(null);
+  const [showReplaceWristband, setShowReplaceWristband] = useState(false);
+  const activeWristbandCode = participant.wristband?.status === 'active' ? participant.wristband.code : null;
 
   const banner = !canProceed
     ? alreadyUsed
@@ -811,9 +819,9 @@ function TicketReview({
         />
         {event.wristband_enabled ? (
           <Fact
-            label="Pulseira"
-            value={participant.wristband?.status === 'active' ? participant.wristband.code : 'Necessária'}
-            tone={participant.wristband?.status === 'active' ? 'success' : 'attention'}
+            label="Pulseira vinculada"
+            value={activeWristbandCode ?? 'Necessária'}
+            tone={activeWristbandCode ? 'success' : 'attention'}
           />
         ) : null}
 
@@ -868,6 +876,11 @@ function TicketReview({
             <button type="button" onClick={onOpenAdmin} disabled={busy} className="min-h-12 rounded-xl border border-slate-700 text-sm font-semibold disabled:opacity-40">
               Abrir operação completa
             </button>
+            {canReplaceWristband && activeWristbandCode ? (
+              <button type="button" onClick={() => setShowReplaceWristband(true)} disabled={busy} className="min-h-12 rounded-xl border border-cyan-700/60 text-sm font-semibold text-cyan-200 disabled:opacity-40">
+                Substituir pulseira
+              </button>
+            ) : null}
             {canUndoKit && !pendingKit ? (
               <button type="button" onClick={() => setUndoKind('kit')} disabled={busy} className="min-h-12 rounded-xl border border-amber-700/60 text-sm font-semibold text-amber-200 disabled:opacity-40">
                 Desfazer entrega
@@ -887,7 +900,7 @@ function TicketReview({
           title={undoKind === 'kit' ? 'Desfazer entrega do kit' : 'Desfazer check-in'}
           description="Ação administrativa. Exige motivo."
           submitLabel={undoKind === 'kit' ? 'Desfazer entrega' : 'Desfazer check-in'}
-          extraOptionLabel={undoKind === 'checkin' ? 'Também desvincular a pulseira' : undefined}
+          wristbandKeepPrompt={undoKind === 'checkin' && activeWristbandCode ? { code: activeWristbandCode } : null}
           onSubmit={async ({ reasonCode, reasonText, extraOption }) => {
             const response =
               undoKind === 'kit'
@@ -900,9 +913,29 @@ function TicketReview({
                   });
             if (!response.success) return { success: false, message: response.message };
             onCancel();
-            return { success: true };
+            return { success: true, message: response.message };
           }}
           onClose={() => setUndoKind(null)}
+        />
+      ) : null}
+      {showReplaceWristband && activeWristbandCode ? (
+        <ReplaceWristbandDialog
+          currentCode={activeWristbandCode}
+          onSubmit={async ({ newCode, reasonCode, reasonText }) => {
+            const response = await replaceWristbandAction({
+              ticket_id: participant.ticket_id,
+              new_code: newCode,
+              reason_code: reasonCode,
+              reason_text: reasonText,
+            });
+            if (!response.success) return { success: false, message: response.message };
+            const refreshed = await getOperationTicketDetailsAction(participant.ticket_id);
+            if (refreshed.success && refreshed.participant && 'ticket_id' in refreshed.participant) {
+              onSelectRelated(refreshed.participant as OperationTicketDetails);
+            }
+            return { success: true, message: response.message };
+          }}
+          onClose={() => setShowReplaceWristband(false)}
         />
       ) : null}
     </div>

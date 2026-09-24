@@ -176,7 +176,7 @@ test("ficha QR identificado mostra Gênero operacional entre Camiseta e Kit, sem
   const camiseta = review.indexOf('<Fact label="Camiseta"');
   const genero = review.indexOf('<Fact label="Gênero"');
   const kit = review.indexOf('<Fact\n          label="Kit"');
-  const pulseira = review.indexOf('<Fact\n            label="Pulseira"');
+  const pulseira = review.indexOf('<Fact\n            label="Pulseira vinculada"');
   assert.ok(camiseta !== -1 && genero !== -1 && kit !== -1 && pulseira !== -1);
   assert.ok(camiseta < genero && genero < kit && kit < pulseira, "ordem precisa ser Camiseta, Gênero, Kit, Pulseira");
   assert.match(review, /turboGenderFromTicket\(participant\)/);

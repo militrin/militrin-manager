@@ -6,15 +6,21 @@ import { REASON_CODES, REASON_CODE_LABELS, type ReasonCode } from "../types";
 /**
  * Modal de motivo obrigatorio -- reusado por "Desfazer check-in" e
  * "Desfazer entrega". Motivo sempre exigido; texto livre so obrigatorio
- * quando o codigo e "other". `extraOption`, quando presente, renderiza um
- * checkbox adicional DESMARCADO por padrao (usado por "Desfazer check-in"
- * pra "Também desvincular a pulseira" -- nunca marcado automaticamente).
+ * quando o codigo e "other".
+ *
+ * `wristbandKeepPrompt`, quando presente, mostra radios Manter/Desvincular
+ * com DEFAULT manter. Nunca marca desvincular automaticamente. extraOption
+ * continua mapeando p_also_unlink_wristband (false = manter).
+ *
+ * `extraOptionLabel` permanece como checkbox legado; o prompt de pulseira
+ * tem precedencia quando os dois sao passados.
  */
 export function ReasonDialog({
   title,
   description,
   submitLabel,
   extraOptionLabel,
+  wristbandKeepPrompt,
   onSubmit,
   onClose,
 }: {
@@ -22,6 +28,7 @@ export function ReasonDialog({
   description?: string;
   submitLabel: string;
   extraOptionLabel?: string;
+  wristbandKeepPrompt?: { code: string } | null;
   onSubmit: (payload: { reasonCode: ReasonCode; reasonText: string; extraOption: boolean }) => Promise<{ success: boolean; message?: string }>;
   onClose: () => void;
 }) {
@@ -83,7 +90,40 @@ export function ReasonDialog({
           </label>
         ) : null}
 
-        {extraOptionLabel ? (
+        {wristbandKeepPrompt ? (
+          <fieldset className="mt-4 space-y-2">
+            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-400">O que fazer com a pulseira?</legend>
+            <p className="text-sm text-slate-300">
+              Pulseira vinculada: <span className="font-mono font-semibold text-cyan-100">{wristbandKeepPrompt.code}</span>
+            </p>
+            <label className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name="wristband-keep"
+                checked={!extraOption}
+                onChange={() => setExtraOption(false)}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <span className="font-semibold">Manter pulseira vinculada</span>
+                <span className="mt-0.5 block text-xs text-slate-400">A pessoa continuará usando esta pulseira.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name="wristband-keep"
+                checked={extraOption}
+                onChange={() => setExtraOption(true)}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <span className="font-semibold">Desvincular pulseira</span>
+                <span className="mt-0.5 block text-xs text-slate-400">A pulseira será liberada para novo vínculo.</span>
+              </span>
+            </label>
+          </fieldset>
+        ) : extraOptionLabel ? (
           <label className="mt-3 flex items-center gap-2 text-sm text-slate-300">
             <input type="checkbox" checked={extraOption} onChange={(e) => setExtraOption(e.target.checked)} className="h-4 w-4 rounded border-slate-600" />
             {extraOptionLabel}

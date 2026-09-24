@@ -2,9 +2,12 @@
 
 import { useState } from "react";
 import { getOperationsGridConfig } from "./tableGrid";
-import type { ActionResult, PickupCapabilities, PickupEvent, PickupListItem } from "../types";
+import type { ActionResult, PickupCapabilities, PickupEvent, PickupListItem, WristbandReplacePayload } from "../types";
 import { MaterializeItemsDialog } from "./MaterializeItemsDialog";
 import { ConfirmDeliverAndCheckinDialog } from "./ConfirmDeliverAndCheckinDialog";
+import { ConfirmCheckinDialog } from "./ConfirmCheckinDialog";
+import { ReplaceWristbandDialog } from "./ReplaceWristbandDialog";
+import { WristbandLinkedPanel } from "./WristbandLinkedPanel";
 import { WristbandCodeModal } from "./WristbandCodeModal";
 
 function maskCpf(cpf: string) {
@@ -66,6 +69,7 @@ export function OperationRow({
   onDeliverFullKit,
   onDeliverKitAndCheckin,
   onCheckin,
+  onReplaceWristband,
   onItemsMaterialized,
 }: {
   item: PickupListItem;
@@ -77,6 +81,7 @@ export function OperationRow({
   onDeliverFullKit: (ticketId: string, participantId: string | null, wristbandCode?: string) => Promise<ActionResult>;
   onDeliverKitAndCheckin: (ticketId: string, participantId: string | null, wristbandCode?: string) => Promise<ActionResult>;
   onCheckin: (ticketId: string, wristbandCode?: string) => Promise<ActionResult>;
+  onReplaceWristband: (ticketId: string, payload: WristbandReplacePayload) => Promise<ActionResult>;
   onItemsMaterialized: (ticketId: string) => Promise<void>;
 }) {
   const grid = getOperationsGridConfig(selectedEvent);
@@ -85,6 +90,8 @@ export function OperationRow({
   const shirtLabel = [item.shirt_type, item.shirt_size].filter(Boolean).join(" ").trim();
   const hasTicket = item.kind === "ticket";
   const [showCombinedConfirm, setShowCombinedConfirm] = useState(false);
+  const [showCheckinConfirm, setShowCheckinConfirm] = useState(false);
+  const [showReplaceWristband, setShowReplaceWristband] = useState(false);
   const [wristbandModal, setWristbandModal] = useState<"mandatory-checkin" | "mandatory-combined" | null>(null);
   const hasActiveWristband = item.wristband?.status === "active";
   const wristbandWillBeRequested = Boolean(
@@ -111,10 +118,15 @@ export function OperationRow({
 
   async function handleCheckinClick() {
     if (item.kind !== "ticket") return;
-    const result = await onCheckin(item.ticket_id);
-    if (result && "code" in result && result.code === "WRISTBAND_REQUIRED") {
-      setWristbandModal("mandatory-checkin");
+    if (hasActiveWristband) {
+      setShowCheckinConfirm(true);
+      return;
     }
+    if (wristbandRequiredForCheckin) {
+      setWristbandModal("mandatory-checkin");
+      return;
+    }
+    await onCheckin(item.ticket_id);
   }
 
   async function handleMandatoryWristbandSubmit(code: string) {
@@ -153,6 +165,18 @@ export function OperationRow({
           {(item.city || "Não informado") + " · " + gender + " · " + (age === null ? "Não informado" : `${age} anos`)}
         </div>
         <div className="text-[11px] text-slate-500">CPF {maskCpf(item.cpf)}</div>
+        {selectedEvent?.wristband_enabled && hasActiveWristband && item.wristband?.code ? (
+          <div className="mt-1" onClick={(event) => event.stopPropagation()}>
+            <WristbandLinkedPanel
+              code={item.wristband.code}
+              compact
+              canReplace={capabilities.canReplaceWristband}
+              onReplace={() => setShowReplaceWristband(true)}
+            />
+          </div>
+        ) : selectedEvent?.wristband_enabled ? (
+          <div className="mt-1 text-[11px] text-amber-300">Pulseira não vinculada</div>
+        ) : null}
         <div className="text-[11px] text-slate-500">
           {item.kind === "participant_without_ticket"
             ? "Inscrição importada sem ingresso gerado"
@@ -263,6 +287,8 @@ export function OperationRow({
           <div className="flex flex-col items-start gap-0.5">
             {wristbandRequiredForCheckin ? (
               <span className="text-[11px] font-medium text-amber-300">Pulseira obrigatória para check-in</span>
+            ) : hasActiveWristband && item.wristband?.code ? (
+              <span className="text-[11px] text-cyan-200">Pulseira vinculada</span>
             ) : null}
             <button
               title="Realizar check-in"
@@ -308,6 +334,22 @@ export function OperationRow({
         mandatory
         onSubmit={handleMandatoryWristbandSubmit}
         onClose={() => setWristbandModal(null)}
+      />
+    ) : null}
+    {showCheckinConfirm && item.kind === "ticket" && item.wristband?.code ? (
+      <ConfirmCheckinDialog
+        wristbandCode={item.wristband.code}
+        onConfirm={() => onCheckin(item.ticket_id)}
+        onClose={() => setShowCheckinConfirm(false)}
+      />
+    ) : null}
+    {showReplaceWristband && item.kind === "ticket" && item.wristband?.code ? (
+      <ReplaceWristbandDialog
+        currentCode={item.wristband.code}
+        onSubmit={async ({ newCode, reasonCode, reasonText }) =>
+          (await onReplaceWristband(item.ticket_id, { newCode, reasonCode, reasonText })) as { success: boolean; message?: string }
+        }
+        onClose={() => setShowReplaceWristband(false)}
       />
     ) : null}
     </>

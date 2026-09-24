@@ -456,11 +456,38 @@ export const REASON_CODE_LABELS: Record<ReasonCode, string> = {
   other: 'Outro',
 };
 
+export const WRISTBAND_REPLACE_REASON_CODES = [
+  'damaged',
+  'lost',
+  'incorrectly_linked',
+  'operational_swap',
+  'other',
+] as const;
+
+export type WristbandReplaceReasonCode = (typeof WRISTBAND_REPLACE_REASON_CODES)[number];
+
+export const WRISTBAND_REPLACE_REASON_CODE_LABELS: Record<WristbandReplaceReasonCode, string> = {
+  damaged: 'Danificada',
+  lost: 'Perdida',
+  incorrectly_linked: 'Vinculada incorretamente',
+  operational_swap: 'Troca operacional',
+  other: 'Outro',
+};
+
+export type WristbandReplacePayload = {
+  newCode: string;
+  reasonCode: WristbandReplaceReasonCode;
+  reasonText: string;
+};
+
 export type WristbandHistoryEntry = {
   id: string;
   action: string;
   code: string | null;
+  old_code: string | null;
+  new_code: string | null;
   reason: string | null;
+  reason_code: string | null;
   actor_email: string | null;
   created_at: string;
 };
