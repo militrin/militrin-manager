@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { getEventCategoriesAndBatchesAction } from "@/app/operacoes/actions";
+import {
+  initialManualTicketIssueIntent,
+  intentAfterAcknowledgeExisting,
+  intentAfterEmitWithoutHolder,
+} from "@/lib/admin/manual-ticket-issue-intent";
 import { getEventShirtOptionsAction, issueTicketAction, lookupRegistrationContactAction, type IssueTicketReason } from "./actions";
 
 type Option = { id: string; name: string };
@@ -42,6 +47,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
     requiresHolderDecision?: boolean;
     requiresExistingTicketConfirmation?: boolean;
     ticketCode?: string;
+    assignHolder?: boolean;
   } | null>(null);
   const [contactLookup, setContactLookup] = useState<ContactLookup>(initialContact ? { status: "found", name: initialContact.name } : { status: "idle" });
   const idempotencyKeyRef = useRef(crypto.randomUUID());
@@ -102,7 +108,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   const categoryUnsellable = hasCategories && Boolean(categoryId) && selectedCategory !== null && !selectedCategory.sellable;
   const canSubmit = contactLookup.status === "found" && eventId && (!hasCategories || categoryId) && !categoryUnsellable && batchId && (!notesRequired || notes.trim()) && (!hasShirts || (shirtType && shirtSize));
 
-  function submit(assignHolder = true, acknowledgeExisting = false) {
+  function submit(assignHolder: boolean, acknowledgeExisting: boolean) {
     setResult(null);
     if (!canSubmit) return;
     if (acknowledgeExisting) {
@@ -150,17 +156,32 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
           ) : null}
           {!result.success && result.requiresExistingTicketConfirmation ? (
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" disabled={pending} onClick={() => submit(true, true)} className="rounded-lg bg-amber-300 px-3 py-2 font-semibold text-slate-950">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  const intent = intentAfterAcknowledgeExisting(result.assignHolder === true);
+                  submit(intent.assignHolder, intent.acknowledgeExisting);
+                }}
+                className="rounded-lg bg-amber-300 px-3 py-2 font-semibold text-slate-950"
+              >
                 Emitir mesmo assim
               </button>
               <button type="button" disabled={pending} onClick={() => setResult(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-slate-200">
                 Cancelar
               </button>
             </div>
-          ) : null}
-          {!result.success && result.requiresHolderDecision ? (
+          ) : !result.success && result.requiresHolderDecision ? (
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" disabled={pending} onClick={() => submit(false)} className="rounded-lg bg-amber-300 px-3 py-2 font-semibold text-slate-950">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  const intent = intentAfterEmitWithoutHolder();
+                  submit(intent.assignHolder, intent.acknowledgeExisting);
+                }}
+                className="rounded-lg bg-amber-300 px-3 py-2 font-semibold text-slate-950"
+              >
                 Emitir sem titular
               </button>
               <button type="button" disabled={pending} onClick={() => setResult(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-slate-200">
@@ -301,7 +322,15 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
         </label>
       </div>
 
-      <button type="button" disabled={!canSubmit || pending} onClick={() => submit()} className="w-fit rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-emerald-950 disabled:opacity-50">
+      <button
+        type="button"
+        disabled={!canSubmit || pending}
+        onClick={() => {
+          const intent = initialManualTicketIssueIntent();
+          submit(intent.assignHolder, intent.acknowledgeExisting);
+        }}
+        className="w-fit rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-emerald-950 disabled:opacity-50"
+      >
         {pending ? "Emitindo..." : "Emitir ingresso"}
       </button>
     </div>

@@ -176,6 +176,8 @@ test('L/M/N: emissao manual exige confirmacao e usa idempotency key', async () =
   const migration = await read('supabase/migrations/20261108000000_payment_amount_guard_and_idempotency.sql');
   assert.match(form, /requiresExistingTicketConfirmation/);
   assert.match(form, /Emitir mesmo assim/);
+  assert.match(form, /intentAfterAcknowledgeExisting\(result\.assignHolder === true\)/);
+  assert.doesNotMatch(form, /submit\(true,\s*true\)/);
   assert.match(form, /idempotencyKeyRef/);
   assert.match(actions, /p_acknowledge_existing/);
   assert.match(actions, /p_idempotency_key/);

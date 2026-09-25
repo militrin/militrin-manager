@@ -106,11 +106,13 @@ test('checkout usa uma unica decisao de autoatribuicao para qualquer quantidade'
 });
 
 test('emissao administrativa exige decisao explicita e pode emitir todo o lote sem titular', async () => {
-  const [actions,form,migration]=await Promise.all([
+  const [actions,form,migration,intent]=await Promise.all([
     read('../src/app/ingressos/emitir/actions.ts'),read('../src/app/ingressos/emitir/issue-ticket-form.tsx'),
     read('../supabase/migrations/135_atomic_manual_ticket_batch_issue.sql'),
+    read('../src/lib/admin/manual-ticket-issue-intent.ts'),
   ]);
-  assert.match(actions,/Esta pessoa já é titular de outro ingresso neste evento/);
+  assert.match(intent,/Esta pessoa já é titular de outro ingresso neste evento/);
+  assert.match(actions,/holderAlreadyAssignedMessage\(\)/);
   assert.match(actions,/p_assign_holder: assignHolder/);
   assert.match(form,/Emitir sem titular/); assert.match(form,/Cancelar/);
   assert.match(migration,/p_assign_holder boolean default true/);
