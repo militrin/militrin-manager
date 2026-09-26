@@ -95,7 +95,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         landingPriority: 22.5,
       },
       {
-        label: "Relatório de Operações",
+        label: "Histórico de Operações",
         icon: ClipboardList,
         href: "/operacoes/relatorio",
         permissionAny: ["operations.view_report"],
@@ -288,6 +288,7 @@ export const adminNavGroups: AdminNavGroup[] = [
 // ver TurboRouteClient.tsx.
 export const EVENT_SCOPED_HREFS = [
   "/operacoes",
+  "/operacoes/relatorio",
   "/painel",
   "/cadastros",
   "/convites",

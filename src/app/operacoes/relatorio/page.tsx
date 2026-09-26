@@ -3,34 +3,72 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { AdminPageHeader } from "@/components/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
-import { REPORT_CATALOG } from "@/lib/reports/catalog";
-import { ReportsExplorer } from "@/app/relatorios/reports-explorer";
+import { pickDefaultEvent } from "@/lib/operations/history/period";
+import { queryOperationsHistory } from "@/lib/operations/history/query";
+import { OperationsHistoryClient } from "./operations-history-client";
 
-// Mesmo motor de /relatorios (catalogo, runReport, export PDF/XLSX/CSV),
-// so filtrado pra categoria "operacoes" e vivendo fora do gate de
-// reports.view -- ver layout.tsx desta rota.
-export default async function OperacoesRelatorioPage() {
+export default async function OperacoesRelatorioPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ eventId?: string }>;
+}) {
   const organization = (await getCurrentOrganizationContext()).organization;
   if (!organization?.id) {
-    return <main className="p-8 text-slate-200">Selecione uma organização para visualizar o relatório.</main>;
+    return <main className="p-8 text-slate-200">Selecione uma organização para visualizar o histórico.</main>;
   }
 
-  const catalog = REPORT_CATALOG.filter((report) => report.category === "operacoes");
-
+  const params = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const { data: events } = await supabase.from("events").select("id,name").eq("organization_id", organization.id).order("starts_at", { ascending: false });
+  const { data: events } = await supabase
+    .from("events")
+    .select("id,name,starts_at,ends_at")
+    .eq("organization_id", organization.id)
+    .order("starts_at", { ascending: false });
+
+  const eventOptions = (events ?? []).map((event) => ({
+    id: String(event.id),
+    name: String(event.name),
+    starts_at: event.starts_at ? String(event.starts_at) : null,
+    ends_at: event.ends_at ? String(event.ends_at) : null,
+  }));
+  const requested = eventOptions.find((event) => event.id === params.eventId);
+  const selected = requested ?? pickDefaultEvent(eventOptions);
+  const initialResult = selected
+    ? await queryOperationsHistory({ eventId: selected.id, period: "today" })
+    : { success: false as const, message: "Nenhum evento encontrado nesta organização." };
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <Sidebar />
-      <div className="flex flex-1 flex-col">
-        <TopBar title="Relatório de Operações" subtitle={organization.name} />
-        <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
-          <AdminPageHeader
-            title="Histórico de Operações e Snapshot de Contingência"
-            subtitle="Log imutável de ações (kit, check-in, pulseira, camiseta, titular) e uma foto do estado atual para usar offline no dia do evento."
+      <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+        <div className="hidden lg:block">
+          <TopBar
+            title="Histórico de Operações"
+            subtitle={organization.name}
+            breadcrumbs={[
+              { label: "Início", href: "/painel" },
+              { label: "Operações", href: "/operacoes" },
+              { label: "Histórico de Operações" },
+            ]}
           />
-          <ReportsExplorer catalog={catalog} events={(events ?? []).map((event) => ({ id: String(event.id), name: String(event.name) }))} />
+        </div>
+        <main className="mx-auto w-full max-w-7xl space-y-3 overflow-x-hidden px-3 lg:space-y-5 lg:px-6 lg:py-6">
+          <div className="hidden lg:block">
+            <AdminPageHeader
+              compact
+              title="Histórico de Operações"
+              subtitle="Acompanhe as operações realizadas no evento e identifique rapidamente alterações, correções e responsáveis."
+            />
+          </div>
+          {eventOptions.length === 0 || !selected ? (
+            <p className="text-sm text-slate-300">Nenhum evento disponível nesta organização.</p>
+          ) : (
+            <OperationsHistoryClient
+              events={eventOptions.map((event) => ({ id: event.id, name: event.name }))}
+              initialEventId={selected.id}
+              initialResult={initialResult}
+            />
+          )}
         </main>
       </div>
     </div>

@@ -16,6 +16,7 @@ export default async function OperacoesLayout({ children }: { children: React.Re
     "kits.deliver",
     "checkin.scan",
     "store.deliver",
+    "operations.view_report",
   ]);
 
   return <>{children}</>;

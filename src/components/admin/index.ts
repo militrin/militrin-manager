@@ -7,6 +7,7 @@ export * from './AdminFilterBar';
 export * from './AdminPageHeader';
 export * from './AdminParticipantCard';
 export * from './AdminSection';
+export * from './SlideOverPanel';
 export * from './AdminStatCard';
 export * from './AdminStatusBadge';
 export * from './OrgSelector';

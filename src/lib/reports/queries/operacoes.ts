@@ -38,6 +38,8 @@ function firstNonEmpty(...values: unknown[]): string {
 type ActionMeta = { label: string; bucket: "kit_delivered" | "kit_undone" | "checkin" | "checkin_undone" | "additional_item" | "correction" | "issuance" };
 
 const ACTION_ALLOWLIST: Record<string, ActionMeta> = {
+  kit_delivered: { label: "Kit entregue", bucket: "kit_delivered" },
+  kit_delivery_undone: { label: "Entrega de kit desfeita", bucket: "kit_undone" },
   ticket_kit_item_delivered: { label: "Item de kit entregue", bucket: "kit_delivered" },
   ticket_kit_item_delivery_undone: { label: "Entrega de kit desfeita", bucket: "kit_undone" },
   combined_kit_delivery_and_checkin: { label: "Kit entregue + check-in", bucket: "kit_delivered" },
