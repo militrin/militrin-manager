@@ -5,6 +5,8 @@ import { createCouponAction, deleteOrArchiveCouponAction, getCouponDetailsAction
 import { formatDateBR, toDatetimeLocalValue } from "@/lib/utils/date";
 import { DateTimeField } from "@/components/forms/DateTimeField";
 import type { CouponStatusFilter } from "./page";
+import { couponHasRecordedUses, formatCouponUsesLabel } from "@/lib/coupons/usage";
+import { CouponUsagesPanel } from "./CouponUsagesPanel";
 
 type CouponRow = {
   id: string;
@@ -65,15 +67,32 @@ function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-export function CouponsManager({ organizationId, coupons, status }: { organizationId: string; coupons: CouponRow[]; status: CouponStatusFilter }) {
+export function CouponsManager({
+  organizationId,
+  coupons,
+  status,
+  canManage = true,
+  canOpenRelatedRecords = false,
+}: {
+  organizationId: string;
+  coupons: CouponRow[];
+  status: CouponStatusFilter;
+  canManage?: boolean;
+  canOpenRelatedRecords?: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState<FormState>(initialForm());
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [options, setOptions] = useState<ScopeOptions | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [usageCoupon, setUsageCoupon] = useState<CouponRow | null>(null);
 
   useEffect(() => {
+    if (!canManage) {
+      setLoadingOptions(false);
+      return;
+    }
     let active = true;
     getCouponScopeOptionsAction(organizationId).then((result) => {
       if (!active) return;
@@ -81,7 +100,7 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
       setLoadingOptions(false);
     });
     return () => { active = false; };
-  }, [organizationId]);
+  }, [organizationId, canManage]);
 
   const eventsById = useMemo(() => new Map((options?.events ?? []).map((event) => [event.id, event])), [options]);
   const categoriesByEvent = useMemo(() => {
@@ -195,7 +214,7 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
           Cupons arquivados ficam fora da lista padrão e não podem mais ser aplicados em novas compras. O histórico de pedidos onde já foram usados permanece intacto.
         </div>
-      ) : (
+      ) : canManage ? (
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
         <p className="text-sm font-semibold text-slate-200">{form.id ? "Editar cupom" : "Novo cupom"}</p>
 
@@ -354,7 +373,7 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
           ) : null}
         </div>
       </div>
-      )}
+      ) : null}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
             <table className="admin-table-zebra min-w-full divide-y divide-slate-800 text-sm">
@@ -380,7 +399,20 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
                   <td className="px-4 py-3 font-semibold">{coupon.code}</td>
                   <td className="px-4 py-3">{coupon.discount_type === "percentage" ? `${Number(coupon.discount_value).toFixed(0)}%` : money(Number(coupon.discount_value))}</td>
                   <td className="px-4 py-3">{[coupon.applies_to_tickets ? "Ingressos" : null, coupon.applies_to_products ? "Produtos" : null].filter(Boolean).join(" + ")}</td>
-                  <td className="px-4 py-3">{coupon.used_count}{coupon.max_uses ? ` / ${coupon.max_uses}` : " (sem limite)"}</td>
+                  <td className="px-4 py-3">
+                    <p>{formatCouponUsesLabel(coupon.used_count, coupon.max_uses)}</p>
+                    {couponHasRecordedUses(coupon.used_count) ? (
+                      <button
+                        type="button"
+                        onClick={() => setUsageCoupon(coupon)}
+                        className="mt-1 rounded-lg border border-emerald-500/40 px-2 py-1 text-xs font-semibold text-emerald-200"
+                      >
+                        Ver utilizações
+                      </button>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-500">Nenhuma utilização</p>
+                    )}
+                  </td>
                   <td className="px-4 py-3">{coupon.valid_from ? formatDateBR(coupon.valid_from) : "-"} {" -> "} {coupon.valid_until ? formatDateBR(coupon.valid_until) : "-"}</td>
                   <td className="px-4 py-3">
                     {archived ? (
@@ -406,7 +438,7 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
                       </div>
                     ) : (
                       <div className="flex flex-wrap gap-2">
-                        {!archived ? (
+                        {canManage && !archived ? (
                           <>
                             <button type="button" onClick={() => void loadForEdit(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">Editar</button>
                             <button type="button" onClick={() => toggle(coupon)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs">{coupon.is_active ? "Desativar" : "Ativar"}</button>
@@ -424,6 +456,13 @@ export function CouponsManager({ organizationId, coupons, status }: { organizati
           </tbody>
         </table>
       </div>
+      {usageCoupon ? (
+        <CouponUsagesPanel
+          coupon={usageCoupon}
+          canOpenRelatedRecords={canOpenRelatedRecords}
+          onClose={() => setUsageCoupon(null)}
+        />
+      ) : null}
     </div>
   );
 }

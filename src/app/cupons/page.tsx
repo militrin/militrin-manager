@@ -6,7 +6,7 @@ import { SectionCard } from "@/components/dashboard/SectionCard";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { CouponsManager } from "./ui";
-import { getCurrentPermissionMap } from "@/lib/admin/permissions";
+import { getCurrentPermissionMap, hasPermission } from "@/lib/admin/permissions";
 
 export type CouponStatusFilter = "active" | "inactive" | "archived";
 
@@ -58,9 +58,10 @@ export default async function CouponsPage({ searchParams }: { searchParams?: Pro
 
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const status = parseStatusFilter(resolvedSearchParams.status);
-  const [coupons, permissions] = await Promise.all([
+  const [coupons, permissions, canOpenRelatedRecords] = await Promise.all([
     getCouponsData(currentOrganization.id, status),
     getCurrentPermissionMap(["coupons.create", "coupons.edit", "coupons.disable"]),
+    hasPermission("participants.view"),
   ]);
   const canManage = Object.values(permissions).some(Boolean);
 
@@ -84,13 +85,8 @@ export default async function CouponsPage({ searchParams }: { searchParams?: Pro
                 </Link>
               ))}
             </div>
-            {canManage ? <CouponsManager organizationId={currentOrganization.id} coupons={coupons} status={status} /> : (
-              <div className="space-y-2">{coupons.map((coupon) => (
-                <div key={coupon.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
-                  <p className="font-mono font-semibold text-slate-100">{coupon.code}</p>
-                  <p className="text-xs text-slate-400">{coupon.discount_type === "percentage" ? `${coupon.discount_value}%` : `R$ ${coupon.discount_value.toFixed(2)}`} · {coupon.used_count} uso(s) · {coupon.is_active ? "Ativo" : "Inativo"}</p>
-                </div>
-              ))}</div>
+            {canManage ? <CouponsManager organizationId={currentOrganization.id} coupons={coupons} status={status} canManage canOpenRelatedRecords={canOpenRelatedRecords} /> : (
+              <CouponsManager organizationId={currentOrganization.id} coupons={coupons} status={status} canManage={false} canOpenRelatedRecords={canOpenRelatedRecords} />
             )}
           </SectionCard>
         </div>

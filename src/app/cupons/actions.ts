@@ -138,3 +138,13 @@ export async function getCouponDetailsAction(couponId: string) {
   if (error) return { success: false as const, message: error.message };
   return { success: true as const, coupon: data as Record<string, unknown> };
 }
+
+export async function getCouponUsagesAction(couponId: string) {
+  await assertPermission("coupons.view");
+  const parsed = z.string().uuid().safeParse(couponId);
+  if (!parsed.success) return { success: false as const, message: "Cupom inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("list_organization_coupon_usages", { p_coupon_id: parsed.data });
+  if (error) return { success: false as const, message: error.message };
+  return { success: true as const, rows: (data ?? []) as Record<string, unknown>[] };
+}
