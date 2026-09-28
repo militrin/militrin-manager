@@ -15,9 +15,11 @@ import {
   Shirt,
   Users,
   X,
+  Search,
 } from "lucide-react";
 import { getSidebarContextAction, signOutAdministrativePanelAction, type SidebarContext } from "./sidebar-actions";
 import { NotificationBell } from "./NotificationBell";
+import { GlobalSearchDesktopTrigger, GlobalSearchMobileTrigger, GlobalSearchPalette, openAdminGlobalSearch } from "@/components/admin/global-search/GlobalSearchHost";
 import {
   adminNavGroups as groups,
   findAdminNavItem,
@@ -202,6 +204,8 @@ function SidebarContent() {
             </div>
           </div>
 
+          <GlobalSearchDesktopTrigger />
+
           {/* Troca de area -- NAO e logout ("Sair da conta" continua so no
               rodape, exclusivo pra encerrar sessao). Perto do topo, antes
               dos grupos de navegacao, pra nunca ficar perdido numa lista
@@ -265,6 +269,7 @@ function SidebarContent() {
           <Menu size={20} />
         </button>
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-slate-100">{currentPageLabel}</h1>
+        <GlobalSearchMobileTrigger />
         <NotificationBell compact />
         {/* Troca de area em 1 toque, sempre visivel (nunca atras do drawer/
             bottom nav) -- NAO e logout, so leva pra /minha-conta. */}
@@ -328,6 +333,17 @@ function SidebarContent() {
                 </span>
                 <ChevronRight size={16} />
               </Link>
+              <button
+                type="button"
+                onClick={() => { setDrawerOpen(false); openAdminGlobalSearch(); }}
+                className="flex w-full items-center justify-between rounded-2xl border border-slate-700/80 bg-slate-900 px-4 py-3.5 text-left text-base font-medium text-slate-200"
+              >
+                <span className="flex items-center gap-3">
+                  <Search size={20} className="text-emerald-300" />
+                  Buscar pessoa, pedido, ingresso...
+                </span>
+                <ChevronRight size={16} />
+              </button>
               {renderGroups(false, () => setDrawerOpen(false))}
             </nav>
 
@@ -418,6 +434,8 @@ function SidebarContent() {
           </li>
         </ul>
       </nav>
+
+      <GlobalSearchPalette />
     </>
   );
 }
