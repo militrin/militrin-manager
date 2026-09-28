@@ -226,19 +226,6 @@ export const adminNavGroups: AdminNavGroup[] = [
         // igual a "Ir para Minha Conta" no rodape da sidebar.
         permissionAny: [],
       },
-      {
-        label: "Fotos",
-        icon: Layers,
-        href: "/fotos",
-        permissionAny: ["photos.view_admin"],
-        requireCapability: (c) => c.hasPhotos,
-      },
-      {
-        label: "Novo cadastro",
-        icon: UserPlus,
-        href: "/cadastros/novo",
-        permissionAny: ["participants.create"],
-      },
     ],
   },
   {
@@ -246,7 +233,6 @@ export const adminNavGroups: AdminNavGroup[] = [
     items: [
       { label: "Todos os ingressos", icon: Ticket, href: "/ingressos", permissionAny: ["participants.view", "orders.view"] },
       { label: "Emitir ingresso", icon: UserPlus, href: "/ingressos/emitir", permissionAny: ["participants.create"], requireCapability: (c) => c.registrationEnabled },
-      { label: "Cortesias em lote (futuro)", icon: Gift, href: "/ingressos/cortesias", permissionAny: ["participants.create"] },
     ],
   },
   {

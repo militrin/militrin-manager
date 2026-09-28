@@ -38,7 +38,7 @@ test('cadastro ingresso e edicao preservam origem; entrada direta usa ingressos'
   assert.match(cadastro,/from=cadastro&contactId=\$\{id\}/);
   assert.match(ticket,/requestedContactId === contactId/);
   assert.match(ticket,/adminEditHref=\{editHref\}/);
-  assert.match(ticket,/\{label:"Ingressos",href:"\/ingressos"\}/);
+  assert.match(ticket,/\{label:"Ingressos",href:listHref\}/);
   assert.match(edit,/requestedContactId === item\?\.registration_contact_id/);
   assert.match(edit,/\{label:"Editar ingresso"\}/);
   assert.match(edit,/fallbackHref="\/ingressos"/);
@@ -52,7 +52,7 @@ test('labels dinamicos usam nomes e identificadores legiveis',async()=>{
   ]);
   assert.match(cadastro,/label:String\(contact\.full_name\)/);
   assert.match(event,/label:String\(event\.name\)/);
-  assert.match(ticket,/const ticketLabel = `#\$\{String\(data\.token/);
+  assert.match(ticket,/const ticketLabel = `\$\{ticketCode/);
   assert.match(ticket,/category\?\.name/);
 });
 
@@ -77,4 +77,32 @@ test('paginas profundas auditadas possuem breadcrumb e retorno pai seguro',async
   assert.match(editParticipant,/backHref=\{participantHref\}/);
   assert.match(newEvent,/\{label:"Eventos",href:"\/painel\/eventos"\}/);
   assert.match(newEvent,/backHref="\/painel\/eventos"/);
+});
+
+test('Fase 5 remove stubs e atalhos duplicados do menu; Emitir ingresso e Novo cadastro continuam descobertos', async () => {
+  const [menu, cadastros, emitir] = await Promise.all([
+    read('../src/lib/navigation/admin-menu.ts'),
+    read('../src/app/cadastros/page.tsx'),
+    read('../src/app/ingressos/emitir/page.tsx'),
+  ]);
+  assert.doesNotMatch(menu, /Cortesias em lote/);
+  assert.doesNotMatch(menu, /\/ingressos\/cortesias/);
+  assert.doesNotMatch(menu, /href: "\/cadastros\/novo"/);
+  assert.doesNotMatch(menu, /href: "\/fotos"/);
+  assert.match(menu, /label: "Emitir ingresso"/);
+  assert.match(menu, /href: "\/ingressos\/emitir"/);
+  assert.match(cadastros, /href="\/cadastros\/novo"/);
+  assert.match(cadastros, /Novo cadastro/);
+  assert.match(emitir, /participants\.create/);
+});
+
+test('categorias e lotes redirecionam para a ficha canônica do evento', async () => {
+  const [categories, batches] = await Promise.all([
+    read('../src/app/categorias/page.tsx'),
+    read('../src/app/lotes/page.tsx'),
+  ]);
+  assert.match(categories, /redirect\(`\/painel\/eventos\/\$\{eventId\}\?etapa=2`\)/);
+  assert.match(categories, /redirect\("\/painel\/eventos"\)/);
+  assert.match(batches, /redirect\(`\/painel\/eventos\/\$\{eventId\}\?etapa=3`\)/);
+  assert.match(batches, /redirect\("\/painel\/eventos"\)/);
 });
