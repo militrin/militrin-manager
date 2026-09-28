@@ -170,6 +170,7 @@ export function OperationRow({
             <WristbandLinkedPanel
               code={item.wristband.code}
               compact
+              canViewCode={capabilities.canViewWristband}
               canReplace={capabilities.canReplaceWristband}
               onReplace={() => setShowReplaceWristband(true)}
             />

@@ -124,10 +124,11 @@ test('pago, cancelado e estornado nunca reabrem cobranca viva', () => {
   assert.equal(isReusableLiveGatewayCharge({ ...base, payment_status: 'expired' }), false);
 });
 
-test('Home, Compras e detalhe usam a mesma regra comercial do PIX', async () => {
+test('Home, Compras, Historico e detalhe usam a mesma regra comercial do PIX', async () => {
   const home = await read('src/app/minha-conta/page.tsx');
   const compras = await read('src/app/minha-conta/compras/page.tsx');
   const detalhe = await read('src/app/minha-conta/compras/[orderId]/page.tsx');
+  const historico = await read('src/app/minha-conta/historico/page.tsx');
   const portal = await read('src/lib/account/portal-orders-and-tickets.ts');
   const pixAction = await read('src/app/inscricao/actions.ts');
   assert.match(home, /findActionableAccountOrder\(orders\)/);
@@ -135,6 +136,9 @@ test('Home, Compras e detalhe usam a mesma regra comercial do PIX', async () => 
   assert.match(compras, /resolvePixCommercialExpiresAt/);
   assert.match(detalhe, /resolvePixCommercialExpiresAt/);
   assert.match(detalhe, /canContinueCommercialPayment\(commercialStatus\)/);
+  assert.match(historico, /resolveAccountOrderStatus\(order\)/);
+  assert.match(historico, /getAccountOrders/);
+  assert.doesNotMatch(historico, /normalizeStatus\(String\(order\.status/);
   assert.match(portal, /resolvePixCommercialExpiresAt/);
   assert.match(pixAction, /closedCommercialPaymentMessage/);
   assert.match(pixAction, /isCommercialPaymentWindowOpen/);

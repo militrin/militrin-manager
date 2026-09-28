@@ -93,6 +93,7 @@ export function TicketOperationalControls(props: {
       <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
         <WristbandLinkedPanel
           code={props.wristbandCode}
+          canViewCode
           canReplace={props.canReplaceWristband}
           onReplace={() => setShowReplaceWristband(true)}
         />

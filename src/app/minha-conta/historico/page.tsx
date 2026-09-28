@@ -4,6 +4,7 @@ import { formatDateTimeBR } from '@/lib/utils/date';
 import { MilitrinButton, MilitrinEmptyState, MilitrinSection, MilitrinTimeline, type MilitrinTimelineItem } from '@/components/militrin';
 import { getStatusLabel } from '@/lib/status-labels';
 import { orderDisplayReference } from '@/lib/display-reference';
+import { getAccountOrders, resolveAccountOrderStatus } from '@/lib/account/portal-orders-and-tickets';
 
 function normalizeStatus(status: string | null | undefined) {
   const normalized = String(status ?? 'pending').toLowerCase();
@@ -18,12 +19,7 @@ export default async function HistoricoPage() {
   } = await supabase.auth.getUser();
 
   const [ordersResult, ticketsResult] = await Promise.all([
-    supabase
-      .from('orders')
-      .select('id, order_number, display_number, status, created_at, confirmed_at, final_amount, events(name)')
-      .eq('user_id', user?.id ?? '')
-      .order('created_at', { ascending: false })
-      .limit(15),
+    getAccountOrders(supabase, user?.id ?? ''),
     supabase
       .from('tickets')
       .select('id, status, issued_at, order_id, orders!inner(user_id, order_number, events(name))')
@@ -39,7 +35,7 @@ export default async function HistoricoPage() {
     .order('created_at', { ascending: false })
     .limit(20);
 
-  const orderItems = (ordersResult.data ?? []).map((order) => {
+  const orderItems = ((ordersResult.data ?? []) as Array<Record<string, unknown>>).slice(0, 15).map((order) => {
     const createdAt = order.created_at ? new Date(String(order.created_at)).getTime() : 0;
     const eventObj = Array.isArray(order.events) ? order.events[0] : order.events;
     return {
@@ -48,7 +44,7 @@ export default async function HistoricoPage() {
       title: `Pedido ${orderDisplayReference(order.display_number, order.order_number)}`,
       subtitle: eventObj?.name ? `Evento: ${String(eventObj.name)}` : 'Pedido no portal Militrin',
       date: order.created_at ? formatDateTimeBR(String(order.created_at), ' as ') : undefined,
-      status: normalizeStatus(String(order.status ?? 'pending')),
+      status: resolveAccountOrderStatus(order),
     };
   });
 

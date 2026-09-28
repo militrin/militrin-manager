@@ -280,7 +280,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
   const returnTimerRef = useRef<number | null>(null);
   const [canUndoDelivery, setCanUndoDelivery] = useState(false);
   const [canDeliverStoreItems, setCanDeliverStoreItems] = useState(true);
-  const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin' | 'canDeliverKit' | 'canCheckin' | 'canCombined' | 'canReplaceWristband'> | null>(null);
+  const [capabilities, setCapabilities] = useState<Pick<PickupCapabilities, 'canUndoKit' | 'canUndoCheckin' | 'canDeliverKit' | 'canCheckin' | 'canCombined' | 'canReplaceWristband' | 'canViewWristband'> | null>(null);
   const [offline, setOffline] = useState(false);
   const [scannerEpoch, setScannerEpoch] = useState(0);
 
@@ -298,6 +298,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
             canCheckin: response.capabilities.canCheckin,
             canCombined: response.capabilities.canCombined,
             canReplaceWristband: response.capabilities.canReplaceWristband,
+            canViewWristband: response.capabilities.canViewWristband,
           });
         }
       })
@@ -593,6 +594,7 @@ export function TurboMode({ event, onExit }: { event: OperationEvent; onExit: (f
           canUndoKit={Boolean(capabilities?.canUndoKit)}
           canUndoCheckin={Boolean(capabilities?.canUndoCheckin)}
           canReplaceWristband={Boolean(capabilities?.canReplaceWristband)}
+          canViewWristband={Boolean(capabilities?.canViewWristband)}
           canCompleteTicket={capabilities?.canCombined !== false}
           busy={Boolean(busyLabel)}
           busyLabel={busyLabel}
@@ -747,6 +749,7 @@ function TicketReview({
   canUndoKit,
   canUndoCheckin,
   canReplaceWristband,
+  canViewWristband,
   canCompleteTicket,
   busy,
   busyLabel,
@@ -760,6 +763,7 @@ function TicketReview({
   canUndoKit: boolean;
   canUndoCheckin: boolean;
   canReplaceWristband: boolean;
+  canViewWristband: boolean;
   canCompleteTicket: boolean;
   busy: boolean;
   busyLabel: string | null;
@@ -820,7 +824,7 @@ function TicketReview({
         {event.wristband_enabled ? (
           <Fact
             label="Pulseira vinculada"
-            value={activeWristbandCode ?? 'Necessária'}
+            value={activeWristbandCode ? (canViewWristband ? activeWristbandCode : 'Vinculada') : 'Necessária'}
             tone={activeWristbandCode ? 'success' : 'attention'}
           />
         ) : null}
@@ -900,7 +904,7 @@ function TicketReview({
           title={undoKind === 'kit' ? 'Desfazer entrega do kit' : 'Desfazer check-in'}
           description="Ação administrativa. Exige motivo."
           submitLabel={undoKind === 'kit' ? 'Desfazer entrega' : 'Desfazer check-in'}
-          wristbandKeepPrompt={undoKind === 'checkin' && activeWristbandCode ? { code: activeWristbandCode } : null}
+          wristbandKeepPrompt={undoKind === 'checkin' && activeWristbandCode ? { code: canViewWristband ? activeWristbandCode : 'vinculada' } : null}
           onSubmit={async ({ reasonCode, reasonText, extraOption }) => {
             const response =
               undoKind === 'kit'

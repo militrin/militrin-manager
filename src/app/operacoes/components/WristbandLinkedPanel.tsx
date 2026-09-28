@@ -10,20 +10,28 @@ export function WristbandLinkedPanel({
   canReplace,
   onReplace,
   compact,
+  canViewCode = false,
 }: {
   code: string;
   canReplace?: boolean;
   onReplace?: () => void;
   compact?: boolean;
+  canViewCode?: boolean;
 }) {
   return (
     <div className={compact ? "space-y-1" : "space-y-2"}>
       <p className={compact ? "text-[11px] text-slate-400" : "text-xs uppercase tracking-wide text-slate-500"}>
         Pulseira vinculada
       </p>
-      <p className={`font-mono font-semibold text-cyan-100 ${compact ? "text-[12px] leading-tight" : "text-sm"}`}>
-        {code}
-      </p>
+      {canViewCode ? (
+        <p className={`font-mono font-semibold text-cyan-100 ${compact ? "text-[12px] leading-tight" : "text-sm"}`}>
+          {code}
+        </p>
+      ) : (
+        <p className={`font-semibold text-cyan-100 ${compact ? "text-[12px] leading-tight" : "text-sm"}`}>
+          Vinculada
+        </p>
+      )}
       {canReplace && onReplace ? (
         <button
           type="button"

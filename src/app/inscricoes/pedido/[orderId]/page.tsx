@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { AdminEmptyState, AdminPageHeader, AdminSection, AdminStatCard, AdminStatusBadge } from "@/components/admin";
@@ -12,6 +13,8 @@ import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPr
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
+import { COUPON_NOT_PAYMENT_COPY, latestPaymentRow, presentSupportOrder } from "@/lib/orders/support-presentation";
+import { getStatusLabel } from "@/lib/status-labels";
 
 function money(value: number, priceOrigin?: string | null) {
   return formatImportedHistoricalAmount(value, priceOrigin);
@@ -38,7 +41,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,order_number,display_number,status,buyer_type,user_id,base_amount,discount_amount,final_amount,price_origin,created_at,confirmed_at,cancelled_at,event_id,events(name)")
+    .select("id,order_number,display_number,status,buyer_type,user_id,base_amount,discount_amount,final_amount,price_origin,applied_coupon_id,created_at,confirmed_at,cancelled_at,event_id,events(name)")
     .eq("id", orderId)
     .maybeSingle();
   if (error) throw error;
@@ -53,7 +56,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
       .order("item_position", { ascending: true }),
     supabase
       .from("payments")
-      .select("id,payment_status,payment_method,final_amount,amount,payment_fee_customer_amount,price_origin,created_at,paid_at,provider,gateway_payment_id,gateway_account_key,gateway_environment,refund_status")
+      .select("id,payment_status,payment_method,final_amount,amount,payment_fee_customer_amount,price_origin,created_at,paid_at,expires_at,settlement_nature,provider,gateway_payment_id,gateway_account_key,gateway_environment,refund_status,off_gateway_method,off_gateway_amount,off_gateway_recorded_at")
       .eq("order_id", orderId)
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id,order_item_id,status,cancellation_replacement_required").eq("order_id", orderId),
@@ -67,8 +70,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // organizacao + Owner OU orders.cancel) -- decide so se o CTA de
   // regularizacao aparece aqui; a acao em si (reclassificar) so acontece na
   // ficha do ingresso, nunca duplicada nesta listagem.
-  const canRegularizeCancellation = await hasPermission("orders.cancel");
-  const canRefundPayment = await hasPermission("finance.refund");
+  const [canRegularizeCancellation, canRefundPayment, canViewCadastro] = await Promise.all([
+    hasPermission("orders.cancel"),
+    hasPermission("finance.refund"),
+    hasPermission("participants.view"),
+  ]);
 
   // Auditoria do caso real #001078 (Integridade Operacional, P0): esta pagina
   // tratava "existe uma linha em tickets" como "ingresso valido" e mostrava
@@ -81,18 +87,23 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // a pagina precisa expor isso claramente, nunca esconder atras de um botao
   // que parece funcionar mas nao muda nada.
   const ticketByItem = new Map((tickets ?? []).map((ticket) => [String(ticket.order_item_id ?? ""), { id: String(ticket.id), status: String(ticket.status ?? ""), replacementRequired: ticket.cancellation_replacement_required as boolean | null }]));
-  const latestPayment = (payments ?? [])[0] ?? null;
-  const charge = orderChargeBreakdown({
-    itemsAmount: order.final_amount,
-    customerFee: latestPayment?.payment_fee_customer_amount,
-    chargedAmount: latestPayment?.final_amount,
-  });
+  const latestPayment = latestPaymentRow(payments) ?? (payments ?? [])[0] ?? null;
 
   let buyerName: string | null = null;
+  let buyerContact: { id: string; full_name: string } | null = null;
   if (order.user_id) {
-    const { data: buyers } = await supabase.rpc("get_operation_buyers", { p_event_id: order.event_id });
+    const [{ data: buyers }, { data: contactRow }] = await Promise.all([
+      supabase.rpc("get_operation_buyers", { p_event_id: order.event_id }),
+      supabase.from("registration_contacts").select("id,full_name").eq("user_id", order.user_id).limit(1).maybeSingle(),
+    ]);
     const buyer = ((buyers ?? []) as Array<Record<string, unknown>>).find((row) => String(row.user_id ?? "") === String(order.user_id));
     if (buyer?.full_name) buyerName = String(buyer.full_name);
+    if (contactRow?.id) buyerContact = { id: String(contactRow.id), full_name: String(contactRow.full_name ?? buyerName ?? "") };
+  }
+  let couponCode: string | null = null;
+  if (order.applied_coupon_id) {
+    const { data: coupon } = await supabase.from("coupons").select("code").eq("id", order.applied_coupon_id).maybeSingle();
+    if (coupon?.code) couponCode = String(coupon.code);
   }
 
   // Mesmo discriminador canonico do detector PAID_ORDER_WITHOUT_TICKET
@@ -116,11 +127,22 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
     buyerType: order.buyer_type, buyerName, holderName, paymentMethod: latestPayment?.payment_method,
   });
 
-  const commercialStatus = resolveCommercialStatus({
+  const support = presentSupportOrder({
+    orderId: String(order.id),
+    displayNumber: order.display_number,
+    orderNumber: order.order_number,
     orderStatus: order.status,
-    paymentStatus: latestPayment?.payment_status,
+    buyerType: order.buyer_type,
+    baseAmount: order.base_amount,
+    discountAmount: order.discount_amount,
+    finalAmount: order.final_amount,
+    priceOrigin: order.price_origin,
+    couponCode,
     reservationExpiresAt: firstItem?.reservation_expires_at ?? null,
+    createdAt: order.created_at,
+    payment: latestPayment,
   });
+  const commercialStatus = support.commercialStatus;
   const friendlyReason = commercialStatusFriendlyReason(commercialStatus, Boolean(latestPayment));
 
   return (
@@ -131,27 +153,57 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
           <AdminPageHeader
             title={`Pedido ${orderDisplayReference(order.display_number, order.order_number)}`}
             subtitle={`${eventRelation?.name ?? "Evento"} · ${ticketItems.length} ${ticketItems.length === 1 ? "inscrição" : "inscrições"} · ${issuedTickets.length} ${issuedTickets.length === 1 ? "ingresso emitido" : "ingressos emitidos"}${productItems.length ? ` · ${productItems.length} item(ns) adicional(is)` : ""}`}
-            actions={<Link href="/inscricoes" className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">Voltar</Link>}
+            actions={<Link href="/pedidos" className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">Voltar</Link>}
           />
 
-          <AdminSection title="Situação" actions={<AdminStatusBadge status={commercialStatus} />}>
+          <AdminSection title="Situação comercial" actions={<AdminStatusBadge status={support.situationBadge} />}>
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={buyerPresentation.label} value={buyerPresentation.name} />
+              <Field
+                label="Comprador"
+                value={
+                  buyerContact && canViewCadastro ? (
+                    <span className="flex flex-col gap-1">
+                      <span>{buyerPresentation.name}</span>
+                      <Link href={`/cadastros/${buyerContact.id}`} className="text-xs font-medium text-cyan-300 hover:text-cyan-200">Ver cadastro</Link>
+                    </span>
+                  ) : buyerPresentation.name
+                }
+              />
+              <Field label="Origem" value={support.originLabel} />
               <Field label="Evento" value={eventRelation?.name ?? "—"} />
-              <Field label="Forma de pagamento tentada" value={formatImportedPaymentMethod(latestPayment?.payment_method)} />
-              <Field label="Valor do pedido" value={canViewFinancial ? money(charge.itemsAmount, order.price_origin) : "Restrito"} />
-              {canViewFinancial && charge.hasCustomerFee ? (
-                <Field label="Taxa de pagamento" value={money(charge.customerFee, order.price_origin)} />
-              ) : null}
-              <Field label="Total cobrado" value={canViewFinancial ? money(charge.chargedAmount, order.price_origin) : "Restrito"} />
-              <Field label="Criado em" value={formatDateTimeBR(order.created_at) ?? "—"} />
-              <Field label="Prazo de pagamento" value={firstItem?.reservation_expires_at ? formatDateTimeBR(firstItem.reservation_expires_at) ?? "—" : "—"} />
-              <Field label="Confirmado em" value={order.confirmed_at ? formatDateTimeBR(order.confirmed_at) ?? "—" : "—"} />
-              <Field label="Referência" value={orderDisplayReference(order.display_number, order.order_number)} />
+              <Field label="Referência" value={support.orderNumber} />
             </div>
+            {support.couponDoesNotMeanPaid ? (
+              <div className="mt-4 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-100">{COUPON_NOT_PAYMENT_COPY}</div>
+            ) : null}
             {friendlyReason ? (
               <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">{friendlyReason}</div>
             ) : null}
+          </AdminSection>
+
+          {canViewFinancial ? (
+            <AdminSection title="Valores">
+              <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <Field label="Valor original" value={money(support.originalAmount, order.price_origin)} />
+                <Field label="Desconto" value={support.discountAmount ? `-${money(support.discountAmount, order.price_origin)}` : money(0, order.price_origin)} />
+                {support.couponCode ? <Field label="Cupom" value={support.couponCode} /> : null}
+                <Field label="Subtotal / líquido" value={money(support.afterDiscountAmount, order.price_origin)} />
+                <Field label="Taxas" value={money(support.customerFee, order.price_origin)} />
+                <Field label="Total cobrado" value={support.chargedAmount == null ? "—" : money(support.chargedAmount, order.price_origin)} />
+                <Field label="Valor pago" value={support.paidAmount == null ? "—" : money(support.paidAmount, order.price_origin)} />
+              </div>
+            </AdminSection>
+          ) : null}
+
+          <AdminSection title="Pagamento">
+            <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Forma" value={support.formaLabel} />
+              <Field label="Gateway" value={support.gatewayLabel} />
+              <Field label="Status" value={getStatusLabel(support.situationBadge).toUpperCase()} />
+              <Field label="Criado em" value={formatDateTimeBR(support.paymentCreatedAt) ?? "—"} />
+              <Field label="Pago em" value={support.paidAt ? formatDateTimeBR(support.paidAt) ?? "—" : "—"} />
+              <Field label="Expirado em" value={support.expiredAt ? formatDateTimeBR(support.expiredAt) ?? "—" : "—"} />
+            </div>
           </AdminSection>
 
           <AdminSection title={`Inscrições do pedido (${ticketItems.length}) · ingressos emitidos (${issuedTickets.length})`}>
@@ -312,11 +364,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
       <p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="font-semibold text-slate-100">{value}</p>
+      <div className="font-semibold text-slate-100">{value}</div>
     </div>
   );
 }

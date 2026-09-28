@@ -14,13 +14,19 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
 import { ContactAccountCard } from "../contact-account-card";
-import { ticketDisplayReference, publicOrderCode } from "@/lib/display-reference";
+import { ticketDisplayReference, publicOrderCode, formatDisplayNumber } from "@/lib/display-reference";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
 import { canonicalHolderName, hasCanonicalHolderName } from "@/lib/tickets/holder-name";
 import { loadSharedEmailGroup } from "@/lib/account/load-shared-email-group";
 import { SharedEmailAccountCard } from "../shared-email-account-card";
+import { AdminStatusBadge } from "@/components/admin";
+import { formatDateBR, formatDateTimeBR } from "@/lib/utils/date";
+import { getStatusLabel } from "@/lib/status-labels";
+import { presentSupportOrderFromRecord, summarizeSupportOrders } from "@/lib/orders/support-presentation";
+import { contactAccountStateView } from "@/lib/account/contact-account-state";
+import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 
 function relation(value: unknown) {
   return (Array.isArray(value) ? value[0] : value) as Record<string, unknown> | null;
@@ -39,7 +45,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const isOrganizationOwner = organizationContext.isOrgOwner;
   if (!organization?.id) notFound();
 
-  const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions, canEditTeam, canInviteFirstAccess, canCancelTicketByPermission, canConfirmPayment] = await Promise.all([
+  const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions, canEditTeam, canInviteFirstAccess, canCancelTicketByPermission, canConfirmPayment, canViewWristband] = await Promise.all([
     supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin,user_id").eq("id", id).eq("organization_id", organization.id).maybeSingle(),
     supabase.from("tickets").select("id,token,status,issued_at,used_at,event_id,owner_user_id,intended_owner_contact_id,participant_id,order_id,order_item_id,events(id,name,starts_at),orders(order_number,display_number,status),order_items(item_position,participant_id,registration_contact_id,ownership_status,holder_full_name,shirt_type,shirt_size,ticket_categories(name),registration_batches(name)),participants(registration_contact_id,full_name),participant_kit_items(status)").eq("organization_id", organization.id).range(0, 4999),
     supabase.from("participants").select("id,user_id,registration_contact_id,participation_history(source)").eq("registration_contact_id", id).eq("organization_id", organization.id).range(0, 4999),
@@ -51,6 +57,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     hasPermission("participants.edit_basic"),
     hasPermission("orders.cancel"),
     hasPermission("finance.confirm_payment"),
+    hasPermission("wristbands.view"),
   ]);
   if (contactError) throw contactError;
   if (!contact) notFound();
@@ -214,7 +221,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
               <p className="font-medium text-amber-50">{meta?.display ?? "Ingresso"}</p>
               <p className="mt-1">Titular: {String(contact.full_name)}</p>
               <p className="mt-1 text-slate-300">Evento: {meta?.eventName ?? "Evento"}</p>
-              <p className="mt-1 text-slate-300">Status: {pointer.status ?? meta?.status ?? "—"}</p>
+              <p className="mt-1 text-slate-300">Status: {getStatusLabel(pointer.status ?? meta?.status)}</p>
               <p className="mt-1 text-slate-300">Proprietário / conta: {ownerName}</p>
               <div className="mt-3 flex flex-wrap gap-3">
                 <Link href={`/ingressos/${pointer.ticketId}`} className="rounded-xl border border-amber-400/40 px-3 py-2 text-amber-100">Abrir ingresso</Link>
@@ -272,6 +279,38 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     if (!contactId || extraInviteStatusByContact.has(contactId)) continue;
     extraInviteStatusByContact.set(contactId, String(invite.status ?? ""));
   }
+  const CADASTRO_ORDERS_SELECT = "id,order_number,display_number,status,buyer_type,user_id,base_amount,discount_amount,final_amount,price_origin,applied_coupon_id,created_at,payments!payments_order_id_fkey(payment_method,payment_status,expires_at,created_at,paid_at,final_amount,payment_fee_customer_amount,settlement_nature,provider,gateway_payment_id,gateway_account_key,gateway_environment,off_gateway_method,off_gateway_amount,off_gateway_recorded_at)";
+  const ticketOrderIds = Array.from(new Set(relatedTicketRows.flatMap(({ row }) => (row.order_id ? [String(row.order_id)] : []))));
+  const relatedTicketIds = relatedTicketRows.map(({ row }) => String(row.id));
+  const [{ data: buyerOrderRows }, { data: ticketOrderRows }, { data: wristbandRows }] = await Promise.all([
+    contactUserId
+      ? supabase.from("orders").select(CADASTRO_ORDERS_SELECT).eq("organization_id", organization.id).eq("user_id", contactUserId).order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    ticketOrderIds.length
+      ? supabase.from("orders").select(CADASTRO_ORDERS_SELECT).eq("organization_id", organization.id).in("id", ticketOrderIds)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    canViewWristband && relatedTicketIds.length
+      ? supabase.from("participant_wristbands").select("ticket_id,code,status").in("ticket_id", relatedTicketIds).eq("status", "active")
+      : Promise.resolve({ data: [] as Array<{ ticket_id?: string; code?: string | null }> }),
+  ]);
+  const ordersById = new Map<string, Record<string, unknown>>();
+  for (const row of [...(buyerOrderRows ?? []), ...(ticketOrderRows ?? [])]) {
+    ordersById.set(String((row as { id?: string }).id), row as Record<string, unknown>);
+  }
+  const couponIds = Array.from(new Set(Array.from(ordersById.values()).flatMap((row) => (row.applied_coupon_id ? [String(row.applied_coupon_id)] : []))));
+  const { data: couponRows } = couponIds.length
+    ? await supabase.from("coupons").select("id,code").in("id", couponIds)
+    : { data: [] as Array<{ id: string; code?: string | null }> };
+  const couponCodeById = new Map((couponRows ?? []).map((row) => [String(row.id), String(row.code ?? "")]));
+  const supportOrders = Array.from(ordersById.values())
+    .map((row) => presentSupportOrderFromRecord(row, { couponCode: row.applied_coupon_id ? couponCodeById.get(String(row.applied_coupon_id)) || null : null }))
+    .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+  const orderSummary = summarizeSupportOrders(supportOrders);
+  const wristbandCodeByTicketId = new Map((wristbandRows ?? []).flatMap((row) => {
+    const ticketId = row.ticket_id ? String(row.ticket_id) : "";
+    const code = row.code ? String(row.code) : "";
+    return ticketId && code ? [[ticketId, code] as const] : [];
+  }));
   const sharedEmailGroup = await loadSharedEmailGroup(supabase, organization.id, id);
   const groupHasLinkedAccount = Boolean(sharedEmailGroup?.people.some((person) => person.hasValidAuth));
   const tickets = relatedTicketRows.map(({ row, orderItem, participant, event, link, roles }) => {
@@ -316,13 +355,18 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
         ticketStatus: String(row.status ?? ""),
       }),
       shirt: [orderItem?.shirt_type, orderItem?.shirt_size].filter(Boolean).join(" · "),
-      orderNumber: order ? publicOrderCode(order.display_number, order.order_number) : null,
+      orderId: row.order_id ? String(row.order_id) : null,
+      orderNumber: order ? (formatDisplayNumber(order.display_number) ?? publicOrderCode(order.display_number, order.order_number)) : null,
       shortCode: ticketDisplayReference(order?.display_number, orderItem?.item_position, order?.order_number).replace(/^#/, ""),
       checkinDone: Boolean(row.used_at) || String(row.status) === "used",
+      checkinAt: row.used_at ? String(row.used_at) : null,
+      wristbandCode: canViewWristband ? (wristbandCodeByTicketId.get(String(row.id)) ?? null) : null,
       kitStatus: kitItems.length === 0 ? null : kitItems.every((item) => item.status === "delivered") ? "Entregue" : "Pendente",
     };
   });
   const groups = groupContactTickets(tickets);
+  const checkinsDone = tickets.filter((ticket) => ticket.checkinDone).length;
+  const kitsPending = tickets.filter((ticket) => ticket.kitStatus === "Pendente").length;
   const imported = (linkedParticipants ?? []).some((row) => (Array.isArray(row.participation_history) ? row.participation_history : []).some((entry) => entry.source === "import"));
   const grantableEvents = (eventRows ?? []).map((event) => ({ id: String(event.id), name: String(event.name) }));
   const additionalItems = (additionalOrderRows ?? []).flatMap((order) => {
@@ -377,10 +421,19 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const cardCanInvite = cardState === "linked_to_other_account" ? false : accountBlock.canInvite;
 
   return <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100"><div className="mx-auto flex max-w-7xl gap-6"><Sidebar/><div className="min-w-0 flex-1 space-y-6">
-    <TopBar title={String(contact.full_name)} subtitle="Ficha global da pessoa" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contact.full_name)}]} backHref="/cadastros" fallbackHref="/cadastros"/>
+    <TopBar title={String(contact.full_name)} subtitle="Ficha de suporte" breadcrumbs={[{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:String(contact.full_name)}]} backHref="/cadastros" fallbackHref="/cadastros"/>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">Dados globais</h2><p className="mt-1 text-sm text-slate-400">Este cadastro não pertence a um evento.</p></div><div className="flex flex-wrap gap-2"><Link href={`/cadastros/${id}/editar`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar cadastro</Link>{canIssueTicket ? <Link href={`/ingressos/emitir?from=cadastro&contactId=${encodeURIComponent(id)}`} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400">Emitir ingresso</Link> : null}{canGrantStoreItems ? <ContactGrantStoreItemButton contactId={id} events={grantableEvents}/> : null}{contactUserId && canEditTeam ? (isExistingTeamMember ? <Link href={`/painel/configuracoes/equipe/${contactUserId}`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar acesso da equipe</Link> : <AddToTeamButton userId={contactUserId} contactId={id} contactName={String(contact.full_name)} roleOptions={teamRoleOptions}/>) : null}</div></div>
-      <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[["Nome",contact.full_name],["CPF",contact.cpf],["Nascimento",contact.birth_date],["Gênero",contact.gender],["Telefone",contact.phone],["E-mail",contact.email],["Cidade",contact.city],["Origem",imported ? "Importação" : "Cadastro global"],["Conta vinculada",accountIds.length ? `${accountIds.length} conta(s)` : "Não vinculada"],["Criado em",contact.created_at ? new Date(String(contact.created_at)).toLocaleString("pt-BR") : null]].map(([label,value]) => <div key={String(label)}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words">{valueOrFallback(value)}</dd></div>)}</dl>
+      <h2 className="text-lg font-semibold">Resumo</h2>
+      <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div><dt className="text-xs text-slate-500">Situação da conta</dt><dd className="mt-1">{contactAccountStateView(cardState).label}</dd></div>
+        <div><dt className="text-xs text-slate-500">Pedidos</dt><dd className="mt-1">{orderSummary.total}{orderSummary.total ? ` · ${[orderSummary.paid ? `${orderSummary.paid} pago${orderSummary.paid === 1 ? "" : "s"}` : null, orderSummary.pending ? `${orderSummary.pending} pendente${orderSummary.pending === 1 ? "" : "s"}` : null, orderSummary.expired ? `${orderSummary.expired} expirado${orderSummary.expired === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ")}` : ""}</dd></div>
+        <div><dt className="text-xs text-slate-500">Ingressos</dt><dd className="mt-1">{tickets.length}</dd></div>
+        <div><dt className="text-xs text-slate-500">Operação</dt><dd className="mt-1">{tickets.length === 0 ? "Nenhuma operação neste cadastro" : `${checkinsDone} check-in${checkinsDone === 1 ? "" : "s"} · ${kitsPending ? `${kitsPending} kit(s) pendente(s)` : "sem kit pendente"}`}</dd></div>
+      </dl>
+    </section>
+    <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">Dados</h2><p className="mt-1 text-sm text-slate-400">Este cadastro não pertence a um evento.</p></div><div className="flex flex-wrap gap-2"><Link href={`/cadastros/${id}/editar`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar cadastro</Link>{canIssueTicket ? <Link href={`/ingressos/emitir?from=cadastro&contactId=${encodeURIComponent(id)}`} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400">Emitir ingresso</Link> : null}{canGrantStoreItems ? <ContactGrantStoreItemButton contactId={id} events={grantableEvents}/> : null}{contactUserId && canEditTeam ? (isExistingTeamMember ? <Link href={`/painel/configuracoes/equipe/${contactUserId}`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm">Editar acesso da equipe</Link> : <AddToTeamButton userId={contactUserId} contactId={id} contactName={String(contact.full_name)} roleOptions={teamRoleOptions}/>) : null}</div></div>
+      <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[["Nome",contact.full_name],["CPF",contact.cpf],["Nascimento",contact.birth_date ? formatDateBR(String(contact.birth_date)) : null],["Gênero",contact.gender],["Telefone",contact.phone],["E-mail",contact.email],["Cidade",contact.city],["Origem",imported ? "Importação" : "Cadastro global"],["Conta vinculada",accountIds.length ? `${accountIds.length} conta(s)` : "Não vinculada"],["Criado em",contact.created_at ? formatDateTimeBR(String(contact.created_at)) : null]].map(([label,value]) => <div key={String(label)}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words">{valueOrFallback(value)}</dd></div>)}</dl>
       <div className="mt-4"><CopyableId label="PIN do cadastro" value={contact.public_pin ? String(contact.public_pin) : null}/></div>
       <ContactAccountCard
         contactId={id}
@@ -396,12 +449,32 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     </section>
     {sharedEmailGroup ? <SharedEmailAccountCard group={sharedEmailGroup} contactId={id} /> : null}
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+      <h2 className="text-lg font-semibold">Pedidos</h2>
+      <p className="text-sm text-slate-400">Pedidos deste cadastro, com status comercial — não o status técnico cru do pedido.</p>
+      {supportOrders.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum pedido vinculado a este cadastro.</p> : (
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          {supportOrders.map((order) => (
+            <div key={order.orderId} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="font-semibold">{order.orderNumber}</p>
+                <AdminStatusBadge status={order.situationBadge} />
+              </div>
+              <p className="mt-2 text-sm text-slate-300">{order.createdAt ? formatDateBR(order.createdAt) : "—"}</p>
+              <p className="mt-1 text-sm font-medium text-slate-100">{formatImportedHistoricalAmount(order.isPaid ? (order.paidAmount ?? order.chargedAmount) : order.afterDiscountAmount, null)}</p>
+              <p className="mt-1 text-xs text-slate-400">{order.formaLabel}{order.couponCode ? ` · Cupom ${order.couponCode}` : ""}</p>
+              <Link href={`/inscricoes/pedido/${order.orderId}`} className="mt-3 inline-flex text-xs font-semibold text-emerald-300">Ver pedido</Link>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+    <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
       <h2 className="text-lg font-semibold">Itens adicionais</h2><p className="text-sm text-slate-400">Produtos vinculados diretamente a este cadastro, separados dos ingressos.</p>
       {additionalItems.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum item adicional vinculado.</p> : <div className="mt-5 grid gap-3 sm:grid-cols-2">{additionalItems.map((item) => <div key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.productName}{item.variantLabel ? ` — ${item.variantLabel}` : ""} ×{item.quantity}</p><p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Concedido pela organização" : ""}</p></div><span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{item.status === "delivered" ? "Entregue" : item.status === "confirmed" ? "Pendente" : "Aguardando pagamento"}</span></div><div className="mt-3 flex items-center gap-4"><Link href={`/loja/pedidos/${item.orderId}#item-${item.id}`} className="text-xs font-semibold text-emerald-300">Ver item</Link>{isOrganizationOwner ? <OwnerCancelAdditionalItemButton contactId={id} itemId={item.id} financeHref={`/loja/pedidos/${item.orderId}#pagamento`} details={[`Produto: ${item.productName}`,`Variante: ${item.variantLabel ?? "Sem variante"}`,`Quantidade: ${item.quantity}`,`Origem: ${item.isCourtesy ? "Concessão administrativa" : "Pedido da loja"}`,`Status: ${item.status}`,`Pagamento: ${item.paymentStatus}`]}/> : null}</div></div>)}</div>}
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Ingressos</h2><p className="text-sm text-slate-400">{tickets.length} ingresso(s) em {groups.length} evento(s)</p></div></div>
       {importedRights.length ? <div className="mt-5 grid gap-3">{importedRights.map((right) => { const order=relation(right.orders); const event=relation(right.events); const paymentId=String(order?.payment_id ?? ""); const unknownPrice=String(order?.price_origin ?? "")==="legacy_unknown"; const awaitingPayment=!unknownPrice && paymentStatusById.get(paymentId)==="pending"; const blockerMessages=formatIssuanceBlockerMessages(importedIssuesByItem.get(String(right.id)) ?? []); return <div key={String(right.id)} className={awaitingPayment ? "rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4" : "rounded-2xl border border-slate-700 bg-slate-950/50 p-4"}>{awaitingPayment ? <><p className="font-semibold text-amber-100">Ingresso importado aguardando pagamento</p><p className="mt-1 text-sm text-amber-100/80">{String(event?.name ?? "Evento")} · o ingresso não foi emitido porque o pagamento importado está pendente.</p></> : <><p className="font-semibold text-slate-100">Compra importada preservada</p><p className="mt-1 text-sm text-slate-300">{formatImportedPurchaseWithoutTicketCopy({ eventName: String(event?.name ?? "Evento"), blockerMessages })}</p></>}<div className="mt-3 flex flex-wrap gap-3"><Link href={`/inscricoes/pedido/${String(order?.id ?? right.order_id)}`} className="rounded-xl border border-amber-400/40 px-3 py-2 text-sm text-amber-100">Abrir pedido</Link></div>{awaitingPayment && canConfirmPayment && paymentId ? <ImportedPaymentConfirmation paymentId={paymentId}/> : awaitingPayment ? <p className="mt-3 text-xs text-slate-300">Peça a um administrador com permissão financeira para confirmar o pagamento.</p> : null}</div>; })}</div> : null}
-      {groups.length === 0 && importedRights.length === 0 ? <p className="mt-6 rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Esta pessoa ainda não possui ingressos nem direitos importados pendentes.</p> : <div className="mt-5 grid gap-5 xl:grid-cols-2">{groups.map((group) => <article key={group.eventId} className="rounded-3xl border border-slate-700/80 bg-slate-950/50 p-4 shadow-lg shadow-black/10"><div className="mb-3 border-b border-slate-800 pb-3"><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Evento</p><h3 className="mt-1 text-lg font-semibold text-emerald-200">{group.eventName}</h3><p className="text-xs text-slate-400">{group.tickets.length} ingresso(s)</p></div><div className="grid gap-2">{group.tickets.map((ticket) => <div key={ticket.ticketId} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{ticket.categoryName}</p><p className="mt-0.5 font-mono text-xs text-slate-500">#{ticket.shortCode}</p></div><span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs">{ticket.status}</span></div><p className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-300">{ticket.roleLabel}</p><TicketIdentitySummary identity={ticket.identity} />{ticket.holderUnassigned ? <p className="mt-1 text-xs text-slate-400">{additionalTicketHolderUnassignedCopy()}</p> : null}<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">{ticket.kitStatus ? <span>Kit: {ticket.kitStatus}</span> : null}<span>Check-in: {ticket.checkinDone ? "Realizado" : "Pendente"}</span>{ticket.shirt ? <span>{ticket.shirt}</span> : null}</div><div className="mt-3 flex items-center gap-4"><Link href={`/ingressos/${ticket.ticketId}?from=cadastro&contactId=${id}`} className="text-xs font-semibold text-emerald-300">Ver ingresso</Link>{canCancelTickets ? <OwnerCancelTicketButton contactId={id} ticketId={ticket.ticketId} alreadyCancelled={ticket.status === "cancelled"} details={[`${ticket.categoryName}`,`#${ticket.shortCode}`,`Status: ${ticket.status}`,`Check-in: ${ticket.checkinDone ? "Realizado" : "Pendente"}`,`Kit: ${ticket.kitStatus ?? "Sem itens"}`]}/> : null}</div></div>)}</div></article>)}</div>}
+      {groups.length === 0 && importedRights.length === 0 ? <p className="mt-6 rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Esta pessoa ainda não possui ingressos nem direitos importados pendentes.</p> : <div className="mt-5 grid gap-5 xl:grid-cols-2">{groups.map((group) => <article key={group.eventId} className="rounded-3xl border border-slate-700/80 bg-slate-950/50 p-4 shadow-lg shadow-black/10"><div className="mb-3 border-b border-slate-800 pb-3"><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Evento</p><h3 className="mt-1 text-lg font-semibold text-emerald-200">{group.eventName}</h3><p className="text-xs text-slate-400">{group.tickets.length} ingresso(s)</p></div><div className="grid gap-2">{group.tickets.map((ticket) => <div key={ticket.ticketId} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-semibold">{ticket.categoryName}</p><p className="mt-0.5 font-mono text-xs text-slate-500">#{ticket.shortCode}</p>{ticket.orderNumber ? <p className="mt-0.5 text-xs text-slate-400">Pedido {ticket.orderNumber}</p> : null}</div><AdminStatusBadge status={ticket.status} /></div><p className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-300">{ticket.roleLabel}</p><TicketIdentitySummary identity={ticket.identity} />{ticket.holderUnassigned ? <p className="mt-1 text-xs text-slate-400">{additionalTicketHolderUnassignedCopy()}</p> : null}<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">{ticket.kitStatus ? <span>Kit: {ticket.kitStatus}</span> : null}<span>Check-in: {ticket.checkinDone ? (ticket.checkinAt ? `Realizado em ${formatDateTimeBR(ticket.checkinAt)}` : "Realizado") : "Pendente"}</span>{ticket.shirt ? <span>{ticket.shirt}</span> : null}{ticket.wristbandCode ? <span>Pulseira {ticket.wristbandCode}</span> : null}</div><div className="mt-3 flex flex-wrap items-center gap-4"><Link href={`/ingressos/${ticket.ticketId}?from=cadastro&contactId=${id}`} className="text-xs font-semibold text-emerald-300">Ver ingresso</Link>{ticket.orderId ? <Link href={`/inscricoes/pedido/${ticket.orderId}`} className="text-xs font-semibold text-cyan-300">Ver pedido</Link> : null}{canCancelTickets ? <OwnerCancelTicketButton contactId={id} ticketId={ticket.ticketId} alreadyCancelled={ticket.status === "cancelled"} details={[`${ticket.categoryName}`,`#${ticket.shortCode}`,`Status: ${ticket.status}`,`Check-in: ${ticket.checkinDone ? "Realizado" : "Pendente"}`,`Kit: ${ticket.kitStatus ?? "Sem itens"}`]}/> : null}</div></div>)}</div></article>)}</div>}
     </section>
   </div></div></main>;
 }

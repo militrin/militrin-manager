@@ -71,7 +71,8 @@ test("wrapper por ticket resolve registration_contact e delega para a RPC canoni
 
 test("Ficha Global mostra botao no cabecalho, seleciona evento e lista itens separados", async () => {
   const [page, button, modal] = await Promise.all([readFile(pageUrl, "utf8"), readFile(buttonUrl, "utf8"), readFile(modalUrl, "utf8")]);
-  const header = page.slice(page.indexOf("Dados globais"), page.indexOf("<dl"));
+  const dadosStart = page.indexOf(">Dados</h2>");
+  const header = page.slice(dadosStart, page.indexOf("<dl", dadosStart));
   assert.match(header, /Editar cadastro/);
   assert.match(header, /Emitir ingresso/);
   assert.match(header, /ContactGrantStoreItemButton/);

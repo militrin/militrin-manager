@@ -122,7 +122,8 @@ test('Pedido: cancelamento resolvido (replacement_required=false) deixa de ser t
 });
 
 test('Pedido: CTA "Regularizar cancelamento" so aparece quando replacement_required é NULL (pendente) E o usuário tem orders.cancel', () => {
-  assert.match(pedidoPage, /const canRegularizeCancellation = await hasPermission\("orders\.cancel"\);/);
+  assert.match(pedidoPage, /hasPermission\("orders\.cancel"\)/);
+  assert.match(pedidoPage, /canRegularizeCancellation/);
   assert.match(pedidoPage, /const cancellationNeedsRegularization = hasCancelledOnlyTicket && ticket!\.replacementRequired === null;/);
   assert.match(pedidoPage, /cancellationNeedsRegularization && canRegularizeCancellation \?/);
 });

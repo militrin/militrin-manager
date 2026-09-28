@@ -334,6 +334,7 @@ export function ExpandedTicketDetails({
             {hasActiveWristband && detail.wristband?.code ? (
               <WristbandLinkedPanel
                 code={detail.wristband.code}
+                canViewCode={capabilities.canViewWristband}
                 canReplace={capabilities.canReplaceWristband}
                 onReplace={() => setShowReplaceWristband(true)}
               />
@@ -418,7 +419,9 @@ export function ExpandedTicketDetails({
                 </button>
               ) : null}
               {hasActiveWristband && detail.wristband?.code ? (
-                <p className="mt-2 text-[11px] text-cyan-200">Pulseira vinculada: <span className="font-mono">{detail.wristband.code}</span></p>
+                <p className="mt-2 text-[11px] text-cyan-200">
+                  Pulseira vinculada{capabilities.canViewWristband ? <>: <span className="font-mono">{detail.wristband.code}</span></> : null}
+                </p>
               ) : null}
             </div>
           ) : (
@@ -426,7 +429,9 @@ export function ExpandedTicketDetails({
               {wristbandRequiredForCheckin && !hasActiveWristband ? (
                 <span className="text-[11px] font-medium text-amber-300">Pulseira obrigatória para check-in</span>
               ) : hasActiveWristband && detail.wristband?.code ? (
-                <p className="text-[11px] text-cyan-200">Pulseira vinculada: <span className="font-mono">{detail.wristband.code}</span></p>
+                <p className="text-[11px] text-cyan-200">
+                  Pulseira vinculada{capabilities.canViewWristband ? <>: <span className="font-mono">{detail.wristband.code}</span></> : null}
+                </p>
               ) : null}
               <button
                 type="button"
