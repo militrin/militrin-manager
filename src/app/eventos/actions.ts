@@ -186,7 +186,6 @@ function resolveActionErrorMessage(error: unknown, fallback: string) {
 async function revalidateEventsPages() {
   revalidatePath('/eventos');
   revalidatePath('/painel/eventos');
-  revalidatePath("/inscricoes/nova");
   revalidatePath("/operacoes");
   revalidatePath("/");
   revalidatePath('/minha-conta');
@@ -1003,7 +1002,6 @@ export async function upsertKitItemAction(payload: z.infer<typeof kitItemSchema>
     revalidatePath('/eventos');
     revalidatePath('/painel/eventos');
     revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
-    revalidatePath("/inscricoes/nova");
     return { success: true, message: "Item do kit salvo com sucesso." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao salvar item do kit." };
@@ -1022,7 +1020,6 @@ export async function deleteKitItemAction(payload: { event_id: string; kit_item_
     revalidatePath('/eventos');
     revalidatePath('/painel/eventos');
     revalidatePath(`/painel/eventos/${payload.event_id}`);
-    revalidatePath("/inscricoes/nova");
     return { success: true, message: "Item removido." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao remover item." };
@@ -1049,7 +1046,6 @@ export async function upsertKitVariantAction(payload: z.infer<typeof kitVariantS
     if (error) throw error;
     revalidatePath('/eventos');
     revalidatePath('/painel/eventos');
-    revalidatePath("/inscricoes/nova");
     return { success: true, message: "Variação salva." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao salvar variação." };
@@ -1064,7 +1060,6 @@ export async function deleteKitVariantAction(variantId: string) {
     if (error) throw error;
     revalidatePath('/eventos');
     revalidatePath('/painel/eventos');
-    revalidatePath("/inscricoes/nova");
     return { success: true, message: "Variação removida." };
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : "Falha ao remover variação." };
@@ -1104,7 +1099,6 @@ export async function saveEventShirtKitConfigurationAction(payload: z.infer<type
     revalidatePath('/eventos');
     revalidatePath('/painel/eventos');
     revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
-    revalidatePath("/inscricoes/nova");
     revalidatePath("/camisetas");
     const blockedRemovals = Array.isArray((data as { blocked_removals?: unknown[] } | null)?.blocked_removals)
       ? ((data as { blocked_removals: Array<{ shirt_type: string; shirt_size: string; reason: string }> }).blocked_removals)

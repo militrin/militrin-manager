@@ -106,3 +106,15 @@ test('categorias e lotes redirecionam para a ficha canônica do evento', async (
   assert.match(batches, /redirect\(`\/painel\/eventos\/\$\{eventId\}\?etapa=3`\)/);
   assert.match(batches, /redirect\("\/painel\/eventos"\)/);
 });
+
+test('Fase 6 aposenta /inscricoes/nova para Emitir ingresso, preservando eventId', async () => {
+  const [nova, emitir] = await Promise.all([
+    read('../src/app/inscricoes/nova/page.tsx'),
+    read('../src/app/ingressos/emitir/page.tsx'),
+  ]);
+  assert.match(nova, /redirect\(`\/ingressos\/emitir\?eventId=\$\{encodeURIComponent\(eventId\)\}`\)/);
+  assert.match(nova, /redirect\("\/ingressos\/emitir"\)/);
+  assert.match(emitir, /query\.eventId && uuid\.test\(query\.eventId\)/);
+  assert.match(emitir, /initialEventId=\{initialEventId\}/);
+  assert.match(emitir, /participants\.create/);
+});

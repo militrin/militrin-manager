@@ -18,11 +18,12 @@ type InitialContact = { id: string; name: string; pin: string };
 
 const inputClass = "w-full rounded-xl border border-slate-800 bg-slate-950 p-3";
 const pinPattern = /^[A-Z0-9]{10}$/i;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export function IssueTicketForm({ events, initialPin, initialContact }: { events: Option[]; initialPin: string; initialContact: InitialContact | null }) {
+export function IssueTicketForm({ events, initialPin, initialContact, initialEventId = "" }: { events: Option[]; initialPin: string; initialContact: InitialContact | null; initialEventId?: string }) {
   const [pin, setPin] = useState(initialPin);
   const [registrationContactId, setRegistrationContactId] = useState<string | null>(initialContact?.id ?? null);
-  const [eventId, setEventId] = useState("");
+  const [eventId, setEventId] = useState(() => events.some((event) => event.id === initialEventId) ? initialEventId : "");
   const [categoryId, setCategoryId] = useState("");
   const [batchId, setBatchId] = useState("");
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -102,6 +103,7 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
   }, [eventId]);
 
   const notesRequired = reason === "other";
+  const newContactHref = uuid.test(eventId) ? `/cadastros/novo?eventId=${encodeURIComponent(eventId)}` : "/cadastros/novo";
   const shirtSizesForType = shirtOptions.find((option) => option.type === shirtType)?.sizes ?? [];
   const hasCategories = categories.length > 0;
   const selectedCategory = categories.find((category) => category.id === categoryId) ?? null;
@@ -209,11 +211,11 @@ export function IssueTicketForm({ events, initialPin, initialContact }: { events
           {contactLookup.status === "loading" ? <p className="text-sm text-slate-400">Buscando cadastro...</p> : null}
           {contactLookup.status === "found" ? <p className="text-sm text-emerald-300">{contactLookup.name}</p> : null}
           {contactLookup.status === "error" ? <p className="text-sm text-rose-300">{contactLookup.message}</p> : null}
-          <Link href="/cadastros/novo" className="text-sm text-emerald-300">Criar novo cadastro</Link>
+          <Link href={newContactHref} className="text-sm text-emerald-300">Criar novo cadastro</Link>
         </label>
 
         <label className="space-y-2">
-          <span>Evento</span>
+          <span>Evento{eventId ? `: ${events.find((event) => event.id === eventId)?.name ?? ""}` : ""}</span>
           <select
             value={eventId}
             onChange={(e) => {

@@ -55,7 +55,6 @@ export async function createCategoryAction(payload: z.infer<typeof categorySchem
     if (error) throw error;
 
     revalidatePath("/categorias");
-    revalidatePath("/inscricoes/nova");
     revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
     return { success: true, message: "Categoria criada com sucesso." };
   } catch (error) {
@@ -84,7 +83,6 @@ export async function updateCategoryAction(payload: z.infer<typeof categorySchem
     if (error) throw error;
 
     revalidatePath("/categorias");
-    revalidatePath("/inscricoes/nova");
     revalidatePath(`/painel/eventos/${parsed.data.event_id}`);
     return { success: true, message: "Categoria atualizada com sucesso." };
   } catch (error) {
@@ -105,7 +103,6 @@ export async function toggleCategoryActiveAction(payload: { id: string; event_id
     if (error) throw error;
 
     revalidatePath("/categorias");
-    revalidatePath("/inscricoes/nova");
     revalidatePath(`/painel/eventos/${payload.event_id}`);
     return { success: true, message: payload.is_active ? "Categoria ativada." : "Categoria desativada." };
   } catch (error) {

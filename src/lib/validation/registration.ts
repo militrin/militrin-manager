@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { SHIRT_SIZES, SHIRT_TYPES } from "@/lib/constants/shirts";
 import { isValidDateBR, parseDateInput } from "@/lib/utils/date";
 import { isValidCpf as validateCpf } from "@/lib/imports/import-row-validation";
 
@@ -46,62 +45,3 @@ export const personRegistrationSchema = personFieldsSchema.superRefine((data, ct
   }
 });
 export type PersonRegistrationValues = z.infer<typeof personRegistrationSchema>;
-
-export const registrationSchema = personFieldsSchema.extend({
-  shirt_type: z.string().optional(),
-  shirt_size: z.string().optional(),
-  has_shirt_item: z.boolean().optional(),
-  ticket_category_id: z.string().uuid("Selecione uma categoria de acesso válida."),
-  payment_method: z.string().min(1, "Selecione a forma de pagamento."),
-  coupon_code: z.string().trim().max(60, "Código de cupom muito longo.").optional().or(z.literal("")),
-  notes: z.string().optional(),
-}).superRefine((data, ctx) => {
-  if (!isValidCpf(data.cpf)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cpf"], message: "CPF inválido." });
-  }
-
-  if (!isValidDateBR(data.birth_date)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["birth_date"], message: "Informe uma data válida no formato dd/MM/aaaa." });
-    return;
-  }
-
-  const parsedBirthDate = parseDateInput(data.birth_date);
-  if (!parsedBirthDate || parsedBirthDate.getTime() > Date.now()) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["birth_date"], message: "Informe uma data válida no formato dd/MM/aaaa." });
-    return;
-  }
-
-  if (data.has_shirt_item) {
-    if (!data.shirt_type || !SHIRT_TYPES.includes(data.shirt_type as (typeof SHIRT_TYPES)[number])) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["shirt_type"], message: "Selecione o modelo de camiseta." });
-      return;
-    }
-
-    const allowedSizes = (SHIRT_SIZES as Record<string, readonly string[]>)[data.shirt_type] ?? [];
-    if (!data.shirt_size || !allowedSizes.includes(data.shirt_size)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["shirt_size"], message: "Tamanho não permitido para este modelo." });
-    }
-  }
-});
-
-export type RegistrationFormValues = z.infer<typeof registrationSchema> & {
-  has_shirt_item?: boolean;
-};
-
-export function validateShirtSelection(values: { has_shirt_item?: boolean; shirt_type?: string; shirt_size?: string }) {
-  if (!values.has_shirt_item) return null;
-
-  const shirtType = values.shirt_type ?? "";
-  const shirtSize = values.shirt_size ?? "";
-
-  if (!SHIRT_TYPES.includes(shirtType as (typeof SHIRT_TYPES)[number])) {
-    return "Selecione o modelo de camiseta.";
-  }
-
-  const allowedSizes = (SHIRT_SIZES as Record<string, readonly string[]>)[shirtType] ?? [];
-  if (!shirtSize || !allowedSizes.includes(shirtSize)) {
-    return "Tamanho não permitido para este modelo.";
-  }
-
-  return null;
-}

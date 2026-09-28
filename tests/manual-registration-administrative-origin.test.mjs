@@ -10,8 +10,8 @@ const checkoutSql = await readFile(
   new URL('../supabase/migrations/20260904000000_ticket_category_capacity_order_items_source.sql', import.meta.url),
   'utf8',
 );
-const novaAction = await readFile(
-  new URL('../src/app/inscricoes/nova/actions.ts', import.meta.url),
+const issueAction = await readFile(
+  new URL('../src/app/ingressos/emitir/actions.ts', import.meta.url),
   'utf8',
 );
 
@@ -35,10 +35,11 @@ test('insert continua pelo trigger existente, sem segunda regra paralela de buye
   assert.doesNotMatch(fn, /buyer_type\s*=\s*'administrative'/);
 });
 
-test('/inscricoes/nova continua chamando a mesma RPC, sem classificacao no client', () => {
-  assert.match(novaAction, /supabase\.rpc\('create_manual_registration_order'/);
-  assert.doesNotMatch(novaAction, /buyer_type/);
-  assert.doesNotMatch(novaAction, /administrative_ticket_issue_actor/);
+test('emissao administrativa TS passa pela RPC wrapper, sem classificacao no client', () => {
+  assert.match(issueAction, /supabase\.rpc\("issue_manual_ticket_batch"/);
+  assert.doesNotMatch(issueAction, /create_manual_registration_order/);
+  assert.doesNotMatch(issueAction, /buyer_type/);
+  assert.doesNotMatch(issueAction, /administrative_ticket_issue_actor/);
 });
 
 test('checkout publico nao seta o GUC administrativo', () => {

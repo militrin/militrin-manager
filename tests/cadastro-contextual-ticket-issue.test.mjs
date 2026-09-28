@@ -20,8 +20,10 @@ test('emissor existente preseleciona cadastro por UUID e preserva breadcrumb',as
   assert.match(page,/\.eq\("organization_id", org\.id\)/);
   assert.match(page,/label:contactContext\.name,href:cadastroHref/);
   assert.match(page,/label:"Emitir ingresso"/);
+  assert.match(page,/query\.eventId && uuid\.test\(query\.eventId\)/);
   assert.match(form,/Emitindo para:/);
   assert.match(form,/registrationContactId/);
+  assert.match(form,/initialEventId/);
 });
 
 test('action usa registration_contact_id exato e nao infere propriedade por e-mail/identidade',async()=>{
@@ -52,4 +54,25 @@ test('TopBar global nao injeta busca ou cadastro e listas mantem acoes locais',a
   assert.match(cadastros,/placeholder="Nome, CPF, e-mail ou telefone"/);
   assert.match(cadastros,/href="\/cadastros\/novo"[\s\S]*Novo cadastro/);
   assert.match(ingressos,/href="\/ingressos\/emitir"[\s\S]*Emitir ingresso/);
+});
+
+test('round-trip Novo cadastro preserva eventId valido e PIN; invalido nao propaga',async()=>{
+  const [form,novoPage,novoAction,emitir]=await Promise.all([
+    read('../src/app/ingressos/emitir/issue-ticket-form.tsx'),
+    read('../src/app/cadastros/novo/page.tsx'),
+    read('../src/app/cadastros/novo/actions.ts'),
+    read('../src/app/ingressos/emitir/page.tsx'),
+  ]);
+  assert.match(form,/uuid\.test\(eventId\) \? `\/cadastros\/novo\?eventId=\$\{encodeURIComponent\(eventId\)\}` : "\/cadastros\/novo"/);
+  assert.match(novoPage,/query\.eventId && uuid\.test\(query\.eventId\)/);
+  assert.match(novoPage,/name="event_id"/);
+  assert.match(novoPage,/\/ingressos\/emitir\?pin=\$\{encodeURIComponent\(query\.pin\)\}&eventId=\$\{encodeURIComponent\(eventId\)\}/);
+  assert.match(novoPage,/\/ingressos\/emitir\?pin=\$\{encodeURIComponent\(query\.pin\)\}/);
+  assert.match(novoAction,/formData\.get\("event_id"\)/);
+  assert.match(novoAction,/uuid\.test\(eventId\)[\s\S]*search\.set\("eventId", eventId\)/);
+  assert.doesNotMatch(novoAction,/from\("events"\)/);
+  assert.match(emitir,/query\.eventId && uuid\.test\(query\.eventId\)/);
+  assert.match(emitir,/\.eq\("organization_id", org\.id\)[\s\S]*\.eq\("is_active", true\)[\s\S]*\.is\("archived_at", null\)/);
+  assert.match(emitir,/eventOptions\.some\(\(event\) => event\.id === requestedEventId\) \? requestedEventId : ""/);
+  assert.match(emitir,/hasPermission\("participants.create"\)/);
 });

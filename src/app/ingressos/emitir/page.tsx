@@ -17,6 +17,7 @@ export default async function IssueTicketPage({ searchParams }: { searchParams: 
   const supabase = await createServerSupabaseClient();
   const org = (await getCurrentOrganizationContext()).organization;
   const requestedContactId = query.from === "cadastro" && query.contactId && uuid.test(query.contactId) ? query.contactId : null;
+  const requestedEventId = query.eventId && uuid.test(query.eventId) ? query.eventId : null;
   const [{ data: events }, { data: initialContact }] = org?.id
     ? await Promise.all([
       supabase.from("events").select("id,name").eq("organization_id", org.id).eq("is_active", true).is("archived_at", null).order("starts_at", { ascending: false }),
@@ -25,6 +26,9 @@ export default async function IssueTicketPage({ searchParams }: { searchParams: 
         : Promise.resolve({ data: null }),
     ])
     : [{ data: [] }, { data: null }];
+  const eventOptions = (events ?? []).map((event) => ({ id: String(event.id), name: String(event.name) }));
+  const initialEventId = requestedEventId && eventOptions.some((event) => event.id === requestedEventId) ? requestedEventId : "";
+  const selectedEventName = eventOptions.find((event) => event.id === initialEventId)?.name ?? null;
   const contactContext = initialContact ? { id: String(initialContact.id), name: String(initialContact.full_name), pin: String(initialContact.public_pin ?? "") } : null;
   const cadastroHref = contactContext ? `/cadastros/${contactContext.id}` : "/cadastros";
 
@@ -33,12 +37,12 @@ export default async function IssueTicketPage({ searchParams }: { searchParams: 
       <div className="mx-auto flex max-w-7xl gap-6">
         <Sidebar />
         <div className="flex-1 space-y-6">
-          <TopBar title="Emitir ingresso" subtitle="Ingressos" breadcrumbs={contactContext ? [{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:contactContext.name,href:cadastroHref},{label:"Emitir ingresso"}] : undefined} backHref={cadastroHref} fallbackHref={cadastroHref} />
+          <TopBar title="Emitir ingresso" subtitle={selectedEventName ?? "Ingressos"} breadcrumbs={contactContext ? [{label:"Início",href:"/painel"},{label:"Cadastros",href:"/cadastros"},{label:contactContext.name,href:cadastroHref},{label:"Emitir ingresso"}] : undefined} backHref={cadastroHref} fallbackHref={cadastroHref} />
           <SectionCard
             title="Emissão manual de ingresso"
             description="Gera sempre um ingresso novo e independente para o PIN de cadastro informado — cortesia, correção de falha do sistema ou outro motivo, sem passar por confirmação de pagamento."
           >
-            <IssueTicketForm events={(events ?? []).map((e) => ({ id: String(e.id), name: String(e.name) }))} initialPin={contactContext?.pin ?? query.pin ?? ""} initialContact={contactContext} />
+            <IssueTicketForm events={eventOptions} initialPin={contactContext?.pin ?? query.pin ?? ""} initialContact={contactContext} initialEventId={initialEventId} />
           </SectionCard>
         </div>
       </div>
