@@ -1,7 +1,9 @@
 "use client";
 
 import { Fragment, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { shirtDeliveriesHref } from "@/lib/operations/history/url";
 import {
   addInventoryQuantityAction,
   adjustInventoryQuantityAction,
@@ -32,6 +34,7 @@ type ShirtStockTableProps = {
   limitShirtSelectionToStock: boolean;
   canAdjustInventory: boolean;
   canViewHistory: boolean;
+  canViewDeliveries?: boolean;
   canLimitSelection: boolean;
   canResetInventory: boolean;
   canClearHistory: boolean;
@@ -93,6 +96,7 @@ export function ShirtStockTable({
   limitShirtSelectionToStock,
   canAdjustInventory,
   canViewHistory,
+  canViewDeliveries = false,
   canLimitSelection,
   canResetInventory,
   canClearHistory,
@@ -120,6 +124,14 @@ export function ShirtStockTable({
     if (Number.isNaN(ts)) return false;
     return nowMs > ts;
   })();
+
+  function deliveriesHref(row: ShirtStockRow) {
+    return shirtDeliveriesHref({
+      eventId,
+      shirtType: row.shirt_type,
+      shirtSize: row.shirt_size,
+    });
+  }
 
   function statusLabel() {
     return limitSelectionEnabled ? "Limitada ao estoque físico" : "Livre para encomenda";
@@ -511,6 +523,7 @@ export function ShirtStockTable({
                   </abbr>
                 </span>
               </th>
+              <th className="px-2 py-2 font-medium">Entregas</th>
               <th className="px-2 py-2 font-medium">
                 {bulkMode === "purchase" ? "Quantidade recebida" : bulkMode === "adjustment" ? "Ajuste (+/-)" : "Histórico"}
               </th>
@@ -519,7 +532,7 @@ export function ShirtStockTable({
           <tbody className="divide-y divide-slate-800 text-slate-200">
             {rows.length === 0 ? (
               <tr>
-                <td className="px-3 py-4 text-center text-slate-400" colSpan={9}>
+                <td className="px-3 py-4 text-center text-slate-400" colSpan={10}>
                   Sem linhas de estoque neste evento.
                 </td>
               </tr>
@@ -559,6 +572,18 @@ export function ShirtStockTable({
                         <ToOrderValue quantity={toOrder} />
                       </td>
                       <td className="px-2 py-2">
+                        {canViewDeliveries ? (
+                          <Link
+                            href={deliveriesHref(row)}
+                            className="inline-flex h-7 items-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400"
+                          >
+                            Ver entregas
+                          </Link>
+                        ) : (
+                          <span className="text-xs text-slate-500">—</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2">
                         {bulkMode ? (
                           <input
                             type="number"
@@ -585,7 +610,7 @@ export function ShirtStockTable({
 
                     {isHistoryOpen ? (
                       <tr {...adminTableRowProps({ detail: true })}>
-                        <td colSpan={9} className="bg-slate-950/40 px-3 py-3">
+                        <td colSpan={10} className="bg-slate-950/40 px-3 py-3">
                           <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
                             <p className="text-sm font-semibold text-slate-100">Histórico de movimentações</p>
                             <div className="mt-3 space-y-2">
@@ -634,6 +659,7 @@ export function ShirtStockTable({
                 <td className="px-2 py-2 font-semibold">{totals.free}</td>
                 <td className={`px-2 py-2 font-semibold ${totals.toOrder > 0 ? "bg-amber-500/10 text-amber-100" : ""}`}>{totals.toOrder}</td>
                 <td className="px-2 py-2" />
+                <td className="px-2 py-2" />
               </tr>
             </tfoot>
           ) : null}
@@ -678,19 +704,32 @@ export function ShirtStockTable({
                       placeholder={bulkMode === "purchase" ? "0" : "+/-0"}
                       className="w-24 rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-1 text-sm text-slate-100 outline-none"
                     />
-                  ) : canViewHistory ? (
-                    <button
-                      type="button"
-                      onClick={() => handleOpenHistory(row.id)}
-                      disabled={historyLoadingRowId === row.id}
-                      className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-200 transition hover:border-slate-500"
-                    >
-                      {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Histórico"}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-slate-500">Somente leitura</span>
-                  )}
+                  ) : null}
                 </div>
+                {!bulkMode ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {canViewDeliveries ? (
+                      <Link
+                        href={deliveriesHref(row)}
+                        className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-200"
+                      >
+                        Ver entregas
+                      </Link>
+                    ) : null}
+                    {canViewHistory ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenHistory(row.id)}
+                        disabled={historyLoadingRowId === row.id}
+                        className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-700 px-3 text-sm text-slate-200 transition hover:border-slate-500"
+                      >
+                        {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Histórico"}
+                      </button>
+                    ) : !canViewDeliveries ? (
+                      <span className="text-xs text-slate-500">Somente leitura</span>
+                    ) : null}
+                  </div>
+                ) : null}
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-2">
                     <dt className="text-[11px] uppercase tracking-wide text-slate-500">Estoque físico</dt>

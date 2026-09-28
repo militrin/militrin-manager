@@ -34,6 +34,7 @@ test('cursor inválido não quebra a primeira página', () => {
 test('período Hoje usa o calendário do evento, 7 e 30 dias são inclusivos até hoje', () => {
   const now = new Date('2026-09-24T18:30:00-03:00');
   assert.deepEqual(resolveHistoryPeriod({ period: 'today', now }), { dateFrom: '2026-09-24', dateTo: '2026-09-24' });
+  assert.deepEqual(resolveHistoryPeriod({ period: 'yesterday', now }), { dateFrom: '2026-09-23', dateTo: '2026-09-23' });
   assert.deepEqual(resolveHistoryPeriod({ period: '7d', now }), { dateFrom: '2026-09-18', dateTo: '2026-09-24' });
   assert.deepEqual(resolveHistoryPeriod({ period: '30d', now }), { dateFrom: '2026-08-26', dateTo: '2026-09-24' });
   assert.deepEqual(

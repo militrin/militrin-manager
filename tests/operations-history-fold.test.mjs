@@ -77,6 +77,7 @@ test('histórico legado agrupa itens do mesmo ingresso+operador na janela e não
   assert.equal(folded[0].grouping, 'legacy');
   assert.equal(folded[0].title, 'KIT ENTREGUE');
   assert.equal(folded[0].sourceIds.length, 4);
+  assert.equal(folded[0].shirtQuantity, 4);
 });
 
 test('itens distantes (>15s) não viram a mesma entrega legada', () => {

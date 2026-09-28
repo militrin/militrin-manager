@@ -7,6 +7,7 @@ import {
   feedParticipantLine,
   feedTone,
   formatFeedOccurredAt,
+  formatHistoryPeriodLabel,
 } from '../src/lib/operations/history/presentation.ts';
 
 const baseItem = {
@@ -21,9 +22,10 @@ const baseItem = {
   stateChanges: [],
 };
 
-test('no período Hoje o feed mostra só HH:mm', () => {
+test('no período Hoje e Ontem o feed mostra só HH:mm', () => {
   const now = new Date('2026-09-25T18:00:00-03:00');
   assert.equal(formatFeedOccurredAt('2026-09-25T16:13:00.000Z', 'today', now), '13:13');
+  assert.equal(formatFeedOccurredAt('2026-09-24T21:42:00.000Z', 'yesterday', now), '18:42');
 });
 
 test('períodos maiores usam Hoje, Ontem e dd/MM', () => {
@@ -36,6 +38,8 @@ test('períodos maiores usam Hoje, Ontem e dd/MM', () => {
 test('filtros extras não contam busca nem o período Hoje', () => {
   assert.equal(extraHistoryFilterCount({ period: 'today', category: 'all', operatorUserId: '' }), 0);
   assert.equal(extraHistoryFilterCount({ period: '7d', category: 'kit', operatorUserId: 'abc' }), 3);
+  assert.equal(extraHistoryFilterCount({ period: 'yesterday', category: 'kit', operatorUserId: '', shirtType: 'Camiseta', shirtSize: 'EXGG' }), 4);
+  assert.match(formatHistoryPeriodLabel({ period: 'today', dateFrom: '2026-09-27', dateTo: '2026-09-27' }), /Hoje · 27\/09\/2026 · America\/Sao_Paulo/);
 });
 
 test('linha de meta do feed junta ingresso, info e operador sem prefixo', () => {

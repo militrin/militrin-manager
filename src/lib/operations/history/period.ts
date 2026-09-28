@@ -34,6 +34,10 @@ export function resolveHistoryPeriod(input: {
 }) {
   const today = calendarDateInEventTimeZone(input.now ?? new Date());
   if (input.period === "today") return { dateFrom: today, dateTo: today };
+  if (input.period === "yesterday") {
+    const yesterday = addCalendarDays(today, -1);
+    return { dateFrom: yesterday, dateTo: yesterday };
+  }
   if (input.period === "7d") return { dateFrom: addCalendarDays(today, -6), dateTo: today };
   if (input.period === "30d") return { dateFrom: addCalendarDays(today, -29), dateTo: today };
 

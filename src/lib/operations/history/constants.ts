@@ -41,6 +41,16 @@ export const HISTORY_AUDIT_ACTIONS = [
   "manual_unassigned_ticket_order_created",
 ] as const;
 
+export const KIT_HISTORY_AUDIT_ACTIONS = [
+  ACTION_KIT_DELIVERED,
+  ACTION_KIT_DELIVERY_UNDONE,
+  ACTION_KIT_ITEM_DELIVERED,
+  ACTION_KIT_ITEM_UNDONE,
+  ACTION_COMBINED_KIT_CHECKIN,
+  "ticket_shirt_admin_changed",
+  "ticket_shirt_admin_corrected_after_operation",
+] as const;
+
 export const HISTORY_HOLDER_OPERATIONS = [
   "holder_assigned",
   "holder_changed",

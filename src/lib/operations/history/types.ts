@@ -1,4 +1,6 @@
-export type HistoryPeriodPreset = "today" | "7d" | "30d" | "custom";
+export type HistoryPeriodPreset = "today" | "yesterday" | "7d" | "30d" | "custom";
+
+export type ShirtDeliveryStatus = "delivered" | "undone" | "redelivered";
 
 export type OperationHistoryCategory =
   | "kit"
@@ -65,8 +67,12 @@ export type OperationHistoryItem = {
   orderNumber: string | null;
   operatorName: string;
   shirtLabel: string | null;
+  shirtQuantity: number | null;
+  deliveryStatus: ShirtDeliveryStatus | null;
   wristbandLabel: string | null;
   reason: string | null;
+  contactId: string | null;
+  orderId: string | null;
   eventName: string;
   stateChanges: OperationStateChange[];
   counts: OperationCounts;
@@ -101,6 +107,8 @@ export type OperationHistoryQueryInput = {
   category?: OperationHistoryCategory | "all" | null;
   operatorUserId?: string | null;
   search?: string | null;
+  shirtType?: string | null;
+  shirtSize?: string | null;
   cursor?: string | null;
   pageSize?: number;
   includeTechnical?: boolean;
@@ -116,6 +124,16 @@ export type OperationHistoryResult = {
   cards: OperationHistoryCards;
   items: OperationHistoryItem[];
   operators: OperationHistoryOperator[];
+  shirtCatalog: { types: string[]; sizesByType: Record<string, string[]> };
+  shirtDeliverySummary: {
+    periodDeliveries: number;
+    periodUndos: number;
+    currentlyDelivered: number | null;
+    unknownSize: number;
+  } | null;
+  canViewCadastro: boolean;
+  canViewTicket: boolean;
+  canViewOrder: boolean;
   nextCursor: string | null;
   truncated: boolean;
   generatedAt: string;

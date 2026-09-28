@@ -153,6 +153,7 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
     "inventory.limit_selection",
     "inventory.reset",
     "inventory.clear_history",
+    "operations.view_report",
   ]);
   const canCreateEvent = await hasPermission("events.create");
 
@@ -205,6 +206,7 @@ export default async function ShirtsPage({ searchParams }: { searchParams?: Prom
                 limitShirtSelectionToStock={Boolean(selectedEvent?.limit_shirt_selection_to_stock)}
                 canAdjustInventory={Boolean(permissionMap["inventory.adjust"])}
                 canViewHistory={Boolean(permissionMap["inventory.view_history"])}
+                canViewDeliveries={Boolean(permissionMap["operations.view_report"])}
                 canLimitSelection={Boolean(permissionMap["inventory.limit_selection"])}
                 canResetInventory={Boolean(permissionMap["inventory.reset"])}
                 canClearHistory={Boolean(permissionMap["inventory.clear_history"])}

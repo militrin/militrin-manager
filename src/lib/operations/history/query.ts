@@ -13,6 +13,7 @@ import {
   FINANCIAL_AUDIT_ACTIONS,
   HISTORY_AUDIT_ACTIONS,
   HISTORY_HOLDER_OPERATIONS,
+  KIT_HISTORY_AUDIT_ACTIONS,
   PAGE_SIZE,
   RAW_FETCH_CAP,
   RAW_FETCH_CHUNK,
@@ -21,6 +22,16 @@ import { foldOperationEvents } from "./fold-events.ts";
 import { paginateByCursor } from "./paginate.ts";
 import { periodToIsoBounds, resolveHistoryPeriod } from "./period.ts";
 import { applyHistoryFilters, countOperationCards } from "./search.ts";
+import {
+  annotateKitDeliveryLifecycle,
+  countShirtDeliverySummary,
+  formatHistoricalShirtLabel,
+  inheritUndoShirtFromPriorDeliveries,
+  isKitUndoItem,
+  parseShirtFromDetails,
+  sortShirtCatalog,
+  variantIdsFromRaw,
+} from "./shirt-from-audit.ts";
 import type {
   OperationHistoryItem,
   OperationHistoryOperator,
@@ -76,6 +87,7 @@ async function fetchAuditRows(
   eventId: string,
   fromIso: string,
   toIso: string,
+  actions: readonly string[] = HISTORY_AUDIT_ACTIONS,
 ) {
   const auditLogsClient = createServiceRoleSupabaseClient();
   const rows: Row[] = [];
@@ -86,7 +98,7 @@ async function fetchAuditRows(
       .from("audit_logs")
       .select("id,action,entity_type,entity_id,details,created_at")
       .eq("event_id", eventId)
-      .in("action", [...HISTORY_AUDIT_ACTIONS])
+      .in("action", [...actions])
       .gte("created_at", fromIso)
       .lte("created_at", toIso)
       .order("created_at", { ascending: false })
@@ -210,7 +222,7 @@ async function enrichItems(
   for (const ids of chunkIds(orderItemIds)) {
     const { data: orderItems } = await supabase
       .from("order_items")
-      .select("id,order_id,participant_id,holder_full_name,shirt_type,shirt_size,item_position")
+      .select("id,order_id,participant_id,holder_full_name,registration_contact_id,item_position")
       .in("id", ids);
     for (const item of orderItems ?? []) orderItemMap.set(String(item.id), item as Row);
   }
@@ -267,7 +279,6 @@ async function enrichItems(
       ? ticketDisplayReference(order.display_number, null, order.order_number)
       : null;
 
-    const shirtFromOrder = [asString(orderItem?.shirt_type), asString(orderItem?.shirt_size)].filter(Boolean).join(" ") || null;
     const operatorName = formatOperatorDisplayName({
       resolvedName: item.actorUserId ? operatorNames.get(item.actorUserId) : null,
       actorEmail: raw?.actorEmail,
@@ -293,8 +304,10 @@ async function enrichItems(
       participantName: issuedWithoutHolder ? "Sem titular" : participantName,
       ticketCode,
       orderNumber,
+      orderId: asString(ticket?.order_id) ?? asString(orderItem?.order_id) ?? asString(order?.id),
+      contactId: asString(orderItem?.registration_contact_id),
       operatorName,
-      shirtLabel: item.shirtLabel ?? (item.category === "kit" ? shirtFromOrder : item.counts.manualIssue ? item.shirtLabel : null),
+      shirtLabel: item.shirtLabel,
     };
   });
 }
@@ -310,6 +323,146 @@ function operatorsFromItems(items: OperationHistoryItem[]): OperationHistoryOper
   return [...map.entries()]
     .map(([id, name]) => ({ id, name }))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+}
+
+function shouldNarrowToKitHistory(input: OperationHistoryQueryInput) {
+  return Boolean(input.shirtType?.trim() || input.shirtSize?.trim() || input.category === "kit");
+}
+
+async function loadVariantLabelsByIds(ids: string[]) {
+  const labels = new Map<string, string>();
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return labels;
+  const auditLogsClient = createServiceRoleSupabaseClient();
+  for (const chunk of chunkIds(unique)) {
+    const { data } = await auditLogsClient
+      .from("event_kit_item_variants")
+      .select("id,name,value")
+      .in("id", chunk);
+    for (const row of data ?? []) {
+      const label = formatHistoricalShirtLabel(asString((row as Row).name), asString((row as Row).value));
+      if (label) labels.set(String((row as Row).id), label);
+    }
+  }
+  return labels;
+}
+
+async function resolveVariantLabels(raw: OperationRawEvent[]) {
+  return loadVariantLabelsByIds(raw.flatMap((event) => variantIdsFromRaw(event)));
+}
+
+function applyVariantLabels(
+  items: OperationHistoryItem[],
+  rawById: Map<string, OperationRawEvent>,
+  variantLabels: Map<string, string>,
+) {
+  return items.map((item) => {
+    if (item.shirtLabel) return item;
+    const sources = [rawById.get(item.id), ...item.sourceIds.map((id) => rawById.get(id))].filter(Boolean) as OperationRawEvent[];
+    for (const raw of sources) {
+      const parsed = parseShirtFromDetails(raw.details);
+      const fromVariant = parsed.variantId ? variantLabels.get(parsed.variantId) : null;
+      if (fromVariant || parsed.label) {
+        return { ...item, shirtLabel: parsed.label ?? fromVariant ?? null };
+      }
+    }
+    return item;
+  });
+}
+
+async function backfillUndoShirtFromPriorDeliveries(
+  eventId: string,
+  items: OperationHistoryItem[],
+) {
+  const missing = items.filter((item) => isKitUndoItem(item) && !item.shirtLabel && item.ticketId);
+  const ticketIds = [...new Set(missing.map((item) => item.ticketId).filter((value): value is string => typeof value === "string" && UUID_RE.test(value)))];
+  if (!ticketIds.length) return items;
+  const auditLogsClient = createServiceRoleSupabaseClient();
+  const deliveries: Array<{ ticketId: string; occurredAt: string; label: string | null; variantId: string | null }> = [];
+  for (const chunk of chunkIds(ticketIds)) {
+    const [{ data: canonical }, { data: itemLogs }] = await Promise.all([
+      auditLogsClient
+        .from("audit_logs")
+        .select("entity_id,details,created_at")
+        .eq("event_id", eventId)
+        .eq("action", "kit_delivered")
+        .in("entity_id", chunk)
+        .order("created_at", { ascending: false }),
+      auditLogsClient
+        .from("audit_logs")
+        .select("details,created_at")
+        .eq("event_id", eventId)
+        .eq("action", "ticket_kit_item_delivered")
+        .filter("details->>ticket_id", "in", `(${chunk.join(",")})`)
+        .order("created_at", { ascending: false }),
+    ]);
+    for (const row of [...(canonical ?? []), ...(itemLogs ?? [])]) {
+      const details = one((row as Row).details);
+      const ticketId = asString(details.ticket_id) ?? asString((row as Row).entity_id);
+      const parsed = parseShirtFromDetails(details);
+      if (!ticketId) continue;
+      deliveries.push({
+        ticketId,
+        occurredAt: String((row as Row).created_at),
+        label: parsed.label,
+        variantId: parsed.variantId,
+      });
+    }
+  }
+  const variantIds = [...new Set(deliveries.map((row) => row.variantId).filter((value): value is string => Boolean(value)))];
+  const variantLabels = await loadVariantLabelsByIds(variantIds);
+  const resolved = deliveries.map((row) => ({
+    ticketId: row.ticketId,
+    occurredAt: row.occurredAt,
+    label: row.label ?? (row.variantId ? variantLabels.get(row.variantId) ?? null : null),
+  }));
+  return inheritUndoShirtFromPriorDeliveries(items, resolved);
+}
+
+async function loadShirtCatalog(eventId: string) {
+  const auditLogsClient = createServiceRoleSupabaseClient();
+  const { data } = await auditLogsClient
+    .from("event_kit_items")
+    .select("event_kit_item_variants(name,value,is_active)")
+    .eq("event_id", eventId)
+    .eq("item_type", "shirt");
+  const sizesByType: Record<string, string[]> = {};
+  for (const item of data ?? []) {
+    const variants = Array.isArray((item as Row).event_kit_item_variants)
+      ? (item as Row).event_kit_item_variants as Row[]
+      : [];
+    for (const row of variants) {
+      if (row.is_active === false) continue;
+      const type = asString(row.name);
+      const size = asString(row.value)?.toUpperCase() ?? null;
+      if (!type || !size) continue;
+      if (!sizesByType[type]) sizesByType[type] = [];
+      if (!sizesByType[type].includes(size)) sizesByType[type].push(size);
+    }
+  }
+  return sortShirtCatalog(Object.keys(sizesByType), sizesByType);
+}
+
+async function loadCurrentlyDelivered(eventId: string, shirtType: string | null, shirtSize: string | null) {
+  if (!shirtType || !shirtSize) return null;
+  const auditLogsClient = createServiceRoleSupabaseClient();
+  const { data } = await auditLogsClient
+    .from("event_kit_item_variant_inventory")
+    .select("delivered_quantity,event_kit_item_variants!inner(name,value)")
+    .eq("event_id", eventId);
+  let total = 0;
+  let found = false;
+  for (const row of data ?? []) {
+    const relation = Array.isArray((row as Row).event_kit_item_variants)
+      ? ((row as Row).event_kit_item_variants as Row[])[0]
+      : (row as Row).event_kit_item_variants as Row | null;
+    const type = asString(relation?.name);
+    const size = asString(relation?.value)?.toUpperCase() ?? null;
+    if (type?.toLowerCase() !== shirtType.toLowerCase() || size !== shirtSize.toUpperCase()) continue;
+    found = true;
+    total += Number((row as Row).delivered_quantity ?? 0);
+  }
+  return found ? total : null;
 }
 
 export async function queryOperationsHistory(input: OperationHistoryQueryInput): Promise<OperationHistoryResponse> {
@@ -335,9 +488,11 @@ export async function queryOperationsHistory(input: OperationHistoryQueryInput):
   if (!event) return { success: false, message: "Evento não encontrado nesta organização." };
 
   try {
-    const [audit, holders] = await Promise.all([
-      fetchAuditRows(event.id, fromIso, toIso),
-      fetchHolderRows(supabase, event.id, fromIso, toIso),
+    const kitOnly = shouldNarrowToKitHistory(input);
+    const [audit, holders, shirtCatalog] = await Promise.all([
+      fetchAuditRows(event.id, fromIso, toIso, kitOnly ? KIT_HISTORY_AUDIT_ACTIONS : HISTORY_AUDIT_ACTIONS),
+      kitOnly ? Promise.resolve({ rows: [] as Row[], truncated: false }) : fetchHolderRows(supabase, event.id, fromIso, toIso),
+      loadShirtCatalog(event.id),
     ]);
     const raw: OperationRawEvent[] = [];
     for (const row of audit.rows) {
@@ -350,16 +505,33 @@ export async function queryOperationsHistory(input: OperationHistoryQueryInput):
     }
 
     const rawById = new Map(raw.map((eventRow) => [eventRow.id, eventRow]));
-    const folded = foldOperationEvents(raw);
-    const enriched = await enrichItems(supabase, folded, rawById, String(event.name));
-    const filtered = applyHistoryFilters(enriched, {
+    const variantLabels = await resolveVariantLabels(raw);
+    const folded = applyVariantLabels(foldOperationEvents(raw), rawById, variantLabels);
+    const sameWindowLifecycle = annotateKitDeliveryLifecycle(folded);
+    const withPriorUndoShirt = await backfillUndoShirtFromPriorDeliveries(event.id, sameWindowLifecycle);
+    const enriched = await enrichItems(supabase, withPriorUndoShirt, rawById, String(event.name));
+    const annotated = annotateKitDeliveryLifecycle(enriched);
+    const filtered = applyHistoryFilters(annotated, {
       category: input.category,
       operatorUserId: input.operatorUserId,
       search: input.search,
+      shirtType: input.shirtType,
+      shirtSize: input.shirtSize,
     });
     const page = paginateByCursor(filtered, input.cursor, input.pageSize ?? PAGE_SIZE);
-    const canViewTechnical = input.includeTechnical === false ? false : await hasPermission("audit.view");
-    const operators = operatorsFromItems(enriched);
+    const [canViewTechnical, canViewCadastro, canViewOrderPermission, currentlyDelivered] = await Promise.all([
+      input.includeTechnical === false ? Promise.resolve(false) : hasPermission("audit.view"),
+      hasPermission("participants.view"),
+      hasPermission("orders.view"),
+      input.shirtType && input.shirtSize
+        ? loadCurrentlyDelivered(event.id, input.shirtType, input.shirtSize)
+        : Promise.resolve(null),
+    ]);
+    const canViewTicket = canViewCadastro || canViewOrderPermission;
+    const canViewOrder = canViewCadastro;
+    const operators = operatorsFromItems(annotated);
+    const shirtFilterActive = Boolean(input.shirtType?.trim() || input.shirtSize?.trim());
+    const summaryCounts = countShirtDeliverySummary(filtered);
 
     return {
       success: true,
@@ -371,6 +543,13 @@ export async function queryOperationsHistory(input: OperationHistoryQueryInput):
       cards: countOperationCards(filtered),
       items: page.items.map((item) => publicItem(item, canViewTechnical)),
       operators,
+      shirtCatalog,
+      shirtDeliverySummary: shirtFilterActive
+        ? { ...summaryCounts, currentlyDelivered }
+        : null,
+      canViewCadastro,
+      canViewTicket,
+      canViewOrder,
       nextCursor: page.nextCursor,
       truncated: audit.truncated || holders.truncated,
       generatedAt: new Date().toISOString(),

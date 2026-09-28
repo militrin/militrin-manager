@@ -8,6 +8,7 @@ const queryUrl = new URL('../src/lib/operations/history/query.ts', import.meta.u
 const actionsUrl = new URL('../src/app/operacoes/relatorio/actions.ts', import.meta.url);
 const clientUrl = new URL('../src/app/operacoes/relatorio/operations-history-client.tsx', import.meta.url);
 const pageUrl = new URL('../src/app/operacoes/relatorio/page.tsx', import.meta.url);
+const urlUrl = new URL('../src/lib/operations/history/url.ts', import.meta.url);
 const layoutUrl = new URL('../src/app/operacoes/relatorio/layout.tsx', import.meta.url);
 
 function extractFunction(sql, name) {
@@ -71,10 +72,11 @@ test('allowlist operacional não inclui financeiro e a query não seleciona valo
 });
 
 test('o client da Central não recebe service role nem calcula cards só com a página de 50', async () => {
-  const [client, page, query] = await Promise.all([
+  const [client, page, query, url] = await Promise.all([
     readFile(clientUrl, 'utf8'),
     readFile(pageUrl, 'utf8'),
     readFile(queryUrl, 'utf8'),
+    readFile(urlUrl, 'utf8'),
   ]);
   assert.doesNotMatch(client, /createServiceRoleSupabaseClient|SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(page, /SUPABASE_SERVICE_ROLE_KEY/);
@@ -82,7 +84,8 @@ test('o client da Central não recebe service role nem calcula cards só com a p
   assert.match(client, /30_000/);
   assert.match(query, /countOperationCards\(filtered\)/);
   assert.match(query, /paginateByCursor\(filtered/);
-  assert.match(page, /period: "today"/);
+  assert.match(page, /parseHistorySearchParams/);
+  assert.match(url, /: "today"/);
   assert.match(page, /Acompanhe as operações realizadas no evento/);
   assert.doesNotMatch(page, /ReportsExplorer/);
   assert.match(client, /Filtros •/);

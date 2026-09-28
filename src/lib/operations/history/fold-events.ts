@@ -10,6 +10,7 @@ import {
   COMBINED_CHECKIN_WINDOW_MS,
   LEGACY_GROUP_WINDOW_MS,
 } from "./constants.ts";
+import { parseShirtFromDetails } from "./shirt-from-audit.ts";
 import { compareOccurredDesc } from "./paginate.ts";
 import type {
   OperationCounts,
@@ -53,10 +54,7 @@ export function maskWristbandCode(code: string | null | undefined) {
 }
 
 function shirtFromDetails(details: Record<string, unknown>) {
-  const type = text(details, "shirt_type");
-  const size = text(details, "shirt_size");
-  const joined = [type, size].filter(Boolean).join(" ");
-  return joined || null;
+  return parseShirtFromDetails(details).label;
 }
 
 function wristbandFromDetails(details: Record<string, unknown>) {
@@ -99,8 +97,14 @@ function baseItem(
     orderNumber: null,
     operatorName: "",
     shirtLabel: input.shirtLabel ?? shirtFromDetails(seed.details),
+    shirtQuantity: parseShirtFromDetails(seed.details).quantity
+      ?? members.map((member) => parseShirtFromDetails(member.details).quantity).find(Boolean)
+      ?? ([seed, ...members].filter((event) => event.action === ACTION_KIT_ITEM_DELIVERED).length || null),
+    deliveryStatus: null,
     wristbandLabel: input.wristbandLabel ?? wristbandFromDetails(seed.details),
     reason: seed.reason ?? members.map((member) => member.reason).find(Boolean) ?? null,
+    contactId: null,
+    orderId: null,
     eventName: "",
     stateChanges: input.stateChanges ?? [],
     counts: input.counts,
@@ -174,8 +178,9 @@ function wristbandStateChanges(event: OperationRawEvent): OperationStateChange[]
 }
 
 function shirtStateChanges(event: OperationRawEvent): OperationStateChange[] {
-  const previous = [text(event.details, "previous_type"), text(event.details, "previous_size")].filter(Boolean).join(" ") || null;
-  const next = [text(event.details, "next_type", "shirt_type", "new_type"), text(event.details, "next_size", "shirt_size", "new_size")].filter(Boolean).join(" ") || null;
+  const parsed = parseShirtFromDetails(event.details);
+  const previous = parsed.previousLabel;
+  const next = parsed.label;
   if (!previous && !next) return [];
   return [{ label: "Camiseta", previous, next }];
 }

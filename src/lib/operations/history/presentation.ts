@@ -5,15 +5,36 @@ import type { HistoryPeriodPreset, OperationHistoryCategory, OperationHistoryIte
 export type FeedTone = "success" | "warning" | "danger" | "neutral";
 export type FeedIconKind = "kit" | "checkin" | "wristband" | "holder" | "ticket" | "undo" | "store";
 
+export function formatHistoryPeriodLabel(input: {
+  period: HistoryPeriodPreset;
+  dateFrom: string;
+  dateTo: string;
+}) {
+  const [year, month, day] = input.dateFrom.split("-");
+  const prettyFrom = year && month && day ? `${day}/${month}/${year}` : input.dateFrom;
+  const [toYear, toMonth, toDay] = input.dateTo.split("-");
+  const prettyTo = toYear && toMonth && toDay ? `${toDay}/${toMonth}/${toYear}` : input.dateTo;
+  const prettyRange = input.dateFrom === input.dateTo ? prettyFrom : `${prettyFrom} → ${prettyTo}`;
+  if (input.period === "today") return `Hoje · ${prettyRange} · America/Sao_Paulo`;
+  if (input.period === "yesterday") return `Ontem · ${prettyRange} · America/Sao_Paulo`;
+  if (input.period === "7d") return `7 dias · ${prettyRange} · America/Sao_Paulo`;
+  if (input.period === "30d") return `30 dias · ${prettyRange} · America/Sao_Paulo`;
+  return `Personalizado · ${prettyRange} · America/Sao_Paulo`;
+}
+
 export function extraHistoryFilterCount(input: {
   period: HistoryPeriodPreset;
   category: OperationHistoryCategory | "all";
   operatorUserId: string;
+  shirtType?: string | null;
+  shirtSize?: string | null;
 }) {
   let count = 0;
   if (input.period !== "today") count += 1;
   if (input.category !== "all") count += 1;
   if (input.operatorUserId) count += 1;
+  if (input.shirtType) count += 1;
+  if (input.shirtSize) count += 1;
   return count;
 }
 
@@ -32,7 +53,7 @@ export function formatFeedOccurredAt(
 ) {
   const clock = formatFeedClock(value, timeZone);
   if (clock === "—") return clock;
-  if (period === "today") return clock;
+  if (period === "today" || period === "yesterday") return clock;
 
   const date = value instanceof Date ? value : new Date(value);
   const eventDate = calendarDateInEventTimeZone(date, timeZone);
@@ -87,4 +108,34 @@ export function feedPrimaryInfo(item: Pick<OperationHistoryItem, "shirtLabel" | 
 
 export function feedMetaLine(item: Pick<OperationHistoryItem, "ticketCode" | "shirtLabel" | "wristbandLabel" | "stateChanges" | "title" | "operatorName">) {
   return [item.ticketCode, feedPrimaryInfo(item), item.operatorName].filter(Boolean).join(" · ");
+}
+
+export function shirtDeliverySummaryCards(summary: {
+  periodDeliveries: number;
+  periodUndos: number;
+  currentlyDelivered: number | null;
+}) {
+  return [
+    {
+      key: "saidas",
+      label: "Saídas no período",
+      short: "Saídas",
+      value: summary.periodDeliveries,
+      hint: "Eventos de entrega ocorridos no período filtrado.",
+    },
+    {
+      key: "undos",
+      label: "Undos no período",
+      short: "Undos",
+      value: summary.periodUndos,
+      hint: "Eventos de desfazer ocorridos no período filtrado.",
+    },
+    {
+      key: "estoqueAtual",
+      label: "Estoque atual entregue",
+      short: "Estoque atual",
+      value: summary.currentlyDelivered,
+      hint: "delivered_quantity atual desta variante. Não é o saldo do período.",
+    },
+  ] as const;
 }

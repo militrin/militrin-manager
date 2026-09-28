@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardCheck,
@@ -27,24 +28,34 @@ import {
   feedParticipantLine,
   feedTone,
   formatFeedOccurredAt,
+  formatHistoryPeriodLabel,
+  shirtDeliverySummaryCards,
 } from "@/lib/operations/history/presentation";
+import { deliveryStatusLabel, shirtDeliveriesHeading } from "@/lib/operations/history/shirt-from-audit";
 import type {
   HistoryPeriodPreset,
   OperationHistoryCategory,
   OperationHistoryItem,
+  OperationHistoryQueryInput,
   OperationHistoryResponse,
 } from "@/lib/operations/history/types";
+import { formatDateTimeBR } from "@/lib/utils/date";
 import { getOperationsHistoryAction } from "./actions";
 import { getReportPreviewAction } from "@/app/relatorios/actions";
 import type { ReportResult } from "@/lib/reports/types";
 
 type EventOption = { id: string; name: string };
 type FeedIconKind = ReturnType<typeof feedIconKind>;
+type InitialQuery = Pick<
+  OperationHistoryQueryInput,
+  "period" | "dateFrom" | "dateTo" | "category" | "operatorUserId" | "search" | "shirtType" | "shirtSize"
+>;
 
 const POLL_MS = 30_000;
 const SEARCH_DEBOUNCE_MS = 350;
 const PERIOD_OPTIONS = [
   ["today", "Hoje"],
+  ["yesterday", "Ontem"],
   ["7d", "7 dias"],
   ["30d", "30 dias"],
   ["custom", "Personalizado"],
@@ -65,6 +76,11 @@ const FEED_ICONS: Record<FeedIconKind, typeof Shirt> = {
   undo: Undo2,
   store: ShoppingBag,
 };
+const STATUS_CLASS: Record<string, string> = {
+  ENTREGUE: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+  DESFEITA: "border-rose-500/40 bg-rose-500/10 text-rose-200",
+  REENTREGUE: "border-amber-500/40 bg-amber-500/10 text-amber-200",
+};
 
 function secondsAgoLabel(fromIso: string, nowMs: number) {
   const then = Date.parse(fromIso);
@@ -82,23 +98,33 @@ function liveStatus(fromIso: string, nowMs: number) {
   return `há ${seconds}s`;
 }
 
+function navLinkClass(mobile: boolean) {
+  return mobile
+    ? "inline-flex min-h-11 items-center rounded-xl border border-slate-600 px-3 text-sm text-emerald-200"
+    : "inline-flex h-9 items-center rounded-xl border border-slate-600 px-3 text-sm text-emerald-200";
+}
+
 export function OperationsHistoryClient({
   events,
   initialEventId,
+  initialQuery,
   initialResult,
 }: {
   events: EventOption[];
   initialEventId: string;
+  initialQuery?: InitialQuery;
   initialResult: OperationHistoryResponse;
 }) {
   const [eventId, setEventId] = useState(initialEventId);
-  const [period, setPeriod] = useState<HistoryPeriodPreset>(initialResult.success ? initialResult.period : "today");
-  const [dateFrom, setDateFrom] = useState(initialResult.success ? initialResult.dateFrom : "");
-  const [dateTo, setDateTo] = useState(initialResult.success ? initialResult.dateTo : "");
-  const [category, setCategory] = useState<OperationHistoryCategory | "all">("all");
-  const [operatorUserId, setOperatorUserId] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  const [period, setPeriod] = useState<HistoryPeriodPreset>(initialQuery?.period ?? (initialResult.success ? initialResult.period : "today"));
+  const [dateFrom, setDateFrom] = useState(initialQuery?.dateFrom ?? (initialResult.success ? initialResult.dateFrom : "") ?? "");
+  const [dateTo, setDateTo] = useState(initialQuery?.dateTo ?? (initialResult.success ? initialResult.dateTo : "") ?? "");
+  const [category, setCategory] = useState<OperationHistoryCategory | "all">(initialQuery?.category ?? "all");
+  const [operatorUserId, setOperatorUserId] = useState(initialQuery?.operatorUserId ?? "");
+  const [searchInput, setSearchInput] = useState(initialQuery?.search ?? "");
+  const [search, setSearch] = useState(initialQuery?.search ?? "");
+  const [shirtType, setShirtType] = useState(initialQuery?.shirtType ?? "");
+  const [shirtSize, setShirtSize] = useState(initialQuery?.shirtSize ?? "");
   const [result, setResult] = useState<OperationHistoryResponse>(initialResult);
   const [items, setItems] = useState<OperationHistoryItem[]>(initialResult.success ? initialResult.items : []);
   const [nextCursor, setNextCursor] = useState(initialResult.success ? initialResult.nextCursor : null);
@@ -137,8 +163,26 @@ export function OperationsHistoryClient({
     category,
     operatorUserId: operatorUserId || null,
     search: search || null,
+    shirtType: shirtType || null,
+    shirtSize: shirtSize || null,
     pageSize: PAGE_SIZE,
-  }), [eventId, period, dateFrom, dateTo, category, operatorUserId, search]);
+  }), [eventId, period, dateFrom, dateTo, category, operatorUserId, search, shirtType, shirtSize]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("eventId", eventId);
+    params.set("period", period);
+    if (period === "custom") {
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+    }
+    if (category !== "all") params.set("category", category);
+    if (operatorUserId) params.set("operatorUserId", operatorUserId);
+    if (search) params.set("search", search);
+    if (shirtType) params.set("shirtType", shirtType);
+    if (shirtSize) params.set("shirtSize", shirtSize);
+    window.history.replaceState(null, "", `/operacoes/relatorio?${params.toString()}`);
+  }, [eventId, period, dateFrom, dateTo, category, operatorUserId, search, shirtType, shirtSize]);
 
   const load = useCallback(async (mode: "replace" | "more" | "silent") => {
     if (!eventId) return;
@@ -223,8 +267,24 @@ export function OperationsHistoryClient({
   const operators = result.success ? result.operators : [];
   const generatedAt = result.success ? result.generatedAt : null;
   const canViewTechnical = result.success ? result.canViewTechnical : false;
-  const emptyBecauseFilters = Boolean(search || operatorUserId || (category !== "all")) && (cards?.operations === 0);
-  const extraFilterCount = extraHistoryFilterCount({ period, category, operatorUserId });
+  const canViewCadastro = result.success ? result.canViewCadastro : false;
+  const canViewTicket = result.success ? result.canViewTicket : false;
+  const canViewOrder = result.success ? result.canViewOrder : false;
+  const shirtCatalog = result.success ? result.shirtCatalog : { types: [], sizesByType: {} };
+  const shirtDeliverySummary = result.success ? result.shirtDeliverySummary : null;
+  const shirtFilterActive = Boolean(shirtType || shirtSize);
+  const catalogTypes = shirtType && !shirtCatalog.types.includes(shirtType)
+    ? [shirtType, ...shirtCatalog.types]
+    : shirtCatalog.types;
+  const catalogSizes = (() => {
+    const fromCatalog = shirtType ? (shirtCatalog.sizesByType[shirtType] ?? []) : [];
+    return shirtSize && !fromCatalog.includes(shirtSize) ? [shirtSize, ...fromCatalog] : fromCatalog;
+  })();
+  const emptyBecauseFilters = Boolean(search || operatorUserId || category !== "all" || shirtFilterActive) && (cards?.operations === 0);
+  const extraFilterCount = extraHistoryFilterCount({ period, category, operatorUserId, shirtType, shirtSize });
+  const periodLabel = result.success
+    ? formatHistoryPeriodLabel({ period: result.period, dateFrom: result.dateFrom, dateTo: result.dateTo })
+    : null;
   const exportQuery = new URLSearchParams();
   if (eventId) exportQuery.set("eventId", eventId);
   if (result.success) {
@@ -235,7 +295,8 @@ export function OperationsHistoryClient({
   const exportHref = (format: "csv" | "xlsx" | "pdf") => `/api/relatorios/operacoes-historico/${format}?${exportQuery.toString()}`;
   const snapshotHref = (format: "csv" | "xlsx" | "pdf") => `/api/relatorios/operacoes-contingencia/${format}?eventId=${encodeURIComponent(eventId)}`;
   const selectedEventName = events.find((event) => event.id === eventId)?.name ?? "Evento";
-  const metricCards = cards
+  const deliveryCards = shirtDeliverySummary ? shirtDeliverySummaryCards(shirtDeliverySummary) : [];
+  const metricCards = !shirtFilterActive && cards
     ? [
       { key: "operations", label: "Operações", short: "Operações", value: cards.operations, tone: "default" as const },
       { key: "kits", label: "Kits entregues", short: "Kits", value: cards.kitsDelivered, tone: "default" as const },
@@ -262,6 +323,44 @@ export function OperationsHistoryClient({
     setPeriod(next);
     if (next === "custom") setFiltersOpen(true);
   }
+
+  function onShirtTypeChange(next: string) {
+    setShirtType(next);
+    if (!next) {
+      setShirtSize("");
+      return;
+    }
+    const sizes = shirtCatalog.sizesByType[next] ?? [];
+    if (shirtSize && !sizes.includes(shirtSize)) setShirtSize("");
+  }
+
+  const shirtFilters = (
+    <div className="grid grid-cols-2 gap-2">
+      <label className="space-y-1 text-sm">
+        <span className="text-slate-300">Item</span>
+        <select value={shirtType} onChange={(event) => onShirtTypeChange(event.target.value)} className={`w-full ${inputClass}`}>
+          <option value="">Todos</option>
+          {catalogTypes.map((type) => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+      </label>
+      <label className="space-y-1 text-sm">
+        <span className="text-slate-300">Variante / tamanho</span>
+        <select
+          value={shirtSize}
+          onChange={(event) => setShirtSize(event.target.value)}
+          disabled={!shirtType}
+          className={`w-full ${inputClass} disabled:opacity-50`}
+        >
+          <option value="">Todos</option>
+          {catalogSizes.map((size) => (
+            <option key={size} value={size}>{size}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
 
   const exportLinks = (
     <>
@@ -300,6 +399,7 @@ export function OperationsHistoryClient({
           </label>
         </div>
       ) : null}
+      {shirtFilters}
       <label className="block space-y-1 text-sm">
         <span className="text-slate-300">Tipo de operação</span>
         <select value={category} onChange={(event) => setCategory(event.target.value as OperationHistoryCategory | "all")} className={`w-full ${inputClass}`}>
@@ -324,9 +424,53 @@ export function OperationsHistoryClient({
     </div>
   );
 
+  function renderFeedItem(item: OperationHistoryItem) {
+    const tone = feedTone(item);
+    const Icon = FEED_ICONS[feedIconKind(item)];
+    const meta = feedMetaLine(item);
+    const status = deliveryStatusLabel(item.deliveryStatus);
+    return (
+      <li key={item.id}>
+        <button
+          type="button"
+          onClick={() => { setSelected(item); setShowTechnical(false); }}
+          className="flex min-h-[4.25rem] w-full items-start gap-2 px-2.5 py-2 text-left hover:bg-slate-800/60 sm:px-3"
+        >
+          <Icon className={`mt-0.5 size-4 shrink-0 ${TONE_CLASS[tone]}`} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className={`truncate text-[11px] font-semibold uppercase tracking-[0.14em] ${TONE_CLASS[tone]}`}>{item.title}</p>
+              <time className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">{formatFeedOccurredAt(item.occurredAt, period)}</time>
+            </div>
+            <p className="truncate text-sm leading-5 text-slate-100">{feedParticipantLine(item)}</p>
+            <p className="truncate text-[12px] leading-4 text-slate-400">
+              {[item.shirtLabel, item.ticketCode, item.orderNumber ? `Pedido ${item.orderNumber}` : null, item.operatorName].filter(Boolean).join(" · ") || meta}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {status ? (
+                <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${STATUS_CLASS[status] ?? "border-slate-700 text-slate-300"}`}>
+                  {status}
+                </span>
+              ) : null}
+              {item.shirtQuantity ? (
+                <span className="text-[11px] text-slate-500">
+                  {item.shirtQuantity} {item.shirtQuantity === 1 ? "item" : "itens"}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </button>
+      </li>
+    );
+  }
+
   return (
     <div className="min-w-0 space-y-3 lg:space-y-4">
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 lg:hidden">
+        {shirtFilterActive ? (
+          <p className="mb-2 text-sm font-semibold text-white">{shirtDeliveriesHeading(shirtType, shirtSize)}</p>
+        ) : null}
+        {periodLabel ? <p className="mb-2 text-xs text-slate-400">{periodLabel}</p> : null}
         <label className="block">
           <span className="sr-only">Evento</span>
           <select
@@ -368,7 +512,7 @@ export function OperationsHistoryClient({
           <input
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Buscar..."
+            placeholder="Nome, ingresso ou pedido"
             className={`w-full pl-9 ${inputClass}`}
           />
         </label>
@@ -386,6 +530,10 @@ export function OperationsHistoryClient({
 
       <div className="hidden lg:block">
       <AdminFilterBar>
+        {shirtFilterActive ? (
+          <p className="mb-2 text-base font-semibold text-white">{shirtDeliveriesHeading(shirtType, shirtSize)}</p>
+        ) : null}
+        {periodLabel ? <p className="mb-3 text-xs text-slate-400">{periodLabel}</p> : null}
         <div className="flex flex-wrap items-end gap-3">
           <label className="space-y-1 text-sm">
             <span className="text-slate-300">Evento</span>
@@ -432,6 +580,24 @@ export function OperationsHistoryClient({
             />
           </label>
           <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Item</span>
+            <select value={shirtType} onChange={(event) => onShirtTypeChange(event.target.value)} className={inputClass}>
+              <option value="">Todos</option>
+              {catalogTypes.map((type) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-300">Variante / tamanho</span>
+            <select value={shirtSize} onChange={(event) => setShirtSize(event.target.value)} disabled={!shirtType} className={inputClass}>
+              <option value="">Todos</option>
+              {catalogSizes.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
             <span className="text-slate-300">Tipo de operação</span>
             <select value={category} onChange={(event) => setCategory(event.target.value as OperationHistoryCategory | "all")} className={inputClass}>
               {HISTORY_CATEGORIES.map((value) => (
@@ -473,6 +639,28 @@ export function OperationsHistoryClient({
       </AdminFilterBar>
       </div>
 
+      {deliveryCards.length ? (
+        <div className="min-w-0 w-full overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:thin] lg:overflow-visible">
+          <div className="flex w-max gap-2 pb-1 lg:grid lg:w-full lg:grid-cols-3 lg:gap-2 lg:pb-0">
+            {deliveryCards.map((card) => (
+              <article key={card.key} className="flex h-[5.25rem] w-[9.5rem] shrink-0 flex-col justify-center rounded-xl border border-slate-800 bg-slate-950/80 px-2.5 py-2 lg:h-auto lg:w-auto">
+                <p className="text-2xl font-semibold leading-none text-white">{card.value ?? "—"}</p>
+                <p className="mt-1 truncate text-[11px] leading-4 text-slate-400">
+                  <span className="xl:hidden">{card.short}</span>
+                  <span className="hidden xl:inline">{card.label}</span>
+                </p>
+                <p className="mt-0.5 hidden text-[10px] leading-3 text-slate-500 lg:block">{card.hint}</p>
+              </article>
+            ))}
+          </div>
+          {shirtDeliverySummary?.unknownSize ? (
+            <p className="mt-2 text-xs text-amber-200">
+              {shirtDeliverySummary.unknownSize} registro(s) sem tamanho histórico confiável no audit. Não inferimos pelo tamanho atual.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {metricCards.length ? (
         <div className="min-w-0 w-full overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:thin] lg:overflow-visible">
           <div className="flex w-max gap-2 pb-1 lg:grid lg:w-full lg:grid-cols-6 lg:gap-2 lg:pb-0">
@@ -496,7 +684,7 @@ export function OperationsHistoryClient({
 
       <AdminSection
         compact
-        title="Atividade recente"
+        title={shirtFilterActive ? shirtDeliveriesHeading(shirtType, shirtSize) : "Atividade recente"}
         actions={
           generatedAt ? (
             <p className="flex items-center gap-1.5 text-xs text-slate-400" aria-live="polite">
@@ -520,35 +708,12 @@ export function OperationsHistoryClient({
           <AdminEmptyState
             title={emptyBecauseFilters ? "Nenhuma operação com esses filtros" : "Sem operações no período"}
             description={emptyBecauseFilters
-              ? "Ajuste a busca, o tipo ou o operador para ver resultados."
+              ? "Ajuste a busca, o tipo, o tamanho ou o operador para ver resultados."
               : "Ainda não há atividade operacional neste evento para o período selecionado."}
           />
         ) : (
           <ul className="divide-y divide-slate-800 overflow-hidden rounded-xl border border-slate-800">
-            {items.map((item) => {
-              const tone = feedTone(item);
-              const Icon = FEED_ICONS[feedIconKind(item)];
-              const meta = feedMetaLine(item);
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => { setSelected(item); setShowTechnical(false); }}
-                    className="flex min-h-[4.25rem] w-full items-start gap-2 px-2.5 py-2 text-left hover:bg-slate-800/60 sm:px-3"
-                  >
-                    <Icon className={`mt-0.5 size-4 shrink-0 ${TONE_CLASS[tone]}`} aria-hidden />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className={`truncate text-[11px] font-semibold uppercase tracking-[0.14em] ${TONE_CLASS[tone]}`}>{item.title}</p>
-                        <time className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">{formatFeedOccurredAt(item.occurredAt, period)}</time>
-                      </div>
-                      <p className="truncate text-sm leading-5 text-slate-100">{feedParticipantLine(item)}</p>
-                      {meta ? <p className="truncate text-[12px] leading-4 text-slate-400">{meta}</p> : null}
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
+            {items.map(renderFeedItem)}
           </ul>
         )}
         {result.success && nextCursor ? (
@@ -622,9 +787,13 @@ export function OperationsHistoryClient({
             <div><dt className="text-xs uppercase tracking-wide text-slate-500">Operação</dt><dd className="text-slate-100">{selected.title}</dd></div>
             <div><dt className="text-xs uppercase tracking-wide text-slate-500">Participante</dt><dd className="text-slate-100">{selected.participantName ?? "—"}</dd></div>
             <div><dt className="text-xs uppercase tracking-wide text-slate-500">Ingresso</dt><dd className="text-slate-100">{selected.ticketCode ?? "—"}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-500">Pedido</dt><dd className="text-slate-100">{selected.orderNumber ?? "—"}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-500">Item</dt><dd className="text-slate-100">{selected.shirtLabel ?? "—"}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-500">Quantidade</dt><dd className="text-slate-100">{selected.shirtQuantity ? `${selected.shirtQuantity} ${selected.shirtQuantity === 1 ? "item" : "itens"}` : "—"}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-500">Estado</dt><dd className="text-slate-100">{deliveryStatusLabel(selected.deliveryStatus) ?? "—"}</dd></div>
             <div><dt className="text-xs uppercase tracking-wide text-slate-500">Evento</dt><dd className="text-slate-100">{selected.eventName || "—"}</dd></div>
             <div><dt className="text-xs uppercase tracking-wide text-slate-500">Operador</dt><dd className="text-slate-100">{selected.operatorName}</dd></div>
-            <div><dt className="text-xs uppercase tracking-wide text-slate-500">Data/hora</dt><dd className="text-slate-100">{new Date(selected.occurredAt).toLocaleString("pt-BR")}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-500">Data/hora</dt><dd className="text-slate-100">{formatDateTimeBR(selected.occurredAt)}</dd></div>
             {selected.reason ? <div><dt className="text-xs uppercase tracking-wide text-slate-500">Motivo</dt><dd className="text-slate-100">{selected.reason}</dd></div> : null}
             {selected.stateChanges.map((change) => (
               <div key={change.label}>
@@ -632,6 +801,17 @@ export function OperationsHistoryClient({
                 <dd className="text-slate-100">{[change.previous, change.next].filter(Boolean).length === 2 ? `${change.previous} → ${change.next}` : change.next ?? change.previous}</dd>
               </div>
             ))}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {canViewCadastro && selected.contactId ? (
+                <Link href={`/cadastros/${selected.contactId}`} className={navLinkClass(true)}>Ver cadastro</Link>
+              ) : null}
+              {canViewTicket && selected.ticketId ? (
+                <Link href={`/ingressos/${selected.ticketId}`} className={navLinkClass(true)}>Ver ingresso</Link>
+              ) : null}
+              {canViewOrder && selected.orderId ? (
+                <Link href={`/inscricoes/pedido/${selected.orderId}`} className={navLinkClass(true)}>Ver pedido</Link>
+              ) : null}
+            </div>
             {canViewTechnical ? (
               <div className="pt-2">
                 <button type="button" onClick={() => setShowTechnical((open) => !open)} className="min-h-11 text-sm text-emerald-300 lg:min-h-0">

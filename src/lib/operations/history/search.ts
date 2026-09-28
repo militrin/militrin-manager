@@ -1,4 +1,5 @@
 import type { OperationHistoryCategory, OperationHistoryItem } from "./types.ts";
+import { shirtMatchesFilter } from "./shirt-from-audit.ts";
 
 const DIACRITICS_PATTERN = /[\u0300-\u036f]/g;
 
@@ -36,6 +37,8 @@ export function applyHistoryFilters(
     category?: OperationHistoryCategory | "all" | null;
     operatorUserId?: string | null;
     search?: string | null;
+    shirtType?: string | null;
+    shirtSize?: string | null;
   },
 ) {
   const category = filters.category && filters.category !== "all" ? filters.category : null;
@@ -43,6 +46,7 @@ export function applyHistoryFilters(
   return items.filter((item) => {
     if (category && item.category !== category) return false;
     if (operatorUserId && item.actorUserId !== operatorUserId) return false;
+    if (!shirtMatchesFilter(item, filters.shirtType, filters.shirtSize)) return false;
     return itemMatchesSearch(item, filters.search);
   });
 }
