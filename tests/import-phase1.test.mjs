@@ -112,8 +112,10 @@ test('menu remove listagem legada de inscrições e preserva redirecionamento pa
 
 test('Financeiro preserva evento ao filtrar e exibe rótulos em português', async () => {
   const finance = await readFile(new URL('../src/app/financeiro/page.tsx', import.meta.url), 'utf8');
+  const labels = await readFile(new URL('../src/lib/finance/payment-presentation.ts', import.meta.url), 'utf8');
   const selector = await readFile(new URL('../src/components/admin/EventContextSelector.tsx', import.meta.url), 'utf8');
-  for (const label of ['Pendentes', 'Confirmados', 'Cancelados', 'Expirados', 'Cortesias']) assert.match(finance, new RegExp(label));
+  for (const label of ['Pendentes', 'Pagos', 'Cancelados', 'Expirados', 'Cortesias']) assert.match(labels, new RegExp(label));
+  assert.match(finance, /financeSalesStatusFilterLabel/);
   assert.match(finance, /selectedEventId.*eventId=/s);
   assert.match(selector, /new URLSearchParams\(searchParams\.toString\(\)\)/);
   assert.match(selector, /params\.set\("eventId", eventId\)/);

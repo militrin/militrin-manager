@@ -9,12 +9,18 @@ import { hasPermission } from "@/lib/admin/permissions";
 import { formatDateTimeBR } from "@/lib/utils/date";
 import { orderDisplayReference } from "@/lib/display-reference";
 import { orderChargeBreakdown } from "@/lib/orders/charge-breakdown";
-import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from "@/lib/dashboard/commercial-status";
+import { commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from "@/lib/dashboard/commercial-status";
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
 import { COUPON_NOT_PAYMENT_COPY, latestPaymentRow, presentSupportOrder } from "@/lib/orders/support-presentation";
 import { getStatusLabel } from "@/lib/status-labels";
+import {
+  canShowOffGatewayRegularizeCta,
+  offGatewayExpectedAmount,
+  presentFinancePayment,
+} from "@/lib/finance/payment-presentation";
+import { OffGatewayPaymentModal } from "@/app/financeiro/pagamento/off-gateway-modal";
 
 function money(value: number, priceOrigin?: string | null) {
   return formatImportedHistoricalAmount(value, priceOrigin);
@@ -70,10 +76,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // organizacao + Owner OU orders.cancel) -- decide so se o CTA de
   // regularizacao aparece aqui; a acao em si (reclassificar) so acontece na
   // ficha do ingresso, nunca duplicada nesta listagem.
-  const [canRegularizeCancellation, canRefundPayment, canViewCadastro] = await Promise.all([
+  const [canRegularizeCancellation, canRefundPayment, canViewCadastro, canConfirmPayment] = await Promise.all([
     hasPermission("orders.cancel"),
     hasPermission("finance.refund"),
     hasPermission("participants.view"),
+    hasPermission("finance.confirm_payment"),
   ]);
 
   // Auditoria do caso real #001078 (Integridade Operacional, P0): esta pagina
@@ -144,6 +151,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   });
   const commercialStatus = support.commercialStatus;
   const friendlyReason = commercialStatusFriendlyReason(commercialStatus, Boolean(latestPayment));
+  const financeView = latestPayment ? presentFinancePayment(latestPayment) : null;
+  const offGatewayCta = canShowOffGatewayRegularizeCta({
+    payment: latestPayment,
+    hasPermission: canConfirmPayment,
+    surface: "order",
+  });
+  const expectedAmountLabel = money(
+    offGatewayExpectedAmount(latestPayment ?? {}, order.final_amount),
+    order.price_origin,
+  );
+  const confirmOrderLabel = Number.isSafeInteger(Number(order.display_number)) && Number(order.display_number) > 0
+    ? String(Number(order.display_number))
+    : orderDisplayReference(order.display_number, order.order_number);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,var(--brand-glow-strong),transparent_30%),linear-gradient(135deg,#030712,#0f172a)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -199,11 +219,24 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Forma" value={support.formaLabel} />
               <Field label="Gateway" value={support.gatewayLabel} />
-              <Field label="Status" value={getStatusLabel(support.situationBadge).toUpperCase()} />
+              <Field label="Liquidação" value={financeView ? financeView.statusLabel.toUpperCase() : getStatusLabel(support.situationBadge).toUpperCase()} />
+              <Field label="Inscrição" value={COMMERCIAL_STATUS_LABELS[commercialStatus]} />
               <Field label="Criado em" value={formatDateTimeBR(support.paymentCreatedAt) ?? "—"} />
               <Field label="Pago em" value={support.paidAt ? formatDateTimeBR(support.paidAt) ?? "—" : "—"} />
               <Field label="Expirado em" value={support.expiredAt ? formatDateTimeBR(support.expiredAt) ?? "—" : "—"} />
             </div>
+            {offGatewayCta.show && latestPayment?.id ? (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Ações financeiras</p>
+                <OffGatewayPaymentModal
+                  paymentId={String(latestPayment.id)}
+                  orderLabel={confirmOrderLabel}
+                  buyerName={buyerPresentation.name}
+                  replace={false}
+                  expectedAmountLabel={canViewFinancial ? expectedAmountLabel : undefined}
+                />
+              </div>
+            ) : null}
           </AdminSection>
 
           <AdminSection title={`Inscrições do pedido (${ticketItems.length}) · ingressos emitidos (${issuedTickets.length})`}>
@@ -336,20 +369,21 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                     customerFee: payment.payment_fee_customer_amount,
                     chargedAmount: payment.final_amount,
                   });
+                  const attemptView = presentFinancePayment(payment);
                   return (
                   <div key={payment.id} className="space-y-2">
                     <AdminStatCard
                       compact
                       label={formatImportedPaymentMethod(payment.payment_method)}
-                      value={canViewFinancial ? money(attemptCharge.chargedAmount, payment.price_origin ?? order.price_origin) : "—"}
-                      hint={`${COMMERCIAL_STATUS_LABELS[resolveCommercialStatus({ paymentStatus: payment.payment_status })] ?? payment.payment_status} · ${formatDateTimeBR(payment.created_at) ?? "—"}${canViewFinancial && attemptCharge.hasCustomerFee ? ` · taxa ${money(attemptCharge.customerFee, payment.price_origin ?? order.price_origin)}` : ""}`}
+                      value={canViewFinancial ? (attemptView.displayAmount == null ? attemptView.amountCaption : money(attemptCharge.chargedAmount, payment.price_origin ?? order.price_origin)) : "—"}
+                      hint={`${attemptView.statusLabel} · ${formatDateTimeBR(payment.created_at) ?? "—"}${canViewFinancial && attemptCharge.hasCustomerFee ? ` · taxa ${money(attemptCharge.customerFee, payment.price_origin ?? order.price_origin)}` : ""}`}
                     />
                     {canViewFinancial ? (
                       <Link
                         href={`/financeiro/pagamento/${payment.id}`}
                         className="inline-flex h-8 items-center rounded-lg border border-emerald-500/40 px-2.5 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10"
                       >
-                        {canRefundPayment && payment.payment_status === "paid" ? "ESTORNAR PAGAMENTO" : "Ver pagamento"}
+                        {canRefundPayment && payment.payment_status === "paid" && attemptView.badge === "paid" ? "ESTORNAR PAGAMENTO" : "Ver pagamento"}
                       </Link>
                     ) : null}
                   </div>

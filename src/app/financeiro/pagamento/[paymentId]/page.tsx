@@ -11,12 +11,16 @@ import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { formatImportedPaymentMethod } from "@/lib/imports/payment-method";
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from "@/lib/payments/gateway-environment";
 import {
-  canRegisterOffGatewayPayment,
   formatSettlementMethodLabel,
   resolveSettlementNature,
   settlementDisplayAmount,
   settlementNatureLabel,
 } from "@/lib/finance/settlement-nature";
+import {
+  canShowOffGatewayRegularizeCta,
+  offGatewayExpectedAmount,
+  presentFinancePayment,
+} from "@/lib/finance/payment-presentation";
 import {
   adminRefundVisualLabel,
   adminRefundVisualStatus,
@@ -105,7 +109,19 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   const settlement = resolveSettlementNature(payment);
   const settlementAmount = settlementDisplayAmount(payment);
   const settlementAmountLabel = formatImportedHistoricalAmount(settlementAmount, payment.price_origin);
-  const offGatewayEligibility = canRegisterOffGatewayPayment(payment);
+  const financeView = presentFinancePayment(payment);
+  const offGatewayCta = canShowOffGatewayRegularizeCta({
+    payment,
+    hasPermission: canConfirmPayment,
+    surface: "payment",
+  });
+  const expectedAmountLabel = formatImportedHistoricalAmount(
+    offGatewayExpectedAmount(payment, order?.final_amount != null ? Number(order.final_amount) : null),
+    payment.price_origin,
+  );
+  const refundVisuals = new Set(["refunded", "failed", "uncertain", "refund_pending", "requested"]);
+  const headerBadge = refundVisuals.has(visual) ? visual : financeView.badge;
+  const statusLabel = refundVisuals.has(visual) ? adminRefundVisualLabel(visual) : financeView.statusLabel;
   const recordedById = payment.off_gateway_recorded_by ? String(payment.off_gateway_recorded_by) : "";
   const { data: recordedByProfile } = recordedById
     ? await supabase.from("customer_profiles").select("full_name").eq("user_id", recordedById).maybeSingle()
@@ -129,7 +145,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               <div className="flex flex-wrap gap-2">
                 {payment.order_id ? (
                   <Link href={`/inscricoes/pedido/${payment.order_id}`} className="inline-flex items-center rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">
-                    Abrir pedido
+                    Ver pedido
                   </Link>
                 ) : null}
                 <Link href="/financeiro?tab=sales" className="inline-flex items-center rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500">
@@ -139,7 +155,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
             )}
           />
 
-          <AdminSection title="Situação" actions={<AdminStatusBadge status={visual} />}>
+          <AdminSection title="Situação financeira" actions={<AdminStatusBadge status={headerBadge} />}>
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Pedido" value={orderLabel} />
               <Field label="Comprador" value={buyerName} />
@@ -149,9 +165,9 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               {charge.hasCustomerFee ? (
                 <Field label="Taxa de pagamento" value={formatImportedHistoricalAmount(charge.customerFee, payment.price_origin)} />
               ) : null}
-              <Field label={settlement === "off_gateway" ? "Valor recebido" : "Total cobrado"} value={settlement === "off_gateway" ? settlementAmountLabel : amountLabel} />
+              <Field label={settlement === "off_gateway" ? "Valor recebido" : financeView.displayAmount == null ? "Receita" : "Total cobrado"} value={financeView.displayAmount == null ? financeView.amountCaption : (settlement === "off_gateway" ? settlementAmountLabel : amountLabel)} />
               <Field label="Ambiente" value={settlement === "off_gateway" ? "Nenhum" : environment ?? "—"} />
-              <Field label="Status" value={adminRefundVisualLabel(visual)} />
+              <Field label="Status" value={statusLabel} />
               <Field label="Provider" value={settlement === "off_gateway" ? "Sem cobrança Asaas" : String(payment.provider ?? "—")} />
               <Field label="Conta" value={String(payment.gateway_account_key ?? "—")} />
               <Field label="Gateway id" value={settlement === "off_gateway" ? "Nenhum" : String(payment.gateway_payment_id ?? "—")} />
@@ -182,15 +198,16 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               </p>
             ) : null}
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              {canConfirmPayment && offGatewayEligibility.allowed ? (
+              {offGatewayCta.show ? (
                 <OffGatewayPaymentModal
                   paymentId={String(payment.id)}
                   orderLabel={confirmOrderLabel}
                   buyerName={buyerName}
-                  replace={offGatewayEligibility.replace}
+                  replace={offGatewayCta.replace}
+                  expectedAmountLabel={expectedAmountLabel}
                 />
-              ) : canConfirmPayment && offGatewayEligibility.reason ? (
-                <p className="text-sm text-slate-400">{offGatewayEligibility.reason}</p>
+              ) : offGatewayCta.reason ? (
+                <p className="text-sm text-slate-400">{offGatewayCta.reason}</p>
               ) : null}
               {canRefund && eligibility.eligible && eligibility.needsConfirmPhrase ? (
                 <AdminRefundPaymentModal
@@ -199,7 +216,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
                   amountLabel={amountLabel}
                   methodLabel={formatImportedPaymentMethod(payment.payment_method)}
                   environmentLabel={environment ?? "—"}
-                  statusLabel={adminRefundVisualLabel(visual)}
+                  statusLabel={statusLabel}
                   gatewayPaymentId={String(payment.gateway_payment_id ?? "—")}
                   confirmPhrase={eligibility.needsConfirmPhrase}
                   defaultCancelTickets={defaultCancelTicketsChecked(ticketViews)}
@@ -213,7 +230,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
                   amountLabel={amountLabel}
                   methodLabel={formatImportedPaymentMethod(payment.payment_method)}
                   environmentLabel={environment ?? "—"}
-                  statusLabel={adminRefundVisualLabel(visual)}
+                  statusLabel={statusLabel}
                   gatewayPaymentId={String(payment.gateway_payment_id ?? "—")}
                   confirmPhrase={`Confirmo o estorno de ${amountLabel}`}
                   defaultCancelTickets={false}

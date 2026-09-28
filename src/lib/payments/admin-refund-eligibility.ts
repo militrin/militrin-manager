@@ -123,7 +123,7 @@ export function adminRefundVisualLabel(status: string) {
   if (status === "uncertain") return "Estorno em conciliação";
   if (status === "refund_pending") return "Estorno em processamento";
   if (status === "requested") return "Estorno solicitado";
-  if (status === "paid") return "Confirmado";
+  if (status === "paid") return "Pago";
   if (status === "pending_payment" || status === "pending") return "Pendente";
   return status;
 }

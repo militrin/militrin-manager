@@ -22,15 +22,14 @@ import { listPaidOrdersAwaitingTicketIssueAction } from "@/app/painel/integridad
 import { formatImportedHistoricalAmount } from "@/lib/imports/legacy-price";
 import { gatewayEnvironmentLabel, resolveGatewayEnvironment } from "@/lib/payments/gateway-environment";
 import {
-  formatSettlementMethodLabel,
   matchesSalesSettlementFilter,
   resolveSettlementNature,
   SALES_SETTLEMENT_FILTERS,
   salesSettlementFilterLabel,
-  settlementDisplayAmount,
   type SalesSettlementFilter,
 } from "@/lib/finance/settlement-nature";
-import { confirmedRevenueAmount, shouldIncludeInConfirmedRevenue } from "@/lib/finance/confirmed-revenue";
+import { financeSalesStatusFilterLabel, presentFinancePayment } from "@/lib/finance/payment-presentation";
+import { orderDisplayReference } from "@/lib/display-reference";
 
 const tabs = [
   ["overview", "Visão geral"], ["sales", "Receitas"], ["expenses", "Despesas"],
@@ -39,7 +38,6 @@ const tabs = [
 ] as const;
 type Tab = (typeof tabs)[number][0];
 const statusOptions = ["pending", "paid", "cancelled", "expired", "refunded", "courtesy"] as const;
-const statusLabels = { pending: "Pendentes", paid: "Confirmados", cancelled: "Cancelados", expired: "Expirados", refunded: "Estornados", courtesy: "Cortesias" };
 const field = "w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100";
 type Account = { id: string; code: string; name: string; account_type: string; is_active: boolean };
 type Category = { id: string; name: string; entry_kind: string; is_active: boolean };
@@ -51,6 +49,7 @@ type Allocation = { entry_id: string; event_id: string; amount: number };
 type TicketMetric = { eventId: string; issuedAt: string; kind: "sold" | "courtesy" };
 type PaymentRow = {
   id: string;
+  order_id?: string | null;
   amount?: number | null;
   discount_amount?: number | null;
   final_amount: number;
@@ -70,6 +69,7 @@ type PaymentRow = {
   created_at: string;
   paid_at: string | null;
   participants: { full_name?: string; cpf?: string } | { full_name?: string; cpf?: string }[] | null;
+  orders?: { order_number?: string | null; display_number?: number | null } | { order_number?: string | null; display_number?: number | null }[] | null;
 };
 
 async function loadContext(eventId: string | null) {
@@ -94,7 +94,7 @@ async function loadSales(status: string, eventId: string | null, settlement: Sal
   if (!context.selected) return { ...context, rows: [] as PaymentRow[] };
   const paymentStatus = status === "courtesy" || settlement ? "paid" : status;
   let query = context.supabase.from("payments")
-    .select("id,amount,discount_amount,final_amount,payment_method,payment_status,refund_status,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,created_at,paid_at,participants!inner(full_name,cpf)")
+    .select("id,order_id,amount,discount_amount,final_amount,payment_method,payment_status,refund_status,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,created_at,paid_at,participants!inner(full_name,cpf),orders!payments_order_id_fkey(order_number,display_number)")
     .eq("event_id", context.selected.id).eq("payment_status", paymentStatus).order("created_at", { ascending: false }).limit(200);
   if (!settlement && status === "courtesy") query = query.eq("payment_method", "courtesy");
   const { data } = await query;
@@ -220,7 +220,7 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
     <TopBar title="Financeiro" subtitle="Vendas e livro financeiro administrativo"/>
     {awaitingIssueCount > 0 ? (
       <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
-        <p className="font-semibold">Pagamentos confirmados aguardando emissão: {awaitingIssueCount}</p>
+        <p className="font-semibold">Pagamentos pagos aguardando emissão: {awaitingIssueCount}</p>
         <p className="mt-1 text-amber-100/80">O dinheiro já está registrado, mas o ingresso ainda não foi emitido.</p>
         <Link href="/painel/integridade" className="mt-2 inline-flex rounded-lg border border-amber-400/50 px-3 py-1.5 text-xs font-semibold text-amber-50">
           Abrir Integridade e emitir ingressos
@@ -242,10 +242,35 @@ export default async function FinanceiroPage({ searchParams }: { searchParams: P
     ) : (
       <EventContextSelector events={eventOptions} selectedEventId={selectedEventId || null} pathname="/financeiro"/>
     )}
-    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Receita confirmada usa a natureza financeira, não só payment_method. SANDBOX permanece visível para auditoria. Estorno e regularização fora do gateway: abra o pagamento.">
-      <div className="mb-3 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${!settlement && status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{statusLabels[option]}</Link>)}</div>
+    {active === "sales" && sales && selectedEventId ? <SectionCard title="Vendas" description="Receita operacional usa a natureza financeira, não inscrição confirmada. Cortesia e cupom 100% não entram como dinheiro recebido. SANDBOX permanece visível para auditoria. Estorno e regularização fora do gateway: abra o pagamento.">
+      <div className="mb-3 flex flex-wrap gap-2">{statusOptions.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${!settlement && status === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{financeSalesStatusFilterLabel(option)}</Link>)}</div>
       <div className="mb-4 flex flex-wrap gap-2">{SALES_SETTLEMENT_FILTERS.map((option) => <Link key={option} href={`/financeiro?tab=sales&status=paid&settlement=${option}${selectedEventId ? `&eventId=${selectedEventId}` : ""}`} className={`rounded-lg border px-3 py-2 text-sm ${settlement === option ? "border-emerald-400 text-emerald-200" : "border-slate-700"}`}>{salesSettlementFilterLabel(option)}</Link>)}</div>
-      <div className="overflow-x-auto rounded-xl border border-slate-800"><table className="admin-table-zebra min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Nome</th><th className="p-3">CPF</th><th className="p-3">Valor</th><th className="p-3">Forma</th><th className="p-3">Ambiente</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Pago</th><th className="p-3">Ação</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => { const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants; const environment = gatewayEnvironmentLabel(resolveGatewayEnvironment(row)); const statusLabel = row.payment_status === "paid" ? "Confirmado" : row.payment_status === "pending" ? "Pendente" : row.payment_status === "expired" ? "Expirado" : row.payment_status === "refunded" ? "Estornado" : "Cancelado"; return <tr key={row.id} className="border-t border-slate-800"><td className="p-3">{participant?.full_name ?? "—"}</td><td className="p-3">{participant?.cpf ?? "—"}</td><td className="p-3">{formatImportedHistoricalAmount(shouldIncludeInConfirmedRevenue(row) ? confirmedRevenueAmount(row) : settlementDisplayAmount(row), row.price_origin)}</td><td className="p-3">{formatSettlementMethodLabel(row)}</td><td className="p-3">{resolveSettlementNature(row) === "off_gateway" ? "Nenhum" : environment ? <span className={`rounded-full border px-2 py-0.5 text-xs ${environment === "LIVE" ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}>{environment}</span> : "—"}</td><td className="p-3">{statusLabel}</td><td className="p-3">{formatDateTimeBR(row.created_at, " às ")}</td><td className="p-3">{row.paid_at ? formatDateTimeBR(row.paid_at, " às ") : "—"}</td><td className="p-3"><Link href={`/financeiro/pagamento/${row.id}`} className="text-emerald-300 hover:underline">{row.payment_status === "paid" ? "Abrir pagamento" : "Abrir"}</Link></td></tr>; })}</tbody></table></div>
+      <div className="overflow-x-auto rounded-xl border border-slate-800"><table className="admin-table-zebra min-w-full text-sm"><thead className="bg-slate-950 text-left text-slate-400"><tr><th className="p-3">Pedido</th><th className="p-3">Comprador</th><th className="p-3">Valor</th><th className="p-3">Natureza / forma</th><th className="p-3">Ambiente</th><th className="p-3">Status</th><th className="p-3">Quando</th><th className="p-3">Ação</th></tr></thead><tbody>{(sales.rows as PaymentRow[]).map((row) => {
+        const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants;
+        const order = Array.isArray(row.orders) ? row.orders[0] : row.orders;
+        const environment = gatewayEnvironmentLabel(resolveGatewayEnvironment(row));
+        const view = presentFinancePayment(row);
+        const orderLabel = orderDisplayReference(order?.display_number, order?.order_number);
+        const amountLabel = view.displayAmount == null
+          ? view.amountCaption
+          : `${formatImportedHistoricalAmount(view.displayAmount, row.price_origin)}${view.isRevenue ? "" : ` · ${view.amountCaption}`}`;
+        const whenIso = view.whenIso;
+        return <tr key={row.id} className="border-t border-slate-800">
+          <td className="p-3">{orderLabel}</td>
+          <td className="p-3">{participant?.full_name ?? "—"}</td>
+          <td className="p-3">{amountLabel}</td>
+          <td className="p-3">{view.methodLabel}</td>
+          <td className="p-3">{resolveSettlementNature(row) === "off_gateway" ? "Nenhum" : environment ? <span className={`rounded-full border px-2 py-0.5 text-xs ${environment === "LIVE" ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}>{environment}</span> : "—"}</td>
+          <td className="p-3">{view.statusLabel}</td>
+          <td className="p-3">{whenIso ? formatDateTimeBR(whenIso, " às ") : "—"}</td>
+          <td className="p-3">
+            <div className="flex flex-col gap-1">
+              <Link href={`/financeiro/pagamento/${row.id}`} className="text-emerald-300 hover:underline">{row.payment_status === "paid" || view.badge === "off_gateway" ? "Ver pagamento" : "Abrir"}</Link>
+              {row.order_id ? <Link href={`/inscricoes/pedido/${row.order_id}`} className="text-cyan-300 hover:underline">Ver pedido</Link> : null}
+            </div>
+          </td>
+        </tr>;
+      })}</tbody></table></div>
     </SectionCard> : null}
     {active !== "sales" && ledger && !ledger.available ? <LedgerUnavailable/> : null}
     {ledger?.available && organizationId && (selectedEventId || active === "overview") ? (() => {

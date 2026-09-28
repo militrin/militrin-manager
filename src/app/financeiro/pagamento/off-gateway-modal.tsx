@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { datetimeLocalInEventTimeZoneToIso, formatDateTimeBR } from "@/lib/utils/date";
 import { regularizeOffGatewayPaymentAction } from "./actions";
@@ -10,6 +10,7 @@ type OffGatewayModalProps = {
   orderLabel: string;
   buyerName: string;
   replace: boolean;
+  expectedAmountLabel?: string;
 };
 
 function money(value: number) {
@@ -35,6 +36,7 @@ export function OffGatewayPaymentModal(props: OffGatewayModalProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pending, startTransition] = useTransition();
+  const submittingRef = useRef(false);
 
   const amount = parseAmount(amountReceived);
   const receivedAtIso = datetimeLocalInEventTimeZoneToIso(receivedAt);
@@ -50,6 +52,7 @@ export function OffGatewayPaymentModal(props: OffGatewayModalProps) {
 
   function close() {
     if (pending) return;
+    submittingRef.current = false;
     setOpen(false);
     setStep("form");
     setMessage(null);
@@ -57,21 +60,30 @@ export function OffGatewayPaymentModal(props: OffGatewayModalProps) {
   }
 
   function submit() {
+    if (pending || submittingRef.current) return;
+    submittingRef.current = true;
     startTransition(async () => {
-      const result = await regularizeOffGatewayPaymentAction({
-        paymentId: props.paymentId,
-        method: "pix",
-        amountReceived,
-        receivedAt,
-        reason,
-        reference,
-        destinationNote,
-        replace: props.replace ? replace : false,
-      });
-      setMessage(result.message);
-      if (result.success) {
-        setSuccess(true);
-        router.refresh();
+      try {
+        const result = await regularizeOffGatewayPaymentAction({
+          paymentId: props.paymentId,
+          method: "pix",
+          amountReceived,
+          receivedAt,
+          reason,
+          reference,
+          destinationNote,
+          replace: props.replace ? replace : false,
+        });
+        setMessage(result.message);
+        if (result.success) {
+          setSuccess(true);
+          router.refresh();
+        } else {
+          submittingRef.current = false;
+        }
+      } catch {
+        submittingRef.current = false;
+        setMessage("Não foi possível registrar o pagamento fora do gateway.");
       }
     });
   }
@@ -94,6 +106,16 @@ export function OffGatewayPaymentModal(props: OffGatewayModalProps) {
             <p className="mt-1 text-sm text-slate-300">
               Use esta opção somente quando o pagamento foi recebido diretamente, sem processamento pelo gateway integrado.
             </p>
+            <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+              <Field label="Pedido" value={props.orderLabel} />
+              <Field label="Comprador" value={props.buyerName} />
+              <Field label="Valor esperado" value={props.expectedAmountLabel || "—"} />
+            </dl>
+            {props.expectedAmountLabel ? (
+              <p className="mt-2 text-xs text-slate-400">
+                Valor esperado é o líquido do pedido (após desconto), não a cobrança Asaas com taxa. O valor recebido é o que realmente entrou fora do gateway.
+              </p>
+            ) : null}
 
             {success ? (
               <div className="mt-4 space-y-4">

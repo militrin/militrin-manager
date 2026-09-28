@@ -7,6 +7,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { executeAdminPaymentRefund } from "@/lib/payments/admin-refund";
 import { tryGetPaymentGatewayProviderForAccountKey } from "@/lib/payments/get-gateway-provider";
 import { datetimeLocalInEventTimeZoneToIso } from "@/lib/utils/date";
+import { humanizeOffGatewayError } from "@/lib/finance/off-gateway-errors";
 
 export type AdminRefundActionState = {
   success: boolean;
@@ -212,14 +213,16 @@ export async function regularizeOffGatewayPaymentAction(input: {
     p_replace: Boolean(input.replace),
   });
   if (error) {
-    return failOffGateway(error.message);
+    return failOffGateway(humanizeOffGatewayError(error));
   }
 
+  const payload = (data ?? {}) as Record<string, unknown>;
+  const orderId = payload.order_id ? String(payload.order_id) : "";
   revalidatePath(`/financeiro/pagamento/${paymentId}`);
   revalidatePath("/financeiro");
   revalidatePath("/painel");
+  if (orderId) revalidatePath(`/inscricoes/pedido/${orderId}`);
 
-  const payload = (data ?? {}) as Record<string, unknown>;
   return {
     success: true,
     status: payload.idempotent ? "idempotent" : payload.replaced ? "replaced" : "recorded",
