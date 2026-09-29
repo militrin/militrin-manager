@@ -52,8 +52,9 @@ export function ConfirmCheckinDialog({
         <p className="mt-1 text-sm text-slate-400">Este ingresso já possui pulseira vinculada. Nenhuma pulseira nova será lida.</p>
 
         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-3">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Pulseira vinculada</p>
+          <p className="text-xs uppercase tracking-wide text-slate-500">Pulseira</p>
           <p className="mt-1 font-mono text-sm font-semibold text-cyan-100">{wristbandCode}</p>
+          <p className="mt-1 inline-flex rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">Vinculada</p>
         </div>
 
         {error ? (

@@ -202,7 +202,12 @@ export function ExpandedTicketDetails({
             ? await onDeliverKitItem(detail.ticket_id, detail.participant_id, pendingKitItemId, code)
             : { success: false, message: "Operação desconhecida." };
     if (!result || !("success" in result) || !result.success) {
-      return { success: false, message: (result && "message" in result ? result.message : null) ?? "Não foi possível concluir com esta pulseira." };
+      return {
+        success: false,
+        message: (result && "message" in result ? result.message : null) ?? "Não foi possível concluir com esta pulseira.",
+        code: result && "code" in result ? result.code : undefined,
+        holder_name: result && "holder_name" in result ? result.holder_name : undefined,
+      };
     }
     setPendingKitItemId(null);
     return { success: true };
@@ -627,7 +632,8 @@ export function ExpandedTicketDetails({
         <WristbandCodeModal
           title="Vincular pulseira"
           submitLabel="Vincular"
-          onSubmit={async (code) => (await onLinkWristband(detail.ticket_id, code)) as { success: boolean; message?: string }}
+          eventId={detail.event_id}
+          onSubmit={async (code) => (await onLinkWristband(detail.ticket_id, code)) as { success: boolean; message?: string; code?: string; holder_name?: string | null }}
           onClose={() => setWristbandModal(null)}
         />
       ) : null}
@@ -660,6 +666,7 @@ export function ExpandedTicketDetails({
           }
           submitLabel="Vincular e continuar"
           mandatory
+          eventId={detail.event_id}
           onSubmit={handleMandatoryWristbandSubmit}
           onClose={() => { setWristbandModal(null); setPendingKitItemId(null); }}
         />

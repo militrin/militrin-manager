@@ -135,7 +135,12 @@ export function OperationRow({
       ? await onDeliverKitAndCheckin(item.ticket_id, item.participant_id, code)
       : await onCheckin(item.ticket_id, code);
     if (!result || !("success" in result) || !result.success) {
-      return { success: false, message: (result && "message" in result ? result.message : null) ?? "Não foi possível concluir com esta pulseira." };
+      return {
+        success: false,
+        message: (result && "message" in result ? result.message : null) ?? "Não foi possível concluir com esta pulseira.",
+        code: result && "code" in result ? result.code : undefined,
+        holder_name: result && "holder_name" in result ? result.holder_name : undefined,
+      };
     }
     return { success: true };
   }
@@ -333,6 +338,7 @@ export function OperationRow({
         }
         submitLabel="Vincular e continuar"
         mandatory
+        eventId={item.event_id}
         onSubmit={handleMandatoryWristbandSubmit}
         onClose={() => setWristbandModal(null)}
       />

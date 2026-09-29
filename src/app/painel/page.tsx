@@ -109,8 +109,11 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             {sectionAccess.operations && data.hasData ? <AdminSection compact title="Ingressos e operação">
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <AdminStatCard compact label="Ingressos emitidos" value={metric('tickets').value} href={href('tickets')} icon={Ticket} hint="Total histórico, inclui cancelados" />
-                <AdminStatCard compact label="Check-ins realizados" value={metric('checkins').value} href={href('checkins')} icon={ScanLine} tone="info" />
-                <AdminStatCard compact label="Kits completos entregues" value={metric('complete_kits').value} href={href('complete_kits')} icon={PackageCheck} tone="success" />
+                <AdminStatCard compact label="Check-ins realizados" value={metric('checkins').value} href={href('checkins')} icon={ScanLine} tone="info" hint={metric('kit_without_checkin').value ? `Kit entregue sem check-in · ${metric('kit_without_checkin').value}` : undefined} />
+                <AdminStatCard compact label="Kits completos entregues" value={metric('complete_kits').value} href={href('complete_kits')} icon={PackageCheck} tone="success" hint={metric('kit_without_checkin').value ? `Kit entregue sem check-in · ${metric('kit_without_checkin').value}` : undefined} />
+                {metric('kit_without_checkin').value > 0 ? (
+                  <AdminStatCard compact label="Kit entregue sem check-in" value={metric('kit_without_checkin').value} href={href('kit_without_checkin')} icon={TriangleAlert} tone="warning" actionLabel="Ver exceções" />
+                ) : null}
                 <div className="sm:col-span-2 xl:col-span-2">
                   <AdminStatCard compact label={shirtAttention ? 'Consistência operacional' : 'Camisetas consistentes'} value={shirtAttention ? `${shirtAttention} com atenção` : 'Tudo certo'} hint={shirtAttention ? 'Ingressos ativos sem variant_id. Combinação inequívoca é resolvível automaticamente; 0 ou várias variantes exigem revisão.' : 'Ingressos ativos possuem variant_id quando exigido.'} href={href('shirt_coherence')} actionLabel={shirtAttention ? 'Ver pendências' : 'Auditar vínculos'} icon={shirtAttention ? TriangleAlert : Shirt} tone={shirtAttention ? 'warning' : 'success'} />
                 </div>

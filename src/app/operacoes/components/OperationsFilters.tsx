@@ -172,14 +172,30 @@ export function OperationsFilters({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen((current) => !current)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs"
-          >
-            Filtros avançados
-            <span className="text-slate-400">{advancedOpen ? "▲" : "▼"}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((current) => !current)}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs"
+            >
+              Filtros avançados
+              <span className="text-slate-400">{advancedOpen ? "▲" : "▼"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onFilterChange("kitStatus", "delivered");
+                onFilterChange("checkinStatus", "pending");
+              }}
+              className={`inline-flex min-h-9 items-center rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                filters.kitStatus === "delivered" && filters.checkinStatus === "pending"
+                  ? "border-amber-400/60 bg-amber-500/15 text-amber-100"
+                  : "border-slate-700 text-slate-200"
+              }`}
+            >
+              Kit entregue sem check-in
+            </button>
+          </div>
 
           <div className="text-xs text-slate-400">
             {summary.totalGroups} compras/inscrições exibidas •{" "}

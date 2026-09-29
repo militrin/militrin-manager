@@ -21,7 +21,7 @@ test('canonical dashboard separates people, commercial items and tickets', async
   assert.match(source, /put\('confirmed', 'Ingressos ativos', activeTickets\.length/);
   assert.match(source, /put\('cancelled', 'Cancelados', cancelledTickets\.length/);
   assert.match(source, /put\('tickets', 'Ingressos emitidos', tickets\.length/);
-  assert.match(source, /registration_contacts\(id,full_name\)/);
+  assert.match(source, /registration_contacts\(id,full_name,public_pin\)/);
   assert.match(source, /participant_data_issues'\)\.select\('id,event_id,participant_id/);
   assert.doesNotMatch(source, /participant_data_issues'\)\.select\([^']*order_item_id/);
 });

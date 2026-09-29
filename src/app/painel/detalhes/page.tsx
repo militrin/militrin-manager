@@ -7,10 +7,19 @@ import { dashboardDetailHref, loadAdminDashboard, type DashboardMetricKey } from
 import { DASHBOARD_METRIC_SECTIONS, DASHBOARD_SECTION_PERMISSIONS } from '@/lib/dashboard/dashboard-permissions';
 
 const metricKeys = new Set<DashboardMetricKey>([
-  'people', 'registrations', 'confirmed', 'pending', 'expired', 'cancelled', 'tickets', 'checkins', 'complete_kits', 'shirt_coherence',
+  'people', 'registrations', 'confirmed', 'pending', 'expired', 'cancelled', 'tickets', 'checkins', 'complete_kits',
+  'kit_without_checkin', 'checkin_without_kit', 'shirt_coherence',
   'shirts_received', 'shirts_reserved', 'shirts_kit_reserved', 'shirts_additional', 'shirts_delivered', 'shirts_available', 'shirts_deficit',
   'revenue_confirmed', 'revenue_gateway', 'revenue_off_gateway', 'revenue_pending', 'revenue_refunded', 'pix', 'card', 'courtesy', 'coupon_zero',
 ]);
+
+const RELATED_OPERATION_VIEWS: Partial<Record<DashboardMetricKey, DashboardMetricKey[]>> = {
+  complete_kits: ['complete_kits', 'kit_without_checkin'],
+  kit_without_checkin: ['complete_kits', 'kit_without_checkin'],
+  checkins: ['checkins', 'kit_without_checkin', 'checkin_without_kit'],
+  checkin_without_kit: ['checkins', 'checkin_without_kit'],
+};
+
 function money(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
@@ -23,6 +32,7 @@ export default async function DashboardDetailsPage({ searchParams }: { searchPar
   if (section === 'finance') await requirePermission('finance.view_amounts');
   const data = await loadAdminDashboard(params.eventId, [section]);
   const metric = data.metrics.get(key);
+  const relatedKeys = RELATED_OPERATION_VIEWS[key] ?? [];
   const requiredPermissions = [...new Set((metric?.rows ?? []).flatMap((row) => row.requiredPermission ? [row.requiredPermission] : []))];
   const grantedPermissions = new Set((await Promise.all(requiredPermissions.map(async (permission) => [permission, await hasPermission(permission)] as const))).filter(([, granted]) => granted).map(([permission]) => permission));
   const backParams = params.eventId && params.eventId !== 'all' ? `?eventId=${encodeURIComponent(params.eventId)}` : '';
@@ -34,6 +44,23 @@ export default async function DashboardDetailsPage({ searchParams }: { searchPar
       <div className="min-w-0 flex-1 space-y-6">
         <AdminPageHeader title={metric?.label ?? 'Detalhes do indicador'} subtitle={`Registros que formam o indicador em ${data.selectedEvent?.name ?? 'todos os eventos'}.`} actions={<Link href={`/painel${backParams}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500"><ArrowLeft className="size-4" />Voltar ao painel</Link>} />
         {!metric ? <AdminEmptyState title="Indicador indisponível" description="O indicador solicitado não existe para este contexto." /> : <>
+          {relatedKeys.length ? (
+            <div className="flex flex-wrap gap-2">
+              {relatedKeys.map((relatedKey) => {
+                const related = data.metrics.get(relatedKey);
+                const active = relatedKey === key;
+                return (
+                  <Link
+                    key={relatedKey}
+                    href={dashboardDetailHref(relatedKey, params.eventId)}
+                    className={`inline-flex min-h-11 items-center rounded-full border px-3 py-1.5 text-sm font-semibold ${active ? 'border-amber-400/60 bg-amber-500/15 text-amber-100' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}
+                  >
+                    {related?.label ?? relatedKey} · {related?.value ?? 0}
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
           <AdminSection title={isMoney ? money(metric.value) : String(metric.value)} description={key === 'revenue_confirmed'
             ? `${metric.rows.length} pagamento(s). Soma das linhas = card. Gateway LIVE + fora do gateway auditado. Cortesia, cupom 100%, legado sem comprovação, SANDBOX, fake e estorno ficam de fora.`
             : key === 'revenue_gateway'
@@ -44,6 +71,10 @@ export default async function DashboardDetailsPage({ searchParams }: { searchPar
               ? `${metric.rows.length} pagamento(s) LIVE estornado(s). Histórico financeiro; não é receita atual. SANDBOX refunded não entra.`
             : key === 'shirt_coherence'
               ? `${metric.rows.length} ingresso(s). Combinação inequívoca é resolvível automaticamente; 0 ou várias variantes exigem revisão.`
+            : key === 'kit_without_checkin'
+              ? `${metric.rows.length} ingresso(s) com kit completo entregue e check-in pendente. Cada linha abre a ficha na Central.`
+            : key === 'checkin_without_kit'
+              ? `${metric.rows.length} ingresso(s) com check-in feito e kit ainda pendente.`
               : `${metric.rows.length} registro(s) na composição exata do indicador.`} actions={<AdminStatusBadge status={metric.rows.length ? 'confirmed' : 'pending'} />}>
             {!metric.rows.length ? <AdminEmptyState title="Nenhum registro" description="Não há registros que atendam aos filtros deste indicador." /> : <div className="overflow-hidden rounded-2xl border border-slate-800">
               <div className="overflow-x-auto">

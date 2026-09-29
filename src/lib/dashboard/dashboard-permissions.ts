@@ -27,7 +27,7 @@ export async function getDashboardSectionAccess(): Promise<Record<DashboardSecti
 
 export const DASHBOARD_METRIC_SECTIONS = {
   people: 'people', registrations: 'people', confirmed: 'people', pending: 'people', expired: 'people', cancelled: 'people',
-  tickets: 'operations', checkins: 'operations', complete_kits: 'operations', shirt_coherence: 'operations',
+  tickets: 'operations', checkins: 'operations', complete_kits: 'operations', kit_without_checkin: 'operations', checkin_without_kit: 'operations', shirt_coherence: 'operations',
   shirts_received: 'inventory', shirts_reserved: 'inventory', shirts_kit_reserved: 'inventory', shirts_additional: 'inventory',
   shirts_delivered: 'inventory', shirts_available: 'inventory', shirts_deficit: 'inventory',
   revenue_confirmed: 'finance', revenue_gateway: 'finance', revenue_off_gateway: 'finance',

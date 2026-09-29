@@ -2708,6 +2708,23 @@ function escapeIlikePattern(value: string) {
   return value.replace(/[%_\\]/g, (match) => `\\${match}`);
 }
 
+const LOOKUP_UNKNOWN_OPERATOR = "Operador não identificado";
+
+async function resolveLookupOperator(linkedBy: string | null) {
+  if (!linkedBy) {
+    return { name: LOOKUP_UNKNOWN_OPERATOR, email: null as string | null };
+  }
+  const names = await resolveOperatorNames([linkedBy]);
+  const formatted = formatOperatorDisplayName({
+    resolvedName: names.get(linkedBy) ?? null,
+    actorUserId: linkedBy,
+  });
+  if (!formatted || formatted === "Operador" || formatted === "Sistema") {
+    return { name: LOOKUP_UNKNOWN_OPERATOR, email: null as string | null };
+  }
+  return { name: formatted, email: null as string | null };
+}
+
 // "Ver pulseira vinculada" -- consulta rapida por codigo de pulseira (leitor
 // de QR dedicado, fora do Turbo). So exige wristbands.view; NUNCA reusa
 // getOperationTicketDetailsAction/buildTicketDetails (essas exigem
@@ -2726,7 +2743,7 @@ export async function lookupWristbandByQrAction(rawValue: string) {
 
   const { data: wristbandRows, error: wristbandError } = await supabase
     .from("participant_wristbands")
-    .select("id, code, status, linked_at, ticket_id")
+    .select("id, code, status, linked_at, linked_by, ticket_id")
     .ilike("code", escapeIlikePattern(code))
     .order("linked_at", { ascending: false })
     .limit(1);
@@ -2744,10 +2761,16 @@ export async function lookupWristbandByQrAction(rawValue: string) {
     return { success: false as const, message: "QR Code não corresponde a nenhuma pulseira conhecida." };
   }
 
+  const linkedBy = wristband.linked_by ? String(wristband.linked_by) : null;
+  const operator = await resolveLookupOperator(linkedBy);
+  const ticketId = wristband.ticket_id ? String(wristband.ticket_id) : null;
+
   const wristbandSummary = {
     code: String(wristband.code ?? code),
     status: String(wristband.status ?? "unlinked"),
     linked_at: wristband.linked_at ? String(wristband.linked_at) : null,
+    linked_by_name: operator.name,
+    linked_by_email: operator.email,
   };
 
   // Registro existe (a pulseira ja foi vinculada alguma vez) mas o vinculo
@@ -2755,7 +2778,7 @@ export async function lookupWristbandByQrAction(rawValue: string) {
   // "pulseira valida sem vinculo", nunca mostra dados de ingresso antigos
   // como se ainda fossem o vinculo atual.
   if (wristband.status !== "active") {
-    return { success: true as const, state: "unlinked" as const, wristband: wristbandSummary };
+    return { success: true as const, state: "unlinked" as const, wristband: wristbandSummary, ticket_id: null };
   }
 
   const { data: ticket } = await supabase
@@ -2767,7 +2790,7 @@ export async function lookupWristbandByQrAction(rawValue: string) {
     .maybeSingle();
 
   if (!ticket?.id) {
-    return { success: true as const, state: "linked" as const, wristband: wristbandSummary, ticket: null };
+    return { success: true as const, state: "linked" as const, wristband: wristbandSummary, ticket_id: ticketId, ticket: null };
   }
 
   const ticketRow = ticket as Record<string, unknown>;
@@ -2793,6 +2816,7 @@ export async function lookupWristbandByQrAction(rawValue: string) {
     success: true as const,
     state: "linked" as const,
     wristband: wristbandSummary,
+    ticket_id: ticketId,
     ticket: {
       ticket_status: String(ticketRow.status ?? ""),
       event_name: eventRelation?.name ? String(eventRelation.name) : "",

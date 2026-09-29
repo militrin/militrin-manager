@@ -5,18 +5,25 @@ import Link from "next/link";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { SectionCard } from "@/components/dashboard/SectionCard";
 import { AppBreadcrumb } from "@/components/navigation/AppBreadcrumb";
+import { checkinStatusChip } from "@/components/militrin/status-chips";
+import { isOperationalTicketStatus } from "@/lib/dashboard/operational-shirt-demand";
+import { getStatusLabel } from "@/lib/status-labels";
+import { formatEventDateTimeWithSeconds } from "@/lib/utils/date";
 import { QrScanner } from "../components/QrScanner";
-import { lookupWristbandByQrAction, searchLinkedWristbandsAction, unlinkWristbandAction } from "../actions";
+import { ReplaceWristbandDialog } from "../components/ReplaceWristbandDialog";
+import { lookupWristbandByQrAction, replaceWristbandAction, searchLinkedWristbandsAction, unlinkWristbandAction } from "../actions";
 
 type LookupResult = Awaited<ReturnType<typeof lookupWristbandByQrAction>>;
 type LinkedWristbandsResult = Awaited<ReturnType<typeof searchLinkedWristbandsAction>>;
 type LinkedWristbandRow = LinkedWristbandsResult extends { rows: infer R } ? R extends Array<infer Item> ? Item : never : never;
+type LinkedTicket = Extract<LookupResult, { success: true; state: "linked" }> extends { ticket: infer T } ? T : never;
+
+const SCAN_ANOTHER_LABEL = "Ler outra pulseira";
+const UNKNOWN_OPERATOR_LABEL = "Operador não identificado";
 
 function formatDateTime(value: string | null) {
   if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString("pt-BR");
+  return formatEventDateTimeWithSeconds(value);
 }
 
 function maskCpf(cpf: string) {
@@ -25,9 +32,23 @@ function maskCpf(cpf: string) {
   return `***.***.***-${digits.slice(-2)}`;
 }
 
+function humanTicketStatus(status: string | null | undefined) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  if (normalized === "used") return checkinStatusChip(true).label;
+  return getStatusLabel(status, "Não informado");
+}
+
 const PAGE_SIZE = 30;
 
-function LinkedWristbandsSection({ events, canUnlink }: { events: Array<{ id: string; name: string }>; canUnlink: boolean }) {
+function LinkedWristbandsSection({
+  events,
+  canUnlink,
+  canViewTicket,
+}: {
+  events: Array<{ id: string; name: string }>;
+  canUnlink: boolean;
+  canViewTicket: boolean;
+}) {
   const [eventId, setEventId] = useState(events[0]?.id ?? "");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -37,9 +58,6 @@ function LinkedWristbandsSection({ events, canUnlink }: { events: Array<{ id: st
   const [message, setMessage] = useState<string | null>(null);
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
 
-  // Reset de pagina ao trocar evento/busca ajustado DURANTE o render (nao num
-  // useEffect) -- e o padrao recomendado pra "resetar estado quando uma prop
-  // muda" (evita o cascading render que useEffect+setState causaria aqui).
   const [trackedFilters, setTrackedFilters] = useState({ eventId, query });
   if (trackedFilters.eventId !== eventId || trackedFilters.query !== query) {
     setTrackedFilters({ eventId, query });
@@ -138,9 +156,11 @@ function LinkedWristbandsSection({ events, canUnlink }: { events: Array<{ id: st
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
-                    <Link href={`/ingressos/${row.ticket_id}`} className="inline-flex h-8 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
-                      Abrir ingresso
-                    </Link>
+                    {canViewTicket ? (
+                      <Link href={`/ingressos/${row.ticket_id}`} className="inline-flex h-8 items-center rounded-lg border border-cyan-500/40 px-2.5 text-xs text-cyan-200">
+                        Abrir ingresso
+                      </Link>
+                    ) : null}
                     {canUnlink ? (
                       <button
                         type="button"
@@ -174,7 +194,17 @@ function LinkedWristbandsSection({ events, canUnlink }: { events: Array<{ id: st
   );
 }
 
-export function WristbandLookupClient({ events, canUnlink }: { events: Array<{ id: string; name: string }>; canUnlink: boolean }) {
+export function WristbandLookupClient({
+  events,
+  canUnlink,
+  canReplace,
+  canViewTicket,
+}: {
+  events: Array<{ id: string; name: string }>;
+  canUnlink: boolean;
+  canReplace: boolean;
+  canViewTicket: boolean;
+}) {
   const [result, setResult] = useState<LookupResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
@@ -213,37 +243,73 @@ export function WristbandLookupClient({ events, canUnlink }: { events: Array<{ i
             </div>
           </header>
 
-          <SectionCard
-            title="Escaneie a pulseira"
-            description="Aponte a câmera para o QR/código da pulseira para consultar o vínculo atual."
-          >
+          <section className="overflow-x-hidden rounded-3xl border border-slate-800/80 bg-slate-900/70 p-4 sm:p-5">
             {!result ? (
-              <QrScanner
-                key={scannerKey}
-                title="Escaneie a pulseira"
-                onRead={handleRead}
-                guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"
-                helpMessage="Aproxime a pulseira da câmera e evite reflexos."
-              />
+              <div>
+                <p className="text-lg font-semibold text-white">Escaneie a pulseira</p>
+                <p className="mt-1 text-sm text-slate-400">Aponte a câmera para o QR/código da pulseira para consultar o vínculo atual.</p>
+                <div className={`relative mt-3 ${loading ? "pointer-events-none opacity-60" : ""}`}>
+                  <QrScanner
+                    key={scannerKey}
+                    title="Escaneie a pulseira"
+                    onRead={handleRead}
+                    square
+                    hideManual
+                    guideLabel="Aproxime a pulseira até o QR ocupar boa parte da área"
+                    helpMessage="Aproxime a pulseira da câmera e evite reflexos."
+                  />
+                </div>
+              </div>
             ) : (
-              <WristbandResultCard result={result} onScanAnother={handleScanAnother} />
+              <WristbandResultCard
+                result={result}
+                canReplace={canReplace}
+                canViewTicket={canViewTicket}
+                busy={loading}
+                onScanAnother={handleScanAnother}
+                onReplaced={async (newCode) => {
+                  const refreshed = await lookupWristbandByQrAction(newCode);
+                  setResult(refreshed);
+                }}
+              />
             )}
             {loading ? <p className="mt-3 text-sm text-slate-400">Consultando...</p> : null}
-          </SectionCard>
+          </section>
 
-          {events.length > 0 ? <LinkedWristbandsSection events={events} canUnlink={canUnlink} /> : null}
+          {events.length > 0 ? <LinkedWristbandsSection events={events} canUnlink={canUnlink} canViewTicket={canViewTicket} /> : null}
         </div>
       </div>
     </main>
   );
 }
 
-function WristbandResultCard({ result, onScanAnother }: { result: LookupResult; onScanAnother: () => void }) {
+function WristbandResultCard({
+  result,
+  canReplace,
+  canViewTicket,
+  busy,
+  onScanAnother,
+  onReplaced,
+}: {
+  result: LookupResult;
+  canReplace: boolean;
+  canViewTicket: boolean;
+  busy: boolean;
+  onScanAnother: () => void;
+  onReplaced: (newCode: string) => Promise<void>;
+}) {
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const linked = result.success && result.state === "linked" ? result : null;
+  const ticketId = linked && "ticket_id" in linked ? linked.ticket_id : null;
+  const ticket = linked && "ticket" in linked ? linked.ticket : null;
+  const ticketEligible = !ticket || isOperationalTicketStatus(ticket.ticket_status);
+  const showOpenTicket = Boolean(linked && ticketId && canViewTicket);
+  const showReplace = Boolean(linked && ticketId && canReplace && ticketEligible);
+
   return (
     <div className="rounded-3xl border border-slate-700 bg-slate-900 p-6">
-      {/* QR invalido/nao reconhecido -- inclui, de proposito, codigo de
-          outra organizacao (RLS ja filtra antes de chegar aqui, entao nunca
-          da pra distinguir "nao existe" de "existe em outra org"). */}
       {!result.success ? (
         <div>
           <p className="text-lg font-bold text-rose-300">QR não reconhecido</p>
@@ -252,9 +318,6 @@ function WristbandResultCard({ result, onScanAnother }: { result: LookupResult; 
         </div>
       ) : null}
 
-      {/* Pulseira com registro, mas o vinculo mais recente NAO esta ativo
-          (desvinculada/substituida/bloqueada) -- nunca mostra dados de
-          ingresso antigos como se ainda valessem. */}
       {result.success && result.state === "unlinked" ? (
         <div>
           <p className="text-lg font-bold text-amber-300">Pulseira desvinculada</p>
@@ -265,46 +328,123 @@ function WristbandResultCard({ result, onScanAnother }: { result: LookupResult; 
         </div>
       ) : null}
 
-      {result.success && result.state === "linked" ? (
-        <div className="space-y-4">
-          <div>
-            <p className="text-lg font-bold text-emerald-300">Pulseira vinculada</p>
-            <p className="text-xs uppercase tracking-wide text-slate-500">Pulseira</p>
-            <p className="text-2xl font-black">{result.wristband.code}</p>
-            <p className="text-sm text-slate-400">
-              Status: {result.wristband.status}
-              {result.wristband.linked_at ? ` · vinculada em ${formatDateTime(result.wristband.linked_at)}` : ""}
-            </p>
-          </div>
-
-          {result.ticket ? (
-            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-              <Field label="Comprador" value={result.ticket.buyer_name} />
-              <Field label="Titular do ingresso" value={result.ticket.holder_name} />
-              <Field label="Evento" value={result.ticket.event_name} />
-              <Field label="Categoria" value={result.ticket.category_name} />
-              <Field label="Status do ingresso" value={result.ticket.ticket_status} />
-            </div>
-          ) : (
-            <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-              Pulseira encontrada, mas você não tem permissão para ver os dados do ingresso vinculado.
-            </p>
-          )}
-        </div>
+      {linked ? (
+        <ActiveCard
+          code={linked.wristband.code}
+          status={linked.wristband.status}
+          linkedAt={linked.wristband.linked_at}
+          linkedByName={linked.wristband.linked_by_name}
+          ticket={ticket}
+        />
       ) : null}
 
-      <div className="mt-6 flex flex-wrap gap-3">
+      {actionError ? <p className="mt-3 text-sm text-rose-300" role="alert">{actionError}</p> : null}
+
+      <div className="mt-6 space-y-2">
+        {showOpenTicket || showReplace ? (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {showOpenTicket && ticketId ? (
+              <Link
+                href={`/ingressos/${ticketId}`}
+                className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-cyan-500 px-4 text-sm font-semibold text-cyan-950 sm:flex-1"
+              >
+                Abrir ingresso
+              </Link>
+            ) : null}
+            {showReplace ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setReplaceOpen(true)}
+                className="min-h-12 w-full rounded-2xl border border-cyan-500/40 px-4 text-sm font-semibold text-cyan-200 disabled:opacity-40 sm:flex-1"
+              >
+                Substituir pulseira
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={onScanAnother}
-          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-cyan-950"
+          disabled={busy}
+          className="min-h-12 w-full rounded-2xl border border-slate-600 px-4 text-sm font-semibold text-slate-300 disabled:opacity-55"
         >
-          Ler outra pulseira
+          {SCAN_ANOTHER_LABEL}
         </button>
-        <Link href="/operacoes" className="rounded-xl border border-slate-700 px-4 py-2 text-sm">
+        <Link href="/operacoes" className="inline-flex min-h-11 w-full items-center justify-center rounded-2xl border border-slate-700 px-4 text-sm text-slate-300">
           Fechar / voltar
         </Link>
       </div>
+
+      {replaceOpen && linked && ticketId ? (
+        <ReplaceWristbandDialog
+          currentCode={linked.wristband.code}
+          onClose={() => setReplaceOpen(false)}
+          onSubmit={async (payload) => {
+            const response = await replaceWristbandAction({
+              ticket_id: ticketId,
+              new_code: payload.newCode,
+              reason_code: payload.reasonCode,
+              reason_text: payload.reasonText,
+            });
+            if (!response.success) {
+              setActionError(response.message ?? "Não foi possível substituir a pulseira.");
+              return response;
+            }
+            setActionError(null);
+            setReplaceOpen(false);
+            await onReplaced(response.code ?? payload.newCode);
+            return response;
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ActiveCard({
+  code,
+  status,
+  linkedAt,
+  linkedByName,
+  ticket,
+}: {
+  code: string;
+  status: string;
+  linkedAt: string | null;
+  linkedByName: string;
+  ticket: LinkedTicket | null | undefined;
+}) {
+  const linkedAtLabel = formatDateTime(linkedAt);
+  const operatorLabel = String(linkedByName ?? "").trim() || UNKNOWN_OPERATOR_LABEL;
+  const buyerName = String(ticket?.buyer_name ?? "").trim();
+  const buyerUnidentified = !buyerName || buyerName === "Comprador não identificado";
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-lg font-bold text-emerald-300">Pulseira vinculada</p>
+        <p className="mt-1 font-mono text-3xl font-black tracking-tight text-white">{code}</p>
+        <p className="mt-2 text-sm font-semibold text-slate-200">{status === "active" ? "Ativa" : status}</p>
+        {linkedAtLabel ? <p className="text-sm text-slate-400">Vinculada em {linkedAtLabel}</p> : null}
+        <p className="text-sm text-slate-400">Vinculada por {operatorLabel}</p>
+      </div>
+      {ticket ? (
+        <>
+          <Field label="Titular" value={ticket.holder_name || "Titular não definido"} />
+          <Field label="Evento" value={ticket.event_name || "Não informado"} />
+          <Field label="Categoria" value={ticket.category_name || "Não informado"} />
+          <Field label="Status do ingresso" value={humanTicketStatus(ticket.ticket_status)} />
+          {buyerUnidentified ? (
+            <p className="px-1 text-sm text-slate-600">Comprador não identificado</p>
+          ) : (
+            <p className="px-1 text-sm text-slate-500">Comprador: {buyerName}</p>
+          )}
+        </>
+      ) : (
+        <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          Pulseira encontrada, mas você não tem permissão para ver os dados do ingresso vinculado.
+        </p>
+      )}
     </div>
   );
 }

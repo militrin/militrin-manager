@@ -7,7 +7,13 @@ export default async function OperacoesPulseiraPage() {
   await requirePermission("wristbands.view");
 
   const organization = (await getCurrentOrganizationContext()).organization;
-  const canUnlink = await hasPermission("wristbands.unlink");
+  const [canUnlink, canReplace, canViewParticipants, canViewOrders] = await Promise.all([
+    hasPermission("wristbands.unlink"),
+    hasPermission("wristbands.replace"),
+    hasPermission("participants.view"),
+    hasPermission("orders.view"),
+  ]);
+  const canViewTicket = canViewParticipants || canViewOrders;
 
   let events: Array<{ id: string; name: string }> = [];
   if (organization?.id) {
@@ -21,5 +27,12 @@ export default async function OperacoesPulseiraPage() {
     events = (data ?? []).map((event) => ({ id: String(event.id), name: String(event.name) }));
   }
 
-  return <WristbandLookupClient events={events} canUnlink={canUnlink} />;
+  return (
+    <WristbandLookupClient
+      events={events}
+      canUnlink={canUnlink}
+      canReplace={canReplace}
+      canViewTicket={canViewTicket}
+    />
+  );
 }

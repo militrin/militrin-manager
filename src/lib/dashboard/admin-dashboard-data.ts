@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import type { DashboardSection } from '@/lib/dashboard/dashboard-permissions';
 import { makeShirtInventoryKey } from '@/lib/constants/shirts';
-import { orderDisplayReference } from '@/lib/display-reference';
+import { orderDisplayReference, canonicalTicketDisplayCode } from '@/lib/display-reference';
 import { resolveCommercialStatus, commercialStatusFriendlyReason, resolveBuyerPresentation, COMMERCIAL_STATUS_LABELS } from '@/lib/dashboard/commercial-status';
 import { additionalTicketHolderUnassignedCopy } from '@/lib/imports/issuance-presentation';
 import { canonicalHolderName, hasCanonicalHolderName } from '@/lib/tickets/holder-name';
@@ -34,10 +34,17 @@ import {
   shirtDeficitQuantity,
 } from '@/lib/dashboard/operational-shirt-demand';
 import { cadastroHrefForOwnedTicket } from '@/lib/registrations/cadastro-listing';
+import {
+  isCheckinWithoutCompleteKit,
+  isKitDeliveredWithoutCheckin,
+  operationsTicketHref,
+  ticketHasCheckin,
+  ticketHasCompleteRequiredKit,
+} from '@/lib/dashboard/operational-exceptions';
 
 export type DashboardMetricKey =
   | 'people' | 'registrations' | 'confirmed' | 'pending' | 'expired' | 'cancelled'
-  | 'tickets' | 'checkins' | 'complete_kits' | 'shirt_coherence'
+  | 'tickets' | 'checkins' | 'complete_kits' | 'kit_without_checkin' | 'checkin_without_kit' | 'shirt_coherence'
   | 'shirts_received' | 'shirts_reserved' | 'shirts_kit_reserved' | 'shirts_additional'
   | 'shirts_delivered' | 'shirts_available' | 'shirts_deficit'
   | 'revenue_confirmed' | 'revenue_gateway' | 'revenue_off_gateway' | 'revenue_pending' | 'revenue_refunded'
@@ -115,10 +122,10 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   }
   const enabled = new Set(authorizedSections);
   const emptyResult = { data: [], error: null };
-  const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult] = await Promise.all([
-    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,user_id,registration_contact_id,full_name,registration_contacts(id,full_name)')) : emptyResult,
+  const [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult, wristbandsResult] = await Promise.all([
+    enabled.has('people') || enabled.has('operations') ? fetchAllScoped(() => supabase.from('participants').select('id,event_id,user_id,registration_contact_id,full_name,registration_contacts(id,full_name,public_pin)')) : emptyResult,
     enabled.has('people') || enabled.has('operations') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('order_items').select('id,event_id,status,item_kind,participant_id,registration_contact_id,ownership_status,holder_full_name,holder_email,holder_phone,shirt_type,shirt_size,quantity,final_amount,created_at,reservation_expires_at,store_item_id,store_item_variant_id,registration_contacts!order_items_registration_contact_id_fkey(full_name,cpf),participants(full_name,registration_contact_id,cpf),ticket_categories(name),registration_batches(name),orders(id,status,payment_id,user_id,buyer_type,display_number,order_number,created_at)')) : emptyResult,
-    enabled.has('people') || enabled.has('operations') || enabled.has('finance') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,owner_user_id,intended_owner_contact_id,participants(full_name,registration_contact_id),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,ticket_categories(name))')) : emptyResult,
+    enabled.has('people') || enabled.has('operations') || enabled.has('finance') || enabled.has('inventory') ? fetchAllScoped(() => supabase.from('tickets').select('id,event_id,status,used_at,issued_at,participant_id,order_item_id,order_id,owner_user_id,intended_owner_contact_id,participants(full_name,registration_contact_id,registration_contacts(public_pin)),order_items(holder_full_name,registration_contact_id,ownership_status,shirt_type,shirt_size,item_position,ticket_categories(name),registration_contacts!order_items_registration_contact_id_fkey(public_pin)),orders(display_number,order_number)')) : emptyResult,
     enabled.has('finance') ? fetchAllScoped(() => supabase.from('payments').select('id,event_id,order_id,participant_id,payment_status,payment_method,amount,discount_amount,final_amount,price_origin,provider,gateway_payment_id,gateway_account_key,gateway_environment,settlement_nature,off_gateway_method,off_gateway_amount,off_gateway_received_at,off_gateway_recorded_at,created_at,paid_at,participants(full_name),orders!payments_order_id_fkey(display_number,order_number,status)')) : emptyResult,
     // total_quantity (estoque fisico) continua vindo da tela historica de
     // shirt_inventory -- mas reserved_quantity/delivered_quantity aqui sao so
@@ -141,8 +148,9 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     enabled.has('inventory')
       ? supabase.from('store_items').select('id,name,linked_event_kit_item_id').eq('organization_id', organization.id)
       : emptyResult,
+    enabled.has('operations') ? fetchAllScoped(() => supabase.from('participant_wristbands').select('ticket_id,code,status,event_id').eq('status', 'active')) : emptyResult,
   ]);
-  for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult]) if (result.error) throw result.error;
+  for (const result of [participantsResult, itemsResult, ticketsResult, paymentsResult, inventoryResult, variantInventoryResult, kitsResult, kitDefinitionsResult, issuesResult, movementsResult, storeItemsResult, wristbandsResult]) if (result.error) throw result.error;
   const participants = (participantsResult.data ?? []) as Row[];
   // Fonte canonica ticket x produto: order_items.item_kind (nunca nome/preco/
   // lote/QR). Metricas e listas desta secao ("Inscricoes comerciais" etc.) sao
@@ -162,6 +170,12 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   const payments = (paymentsResult.data ?? []) as Row[]; const rawInventory = (inventoryResult.data ?? []) as Row[]; const kits = (kitsResult.data ?? []) as Row[];
   const kitDefinitions = (kitDefinitionsResult.data ?? []) as Row[]; const issues = (issuesResult.data ?? []) as Row[]; const movements = (movementsResult.data ?? []) as Row[];
   const storeItems = ((storeItemsResult.data ?? []) as Row[]).filter((item) => kitDefinitions.some((definition) => definition.item_type === 'shirt' && String(definition.id) === String(item.linked_event_kit_item_id)));
+  const wristbandByTicket = new Map<string, Row>();
+  for (const row of (wristbandsResult.data ?? []) as Row[]) {
+    const ticketId = String(row.ticket_id ?? '');
+    if (!ticketId || wristbandByTicket.has(ticketId)) continue;
+    wristbandByTicket.set(ticketId, row);
+  }
   const shirtKitIds = new Set(kitDefinitions.filter((definition) => definition.item_type === 'shirt').map((definition) => String(definition.id)));
   const kitEventById = new Map(kitDefinitions.map((definition) => [String(definition.id), String(definition.event_id)]));
   let storeVariants: Row[] = [];
@@ -398,7 +412,28 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
     })));
   }
   const kitsByTicket = new Map<string, Row[]>(); for (const kit of kits) { const key = String(kit.ticket_id ?? ''); if (!key) continue; kitsByTicket.set(key, [...(kitsByTicket.get(key) ?? []), kit]); }
-  const completeTickets = activeTickets.filter((ticket) => { const required = requiredKitByEvent.get(String(ticket.event_id)) ?? []; const linked = kitsByTicket.get(String(ticket.id)) ?? []; return required.length > 0 && required.every((id) => linked.some((kit) => String(kit.kit_item_id) === id && kit.status === 'delivered')); });
+  const completeTickets = activeTickets.filter((ticket) => ticketHasCompleteRequiredKit(ticket, requiredKitByEvent, kitsByTicket));
+  const kitWithoutCheckin = activeTickets.filter((ticket) => isKitDeliveredWithoutCheckin(ticket, requiredKitByEvent, kitsByTicket));
+  const checkinWithoutKit = activeTickets.filter((ticket) => isCheckinWithoutCompleteKit(ticket, requiredKitByEvent, kitsByTicket));
+  const exceptionRow = (ticket: Row): DashboardDetailRow => {
+    const item = one(ticket.order_items) ?? itemById.get(String(ticket.order_item_id));
+    const participant = participantById.get(String(ticket.participant_id ?? '')) ?? one(ticket.participants);
+    const order = one(ticket.orders);
+    const pin = String(one(item?.registration_contacts)?.public_pin ?? one(participant?.registration_contacts)?.public_pin ?? '').trim() || null;
+    const ticketCode = canonicalTicketDisplayCode(order?.display_number, item?.item_position, order?.order_number);
+    const wristband = wristbandByTicket.get(String(ticket.id));
+    const checkinDone = ticketHasCheckin(ticket);
+    const kitComplete = ticketHasCompleteRequiredKit(ticket, requiredKitByEvent, kitsByTicket);
+    return {
+      id: String(ticket.id),
+      primary: personName(item, participant),
+      secondary: [ticketCode, pin ? `PIN ${pin}` : null, wristband?.code ? `Pulseira ${wristband.code}` : 'Sem pulseira'].filter(Boolean).join(' · '),
+      status: checkinDone ? 'Check-in realizado' : 'Check-in pendente',
+      href: operationsTicketHref(String(ticket.event_id), String(ticket.id), kitComplete && !checkinDone ? 'kit_without_checkin' : undefined),
+      actionLabel: 'Abrir na Central',
+      issue: [kitComplete ? 'Kit entregue' : 'Kit pendente', checkinDone ? 'Check-in realizado' : 'Check-in pendente', wristband?.code ? `Pulseira ${wristband.code}` : 'Sem pulseira'].join(' · '),
+    };
+  };
   const shirtAttention = activeTickets.filter((ticket) => { const required = shirtKitByEvent.get(String(ticket.event_id)) ?? []; if (!required.length) return false; const linked = kitsByTicket.get(String(ticket.id)) ?? [];
     return !required.some((id) => linked.some((kit) => String(kit.kit_item_id) === id && Boolean(kit.variant_data?.variant_id))); });
   // "Pessoas no evento" = titulares/pessoas físicas projetadas no evento
@@ -550,8 +585,11 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
   put('confirmed', 'Ingressos ativos', activeTickets.length, activeTickets.map(ticketRow)); put('pending', 'Inscrições pendentes', pendingItems.length, pendingItems.map(itemRow));
   put('expired', 'Inscrições expiradas', expiredItems.length, expiredItems.map(itemRow));
   put('cancelled', 'Cancelados', cancelledTickets.length, cancelledTickets.map(ticketRow)); put('tickets', 'Ingressos emitidos', tickets.length, tickets.map(ticketRow));
-  put('checkins', 'Check-ins realizados', tickets.filter((ticket) => ticket.used_at || ticket.status === 'used').length, tickets.filter((ticket) => ticket.used_at || ticket.status === 'used').map(checkinRow));
-  put('complete_kits', 'Kits completos entregues', completeTickets.length, completeTickets.map(ticketRow)); put('shirt_coherence', 'Ingressos com camiseta pendente', shirtAttention.length, shirtAttention.map(shirtAttentionRow));
+  put('checkins', 'Check-ins realizados', tickets.filter((ticket) => ticketHasCheckin(ticket)).length, tickets.filter((ticket) => ticketHasCheckin(ticket)).map(checkinRow));
+  put('complete_kits', 'Kits completos entregues', completeTickets.length, completeTickets.map(ticketRow));
+  put('kit_without_checkin', 'Kit entregue sem check-in', kitWithoutCheckin.length, kitWithoutCheckin.map(exceptionRow));
+  put('checkin_without_kit', 'Check-in com kit pendente', checkinWithoutKit.length, checkinWithoutKit.map(exceptionRow));
+  put('shirt_coherence', 'Ingressos com camiseta pendente', shirtAttention.length, shirtAttention.map(shirtAttentionRow));
   put('shirts_received', 'Camisetas recebidas', received, movementRows.length ? movementRows : inventory.map((row) => inventoryRow(row, 'received', Number(row.total_quantity ?? 0))));
   put('shirts_reserved', 'Camisetas reservadas', reserved, reservedBreakdownRows);
   put('shirts_kit_reserved', 'Camisetas de kits pendentes', kitPendingReserved, kitReservedRows);
@@ -572,5 +610,5 @@ export async function loadAdminDashboard(eventId?: string, authorizedSections: D
 }
 
 export function dashboardDetailHref(metric: DashboardMetricKey, eventId?: string | null) {
-  const params = new URLSearchParams({ metric }); if (eventId) params.set('eventId', eventId); return `/painel/detalhes?${params.toString()}`;
+  const params = new URLSearchParams({ metric }); if (eventId && eventId !== 'all') params.set('eventId', eventId); return `/painel/detalhes?${params.toString()}`;
 }

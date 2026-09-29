@@ -6,7 +6,7 @@ import type { TurboOperationalGender } from "@/lib/operations/turbo-gender-label
  * usado pelos componentes pra decidir se abrem o modal obrigatorio de
  * pulseira (code === 'WRISTBAND_REQUIRED') sem precisar conhecer o formato
  * exato de cada server action. */
-export type ActionResult = { success: boolean; message?: string; code?: string } | void;
+export type ActionResult = { success: boolean; message?: string; code?: string; holder_name?: string | null } | void;
 
 export type ReasonPayload = { reasonCode: string; reasonText: string; alsoUnlinkWristband: boolean };
 

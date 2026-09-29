@@ -49,6 +49,23 @@ import { ticketMatchesExactDisplayCode } from "@/lib/display-reference";
 
 const VIEW_STATE_STORAGE_KEY = "operacoes.view-state.v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function applyOperationUrlFilters(current: PickupFilters, params: URLSearchParams): PickupFilters {
+  const next = { ...current };
+  const eventId = params.get("eventId");
+  if (eventId && UUID_PATTERN.test(eventId)) next.eventId = eventId;
+  const exception = params.get("exception");
+  const kitStatus = params.get("kitStatus");
+  const checkinStatus = params.get("checkinStatus");
+  if (exception === "kit_without_checkin" || (kitStatus === "delivered" && checkinStatus === "pending")) {
+    next.kitStatus = "delivered";
+    next.checkinStatus = "pending";
+  } else {
+    if (kitStatus) next.kitStatus = kitStatus;
+    if (checkinStatus) next.checkinStatus = checkinStatus;
+  }
+  return next;
+}
 const SHIRT_TYPE_RANK = new Map<string, number>([["camiseta", 0], ["babylook", 1]]);
 const SHIRT_SIZE_RANK = new Map<string, number>([
   ["PP", 0],
@@ -384,6 +401,7 @@ function KitPickupPageContent() {
   useEffect(() => {
     queueMicrotask(() => {
       try {
+        const url = new URL(window.location.href);
         const raw = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw) as {
@@ -393,10 +411,16 @@ function KitPickupPageContent() {
             sortDirection?: PickupSortDirection;
           };
 
-          setFilters({ ...EMPTY_PICKUP_FILTERS, ...(parsed.filters ?? {}) });
-          setAppliedFilters({ ...EMPTY_PICKUP_FILTERS, ...(parsed.appliedFilters ?? parsed.filters ?? {}) });
+          const restored = { ...EMPTY_PICKUP_FILTERS, ...(parsed.filters ?? {}) };
+          const restoredApplied = { ...EMPTY_PICKUP_FILTERS, ...(parsed.appliedFilters ?? parsed.filters ?? {}) };
+          setFilters(applyOperationUrlFilters(restored, url.searchParams));
+          setAppliedFilters(applyOperationUrlFilters(restoredApplied, url.searchParams));
           setSortField(parsed.sortField ?? "name");
           setSortDirection(parsed.sortDirection ?? "asc");
+        } else {
+          const fromUrl = applyOperationUrlFilters(EMPTY_PICKUP_FILTERS, url.searchParams);
+          setFilters(fromUrl);
+          setAppliedFilters(fromUrl);
         }
       } catch {
         // Ignore invalid localStorage payload and keep deterministic defaults.
@@ -558,11 +582,13 @@ function KitPickupPageContent() {
       // ja vem ordenado is_active desc, starts_at desc). So mostra "Nenhum
       // evento encontrado" quando a organizacao realmente nao tem evento algum;
       // antes, eventId vazio bastava pra cair aqui mesmo com eventos existindo.
+      const urlEventId = searchParams.get("eventId");
       const preferredEvent =
-        (filters.eventId ? loadedEvents.find((event) => event.id === filters.eventId) : undefined) ??
-        loadedEvents.find((event) => event.is_active) ??
-        loadedEvents[0] ??
-        null;
+        (urlEventId && UUID_PATTERN.test(urlEventId) ? loadedEvents.find((event) => event.id === urlEventId) : undefined)
+        ?? (filters.eventId ? loadedEvents.find((event) => event.id === filters.eventId) : undefined)
+        ?? loadedEvents.find((event) => event.is_active)
+        ?? loadedEvents[0]
+        ?? null;
 
       if (!preferredEvent) {
         setMessage("Nenhum evento encontrado.");
