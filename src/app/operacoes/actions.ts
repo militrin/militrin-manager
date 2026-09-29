@@ -7,6 +7,7 @@ import { ticketHasOpenIssueBlock } from "@/lib/account/ticket-operation-blocks";
 import { hasSellableCategory } from "@/lib/checkout/ticket-presentation";
 import { resolveOperationalPaymentState } from "@/lib/operations/payment-operational-state";
 import { resolveTicketOperationGate } from "@/lib/operations/ticket-operation-gate";
+import { participantIdsRepresentedByTickets, withoutTicketFallbackParticipants } from "@/lib/operations/without-ticket-fallback";
 import { resolveTurboOperationalGender } from "@/lib/operations/turbo-gender-label";
 import { canonicalHolderName } from "@/lib/tickets/holder-name";
 import type {
@@ -917,26 +918,32 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
 
   // ── Queries paralelas ────────────────────────────────────────────────────
   const [
-    { data: allEventTicketParticipants, error: allEventTicketParticipantsError },
+    { data: allEventTicketsForFallback, error: allEventTicketParticipantsError },
     { data: importedParticipantsRows, error: importedParticipantsError },
     { data: orderItemsParticipantsForEvent, error: oiParticipantsError },
+    { data: eventOrdersForFallback, error: eventOrdersError },
     { data: buyerRows, error: buyerRowsError },
     { data: importedHistoryRows, error: importedHistoryError },
   ] = await Promise.all([
-    supabase.from("tickets").select("participant_id").eq("event_id", eventId).not("participant_id", "is", null),
+    supabase
+      .from("tickets")
+      .select("participant_id, order_id, intended_owner_contact_id, status")
+      .eq("event_id", eventId),
     supabase
       .from("participants")
-      .select("id, full_name, cpf, phone, city, gender, birth_date, registration_status, shirt_type, shirt_size, ticket_category_id, ticket_categories(id,name), notes")
+      .select("id, full_name, cpf, phone, city, gender, birth_date, registration_status, shirt_type, shirt_size, ticket_category_id, registration_contact_id, ticket_categories(id,name), notes")
       .eq("event_id", eventId)
       .neq("registration_status", "cancelled"),
-    // Participantes linked via order_items (mesmo que tickets.participant_id = null)
-    orderIds.length
-      ? supabase
-          .from("order_items")
-          .select("participant_id")
-          .in("order_id", orderIds)
-          .not("participant_id", "is", null)
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+    supabase
+      .from("order_items")
+      .select("participant_id")
+      .eq("event_id", eventId)
+      .not("participant_id", "is", null),
+    supabase
+      .from("orders")
+      .select("id, participant_id")
+      .eq("event_id", eventId)
+      .not("participant_id", "is", null),
     buyerUserIds.length
       ? supabase.rpc("get_operation_buyers", { p_event_id: eventId })
       : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
@@ -958,6 +965,9 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
   if (oiParticipantsError) {
     return { success: false as const, message: oiParticipantsError.message, tickets: [] as OperationTicketRow[], groups: [] as OperationGroup[] };
   }
+  if (eventOrdersError) {
+    return { success: false as const, message: eventOrdersError.message, tickets: [] as OperationTicketRow[], groups: [] as OperationGroup[] };
+  }
   if (buyerRowsError) {
     return { success: false as const, message: buyerRowsError.message, tickets: [] as OperationTicketRow[], groups: [] as OperationGroup[] };
   }
@@ -978,20 +988,33 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     if (userId) buyerMap.set(userId, buyer);
   }
 
-  // participantsWithTickets inclui tanto tickets.participant_id quanto order_items.participant_id
-  const participantsWithTickets = new Set([
-    ...((allEventTicketParticipants ?? []) as Array<Record<string, unknown>>)
-      .map((row) => String(row.participant_id ?? "")).filter(Boolean),
-    ...((orderItemsParticipantsForEvent ?? []) as Array<Record<string, unknown>>)
-      .map((row) => String(row.participant_id ?? "")).filter(Boolean),
-  ]);
-
-  const fallbackParticipants = ((importedParticipantsRows ?? []) as Array<Record<string, unknown>>).filter((row) => {
-    const participantId = String(row.id ?? "");
-    if (!participantId) return false;
-    if (participantsWithTickets.has(participantId)) return false;
-    return true;
+  const eventParticipants = (importedParticipantsRows ?? []) as Array<Record<string, unknown> & {
+    id?: string;
+    registration_contact_id?: string | null;
+    registration_status?: string | null;
+  }>;
+  const participantsWithTickets = participantIdsRepresentedByTickets({
+    tickets: ((allEventTicketsForFallback ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      participant_id: row.participant_id ? String(row.participant_id) : null,
+      order_id: row.order_id ? String(row.order_id) : null,
+      intended_owner_contact_id: row.intended_owner_contact_id ? String(row.intended_owner_contact_id) : null,
+      status: row.status ? String(row.status) : null,
+    })),
+    orderItems: ((orderItemsParticipantsForEvent ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      participant_id: row.participant_id ? String(row.participant_id) : null,
+    })),
+    orders: ((eventOrdersForFallback ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id ?? ""),
+      participant_id: row.participant_id ? String(row.participant_id) : null,
+    })),
+    participants: eventParticipants.map((row) => ({
+      id: String(row.id ?? ""),
+      registration_contact_id: row.registration_contact_id ? String(row.registration_contact_id) : null,
+      registration_status: row.registration_status ? String(row.registration_status) : null,
+    })),
   });
+
+  const fallbackParticipants = withoutTicketFallbackParticipants(eventParticipants, participantsWithTickets);
 
   const fallbackParticipantIds = fallbackParticipants.map((row) => String(row.id ?? "")).filter(Boolean);
 

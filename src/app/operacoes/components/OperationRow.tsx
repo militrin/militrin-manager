@@ -185,7 +185,7 @@ export function OperationRow({
         ) : null}
         <div className="text-[11px] text-slate-500">
           {item.kind === "participant_without_ticket"
-            ? "Inscrição importada sem ingresso gerado"
+            ? "Inscrição sem ingresso"
             : item.order_ticket_count > 1
             ? `Pedido com ${item.order_ticket_count} ingressos · ingresso ${item.order_ticket_position} de ${item.order_ticket_count}`
             : "Pedido com 1 ingresso"}

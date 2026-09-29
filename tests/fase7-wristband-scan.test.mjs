@@ -91,3 +91,24 @@ test('RBAC de check-in e vinculo permanece nas actions, nao no scanner', async (
   assert.match(expanded, /capabilities\.canLinkWristband/);
   assert.doesNotMatch(modal, /wristbands\.link|checkin\.scan/);
 });
+
+test('modal Vincular pulseira sempre permite abortar sem writer', async () => {
+  const [modal, scan] = await Promise.all([
+    read('src/app/operacoes/components/WristbandCodeModal.tsx'),
+    read('src/lib/operations/wristband-scan.ts'),
+  ]);
+  assert.match(modal, /aria-label="Fechar"/);
+  assert.match(modal, />\s*Cancelar\s*</);
+  assert.doesNotMatch(modal, /mandatory \? null/);
+  assert.match(modal, /function handleAbort/);
+  const handleAbort = modal.slice(modal.indexOf("function handleAbort"), modal.indexOf("useEffect"));
+  assert.doesNotMatch(handleAbort, /onSubmit/);
+  assert.doesNotMatch(handleAbort, /handleSubmit/);
+  assert.match(modal, /event\.key !== "Escape"/);
+  assert.match(modal, /onClick=\{scanning \|\| submitting \? undefined : handleAbort\}/);
+  const handleScan = modal.slice(modal.indexOf('async function handleScan'), modal.indexOf('const relatedHref'));
+  assert.match(handleScan, /setCode\(parsed\.code\)/);
+  assert.doesNotMatch(handleScan, /onSubmit/);
+  assert.doesNotMatch(handleScan, /handleSubmit/);
+  assert.match(scan, /parseWristbandScan/);
+});

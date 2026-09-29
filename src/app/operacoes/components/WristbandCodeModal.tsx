@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { QrScanner } from "./QrScanner";
 import { parseWristbandScan } from "@/lib/operations/wristband-scan";
@@ -16,9 +16,10 @@ type WristbandSubmitResult = {
  * Modal generico de "codigo da pulseira" -- reusado em 3 fluxos: vincular
  * pela ficha do ingresso, trocar (substituir a ativa) e o vinculo
  * OBRIGATORIO disparado por checkin/entrega quando o evento exige pulseira
- * e o ingresso ainda nao tem uma (nesse caso `mandatory` fica true e o
- * fechar/cancelar do modal so cancela a operacao que pediu a pulseira,
- * nunca conclui check-in/entrega sem ela).
+ * e o ingresso ainda nao tem uma (nesse caso `mandatory` fica true).
+ * Fechar/Cancelar/ESC/backdrop ABORTA a operacao pendente: nao vincula,
+ * nao faz check-in, nao entrega kit. A leitura do QR so preenche o campo;
+ * writer so na confirmacao (submitLabel).
  *
  * Leitura por QR reusa o QrScanner canonico (Turbo / Central). USB/manual
  * continua no campo -- leitores fisicos digitam como teclado.
@@ -47,6 +48,25 @@ export function WristbandCodeModal({
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanningRef = useRef(false);
+
+  function handleAbort() {
+    if (submitting) return;
+    setScanning(false);
+    setScanError(null);
+    onClose();
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || submitting) return;
+      event.preventDefault();
+      setScanning(false);
+      setScanError(null);
+      onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [submitting, onClose]);
 
   async function handleSubmit() {
     const trimmed = code.trim();
@@ -86,12 +106,26 @@ export function WristbandCodeModal({
     : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={mandatory || scanning || submitting ? undefined : onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={scanning || submitting ? undefined : handleAbort}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wristband-code-modal-title"
         className="w-full max-w-sm rounded-t-3xl border border-cyan-500/30 bg-slate-950 p-5 sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-semibold text-slate-100">{title}</h3>
+        <div className="flex items-start justify-between gap-3">
+          <h3 id="wristband-code-modal-title" className="text-base font-semibold text-slate-100">{title}</h3>
+          <button
+            type="button"
+            onClick={handleAbort}
+            disabled={submitting}
+            aria-label="Fechar"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 px-3 text-lg leading-none text-slate-300 disabled:opacity-50"
+          >
+            ×
+          </button>
+        </div>
         {description ? <p className="mt-1 text-sm text-slate-400">{description}</p> : null}
         {mandatory ? (
           <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
@@ -124,11 +158,9 @@ export function WristbandCodeModal({
         ) : null}
 
         <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          {mandatory ? null : (
-            <button type="button" onClick={onClose} disabled={submitting} className="min-h-12 rounded-xl border border-slate-700 px-4 text-sm text-slate-300 disabled:opacity-50">
-              Cancelar
-            </button>
-          )}
+          <button type="button" onClick={handleAbort} disabled={submitting} className="min-h-12 rounded-xl border border-slate-700 px-4 text-sm text-slate-300 disabled:opacity-50">
+            Cancelar
+          </button>
           <button
             type="button"
             onClick={() => { setScanError(null); setScanning(true); }}
