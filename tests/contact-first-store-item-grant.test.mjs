@@ -38,7 +38,7 @@ test("permissao de concessao e validada na UI, action e RPC", async () => {
   assert.match(page, /hasPermission\("store\.grant_items"\)/);
   assert.match(page, /hasPermission\("store\.manage"\)/);
   assert.match(page, /canGrantStoreItems \? <ContactGrantStoreItemButton/);
-  assert.doesNotMatch(page, /hasPermission\("store\.deliver"\)/);
+  assert.match(page, /hasPermission\("store\.deliver"\)/);
   assert.match(actions, /grantStoreItemToContactAction[\s\S]*await assertStoreGrantPermission\(\)/);
   const canonical = extractFunction(sql, "admin_grant_store_item_to_contact");
   assert.match(canonical, /current_user_has_permission\('store\.grant_items'\)/);

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { ParticipantIssuesDialog } from "@/app/inscricoes/participant-issues-dialog";
 import { CopyableId } from "@/components/CopyableId";
-import type { ActionResult, OperationTicketDetails, PickupCapabilities, PickupEvent, ReasonPayload, WristbandReplacePayload } from "../types";
+import type { ActionResult, AdditionalItem, OperationTicketDetails, PickupCapabilities, PickupEvent, ReasonPayload, WristbandReplacePayload } from "../types";
+import { additionalItemIdentity, additionalItemStatusLabel } from "@/lib/operations/additional-product-items";
 import { WristbandCodeModal } from "./WristbandCodeModal";
 import { ReasonDialog } from "./ReasonDialog";
 import { GrantStoreItemModal } from "./GrantStoreItemModal";
@@ -111,7 +112,7 @@ export function ExpandedTicketDetails({
   onConfirmPayment: (participantId: string) => Promise<void>;
   onIssueResolved: (result: { ticketId: string | null; finalization: string | null; message: string }) => void | Promise<void>;
   onGrantStoreItem: (payload: { storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string }) => Promise<ActionResult>;
-  onDeliverAdditionalItem: (storeOrderItemId: string) => Promise<ActionResult>;
+  onDeliverAdditionalItem: (item: { id: string; source: AdditionalItem["source"] }) => Promise<ActionResult>;
 }) {
   const [isConfirmingPayment, startConfirmPayment] = useTransition();
   const [confirmPaymentError, setConfirmPaymentError] = useState<string | null>(null);
@@ -548,7 +549,7 @@ export function ExpandedTicketDetails({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold">Itens adicionais</h3>
-            <p className="text-xs text-slate-500">Produtos da loja concedidos ou comprados separadamente — nunca fazem parte do kit do ingresso.</p>
+            <p className="text-xs text-slate-500">Produtos da loja ou comprados junto ao ingresso — nunca fazem parte do kit.</p>
           </div>
           {capabilities.canGrantStoreItems ? (
             <button
@@ -568,41 +569,61 @@ export function ExpandedTicketDetails({
             <p className="text-sm text-slate-400">Nenhum item adicional vinculado.</p>
           ) : (
             detail.additional_items.map((item) => (
-              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 px-3 py-2">
+              <div key={additionalItemIdentity(item.source, item.id)} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 px-3 py-2">
                 <div>
                   <p className="text-sm font-medium">
                     {item.store_item_name}
                     {item.variant_label ? ` — ${item.variant_label}` : ""} x{item.quantity}
                   </p>
                   <p className="text-xs text-slate-400">
-                    {item.status === "delivered" ? "Entregue" : item.status === "confirmed" ? "Pendente" : "Aguardando pagamento"}
+                    {item.order_reference ? `Pedido ${item.order_reference} · ` : ""}
+                    {additionalItemStatusLabel(item.status)}
                     {item.is_courtesy ? " · Cortesia" : ""}
                     {" · Origem: "}
-                    {item.origin === "admin" ? "Administrativo" : item.origin === "codigo" ? "Código" : "Loja"}
+                    {item.source === "checkout"
+                      ? "Compra junto ao ingresso"
+                      : item.origin === "admin"
+                        ? "Administrativo"
+                        : item.origin === "codigo"
+                          ? "Código"
+                          : "Loja"}
                   </p>
+                  {item.has_qr ? <p className="text-xs text-emerald-300">QR disponível</p> : null}
                   {item.delivered_at ? (
                     <p className="text-xs text-slate-500">{new Date(item.delivered_at).toLocaleString("pt-BR")}</p>
                   ) : null}
                 </div>
-                {item.status === "confirmed" && capabilities.canDeliverStoreItems ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      setAdditionalItemMessage(null);
-                      void onDeliverAdditionalItem(item.id).then((result) => {
-                        if (result && "success" in result && !result.success) {
-                          setAdditionalItemMessage(result.message ?? "Não foi possível entregar o item.");
-                        }
-                      });
-                    }}
-                    className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40"
-                  >
-                    Entregar
-                  </button>
-                ) : item.status === "reserved" ? (
-                  <span className="text-xs text-amber-300">Aguardando confirmação de pagamento</span>
-                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  {item.qr_href && capabilities.canDeliverStoreItems ? (
+                    <a
+                      href={`${item.qr_href}?inline=1`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-cyan-500/40 px-3 py-1.5 text-xs text-cyan-200"
+                    >
+                      Ver QR
+                    </a>
+                  ) : null}
+                  {item.status === "confirmed" && capabilities.canDeliverStoreItems ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setAdditionalItemMessage(null);
+                        void onDeliverAdditionalItem({ id: item.id, source: item.source }).then((result) => {
+                          if (result && "success" in result && !result.success) {
+                            setAdditionalItemMessage(result.message ?? "Não foi possível entregar o item.");
+                          }
+                        });
+                      }}
+                      className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40"
+                    >
+                      Entregar
+                    </button>
+                  ) : item.status === "reserved" ? (
+                    <span className="text-xs text-amber-300">Aguardando confirmação de pagamento</span>
+                  ) : null}
+                </div>
               </div>
             ))
           )}

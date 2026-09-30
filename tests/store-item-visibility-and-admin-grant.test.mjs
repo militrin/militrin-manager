@@ -193,8 +193,10 @@ test('Central: OperationTicketDetails ganha additional_items, e Central busca po
   const types = await readFile(operacoesTypesUrl, 'utf8');
   assert.match(types, /additional_items: AdditionalItem\[\];/);
   const actions = await readFile(operacoesActionsUrl, 'utf8');
-  assert.match(actions, /\.eq\("store_orders\.participant_id", participantId\)/);
+  assert.match(actions, /\.or\(additionalOwnerFilter, \{ referencedTable: "store_orders" \}\)/);
   assert.match(actions, /additional_items: additionalItems,/);
+  assert.match(actions, /item_kind/);
+  assert.match(actions, /checkoutProductBelongsToCadastro/);
 });
 
 test('Central: secao "Itens adicionais" separada da secao "Itens" (kit) -- nunca somada como unidades do mesmo beneficio', async () => {
@@ -204,7 +206,7 @@ test('Central: secao "Itens adicionais" separada da secao "Itens" (kit) -- nunca
   assert.notEqual(kitSectionIndex, -1);
   assert.notEqual(additionalSectionIndex, -1);
   assert.ok(additionalSectionIndex > kitSectionIndex, 'secao de itens adicionais deveria vir depois, como bloco proprio');
-  assert.match(tsx, /Produtos da loja concedidos ou comprados separadamente — nunca fazem parte do kit do ingresso\./);
+  assert.match(tsx, /Produtos da loja ou comprados junto ao ingresso — nunca fazem parte do kit\./);
 });
 
 test('Central mostra produto, variante, quantidade, status e origem por item adicional, com acao de entrega quando pendente', async () => {
@@ -212,9 +214,9 @@ test('Central mostra produto, variante, quantidade, status e origem por item adi
   assert.match(tsx, /item\.store_item_name/);
   assert.match(tsx, /item\.variant_label/);
   assert.match(tsx, /x\{item\.quantity\}/);
-  assert.match(tsx, /item\.status === "delivered" \? "Entregue" : item\.status === "confirmed" \? "Pendente" : "Aguardando pagamento"/);
-  assert.match(tsx, /item\.origin === "admin" \? "Administrativo" : item\.origin === "codigo" \? "Código" : "Loja"/);
-  assert.match(tsx, /onClick=\{\(\) => \{\s*\n\s*setAdditionalItemMessage\(null\);\s*\n\s*void onDeliverAdditionalItem\(item\.id\)/);
+  assert.match(tsx, /additionalItemStatusLabel\(item\.status\)/);
+  assert.match(tsx, /item\.source === "checkout"/);
+  assert.match(tsx, /onDeliverAdditionalItem\(\{ id: item\.id, source: item\.source \}\)/);
 });
 
 test('"Adicionar item" so aparece para quem tem canGrantStoreItems, e abre o GrantStoreItemModal', async () => {

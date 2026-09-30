@@ -426,6 +426,7 @@ export type PickupCapabilities = {
 // implementado.
 export type AdditionalItem = {
   id: string;
+  source: "store" | "checkout";
   store_item_id: string;
   store_item_name: string;
   variant_label: string | null;
@@ -434,6 +435,10 @@ export type AdditionalItem = {
   delivered_at: string | null;
   origin: "admin" | "loja" | "codigo";
   is_courtesy: boolean;
+  order_id: string;
+  order_reference: string;
+  has_qr: boolean;
+  qr_href: string | null;
 };
 
 export const REASON_CODES = [

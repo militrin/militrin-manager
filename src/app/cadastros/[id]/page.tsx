@@ -14,7 +14,16 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
 import { ContactAccountCard } from "../contact-account-card";
-import { ticketDisplayReference, publicOrderCode, formatDisplayNumber } from "@/lib/display-reference";
+import { ticketDisplayReference, publicOrderCode, formatDisplayNumber, orderDisplayReference } from "@/lib/display-reference";
+import {
+  additionalItemIdentity,
+  additionalItemStatus,
+  additionalItemStatusLabel,
+  checkoutProductBelongsToCadastro,
+  checkoutProductQrHref,
+  mergeAdditionalItems,
+  storeProductQrHref,
+} from "@/lib/operations/additional-product-items";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
 import { additionalTicketHolderUnassignedCopy, formatImportedPurchaseWithoutTicketCopy, formatIssuanceBlockerMessages } from "@/lib/imports/issuance-presentation";
@@ -45,12 +54,12 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const isOrganizationOwner = organizationContext.isOrgOwner;
   if (!organization?.id) notFound();
 
-  const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions, canEditTeam, canInviteFirstAccess, canCancelTicketByPermission, canConfirmPayment, canViewWristband] = await Promise.all([
+  const [{ data: contact, error: contactError }, { data: ticketRows, error: ticketsError }, { data: linkedParticipants, error: participantsError }, { data: eventRows, error: eventsError }, { data: additionalOrderRows, error: additionalItemsError }, canIssueTicket, grantPermissions, canEditTeam, canInviteFirstAccess, canCancelTicketByPermission, canConfirmPayment, canViewWristband, canDeliverStoreItems] = await Promise.all([
     supabase.from("registration_contacts").select("id,full_name,cpf,birth_date,gender,phone,email,city,created_at,public_pin,user_id").eq("id", id).eq("organization_id", organization.id).maybeSingle(),
     supabase.from("tickets").select("id,token,status,issued_at,used_at,event_id,owner_user_id,intended_owner_contact_id,participant_id,order_id,order_item_id,events(id,name,starts_at),orders(order_number,display_number,status),order_items(item_position,participant_id,registration_contact_id,ownership_status,holder_full_name,shirt_type,shirt_size,ticket_categories(name),registration_batches(name)),participants(registration_contact_id,full_name),participant_kit_items(status)").eq("organization_id", organization.id).range(0, 4999),
     supabase.from("participants").select("id,user_id,registration_contact_id,participation_history(source)").eq("registration_contact_id", id).eq("organization_id", organization.id).range(0, 4999),
     supabase.from("events").select("id,name,starts_at").eq("organization_id", organization.id).order("starts_at", { ascending: false }),
-    supabase.from("store_orders").select("id,event_id,payment_method,payment_status,created_at,events(name),store_order_items(id,quantity,status,delivered_at,store_items(name),store_item_variants(name,value))").eq("organization_id", organization.id).eq("registration_contact_id", id).neq("status", "cancelled").order("created_at", { ascending: false }),
+    supabase.from("store_orders").select("id,event_id,payment_method,payment_status,created_at,order_number,display_number,events(name),store_order_items(id,quantity,status,delivered_at,qr_token,pickup_qr_mode,store_items(name),store_item_variants(name,value))").eq("organization_id", organization.id).eq("registration_contact_id", id).neq("status", "cancelled").order("created_at", { ascending: false }),
     hasPermission("participants.create"),
     Promise.all([hasPermission("store.grant_items"), hasPermission("store.manage")]),
     hasPermission("team.edit_permissions"),
@@ -58,6 +67,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     hasPermission("orders.cancel"),
     hasPermission("finance.confirm_payment"),
     hasPermission("wristbands.view"),
+    hasPermission("store.deliver"),
   ]);
   if (contactError) throw contactError;
   if (!contact) notFound();
@@ -66,6 +76,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   if (eventsError) throw eventsError;
   if (additionalItemsError) throw additionalItemsError;
   const canGrantStoreItems = grantPermissions.some(Boolean);
+  const canViewProductQr = canDeliverStoreItems || grantPermissions[1];
   // Cancelar ingresso segue o mesmo idioma de autorizacao da RPC
   // (owner_cancel_ticket): Owner OU orders.cancel -- nao mais Owner-only.
   // Ver auditoria em 20260924000000_ticket_cancellation_replacement_intent.sql.
@@ -282,7 +293,7 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const CADASTRO_ORDERS_SELECT = "id,order_number,display_number,status,buyer_type,user_id,base_amount,discount_amount,final_amount,price_origin,applied_coupon_id,created_at,payments!payments_order_id_fkey(payment_method,payment_status,expires_at,created_at,paid_at,final_amount,payment_fee_customer_amount,settlement_nature,provider,gateway_payment_id,gateway_account_key,gateway_environment,off_gateway_method,off_gateway_amount,off_gateway_recorded_at)";
   const ticketOrderIds = Array.from(new Set(relatedTicketRows.flatMap(({ row }) => (row.order_id ? [String(row.order_id)] : []))));
   const relatedTicketIds = relatedTicketRows.map(({ row }) => String(row.id));
-  const [{ data: buyerOrderRows }, { data: ticketOrderRows }, { data: wristbandRows }] = await Promise.all([
+  const [{ data: buyerOrderRows }, { data: ticketOrderRows }, { data: wristbandRows }, { data: checkoutProductRows, error: checkoutProductsError }] = await Promise.all([
     contactUserId
       ? supabase.from("orders").select(CADASTRO_ORDERS_SELECT).eq("organization_id", organization.id).eq("user_id", contactUserId).order("created_at", { ascending: false })
       : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
@@ -292,7 +303,16 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
     canViewWristband && relatedTicketIds.length
       ? supabase.from("participant_wristbands").select("ticket_id,code,status").in("ticket_id", relatedTicketIds).eq("status", "active")
       : Promise.resolve({ data: [] as Array<{ ticket_id?: string; code?: string | null }> }),
+    contactUserId
+      ? supabase
+          .from("order_items")
+          .select("id,order_id,quantity,status,delivered_at,qr_token,pickup_qr_mode,registration_contact_id,event_id,store_items(name),store_item_variants(name,value),orders!inner(id,user_id,status,organization_id,order_number,display_number)")
+          .eq("item_kind", "product")
+          .eq("orders.user_id", contactUserId)
+          .eq("orders.organization_id", organization.id)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
   ]);
+  if (checkoutProductsError) throw checkoutProductsError;
   const ordersById = new Map<string, Record<string, unknown>>();
   for (const row of [...(buyerOrderRows ?? []), ...(ticketOrderRows ?? [])]) {
     ordersById.set(String((row as { id?: string }).id), row as Record<string, unknown>);
@@ -369,21 +389,85 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
   const kitsPending = tickets.filter((ticket) => ticket.kitStatus === "Pendente").length;
   const imported = (linkedParticipants ?? []).some((row) => (Array.isArray(row.participation_history) ? row.participation_history : []).some((entry) => entry.source === "import"));
   const grantableEvents = (eventRows ?? []).map((event) => ({ id: String(event.id), name: String(event.name) }));
-  const additionalItems = (additionalOrderRows ?? []).flatMap((order) => {
+  const eventNameById = new Map((eventRows ?? []).map((event) => [String(event.id), String(event.name)]));
+  const storeAdditionalItems = (additionalOrderRows ?? []).flatMap((order) => {
     const event = relation(order.events);
     const paymentMethod = String(order.payment_method ?? "");
+    const orderReference = orderDisplayReference(order.display_number, order.order_number);
     return (Array.isArray(order.store_order_items) ? order.store_order_items : []).flatMap((item) => {
-      if (String(item.status) === "cancelled") return [];
+      const status = additionalItemStatus({
+        itemStatus: String(item.status ?? "reserved"),
+        deliveredAt: item.delivered_at ? String(item.delivered_at) : null,
+        paymentStatus: String(order.payment_status ?? "pending"),
+      });
+      if (status === "cancelled") return [];
       const product = relation(item.store_items);
       const variant = relation(item.store_item_variants);
+      const quantity = Number(item.quantity ?? 1);
       return [{
-        id: String(item.id), orderId: String(order.id), eventName: String(event?.name ?? "Evento"), productName: String(product?.name ?? "Item"),
+        id: String(item.id),
+        source: "store" as const,
+        orderId: String(order.id),
+        orderReference,
+        eventName: String(event?.name ?? "Evento"),
+        productName: String(product?.name ?? "Item"),
         variantLabel: variant ? [variant.name, variant.value].filter(Boolean).join(" ") : null,
-        quantity: Number(item.quantity ?? 1), status: String(item.status ?? "reserved"),
-        isCourtesy: paymentMethod === "admin_courtesy", paymentStatus: String(order.payment_status ?? "pending"),
+        quantity,
+        status,
+        isCourtesy: paymentMethod === "admin_courtesy",
+        paymentStatus: String(order.payment_status ?? "pending"),
+        qrHref: storeProductQrHref({
+          orderId: String(order.id),
+          itemId: String(item.id),
+          hasQrToken: Boolean(item.qr_token),
+          pickupQrMode: item.pickup_qr_mode ? String(item.pickup_qr_mode) : null,
+          status,
+          quantity,
+        }),
       }];
     });
   });
+  const checkoutAdditionalItems = (checkoutProductRows ?? []).flatMap((row) => {
+    const order = relation(row.orders);
+    if (!checkoutProductBelongsToCadastro({
+      cadastroId: id,
+      cadastroUserId: contactUserId,
+      orderUserId: order?.user_id ? String(order.user_id) : null,
+      itemRegistrationContactId: row.registration_contact_id ? String(row.registration_contact_id) : null,
+    })) return [];
+    const status = additionalItemStatus({
+      itemStatus: String(row.status ?? "reserved"),
+      deliveredAt: row.delivered_at ? String(row.delivered_at) : null,
+      orderStatus: order?.status ? String(order.status) : null,
+    });
+    if (status === "cancelled") return [];
+    const product = relation(row.store_items);
+    const variant = relation(row.store_item_variants);
+    const quantity = Number(row.quantity ?? 1);
+    const orderId = String(row.order_id ?? order?.id ?? "");
+    return [{
+      id: String(row.id),
+      source: "checkout" as const,
+      orderId,
+      orderReference: orderDisplayReference(order?.display_number, order?.order_number),
+      eventName: eventNameById.get(String(row.event_id ?? "")) ?? "Evento",
+      productName: String(product?.name ?? "Item"),
+      variantLabel: variant ? [variant.name, variant.value].filter(Boolean).join(" ") : null,
+      quantity,
+      status,
+      isCourtesy: false,
+      paymentStatus: status === "confirmed" || status === "delivered" ? "paid" : "pending",
+      qrHref: checkoutProductQrHref({
+        orderId,
+        itemId: String(row.id),
+        hasQrToken: Boolean(row.qr_token),
+        pickupQrMode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
+        status,
+        quantity,
+      }),
+    }];
+  });
+  const additionalItems = mergeAdditionalItems([...storeAdditionalItems, ...checkoutAdditionalItems]);
 
   const { data: importedRightRows, error: importedRightsError } = await supabase.from("order_items")
     .select("id,participant_id,event_id,order_id,status,events(name),orders!inner(id,buyer_type,import_batch_id,payment_id,price_origin)")
@@ -469,8 +553,36 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       )}
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-      <h2 className="text-lg font-semibold">Itens adicionais</h2><p className="text-sm text-slate-400">Produtos vinculados diretamente a este cadastro, separados dos ingressos.</p>
-      {additionalItems.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum item adicional vinculado.</p> : <div className="mt-5 grid gap-3 sm:grid-cols-2">{additionalItems.map((item) => <div key={item.id} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.productName}{item.variantLabel ? ` — ${item.variantLabel}` : ""} ×{item.quantity}</p><p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Concedido pela organização" : ""}</p></div><span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{item.status === "delivered" ? "Entregue" : item.status === "confirmed" ? "Pendente" : "Aguardando pagamento"}</span></div><div className="mt-3 flex items-center gap-4"><Link href={`/loja/pedidos/${item.orderId}#item-${item.id}`} className="text-xs font-semibold text-emerald-300">Ver item</Link>{isOrganizationOwner ? <OwnerCancelAdditionalItemButton contactId={id} itemId={item.id} financeHref={`/loja/pedidos/${item.orderId}#pagamento`} details={[`Produto: ${item.productName}`,`Variante: ${item.variantLabel ?? "Sem variante"}`,`Quantidade: ${item.quantity}`,`Origem: ${item.isCourtesy ? "Concessão administrativa" : "Pedido da loja"}`,`Status: ${item.status}`,`Pagamento: ${item.paymentStatus}`]}/> : null}</div></div>)}</div>}
+      <h2 className="text-lg font-semibold">Itens adicionais</h2>
+      <p className="text-sm text-slate-400">Produtos vinculados diretamente a este cadastro, separados dos ingressos.</p>
+      {additionalItems.length === 0 ? (
+        <p className="mt-5 rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Nenhum item adicional vinculado.</p>
+      ) : (
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          {additionalItems.map((item) => {
+            const orderHref = item.source === "store" ? `/loja/pedidos/${item.orderId}#item-${item.id}` : `/inscricoes/pedido/${item.orderId}`;
+            return (
+              <div key={additionalItemIdentity(item.source, item.id)} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{item.productName}{item.variantLabel ? ` — ${item.variantLabel}` : ""}</p>
+                    <p className="mt-1 text-xs text-slate-400">Pedido {item.orderReference}</p>
+                    <p className="mt-1 text-xs text-slate-400">Quantidade {item.quantity}</p>
+                    <p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Concedido pela organização" : item.source === "checkout" ? " · Compra junto ao ingresso" : ""}</p>
+                    {item.qrHref ? <p className="mt-1 text-xs text-emerald-300">QR disponível</p> : null}
+                  </div>
+                  <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{additionalItemStatusLabel(item.status)}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-4">
+                  <Link href={orderHref} className="text-xs font-semibold text-emerald-300">{item.source === "store" ? "Ver item" : "Ver pedido"}</Link>
+                  {item.qrHref && canViewProductQr ? <Link href={`${item.qrHref}?inline=1`} target="_blank" rel="noreferrer" className="text-xs font-semibold text-cyan-300">Ver QR</Link> : null}
+                  {isOrganizationOwner && item.source === "store" ? <OwnerCancelAdditionalItemButton contactId={id} itemId={item.id} financeHref={`/loja/pedidos/${item.orderId}#pagamento`} details={[`Produto: ${item.productName}`,`Variante: ${item.variantLabel ?? "Sem variante"}`,`Quantidade: ${item.quantity}`,`Origem: ${item.isCourtesy ? "Concessão administrativa" : "Pedido da loja"}`,`Status: ${item.status}`,`Pagamento: ${item.paymentStatus}`]}/> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
     <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Ingressos</h2><p className="text-sm text-slate-400">{tickets.length} ingresso(s) em {groups.length} evento(s)</p></div></div>
       {importedRights.length ? <div className="mt-5 grid gap-3">{importedRights.map((right) => { const order=relation(right.orders); const event=relation(right.events); const paymentId=String(order?.payment_id ?? ""); const unknownPrice=String(order?.price_origin ?? "")==="legacy_unknown"; const awaitingPayment=!unknownPrice && paymentStatusById.get(paymentId)==="pending"; const blockerMessages=formatIssuanceBlockerMessages(importedIssuesByItem.get(String(right.id)) ?? []); return <div key={String(right.id)} className={awaitingPayment ? "rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4" : "rounded-2xl border border-slate-700 bg-slate-950/50 p-4"}>{awaitingPayment ? <><p className="font-semibold text-amber-100">Ingresso importado aguardando pagamento</p><p className="mt-1 text-sm text-amber-100/80">{String(event?.name ?? "Evento")} · o ingresso não foi emitido porque o pagamento importado está pendente.</p></> : <><p className="font-semibold text-slate-100">Compra importada preservada</p><p className="mt-1 text-sm text-slate-300">{formatImportedPurchaseWithoutTicketCopy({ eventName: String(event?.name ?? "Evento"), blockerMessages })}</p></>}<div className="mt-3 flex flex-wrap gap-3"><Link href={`/inscricoes/pedido/${String(order?.id ?? right.order_id)}`} className="rounded-xl border border-amber-400/40 px-3 py-2 text-sm text-amber-100">Abrir pedido</Link></div>{awaitingPayment && canConfirmPayment && paymentId ? <ImportedPaymentConfirmation paymentId={paymentId}/> : awaitingPayment ? <p className="mt-3 text-xs text-slate-300">Peça a um administrador com permissão financeira para confirmar o pagamento.</p> : null}</div>; })}</div> : null}

@@ -29,6 +29,14 @@ import { REASON_CODES, WRISTBAND_REPLACE_REASON_CODES, WRISTBAND_REPLACE_REASON_
 import type { WristbandReplaceReasonCode } from "./types";
 import type { OperationalProductItem } from "@/lib/operations/operational-product-item";
 import { formatStoreVariantLabel, parseStoreOrderScanRef } from "@/lib/operations/store-order-scan-ref";
+import {
+  additionalItemStatus,
+  checkoutProductBelongsToCadastro,
+  checkoutProductQrHref,
+  mergeAdditionalItems,
+  storeProductQrHref,
+} from "@/lib/operations/additional-product-items";
+import type { AdditionalItem } from "./types";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
 import { orderDisplayReference, ticketDisplayReference, canonicalTicketDisplayCode, ticketMatchesExactDisplayCode, publicOrderCode } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
@@ -1450,7 +1458,7 @@ async function buildTicketDetails(
   const { error: ensureKitError } = await supabase.rpc("ensure_ticket_kit_items", { p_ticket_id: ticketId });
   if (ensureKitError) return { success: false as const, message: "Nao foi possivel identificar todos os itens deste ingresso. Revise a camiseta antes da entrega." };
 
-  const [{ data: kitRows, error: kitError }, { data: applicableKitItems, error: applicableKitItemsError }, paymentResult, { data: paymentRows, error: paymentError }, { data: wristbands, error: wristbandError }, { data: orderTicketsRows, error: orderTicketsError }, { data: latestCheckin, error: checkinError }, { data: buyerRows, error: buyerError }] =
+  const [{ data: kitRows, error: kitError }, { data: applicableKitItems, error: applicableKitItemsError }, paymentResult, { data: paymentRows, error: paymentError }, { data: wristbands, error: wristbandError }, { data: orderTicketsRows, error: orderTicketsError }, { data: latestCheckin, error: checkinError }, { data: buyerRows, error: buyerError }, { data: cadastroRow, error: cadastroError }] =
     await Promise.all([
       supabase
         .from("participant_kit_items")
@@ -1514,6 +1522,9 @@ async function buildTicketDetails(
         .limit(1)
         .maybeSingle(),
       supabase.rpc("get_operation_buyers", { p_event_id: String(ticketRow.event_id ?? "") }),
+      contactId
+        ? supabase.from("registration_contacts").select("id, user_id").eq("id", contactId).maybeSingle()
+        : Promise.resolve({ data: null as { id?: string; user_id?: string | null } | null, error: null }),
     ]);
 
   if (kitError) return { success: false as const, message: kitError.message };
@@ -1526,44 +1537,122 @@ async function buildTicketDetails(
   if (orderTicketsError) return { success: false as const, message: orderTicketsError.message };
   if (checkinError) return { success: false as const, message: checkinError.message };
   if (buyerError) return { success: false as const, message: buyerError.message };
+  if (cadastroError) return { success: false as const, message: cadastroError.message };
 
-  // Itens adicionais (loja) concedidos/comprados por este participante --
-  // reaproveita store_orders.participant_id (coluna ja existente, nunca
-  // relacionada ao kit do ingresso). Fica FORA de participant_kit_items de
-  // proposito: nunca deve ser contado como parte do kit principal.
+  // Itens adicionais: loja solo (store_order_items vinculados ao Cadastro/
+  // participant) UNION compre junto (order_items.item_kind='product' da
+  // CONTA COMPRADORA). Nunca titular de outro ingresso, nunca kit/camiseta.
   const additionalOwnerFilter = [
     participantId ? `participant_id.eq.${participantId}` : null,
     contactId ? `registration_contact_id.eq.${contactId}` : null,
   ].filter(Boolean).join(",");
-  const { data: additionalItemRows, error: additionalItemsError } = additionalOwnerFilter
-    ? await supabase
-        .from("store_order_items")
-        .select(
-          "id, store_item_id, variant_id, quantity, status, delivered_at, store_items(name), store_item_variants(name,value), store_orders!inner(participant_id,registration_contact_id,event_id,payment_method)",
-        )
-        .or(additionalOwnerFilter, { referencedTable: "store_orders" })
-        .or(`event_id.eq.${String(ticketRow.event_id ?? "")},event_id.is.null`, { referencedTable: "store_orders" })
-        .neq("status", "cancelled")
-    : { data: [] as Array<Record<string, unknown>>, error: null };
+  const cadastroUserId = cadastroRow?.user_id ? String(cadastroRow.user_id) : null;
+  const ticketEventId = String(ticketRow.event_id ?? "");
+  const [{ data: additionalItemRows, error: additionalItemsError }, { data: checkoutProductRows, error: checkoutProductsError }] = await Promise.all([
+    additionalOwnerFilter
+      ? supabase
+          .from("store_order_items")
+          .select(
+            "id, store_item_id, variant_id, quantity, status, delivered_at, qr_token, pickup_qr_mode, store_items(name), store_item_variants(name,value), store_orders!inner(id,participant_id,registration_contact_id,event_id,payment_method,payment_status,order_number,display_number)",
+          )
+          .or(additionalOwnerFilter, { referencedTable: "store_orders" })
+          .or(`event_id.eq.${ticketEventId},event_id.is.null`, { referencedTable: "store_orders" })
+          .neq("status", "cancelled")
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+    cadastroUserId
+      ? supabase
+          .from("order_items")
+          .select(
+            "id, order_id, store_item_id, quantity, status, delivered_at, qr_token, pickup_qr_mode, registration_contact_id, store_items(name), store_item_variants(name,value), orders!inner(id,user_id,status,event_id,order_number,display_number)",
+          )
+          .eq("item_kind", "product")
+          .eq("event_id", ticketEventId)
+          .eq("orders.user_id", cadastroUserId)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+  ]);
   if (additionalItemsError) return { success: false as const, message: additionalItemsError.message };
+  if (checkoutProductsError) return { success: false as const, message: checkoutProductsError.message };
 
-  const additionalItems = ((additionalItemRows ?? []) as Array<Record<string, unknown>>).map((row) => {
+  const storeAdditionalItems: AdditionalItem[] = ((additionalItemRows ?? []) as Array<Record<string, unknown>>).flatMap((row) => {
     const storeItem = getRelation(row.store_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
     const variant = getRelation(row.store_item_variants as Record<string, unknown> | Array<Record<string, unknown>> | null);
     const order = getRelation(row.store_orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
     const paymentMethod = String(order?.payment_method ?? "");
-    return {
+    const quantity = Number(row.quantity ?? 1);
+    const status = additionalItemStatus({
+      itemStatus: String(row.status ?? "reserved"),
+      deliveredAt: row.delivered_at ? String(row.delivered_at) : null,
+      paymentStatus: order?.payment_status ? String(order.payment_status) : null,
+    });
+    if (status === "cancelled") return [];
+    const orderId = String(order?.id ?? "");
+    return [{
       id: String(row.id),
+      source: "store" as const,
       store_item_id: String(row.store_item_id ?? ""),
       store_item_name: String(storeItem?.name ?? "Item"),
       variant_label: variant ? [variant.name, variant.value].filter(Boolean).join(" ") || null : null,
-      quantity: Number(row.quantity ?? 1),
-      status: String(row.status ?? "reserved") as "reserved" | "confirmed" | "delivered" | "cancelled",
+      quantity,
+      status,
       delivered_at: row.delivered_at ? String(row.delivered_at) : null,
       origin: paymentMethod.startsWith("admin_") ? ("admin" as const) : ("loja" as const),
       is_courtesy: paymentMethod === "admin_courtesy",
-    };
+      order_id: orderId,
+      order_reference: orderDisplayReference(order?.display_number, order?.order_number),
+      has_qr: Boolean(row.qr_token),
+      qr_href: storeProductQrHref({
+        orderId,
+        itemId: String(row.id),
+        hasQrToken: Boolean(row.qr_token),
+        pickupQrMode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
+        status,
+        quantity,
+      }),
+    }];
   });
+  const checkoutAdditionalItems: AdditionalItem[] = ((checkoutProductRows ?? []) as Array<Record<string, unknown>>).flatMap((row) => {
+    const storeItem = getRelation(row.store_items as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    const variant = getRelation(row.store_item_variants as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    const order = getRelation(row.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
+    if (!checkoutProductBelongsToCadastro({
+      cadastroId: contactId,
+      cadastroUserId,
+      orderUserId: order?.user_id ? String(order.user_id) : null,
+      itemRegistrationContactId: row.registration_contact_id ? String(row.registration_contact_id) : null,
+    })) return [];
+    const quantity = Number(row.quantity ?? 1);
+    const status = additionalItemStatus({
+      itemStatus: String(row.status ?? "reserved"),
+      deliveredAt: row.delivered_at ? String(row.delivered_at) : null,
+      orderStatus: order?.status ? String(order.status) : null,
+    });
+    if (status === "cancelled") return [];
+    const orderId = String(row.order_id ?? order?.id ?? "");
+    return [{
+      id: String(row.id),
+      source: "checkout" as const,
+      store_item_id: String(row.store_item_id ?? ""),
+      store_item_name: String(storeItem?.name ?? "Item"),
+      variant_label: formatStoreVariantLabel(variant as { name?: string | null; value?: string | null } | null),
+      quantity,
+      status,
+      delivered_at: row.delivered_at ? String(row.delivered_at) : null,
+      origin: "loja" as const,
+      is_courtesy: false,
+      order_id: orderId,
+      order_reference: orderDisplayReference(order?.display_number, order?.order_number),
+      has_qr: Boolean(row.qr_token),
+      qr_href: checkoutProductQrHref({
+        orderId,
+        itemId: String(row.id),
+        hasQrToken: Boolean(row.qr_token),
+        pickupQrMode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
+        status,
+        quantity,
+      }),
+    }];
+  });
+  const additionalItems = mergeAdditionalItems([...storeAdditionalItems, ...checkoutAdditionalItems]);
 
   const eventRelation = getRelation(
     ticketRow.events as Record<string, unknown> | Array<Record<string, unknown>> | null,
@@ -3392,13 +3481,68 @@ async function resolveStoreOrderItemsByOrderRef(
   return { status: "resolved", items };
 }
 
+async function resolveCheckoutOrderItemsByOrderRef(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  tokenCandidate: string,
+): Promise<StoreOrderRefScan> {
+  const ref = parseStoreOrderScanRef(tokenCandidate);
+  if (!ref.displayNumber && !ref.orderNumber) return { status: "none" };
+
+  const organization = (await getCurrentOrganizationContext()).organization;
+  if (!organization?.id) return { status: "none" };
+
+  let query = supabase
+    .from("orders")
+    .select("id, organization_id")
+    .eq("organization_id", organization.id)
+    .limit(2);
+  query = ref.displayNumber
+    ? query.eq("display_number", ref.displayNumber)
+    : query.eq("order_number", ref.orderNumber);
+
+  const { data: orders, error } = await query;
+  if (error || !orders?.length) return { status: "none" };
+  if (orders.length !== 1) return { status: "ambiguous" };
+
+  const order = orders[0];
+  if (String(order.organization_id) !== organization.id) return { status: "none" };
+
+  const { data: lines, error: linesError } = await supabase
+    .from("order_items")
+    .select("qr_token")
+    .eq("order_id", String(order.id))
+    .eq("item_kind", "product")
+    .not("qr_token", "is", null);
+
+  if (linesError || !(lines ?? []).length) return { status: "none" };
+
+  const items: OperationalProductItem[] = [];
+  for (const line of lines ?? []) {
+    const token = String(line.qr_token ?? "").trim();
+    if (!token) continue;
+    const item = await resolveOrderItemProductByQr(supabase, token);
+    if (item) items.push(item);
+  }
+  return items.length ? { status: "resolved", items } : { status: "none" };
+}
+
 async function resolveOperationalScanProducts(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   tokenCandidate: string,
 ): Promise<StoreOrderRefScan> {
   const item = await resolveOperationalProductByQr(supabase, tokenCandidate);
   if (item) return { status: "resolved", items: [item] };
-  return resolveStoreOrderItemsByOrderRef(supabase, tokenCandidate);
+  const [store, checkout] = await Promise.all([
+    resolveStoreOrderItemsByOrderRef(supabase, tokenCandidate),
+    resolveCheckoutOrderItemsByOrderRef(supabase, tokenCandidate),
+  ]);
+  if (store.status === "ambiguous" || checkout.status === "ambiguous") return { status: "ambiguous" };
+  const items = [
+    ...(store.status === "resolved" ? store.items : []),
+    ...(checkout.status === "resolved" ? checkout.items : []),
+  ];
+  if (items.length) return { status: "resolved", items };
+  return { status: "none" };
 }
 
 function productFromScan(items: OperationalProductItem[]): TurboScanResult | null {

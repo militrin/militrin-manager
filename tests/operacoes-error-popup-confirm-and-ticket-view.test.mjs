@@ -156,7 +156,7 @@ test('10. handleGrantStoreItem e handleDeliverAdditionalItem (produto adicional)
   const grant = sql.match(/async function handleGrantStoreItem\([\s\S]*?\n  \}/)?.[0] ?? '';
   const deliverAdditional = sql.match(/async function handleDeliverAdditionalItem\([\s\S]*?\n  \}/)?.[0] ?? '';
   assert.match(grant, /return runAction\(ticketId, \(\) => grantStoreItemAction/);
-  assert.match(deliverAdditional, /return runAction\(ticketId, \(\) => deliverAdditionalStoreItemAction/);
+  assert.match(deliverAdditional, /return runAction\(ticketId, \(\) => deliverOperationalProductItemAction/);
 });
 
 // ============================================================

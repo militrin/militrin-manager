@@ -9,7 +9,7 @@ import {
   deliverFullKitAction,
   deliverKitAndCheckinAction,
   deliverKitItemAction,
-  deliverAdditionalStoreItemAction,
+  deliverOperationalProductItemAction,
   grantStoreItemAction,
   getPickupEventsAction,
   getOperationTicketDetailsAction,
@@ -964,8 +964,8 @@ function KitPickupPageContent() {
     return runAction(ticketId, () => grantStoreItemAction({ ticketId, ...payload }));
   }
 
-  async function handleDeliverAdditionalItem(ticketId: string, storeOrderItemId: string) {
-    return runAction(ticketId, () => deliverAdditionalStoreItemAction(storeOrderItemId));
+  async function handleDeliverAdditionalItem(ticketId: string, item: { id: string; source: "store" | "checkout" }) {
+    return runAction(ticketId, () => deliverOperationalProductItemAction({ source: item.source, item_id: item.id }));
   }
 
   async function handleParticipantResolved(

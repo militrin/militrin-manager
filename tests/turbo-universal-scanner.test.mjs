@@ -70,6 +70,19 @@ test("4b. fallback de comprovante e escopado pela org atual e recusa match ambig
   assert.match(actions, /QR Code ambíguo\. Não foi possível identificar um único pedido\./);
 });
 
+test("4c. fallback #pedido tambem consulta orders com item_kind=product e mostra todos os produtos", () => {
+  assert.deepEqual(parseStoreOrderScanRef("#002123"), { displayNumber: 2123, orderNumber: null });
+  const scan = slice(actions, "async function resolveOperationalScanProducts", "function productFromScan");
+  assert.match(scan, /resolveStoreOrderItemsByOrderRef/);
+  assert.match(scan, /resolveCheckoutOrderItemsByOrderRef/);
+  assert.match(scan, /if \(store.status === "ambiguous" \|\| checkout.status === "ambiguous"\) return \{ status: "ambiguous" \}/);
+  const checkout = slice(actions, "async function resolveCheckoutOrderItemsByOrderRef", "async function resolveOperationalScanProducts");
+  assert.match(checkout, /\.from\("orders"\)/);
+  assert.match(checkout, /\.eq\("item_kind", "product"\)/);
+  assert.match(checkout, /resolveOrderItemProductByQr/);
+  assert.match(actions, /kind: "product_choices"/);
+});
+
 test("5. item Loja ja entregue nao dispara entrega de novo", () => {
   const open = slice(turbo, "const openProduct = useCallback", "async function handleInitialScan");
   assert.match(open, /SCAN_PRODUCT_DELIVERED/);

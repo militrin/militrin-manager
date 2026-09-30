@@ -127,7 +127,7 @@ export function OperationsTable({
     ticketId: string,
     payload: { storeItemId: string; variantId: string | null; quantity: number; isCourtesy: boolean; reason?: string },
   ) => Promise<ActionResult>;
-  onDeliverAdditionalItem: (ticketId: string, storeOrderItemId: string) => Promise<ActionResult>;
+  onDeliverAdditionalItem: (ticketId: string, item: { id: string; source: "store" | "checkout" }) => Promise<ActionResult>;
   onSort: (field: PickupSortField) => void;
   onSortPreset: (field: PickupSortField, direction: PickupSortDirection) => void;
 }) {
@@ -261,7 +261,7 @@ export function OperationsTable({
                             onConfirmPayment={(participantId) => onConfirmPayment(item.ticket_id, participantId)}
                             onIssueResolved={(result) => onParticipantResolved(item.participant_id ?? "", result)}
                             onGrantStoreItem={(payload) => onGrantStoreItem(item.ticket_id, payload)}
-                            onDeliverAdditionalItem={(storeOrderItemId) => onDeliverAdditionalItem(item.ticket_id, storeOrderItemId)}
+                            onDeliverAdditionalItem={(additionalItem) => onDeliverAdditionalItem(item.ticket_id, additionalItem)}
                           /> : <ExpandedParticipantDetails
                             detail={detail?.kind === "participant_without_ticket" ? detail : undefined}
                             busy={busy}
