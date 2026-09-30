@@ -19,6 +19,13 @@ type OperationsFiltersProps = {
     pending: number;
     completed: number;
   };
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    onPageChange: (page: number) => void;
+    onPageSizeChange: (pageSize: number) => void;
+  };
   onEventChange: (eventId: string) => void;
   onFilterChange: <K extends keyof PickupFilters>(key: K, value: PickupFilters[K]) => void;
   onClearAllFilters: () => void;
@@ -40,6 +47,7 @@ export function OperationsFilters({
   cities,
   loading,
   summary,
+  pagination,
   onEventChange,
   onFilterChange,
   onClearAllFilters,
@@ -198,11 +206,7 @@ export function OperationsFilters({
           </div>
 
           <div className="text-xs text-slate-400">
-            {summary.totalGroups} compras/inscrições exibidas •{" "}
-            {summary.totalTickets === summary.totalEventTickets
-              ? `${summary.totalTickets} ingressos totais`
-              : `${summary.totalTickets} de ${summary.totalEventTickets} ingressos do evento (filtros ativos)`}{" "}
-            • {summary.pending} pendentes • {summary.completed} concluídos
+            {summary.totalTickets} resultado{summary.totalTickets === 1 ? "" : "s"} • {summary.totalEventTickets} ingressos operacionais no evento
           </div>
         </div>
       </div>
@@ -382,6 +386,41 @@ export function OperationsFilters({
           </button>
         </div>
       ) : null}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={loading || pagination.page <= 1}
+            onClick={() => pagination.onPageChange(pagination.page - 1)}
+            className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40"
+          >
+            Anterior
+          </button>
+          <span>
+            Página {pagination.page} de {pagination.totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={loading || pagination.page >= pagination.totalPages}
+            onClick={() => pagination.onPageChange(pagination.page + 1)}
+            className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40"
+          >
+            Próxima
+          </button>
+        </div>
+        <label className="inline-flex items-center gap-2">
+          <span className="text-slate-400">Por página</span>
+          <select
+            value={pagination.pageSize}
+            onChange={(event) => pagination.onPageSizeChange(Number(event.target.value))}
+            className={selectClass}
+          >
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+          </select>
+        </label>
+      </div>
     </>
   );
 }

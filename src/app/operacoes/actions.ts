@@ -34,10 +34,33 @@ import { orderDisplayReference, ticketDisplayReference, canonicalTicketDisplayCo
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
 import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
+import { OFFICIAL_SHIRT_SIZE_ORDER, SHIRT_TYPES } from "@/lib/constants/shirts";
+import {
+  clampCentralPage,
+  clampCentralPageSize,
+  filterFallbackCentralRow,
+  mergeCentralFacets,
+  parseOperationTicketPage,
+  windowTicketsThenFallbacks,
+  type CentralListFilters,
+} from "@/lib/operations/central-list-query";
 
 type OperationFiltersInput = {
   eventId?: string | null;
   search?: string;
+  category?: string;
+  city?: string;
+  gender?: string;
+  ageGroup?: string;
+  paymentStatus?: string;
+  kitStatus?: string;
+  checkinStatus?: string;
+  wristbandStatus?: string;
+  shirtType?: string;
+  shirtSize?: string;
+  onlyPending?: boolean;
+  sortField?: string;
+  sortDirection?: string;
   page?: number;
   pageSize?: number;
 };
@@ -806,10 +829,31 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     };
   }
 
-  const page = Math.max(1, Number(filters.page ?? 1));
-  const pageSize = Math.min(500, Math.max(25, Number(filters.pageSize ?? 250)));
+  const page = clampCentralPage(filters.page);
+  const pageSize = clampCentralPageSize(filters.pageSize);
   const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  const listFilters: CentralListFilters = {
+    search: filters.search,
+    category: filters.category,
+    city: filters.city,
+    gender: filters.gender,
+    ageGroup: filters.ageGroup,
+    paymentStatus: filters.paymentStatus,
+    kitStatus: filters.kitStatus,
+    checkinStatus: filters.checkinStatus,
+    wristbandStatus: filters.wristbandStatus,
+    shirtType: filters.shirtType,
+    shirtSize: filters.shirtSize,
+    onlyPending: Boolean(filters.onlyPending),
+    sortField: filters.sortField === "city" || filters.sortField === "gender" || filters.sortField === "age"
+      || filters.sortField === "shirt_type" || filters.sortField === "shirt_size" || filters.sortField === "payment"
+      || filters.sortField === "kit" || filters.sortField === "checkin" || filters.sortField === "wristband"
+      ? filters.sortField
+      : "name",
+    sortDirection: filters.sortDirection === "desc" ? "desc" : "asc",
+    page,
+    pageSize,
+  };
 
   const [{ data: selectedEvent, error: selectedEventError }, { data: selectedEventKitItems, error: selectedEventKitError }] =
     await Promise.all([
@@ -838,12 +882,50 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     (item) => String(item.item_type ?? "").toLowerCase() === "shirt",
   );
 
+  const { data: pagePayload, error: pageError } = await supabase.rpc("list_operation_ticket_page", {
+    p_event_id: eventId,
+    p_search: listFilters.search ?? null,
+    p_category: listFilters.category ?? null,
+    p_city: listFilters.city ?? null,
+    p_gender: listFilters.gender ?? null,
+    p_age_group: listFilters.ageGroup ?? null,
+    p_payment_status: listFilters.paymentStatus ?? null,
+    p_kit_status: listFilters.kitStatus ?? null,
+    p_checkin_status: listFilters.checkinStatus ?? null,
+    p_wristband_status: listFilters.wristbandStatus ?? null,
+    p_shirt_type: listFilters.shirtType ?? null,
+    p_shirt_size: listFilters.shirtSize ?? null,
+    p_only_pending: Boolean(listFilters.onlyPending),
+    p_sort_field: listFilters.sortField ?? "name",
+    p_sort_direction: listFilters.sortDirection ?? "asc",
+    p_offset: from,
+    p_limit: pageSize,
+  });
+
+  if (pageError) {
+    const message = isUndefinedDatabaseFunction(pageError, "list_operation_ticket_page")
+      ? "A consulta da Central ainda não está disponível neste banco. Aplique a migration list_operation_ticket_page."
+      : pageError.message;
+    return {
+      success: false as const,
+      message,
+      tickets: [] as OperationTicketRow[],
+      groups: [] as OperationGroup[],
+    };
+  }
+
+  const ticketPage = parseOperationTicketPage(pagePayload);
+  const facets = mergeCentralFacets(ticketPage.facets, SHIRT_TYPES, OFFICIAL_SHIRT_SIZE_ORDER);
+  const ticketIds = ticketPage.ticket_ids;
+  const ticketIdOrder = new Map(ticketIds.map((id, index) => [id, index]));
+
   // ── Tickets: SEM embed de participants para evitar INNER JOIN implícito
   // que exclui tickets com participant_id = null (ingressos não atribuídos).
-  const { data: ticketRows, error: ticketError, count: totalCount } = await supabase
-    .from("tickets")
-    .select(
-      `
+  const { data: ticketRows, error: ticketError } = ticketIds.length
+    ? await supabase
+      .from("tickets")
+      .select(
+        `
         id,
         token,
         status,
@@ -873,11 +955,10 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
           display_number
         )
       `,
-      { count: "exact" },
-    )
-    .eq("event_id", eventId)
-    .order("issued_at", { ascending: true })
-    .range(from, to);
+      )
+      .in("id", ticketIds)
+      .eq("event_id", eventId)
+    : { data: [] as Array<Record<string, unknown>>, error: null };
 
   if (ticketError) {
     return {
@@ -889,7 +970,6 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
   }
 
   const rows = (ticketRows ?? []) as Array<Record<string, unknown>>;
-  const ticketIds = rows.map((row) => String(row.id ?? "")).filter(Boolean);
   const orderIds = Array.from(new Set(rows.map((row) => String(row.order_id ?? "")).filter(Boolean)));
   const buyerUserIds = Array.from(new Set(rows.flatMap((row) => {
     const order = getRelation(row.orders as Record<string, unknown> | Array<Record<string, unknown>> | null);
@@ -917,6 +997,7 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
   );
 
   // ── Queries paralelas ────────────────────────────────────────────────────
+  const includeFallbacks = !listFilters.onlyPending;
   const [
     { data: allEventTicketsForFallback, error: allEventTicketParticipantsError },
     { data: importedParticipantsRows, error: importedParticipantsError },
@@ -925,25 +1006,33 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     { data: buyerRows, error: buyerRowsError },
     { data: importedHistoryRows, error: importedHistoryError },
   ] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select("participant_id, order_id, intended_owner_contact_id, status")
-      .eq("event_id", eventId),
-    supabase
-      .from("participants")
-      .select("id, full_name, cpf, phone, city, gender, birth_date, registration_status, shirt_type, shirt_size, ticket_category_id, registration_contact_id, ticket_categories(id,name), notes")
-      .eq("event_id", eventId)
-      .neq("registration_status", "cancelled"),
-    supabase
-      .from("order_items")
-      .select("participant_id")
-      .eq("event_id", eventId)
-      .not("participant_id", "is", null),
-    supabase
-      .from("orders")
-      .select("id, participant_id")
-      .eq("event_id", eventId)
-      .not("participant_id", "is", null),
+    includeFallbacks
+      ? supabase
+        .from("tickets")
+        .select("participant_id, order_id, intended_owner_contact_id, status")
+        .eq("event_id", eventId)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+    includeFallbacks
+      ? supabase
+        .from("participants")
+        .select("id, full_name, cpf, phone, city, gender, birth_date, registration_status, shirt_type, shirt_size, ticket_category_id, registration_contact_id, ticket_categories(id,name), notes")
+        .eq("event_id", eventId)
+        .neq("registration_status", "cancelled")
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+    includeFallbacks
+      ? supabase
+        .from("order_items")
+        .select("participant_id")
+        .eq("event_id", eventId)
+        .not("participant_id", "is", null)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+    includeFallbacks
+      ? supabase
+        .from("orders")
+        .select("id, participant_id")
+        .eq("event_id", eventId)
+        .not("participant_id", "is", null)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
     buyerUserIds.length
       ? supabase.rpc("get_operation_buyers", { p_event_id: eventId })
       : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
@@ -1119,25 +1208,28 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     }
   }
 
-  const mappedRows = rows.map((row) =>
-    mapTicketRow({
-      row,
-      selectedEvent: (selectedEvent as Record<string, unknown> | null) ?? null,
-      eventHasKit,
-      eventHasShirt,
-      applicableKitItemCount,
-      kitQueryFailed: Boolean(kitError),
-      paymentByOrder,
-      kitMap,
-      wristbandByTicket,
-      orderTicketIndex,
-      participantMap,
-      buyerMap,
-      importedParticipantIds,
-    }),
-  );
+  const mappedRows = rows
+    .map((row) =>
+      mapTicketRow({
+        row,
+        selectedEvent: (selectedEvent as Record<string, unknown> | null) ?? null,
+        eventHasKit,
+        eventHasShirt,
+        applicableKitItemCount,
+        kitQueryFailed: Boolean(kitError),
+        paymentByOrder,
+        kitMap,
+        wristbandByTicket,
+        orderTicketIndex,
+        participantMap,
+        buyerMap,
+        importedParticipantIds,
+      }),
+    )
+    .sort((a, b) => (ticketIdOrder.get(a.id) ?? 0) - (ticketIdOrder.get(b.id) ?? 0));
 
-  const fallbackRows: OperationTicketRow[] = fallbackParticipants.map((row) => {
+  const fallbackRows: OperationTicketRow[] = includeFallbacks
+    ? fallbackParticipants.map((row) => {
     const participantId = String(row.id ?? "");
     const payment = fallbackPaymentMap.get(participantId);
     const fallbackPaymentState = resolveOperationalPaymentState({
@@ -1210,30 +1302,22 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
       is_imported_without_ticket: isImportTagged,
       wristband: null,
     };
+  })
+    : [];
+
+  const matchedFallbacks = fallbackRows.filter((row) => filterFallbackCentralRow(row, listFilters));
+  const ticketCount = ticketPage.filtered_count;
+  const window = windowTicketsThenFallbacks({
+    ticketCount,
+    fallbackCount: matchedFallbacks.length,
+    page,
+    pageSize,
   });
-
-  const allRows = [...mappedRows, ...fallbackRows];
-
-  const search = normalizeSearch(filters.search ?? "");
-  const tickets = (search
-    ? allRows.filter((row) =>
-        matchesTicketOperationSearch(search, row, [
-          row.participant_name,
-          row.participant_email,
-          row.cpf,
-          row.phone,
-          row.buyer_name,
-          row.buyer_cpf,
-          row.buyer_phone,
-          row.buyer_email,
-          row.ticket_token,
-          row.wristband_code,
-          row.order_number,
-          row.ticket_display_code,
-        ]),
-      )
-    : allRows
-  ).sort((a, b) => a.participant_name.localeCompare(b.participant_name, "pt-BR", { sensitivity: "base" }));
+  const pagedFallbacks = matchedFallbacks.slice(window.fallbackOffset, window.fallbackOffset + window.fallbackLimit);
+  const tickets = [...mappedRows, ...pagedFallbacks];
+  const filteredCount = window.filteredCount;
+  const operationalTotal = ticketPage.operational_total;
+  const hasMore = page * pageSize < filteredCount;
 
   const groups = buildOperationGroups(tickets, eventHasKit);
 
@@ -1252,8 +1336,13 @@ export async function listOperationTicketsAction(filters: OperationFiltersInput 
     },
     page,
     pageSize,
-    total: Number(totalCount ?? tickets.length),
-    hasMore: Number(totalCount ?? 0) > to + 1,
+    page_size: pageSize,
+    total: filteredCount,
+    filtered_count: filteredCount,
+    operational_total: operationalTotal,
+    hasMore,
+    has_more: hasMore,
+    facets,
     tickets,
     groups,
     participants: tickets,
@@ -3387,44 +3476,18 @@ export async function searchTurboOperationsAction(payload: {
   if (!organization?.id) return { success: false, message: "Organização não selecionada." };
 
   const hits: TurboSearchHit[] = [];
-  if (await hasPermission("participants.view")) {
-    // A lista pagina ANTES do filtro de busca. Sem varrer as páginas, a
-    // busca manual do Turbo só via os primeiros 40/250 ingressos — inútil
-    // como fallback de câmera num evento real.
-    const pageSize = 500;
-    let page = 1;
-    const seenTickets = new Set<string>();
-    for (;;) {
-      const tickets = await listOperationTicketsAction({ eventId, page, pageSize });
+    if (await hasPermission("participants.view")) {
+      const tickets = await listOperationTicketsAction({
+        eventId,
+        search: payload.search,
+        page: 1,
+        pageSize: 50,
+      });
       if (!tickets.success) return { success: false, message: tickets.message ?? "Não foi possível buscar ingressos." };
       for (const row of tickets.tickets) {
-        const key = row.ticket_id ? `t:${row.ticket_id}` : `p:${row.participant_id}`;
-        if (seenTickets.has(key)) continue;
-        if (
-          matchesTicketOperationSearch(search, row, [
-            row.participant_name,
-            row.full_name,
-            row.participant_email,
-            row.cpf,
-            row.phone,
-            row.buyer_name,
-            row.buyer_cpf,
-            row.buyer_phone,
-            row.buyer_email,
-            row.ticket_token,
-            row.wristband_code,
-            row.order_number,
-            row.ticket_display_code,
-          ])
-        ) {
-          seenTickets.add(key);
-          hits.push({ kind: "ticket", row });
-        }
+        hits.push({ kind: "ticket", row });
       }
-      if (!tickets.hasMore || page >= 4) break;
-      page += 1;
     }
-  }
 
   const supabase = await createServerSupabaseClient();
   const { data: storeLines, error: storeError } = await supabase

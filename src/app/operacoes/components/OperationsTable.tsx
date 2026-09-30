@@ -180,8 +180,7 @@ export function OperationsTable({
             totalLoadedCount > 0 ? (
               <div className="flex flex-col items-center gap-3 p-8 text-center text-slate-400">
                 <p>
-                  Este evento tem {totalLoadedCount} ingresso(s), mas nenhum corresponde aos filtros atuais
-                  {" "}(pode ser um filtro salvo de uma sessão anterior).
+                  Este evento tem {totalLoadedCount} ingresso(s) operacional(is), mas nenhum corresponde aos filtros atuais.
                 </p>
                 <button
                   type="button"

@@ -45,7 +45,8 @@ import {
   type PickupSortDirection,
   type PickupSortField,
 } from "./types";
-import { ticketMatchesExactDisplayCode } from "@/lib/display-reference";
+import { OFFICIAL_SHIRT_SIZE_ORDER, SHIRT_TYPES } from "@/lib/constants/shirts";
+import { CENTRAL_DEFAULT_PAGE_SIZE, mergeCentralFacets } from "@/lib/operations/central-list-query";
 
 const VIEW_STATE_STORAGE_KEY = "operacoes.view-state.v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -308,6 +309,15 @@ function KitPickupPageContent() {
   const searchParams = useSearchParams();
   const [filters, setFilters] = useState<PickupFilters>(EMPTY_PICKUP_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<PickupFilters>(EMPTY_PICKUP_FILTERS);
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(CENTRAL_DEFAULT_PAGE_SIZE);
+  const [filteredCount, setFilteredCount] = useState(0);
+  const [operationalTotal, setOperationalTotal] = useState(0);
+  const [facets, setFacets] = useState(() => mergeCentralFacets(
+    { categories: [], cities: [], shirt_types: [], shirt_sizes: [] },
+    SHIRT_TYPES,
+    OFFICIAL_SHIRT_SIZE_ORDER,
+  ));
   const [sortField, setSortField] = useState<PickupSortField>("name");
   const [sortDirection, setSortDirection] = useState<PickupSortDirection>("asc");
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
@@ -340,25 +350,10 @@ function KitPickupPageContent() {
     canUndoDeliverStoreItems: false,
   });
 
-  const shirtTypes = useMemo(
-    () => Array.from(new Set(items.map((item) => item.shirt_type).filter(Boolean))).sort(),
-    [items],
-  );
-
-  const shirtSizes = useMemo(
-    () => Array.from(new Set(items.map((item) => item.shirt_size).filter(Boolean))).sort(),
-    [items],
-  );
-
-  const categories = useMemo(
-    () => Array.from(new Set(items.map((item) => item.category_name).filter(Boolean))).sort(),
-    [items],
-  );
-
-  const cities = useMemo(
-    () => Array.from(new Set(items.map((item) => item.city).filter(Boolean))).sort(),
-    [items],
-  );
+  const shirtTypes = facets.shirt_types;
+  const shirtSizes = facets.shirt_sizes;
+  const categories = facets.categories;
+  const cities = facets.cities;
 
   const visibleGroups = useMemo(() => {
     const visibleIndex = new Map(visibleItems.map((item, index) => [item.id, index]));
@@ -380,14 +375,10 @@ function KitPickupPageContent() {
 
   const operationSummary = useMemo(() => {
     const totalGroups = visibleGroups.length;
-    const totalTickets = visibleGroups.reduce((acc, group) => acc + group.tickets.filter((entry) => entry.kind === "ticket").length, 0);
+    const totalTickets = filteredCount;
     const completed = visibleItems.filter((item) => item.kind === "ticket" && isConcluded(item, selectedEvent)).length;
-    const pending = Math.max(0, totalTickets - completed);
-    // Total carregado do evento ANTES dos filtros locais -- permite o resumo
-    // e o estado vazio distinguirem "evento sem ingresso nenhum" de "filtros
-    // ativos escondendo ingressos que existem" (estado persistido no
-    // localStorage pode fazer os dois parecerem identicos pro operador).
-    const totalEventTickets = items.filter((item) => item.kind === "ticket").length;
+    const pending = visibleItems.filter((item) => item.kind === "ticket" && isPending(item)).length;
+    const totalEventTickets = operationalTotal;
 
     return {
       totalGroups,
@@ -396,7 +387,7 @@ function KitPickupPageContent() {
       pending,
       completed,
     };
-  }, [visibleGroups, visibleItems, items, selectedEvent]);
+  }, [visibleGroups, visibleItems, filteredCount, operationalTotal, selectedEvent]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -430,76 +421,60 @@ function KitPickupPageContent() {
     });
   }, []);
 
-  function buildLocalView(
-    sourceItems: PickupListItem[],
-    activeFilters: PickupFilters,
-    activeSortField: PickupSortField,
-    activeSortDirection: PickupSortDirection,
+  function applyView(sourceItems: PickupListItem[]) {
+    setVisibleItems(sourceItems);
+  }
+
+  async function loadList(
+    eventId: string,
+    keepMessage = false,
+    query?: {
+      filters: PickupFilters;
+      page: number;
+      pageSize: number;
+      sortField: PickupSortField;
+      sortDirection: PickupSortDirection;
+    },
   ) {
-    const search = normalizeText(activeFilters.search);
-
-    const filtered = sourceItems.filter((item) => {
-      if (search) {
-        const exactCode = ticketMatchesExactDisplayCode(activeFilters.search, item.ticket_display_code);
-        if (exactCode !== null) {
-          if (!exactCode) return false;
-        } else {
-          const haystack = normalizeText([
-            item.participant_name,
-            item.participant_email,
-            item.cpf,
-            item.phone,
-            item.buyer_name,
-            item.buyer_cpf,
-            item.buyer_phone,
-            item.buyer_email,
-            item.ticket_display_code,
-            item.order_number,
-            item.wristband_code,
-          ].join(" "));
-          if (!haystack.includes(search)) return false;
-        }
-      }
-
-      if (activeFilters.category !== "all" && item.category_name !== activeFilters.category) return false;
-      if (activeFilters.city !== "all" && item.city !== activeFilters.city) return false;
-      if (activeFilters.gender === "not_informed" && item.gender) return false;
-      if (activeFilters.gender !== "all" && activeFilters.gender !== "not_informed" && item.gender !== activeFilters.gender) return false;
-      if (!inAgeGroup(getAge(item.birth_date), activeFilters.ageGroup)) return false;
-      if (activeFilters.paymentStatus !== "all" && item.payment_status !== activeFilters.paymentStatus) return false;
-      if (activeFilters.kitStatus !== "all" && item.kit_status !== activeFilters.kitStatus) return false;
-      if (activeFilters.checkinStatus !== "all" && item.checkin_status !== activeFilters.checkinStatus) return false;
-      if (activeFilters.wristbandStatus === "active" && item.wristband?.status !== "active") return false;
-      if (activeFilters.wristbandStatus === "pending" && item.wristband?.status === "active") return false;
-      if (activeFilters.shirtType !== "all" && item.shirt_type !== activeFilters.shirtType) return false;
-      if (activeFilters.shirtSize !== "all" && item.shirt_size !== activeFilters.shirtSize) return false;
-      if (activeFilters.onlyPending && !isPending(item)) return false;
-
-      return true;
-    });
-
-    return filtered
-      .slice()
-      .sort((a, b) => compareByField(a, b, activeSortField, activeSortDirection));
-  }
-
-  function applyView(sourceItems: PickupListItem[], nextAppliedFilters = appliedFilters, nextSortField = sortField, nextSortDirection = sortDirection) {
-    setVisibleItems(buildLocalView(sourceItems, nextAppliedFilters, nextSortField, nextSortDirection));
-  }
-
-  async function loadList(eventId: string, keepMessage = false) {
+    const active = query ?? {
+      filters: appliedFilters,
+      page: listPage,
+      pageSize: listPageSize,
+      sortField,
+      sortDirection,
+    };
     setLoading(true);
     if (!keepMessage) setMessage(null);
 
     let response: Awaited<ReturnType<typeof listOperationTicketsAction>>;
 
     try {
-      response = await listOperationTicketsAction({ eventId });
+      response = await listOperationTicketsAction({
+        eventId,
+        search: active.filters.search,
+        category: active.filters.category,
+        city: active.filters.city,
+        gender: active.filters.gender,
+        ageGroup: active.filters.ageGroup,
+        paymentStatus: active.filters.paymentStatus,
+        kitStatus: active.filters.kitStatus,
+        checkinStatus: active.filters.checkinStatus,
+        wristbandStatus: active.filters.wristbandStatus,
+        shirtType: active.filters.shirtType,
+        shirtSize: active.filters.shirtSize,
+        onlyPending: active.filters.onlyPending,
+        sortField: active.sortField,
+        sortDirection: active.sortDirection,
+        page: active.page,
+        pageSize: active.pageSize,
+      });
     } catch (error) {
       setLoading(false);
       setItems([]);
       setVisibleItems([]);
       setGroups([]);
+      setFilteredCount(0);
+      setOperationalTotal(0);
       setMessage(error instanceof Error ? error.message : "Não foi possível carregar a lista.");
       return;
     }
@@ -510,6 +485,8 @@ function KitPickupPageContent() {
       setItems([]);
       setVisibleItems([]);
       setGroups([]);
+      setFilteredCount(0);
+      setOperationalTotal(0);
       setMessage(response.message ?? "Não foi possível carregar a lista.");
       return;
     }
@@ -519,6 +496,11 @@ function KitPickupPageContent() {
     setItems(loadedItems);
     setGroups(loadedGroups);
     applyView(loadedItems);
+    setFilteredCount(Number("filtered_count" in response ? response.filtered_count : loadedItems.length));
+    setOperationalTotal(Number("operational_total" in response ? response.operational_total : 0));
+    if ("facets" in response && response.facets) {
+      setFacets(mergeCentralFacets(response.facets, SHIRT_TYPES, OFFICIAL_SHIRT_SIZE_ORDER));
+    }
 
     if (expandedId && !loadedItems.some((item) => item.id === expandedId)) {
       setExpandedId(null);
@@ -609,8 +591,7 @@ function KitPickupPageContent() {
 
       setFilters(nextFilters);
       setAppliedFilters(nextApplied);
-
-      await loadList(preferredEvent.id);
+      setListPage(1);
     })();
     // Carrega somente ao abrir a tela.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -652,17 +633,29 @@ function KitPickupPageContent() {
     if (!preferencesLoaded) return;
 
     const timeoutId = window.setTimeout(() => {
-      setAppliedFilters(filters);
-      applyView(items, filters, sortField, sortDirection);
+      setAppliedFilters((current) => (
+        JSON.stringify(current) === JSON.stringify(filters) ? current : filters
+      ));
     }, filters.search ? 220 : 120);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  // applyView usa exatamente os estados listados abaixo como defaults; inclui-la
-  // recriaria o timer em toda renderizacao porque ela tambem atualiza estado.
+  }, [filters, preferencesLoaded]);
+
+  useEffect(() => {
+    if (!preferencesLoaded || !appliedFilters.eventId) return;
+    void loadList(appliedFilters.eventId, false, {
+      filters: appliedFilters,
+      page: listPage,
+      pageSize: listPageSize,
+      sortField,
+      sortDirection,
+    });
+  // loadList fecha sobre o estado atual; o gatilho canonico e o conjunto
+  // de filtros aplicados + pagina + ordenacao.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, items, sortField, sortDirection, preferencesLoaded]);
+  }, [appliedFilters, listPage, listPageSize, sortField, sortDirection, preferencesLoaded]);
 
   async function toggleDetails(entry: PickupListItem) {
     const entryId = entry.id;
@@ -855,8 +848,7 @@ function KitPickupPageContent() {
     setSelectedEvent(nextEvent);
     setFilters(nextFilters);
     setAppliedFilters(nextApplied);
-
-    await loadList(eventId);
+    setListPage(1);
   }
 
   function handleFilterChange<K extends keyof PickupFilters>(
@@ -867,6 +859,7 @@ function KitPickupPageContent() {
       ...current,
       [key]: value,
     }));
+    setListPage(1);
   }
 
   function handleSort(field: PickupSortField) {
@@ -877,13 +870,11 @@ function KitPickupPageContent() {
 
     setSortField(field);
     setSortDirection(nextDirection);
-    applyView(items, appliedFilters, field, nextDirection);
   }
 
   function handleSortPreset(field: PickupSortField, direction: PickupSortDirection) {
     setSortField(field);
     setSortDirection(direction);
-    applyView(items, appliedFilters, field, direction);
   }
 
   function handleClearFilters() {
@@ -894,7 +885,7 @@ function KitPickupPageContent() {
 
     setFilters(cleared);
     setAppliedFilters(cleared);
-    applyView(items, cleared, sortField, sortDirection);
+    setListPage(1);
   }
 
   async function handleDeliverFullKit(ticketId: string, _participantId: string | null, wristbandCode?: string) {
@@ -1039,7 +1030,7 @@ function KitPickupPageContent() {
 
           <SectionCard
             title="Operação do evento"
-            description="Filtre localmente e execute as ações operacionais sem perder o estado visual da tela."
+            description="Busque e filtre o universo completo de ingressos do evento. A paginação acontece depois dos filtros."
           >
             {selectedEvent && visibleItems.some((item) => item.kind === "ticket" && item.kit_status === "configuration_pending") && capabilities.canDeliverKit ? (
               <div className="mb-3 flex justify-end">
@@ -1066,6 +1057,16 @@ function KitPickupPageContent() {
               onFilterChange={handleFilterChange}
               onClearAllFilters={handleClearFilters}
               onOpenScanner={() => setShowScanner(true)}
+              pagination={{
+                page: listPage,
+                pageSize: listPageSize,
+                totalPages: Math.max(1, Math.ceil(filteredCount / listPageSize) || 1),
+                onPageChange: setListPage,
+                onPageSizeChange: (nextSize) => {
+                  setListPageSize(nextSize);
+                  setListPage(1);
+                },
+              }}
             />
 
             <OperationsDashboard message={message}>
@@ -1073,7 +1074,7 @@ function KitPickupPageContent() {
                 selectedEvent={selectedEvent}
                 groups={visibleGroups}
                 items={visibleItems}
-                totalLoadedCount={items.length}
+                totalLoadedCount={operationalTotal}
                 onClearFilters={handleClearFilters}
                 details={details}
                 expandedId={expandedId}
