@@ -21,6 +21,8 @@ import {
   presentFinancePayment,
 } from "@/lib/finance/payment-presentation";
 import { OffGatewayPaymentModal } from "@/app/financeiro/pagamento/off-gateway-modal";
+import { OrderProductItemCard } from "./order-product-item-card";
+import { additionalItemStatus, checkoutProductPickupPageHref } from "@/lib/operations/additional-product-items";
 
 function money(value: number, priceOrigin?: string | null) {
   return formatImportedHistoricalAmount(value, priceOrigin);
@@ -57,7 +59,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   const [{ data: items }, { data: payments }, { data: tickets }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id,item_position,status,item_kind,ownership_status,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,price_origin,shirt_type,shirt_size,reservation_expires_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
+      .select("id,item_position,status,item_kind,ownership_status,holder_full_name,holder_email,holder_phone,participant_id,quantity,unit_price,discount_amount,final_amount,price_origin,shirt_type,shirt_size,reservation_expires_at,qr_token,pickup_qr_mode,delivered_at,registration_batches(name),ticket_categories(name),participants(full_name,cpf,phone,email),store_items(name),store_item_variants(name,value)")
       .eq("order_id", orderId)
       .order("item_position", { ascending: true }),
     supabase
@@ -76,12 +78,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
   // organizacao + Owner OU orders.cancel) -- decide so se o CTA de
   // regularizacao aparece aqui; a acao em si (reclassificar) so acontece na
   // ficha do ingresso, nunca duplicada nesta listagem.
-  const [canRegularizeCancellation, canRefundPayment, canViewCadastro, canConfirmPayment] = await Promise.all([
+  const [canRegularizeCancellation, canRefundPayment, canViewCadastro, canConfirmPayment, canDeliverStoreItems, canManageStore] = await Promise.all([
     hasPermission("orders.cancel"),
     hasPermission("finance.refund"),
     hasPermission("participants.view"),
     hasPermission("finance.confirm_payment"),
+    hasPermission("store.deliver"),
+    hasPermission("store.manage"),
   ]);
+  const canViewProductQr = canDeliverStoreItems || canManageStore;
 
   // Auditoria do caso real #001078 (Integridade Operacional, P0): esta pagina
   // tratava "existe uma linha em tickets" como "ingresso valido" e mostrava
@@ -334,26 +339,36 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ or
                   const variant = one(item.store_item_variants);
                   const name = storeItem?.name ?? "Produto";
                   const variantText = variant ? `${variant.name}: ${variant.value}` : null;
-                  const deliveryLabel =
-                    item.status === "delivered" ? "Entregue" : item.status === "cancelled" || item.status === "expired" || item.status === "refunded" ? "Cancelado" : "Aguardando retirada";
-                  const deliveryClass =
-                    item.status === "delivered"
-                      ? "border-emerald-500/40 text-emerald-200"
-                      : item.status === "cancelled" || item.status === "expired" || item.status === "refunded"
-                        ? "border-slate-700 text-slate-400"
-                        : "border-amber-500/40 text-amber-200";
+                  const status = additionalItemStatus({
+                    itemStatus: String(item.status ?? ""),
+                    deliveredAt: item.delivered_at ? String(item.delivered_at) : null,
+                    orderStatus: String(order.status ?? ""),
+                  });
+                  const pickupHref = checkoutProductPickupPageHref({
+                    orderId: String(order.id),
+                    itemId: String(item.id),
+                    hasQrToken: Boolean(item.qr_token),
+                    pickupQrMode: item.pickup_qr_mode ? String(item.pickup_qr_mode) : null,
+                    status,
+                    quantity: Number(item.quantity ?? 1),
+                  });
 
                   return (
-                    <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold text-slate-100">{item.quantity}x {name}</p>
-                          <p className="text-xs text-slate-400">{variantText ?? "Sem variante"}</p>
-                          <p className="mt-0.5 text-xs text-slate-500">{canViewFinancial ? money(item.final_amount ?? 0, item.price_origin ?? order.price_origin) : ""}</p>
-                        </div>
-                        <span className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${deliveryClass}`}>{deliveryLabel}</span>
-                      </div>
-                    </div>
+                    <OrderProductItemCard
+                      key={item.id}
+                      itemId={String(item.id)}
+                      name={name}
+                      variantText={variantText}
+                      quantity={Number(item.quantity ?? 1)}
+                      amountLabel={canViewFinancial ? money(item.final_amount ?? 0, item.price_origin ?? order.price_origin) : ""}
+                      status={status}
+                      pickupQrMode={item.pickup_qr_mode ? String(item.pickup_qr_mode) : null}
+                      pickupHref={pickupHref}
+                      canViewQr={canViewProductQr}
+                      canDeliver={canDeliverStoreItems}
+                      orderReference={orderDisplayReference(order.display_number, order.order_number)}
+                      customerName={buyerContact?.full_name ?? buyerName}
+                    />
                   );
                 })}
               </div>

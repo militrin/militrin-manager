@@ -63,9 +63,75 @@ export function additionalItemStatus(input: {
 
 export function additionalItemStatusLabel(status: AdditionalItemStatus) {
   if (status === "delivered") return "Entregue";
-  if (status === "confirmed") return "Pendente de entrega";
+  if (status === "confirmed") return "Aguardando retirada";
   if (status === "cancelled") return "Cancelado";
   return "Aguardando pagamento";
+}
+
+export function canDeliverProductLine(input: {
+  status: AdditionalItemStatus;
+  pickupQrMode?: string | null;
+}) {
+  if (input.status !== "confirmed") return false;
+  const mode = String(input.pickupQrMode ?? "per_line").trim().toLowerCase() || "per_line";
+  return mode !== "per_unit" && mode !== "none";
+}
+
+function pickupPageAllowed(input: {
+  hasQrToken: boolean;
+  pickupQrMode?: string | null;
+  status: AdditionalItemStatus;
+  quantity?: number;
+}) {
+  if (input.status === "cancelled") return false;
+  if (input.pickupQrMode === "none") return false;
+  if (input.pickupQrMode === "per_unit" && Number(input.quantity ?? 1) > 1) return true;
+  return Boolean(input.hasQrToken);
+}
+
+export function productPickupPageHref(input: {
+  source: AdditionalItemSource;
+  orderId: string;
+  itemId: string;
+  hasQrToken: boolean;
+  pickupQrMode?: string | null;
+  status: AdditionalItemStatus;
+  quantity?: number;
+}) {
+  if (!input.orderId || !input.itemId) return null;
+  if (!pickupPageAllowed(input)) return null;
+  const sourcePath = input.source === "store" ? "loja" : "checkout";
+  return `/produto/retirada/${sourcePath}/${input.orderId}/${input.itemId}`;
+}
+
+export function checkoutProductPickupPageHref(input: {
+  orderId: string;
+  itemId: string;
+  hasQrToken: boolean;
+  pickupQrMode?: string | null;
+  status: AdditionalItemStatus;
+  quantity?: number;
+}) {
+  return productPickupPageHref({ ...input, source: "checkout" });
+}
+
+export function storeProductPickupPageHref(input: {
+  orderId: string;
+  itemId: string;
+  hasQrToken?: boolean;
+  pickupQrMode?: string | null;
+  status: AdditionalItemStatus;
+  quantity?: number;
+}) {
+  return productPickupPageHref({
+    source: "store",
+    orderId: input.orderId,
+    itemId: input.itemId,
+    hasQrToken: input.hasQrToken !== false,
+    pickupQrMode: input.pickupQrMode,
+    status: input.status,
+    quantity: input.quantity,
+  });
 }
 
 export function mergeAdditionalItems<T extends { source: AdditionalItemSource; id: string }>(items: T[]) {

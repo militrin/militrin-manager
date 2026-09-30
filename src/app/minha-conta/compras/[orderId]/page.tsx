@@ -18,6 +18,7 @@ import { canContinuePendingCardCheckout } from '@/lib/checkout/pix-payment-statu
 import { canonicalTicketDisplayCode, orderDisplayReference } from '@/lib/display-reference';
 import { orderChargeBreakdown } from '@/lib/orders/charge-breakdown';
 import { canContinueCommercialPayment, resolveCommercialStatus, resolvePaymentDisplayStatus } from '@/lib/dashboard/commercial-status';
+import { additionalItemStatus, additionalItemStatusLabel } from '@/lib/operations/additional-product-items';
 import { resolvePixCommercialExpiresAt } from '@/lib/payments/pix-due-date';
 
 function money(value: number) {
@@ -312,9 +313,14 @@ export default async function OrderDetailPage({
                       </>
                     ) : null}
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <MilitrinStatusBadge status={item.delivered_at ? 'delivered' : item.status} />
+                      <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-200">
+                        {additionalItemStatusLabel(additionalItemStatus({
+                          itemStatus: item.status,
+                          deliveredAt: item.delivered_at,
+                        }))}
+                      </span>
                       {pickupQrMode !== 'none' && canShowProductQr ? (
-                        <Link href={`/minha-conta/compras/${orderId}/itens/${item.order_item_id}`} className="text-xs text-emerald-300 underline">
+                        <Link href={`/produto/retirada/checkout/${orderId}/${item.order_item_id}`} className="text-xs text-emerald-300 underline">
                           {qrLabel}
                         </Link>
                       ) : null}

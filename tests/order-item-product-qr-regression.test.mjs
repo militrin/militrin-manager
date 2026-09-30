@@ -142,9 +142,9 @@ test('item sem qr_token (ex.: linha de ingresso, ou item_kind filtrado) retorna 
 // Frontend (wizard.tsx) -- botao "Ver QR Code" por produto, nunca gerado
 // manualmente a partir do qr_token
 // ============================================================
-test('wizard.tsx: "Produtos do pedido" ganha um link "Ver QR Code" por item, apontando pra rota autorizada (nunca lendo/gerando qr_token no cliente)', async () => {
+test('wizard.tsx: "Produtos do pedido" ganha um link "Ver QR Code" por item, apontando pra pagina de comprovante (nunca lendo/gerando qr_token no cliente)', async () => {
   const source = await fs.readFile(wizardUrl, 'utf8');
-  assert.match(source, /href=\{`\/api\/inscricao\/pedidos\/\$\{registration\.order_id\}\/itens\/\$\{item\.order_item_id\}\/qrcode\?inline=1`\}/);
+  assert.match(source, /href=\{`\/produto\/retirada\/checkout\/\$\{registration\.order_id\}\/\$\{item\.order_item_id\}`\}/);
   assert.match(source, /target="_blank"/);
   assert.doesNotMatch(source, /item\.qr_token/, 'o snapshot do frontend nunca deveria expor/usar qr_token diretamente -- so order_item_id + order_id, ja existentes');
 });

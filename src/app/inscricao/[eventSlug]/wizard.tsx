@@ -3389,7 +3389,7 @@ export function RegistrationWizard({
                               <>
                                 {' '}
                                 <a
-                                  href={`/api/inscricao/pedidos/${registration.order_id}/itens/${item.order_item_id}/qrcode?inline=1`}
+                                  href={`/produto/retirada/checkout/${registration.order_id}/${item.order_item_id}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="text-emerald-300 underline underline-offset-2"

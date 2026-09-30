@@ -9,7 +9,7 @@ export function accountStoreOrderHref(storeOrderId: string) {
 }
 
 export function accountStoreItemHref(storeOrderId: string, itemId: string) {
-  return `${ACCOUNT_STORE_ORDER_PATH}/${storeOrderId}/itens/${itemId}`;
+  return `/produto/retirada/loja/${storeOrderId}/${itemId}`;
 }
 
 export const ACCOUNT_STORE_ORDERS_SELECT =

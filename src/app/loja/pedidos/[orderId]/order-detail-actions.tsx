@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   cancelStoreOrderAction,
   confirmStoreOrderPaymentAction,
@@ -10,6 +11,7 @@ import {
 } from '../../actions';
 import { ReasonDialog } from '@/app/operacoes/components/ReasonDialog';
 import { isSyntheticGatewayPayload } from '@/lib/payments/synthetic-gateway-payload';
+import { DeliverProductConfirmDialog } from '@/components/product-pickup/DeliverProductConfirmDialog';
 
 export function OrderPaymentActions({
   storeOrderId,
@@ -79,49 +81,51 @@ export function OrderItemActions({
   itemId,
   status,
   hasQr,
+  productName,
+  quantity,
+  orderReference,
+  customerName,
+  canDeliver = true,
+  canViewQr = true,
 }: {
   storeOrderId: string;
   itemId: string;
   status: string;
   hasQr: boolean;
+  productName: string;
+  quantity: number;
+  orderReference: string;
+  customerName?: string | null;
+  canDeliver?: boolean;
+  canViewQr?: boolean;
 }) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [showUndoReason, setShowUndoReason] = useState(false);
+  const [showDeliverConfirm, setShowDeliverConfirm] = useState(false);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {hasQr && (status === 'confirmed' || status === 'delivered') ? (
-        <a
-          href={`/api/loja/pedidos/${storeOrderId}/itens/${itemId}/qrcode`}
-          target="_blank"
-          rel="noreferrer"
+      {hasQr && canViewQr && (status === 'confirmed' || status === 'delivered') ? (
+        <Link
+          href={`/produto/retirada/loja/${storeOrderId}/${itemId}`}
           className="inline-flex h-8 items-center rounded-lg border border-cyan-500/40 px-2 text-[11px] text-cyan-200"
         >
-          Baixar QR do item
-        </a>
+          Ver QR
+        </Link>
       ) : null}
-      {status === 'confirmed' ? (
+      {canDeliver && status === 'confirmed' ? (
         <button
           type="button"
-          disabled={pending}
-          onClick={() =>
-            startTransition(async () => {
-              const response = await deliverStoreOrderItemAction(itemId);
-              setMessage(response.message);
-              if (response.success) router.refresh();
-            })
-          }
+          onClick={() => setShowDeliverConfirm(true)}
           className="inline-flex h-8 items-center rounded-lg border border-emerald-500/40 px-2 text-[11px] text-emerald-200 disabled:opacity-50"
         >
-          Confirmar entrega
+          Marcar como entregue
         </button>
       ) : null}
-      {status === 'delivered' ? (
+      {canDeliver && status === 'delivered' ? (
         <button
           type="button"
-          disabled={pending}
           onClick={() => setShowUndoReason(true)}
           className="inline-flex h-8 items-center rounded-lg border border-slate-700 px-2 text-[11px] text-slate-300 disabled:opacity-50"
         >
@@ -129,6 +133,21 @@ export function OrderItemActions({
         </button>
       ) : null}
       {message ? <p className="text-xs text-slate-400" role="status">{message}</p> : null}
+      {showDeliverConfirm ? (
+        <DeliverProductConfirmDialog
+          productName={productName}
+          quantity={quantity}
+          orderReference={orderReference}
+          customerName={customerName}
+          onCancel={() => setShowDeliverConfirm(false)}
+          onConfirm={async () => {
+            const response = await deliverStoreOrderItemAction(itemId);
+            setMessage(response.message);
+            if (response.success) router.refresh();
+            return response;
+          }}
+        />
+      ) : null}
       {showUndoReason ? (
         <ReasonDialog
           title="Desfazer entrega do item"

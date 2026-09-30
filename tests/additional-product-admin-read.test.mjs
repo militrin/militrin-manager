@@ -6,6 +6,7 @@ import {
   additionalItemStatus,
   additionalItemStatusLabel,
   checkoutProductBelongsToCadastro,
+  checkoutProductPickupPageHref,
   checkoutProductQrHref,
   mergeAdditionalItems,
   storeProductQrHref,
@@ -36,7 +37,7 @@ test("compre junto pertence ao Cadastro da conta compradora, nao ao titular B", 
   );
 });
 
-test("Micheli #002123: copo pago nao entregue vira Pendente de entrega com QR canonico", () => {
+test("Micheli #002123: copo pago nao entregue vira Aguardando retirada com QR canonico", () => {
   const status = additionalItemStatus({
     itemStatus: "confirmed",
     deliveredAt: null,
@@ -44,7 +45,7 @@ test("Micheli #002123: copo pago nao entregue vira Pendente de entrega com QR ca
     paymentStatus: "paid",
   });
   assert.equal(status, "confirmed");
-  assert.equal(additionalItemStatusLabel(status), "Pendente de entrega");
+  assert.equal(additionalItemStatusLabel(status), "Aguardando retirada");
   assert.equal(
     checkoutProductQrHref({
       orderId: ORDER_2123,
@@ -54,6 +55,16 @@ test("Micheli #002123: copo pago nao entregue vira Pendente de entrega com QR ca
       status,
     }),
     `/api/inscricao/pedidos/${ORDER_2123}/itens/${COPO_ITEM}/qrcode`,
+  );
+  assert.equal(
+    checkoutProductPickupPageHref({
+      orderId: ORDER_2123,
+      itemId: COPO_ITEM,
+      hasQrToken: true,
+      pickupQrMode: "per_line",
+      status,
+    }),
+    `/produto/retirada/checkout/${ORDER_2123}/${COPO_ITEM}`,
   );
 });
 
@@ -154,14 +165,14 @@ test("Central une store_order_items com order_items.product sem cap 250 e sem wr
   const detailsFn = actions.slice(actions.indexOf("async function buildTicketDetails"), actions.indexOf("export async function getOperationTicketDetailsAction"));
   assert.doesNotMatch(detailsFn, /add_product_to_cart_order|reserve_store_item_stock|deliver_store_order_item|deliver_order_item_product/);
   assert.match(details, /item\.source === "checkout"/);
-  assert.match(details, /onDeliverAdditionalItem\(\{ id: item\.id, source: item\.source \}\)/);
+  assert.match(details, /onDeliverAdditionalItem\(\{ id: pendingDeliverItem.id, source: pendingDeliverItem.source \}\)/);
 });
 
 test("RBAC: leitura nao entrega; Entregar continua exigindo store.deliver", () => {
-  assert.match(details, /item.status === "confirmed" && capabilities.canDeliverStoreItems/);
+  assert.match(details, /canDeliverProductLine\(\{ status: item.status, pickupQrMode: item.pickup_qr_mode \}\) && capabilities.canDeliverStoreItems/);
   assert.match(actions, /export async function deliverAdditionalStoreItemAction[\s\S]{0,80}await assertPermission\("store\.deliver"\)/);
   assert.match(actions, /export async function deliverOrderItemProductAction[\s\S]{0,80}await assertPermission\("store\.deliver"\)/);
   const page = cadastroPage;
   assert.match(page, /canViewProductQr/);
-  assert.match(page, /item.qrHref && canViewProductQr/);
+  assert.match(page, /item.pickupHref && canViewProductQr/);
 });

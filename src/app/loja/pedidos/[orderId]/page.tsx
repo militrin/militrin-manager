@@ -192,9 +192,20 @@ export default async function StoreOrderDetailPage({ params }: { params: Promise
                       {' '}· Subtotal <span className="font-semibold text-slate-200">{money(item.final_amount)}</span>
                     </p>
                     {item.delivered_at ? <p className="text-xs text-slate-500">Entregue em {dateTime(item.delivered_at)}</p> : null}
-                    {canDeliver ? (
+                    {canDeliver || canManage ? (
                       <div className="pt-1">
-                        <OrderItemActions storeOrderId={detail.order.id} itemId={item.id} status={item.status} hasQr={item.has_qr} />
+                        <OrderItemActions
+                          storeOrderId={detail.order.id}
+                          itemId={item.id}
+                          status={item.status}
+                          hasQr={item.has_qr}
+                          productName={item.name}
+                          quantity={item.quantity}
+                          orderReference={orderReference}
+                          customerName={detail.buyer.name}
+                          canDeliver={canDeliver}
+                          canViewQr={canDeliver || canManage}
+                        />
                       </div>
                     ) : null}
                   </div>

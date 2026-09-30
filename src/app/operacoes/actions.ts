@@ -32,8 +32,10 @@ import { formatStoreVariantLabel, parseStoreOrderScanRef } from "@/lib/operation
 import {
   additionalItemStatus,
   checkoutProductBelongsToCadastro,
+  checkoutProductPickupPageHref,
   checkoutProductQrHref,
   mergeAdditionalItems,
+  storeProductPickupPageHref,
   storeProductQrHref,
 } from "@/lib/operations/additional-product-items";
 import type { AdditionalItem } from "./types";
@@ -1600,7 +1602,16 @@ async function buildTicketDetails(
       order_id: orderId,
       order_reference: orderDisplayReference(order?.display_number, order?.order_number),
       has_qr: Boolean(row.qr_token),
+      pickup_qr_mode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
       qr_href: storeProductQrHref({
+        orderId,
+        itemId: String(row.id),
+        hasQrToken: Boolean(row.qr_token),
+        pickupQrMode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
+        status,
+        quantity,
+      }),
+      qr_page_href: storeProductPickupPageHref({
         orderId,
         itemId: String(row.id),
         hasQrToken: Boolean(row.qr_token),
@@ -1642,7 +1653,16 @@ async function buildTicketDetails(
       order_id: orderId,
       order_reference: orderDisplayReference(order?.display_number, order?.order_number),
       has_qr: Boolean(row.qr_token),
+      pickup_qr_mode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
       qr_href: checkoutProductQrHref({
+        orderId,
+        itemId: String(row.id),
+        hasQrToken: Boolean(row.qr_token),
+        pickupQrMode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
+        status,
+        quantity,
+      }),
+      qr_page_href: checkoutProductPickupPageHref({
         orderId,
         itemId: String(row.id),
         hasQrToken: Boolean(row.qr_token),
@@ -2560,6 +2580,9 @@ export async function deliverAdditionalStoreItemAction(storeOrderItemId: string)
     return { success: false, message: error.message };
   }
   revalidatePath("/operacoes");
+  revalidatePath("/cadastros");
+  revalidatePath("/inscricoes");
+  revalidatePath("/loja");
   return { success: true, message: "Item adicional entregue com sucesso." };
 }
 
@@ -2586,6 +2609,8 @@ export async function deliverOrderItemProductAction(orderItemId: string) {
     return { success: false, message: error.message };
   }
   revalidatePath("/operacoes");
+  revalidatePath("/cadastros");
+  revalidatePath("/inscricoes");
   return { success: true, message: "Produto entregue com sucesso." };
 }
 

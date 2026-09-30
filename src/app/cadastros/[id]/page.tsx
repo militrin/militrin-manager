@@ -15,14 +15,16 @@ import { ContactGrantStoreItemButton } from "../contact-store-items";
 import { AddToTeamButton } from "../add-to-team-button";
 import { ContactAccountCard } from "../contact-account-card";
 import { ticketDisplayReference, publicOrderCode, formatDisplayNumber, orderDisplayReference } from "@/lib/display-reference";
+import { DeliverProductButton } from "@/components/product-pickup/DeliverProductConfirmDialog";
 import {
   additionalItemIdentity,
   additionalItemStatus,
   additionalItemStatusLabel,
+  canDeliverProductLine,
   checkoutProductBelongsToCadastro,
-  checkoutProductQrHref,
+  checkoutProductPickupPageHref,
   mergeAdditionalItems,
-  storeProductQrHref,
+  storeProductPickupPageHref,
 } from "@/lib/operations/additional-product-items";
 import { OwnerCancelAdditionalItemButton, OwnerCancelTicketButton } from "../administrative-delete-actions";
 import { ImportedPaymentConfirmation } from "../imported-payment-confirmation";
@@ -416,7 +418,8 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
         status,
         isCourtesy: paymentMethod === "admin_courtesy",
         paymentStatus: String(order.payment_status ?? "pending"),
-        qrHref: storeProductQrHref({
+        pickupQrMode: item.pickup_qr_mode ? String(item.pickup_qr_mode) : null,
+        pickupHref: storeProductPickupPageHref({
           orderId: String(order.id),
           itemId: String(item.id),
           hasQrToken: Boolean(item.qr_token),
@@ -457,7 +460,8 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
       status,
       isCourtesy: false,
       paymentStatus: status === "confirmed" || status === "delivered" ? "paid" : "pending",
-      qrHref: checkoutProductQrHref({
+      pickupQrMode: row.pickup_qr_mode ? String(row.pickup_qr_mode) : null,
+      pickupHref: checkoutProductPickupPageHref({
         orderId,
         itemId: String(row.id),
         hasQrToken: Boolean(row.qr_token),
@@ -569,13 +573,23 @@ export default async function CadastroDetailPage({ params }: { params: Promise<{
                     <p className="mt-1 text-xs text-slate-400">Pedido {item.orderReference}</p>
                     <p className="mt-1 text-xs text-slate-400">Quantidade {item.quantity}</p>
                     <p className="mt-1 text-xs text-slate-400">{item.eventName}{item.isCourtesy ? " · Concedido pela organização" : item.source === "checkout" ? " · Compra junto ao ingresso" : ""}</p>
-                    {item.qrHref ? <p className="mt-1 text-xs text-emerald-300">QR disponível</p> : null}
+                    {item.pickupHref ? <p className="mt-1 text-xs text-emerald-300">QR disponível</p> : null}
                   </div>
                   <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs">{additionalItemStatusLabel(item.status)}</span>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-4">
                   <Link href={orderHref} className="text-xs font-semibold text-emerald-300">{item.source === "store" ? "Ver item" : "Ver pedido"}</Link>
-                  {item.qrHref && canViewProductQr ? <Link href={`${item.qrHref}?inline=1`} target="_blank" rel="noreferrer" className="text-xs font-semibold text-cyan-300">Ver QR</Link> : null}
+                  {item.pickupHref && canViewProductQr ? <Link href={item.pickupHref} className="text-xs font-semibold text-cyan-300">Ver QR</Link> : null}
+                  {canDeliverStoreItems && canDeliverProductLine({ status: item.status, pickupQrMode: item.pickupQrMode }) ? (
+                    <DeliverProductButton
+                      source={item.source}
+                      itemId={item.id}
+                      productName={item.productName}
+                      quantity={item.quantity}
+                      orderReference={item.orderReference}
+                      customerName={String(contact.full_name ?? "")}
+                    />
+                  ) : null}
                   {isOrganizationOwner && item.source === "store" ? <OwnerCancelAdditionalItemButton contactId={id} itemId={item.id} financeHref={`/loja/pedidos/${item.orderId}#pagamento`} details={[`Produto: ${item.productName}`,`Variante: ${item.variantLabel ?? "Sem variante"}`,`Quantidade: ${item.quantity}`,`Origem: ${item.isCourtesy ? "Concessão administrativa" : "Pedido da loja"}`,`Status: ${item.status}`,`Pagamento: ${item.paymentStatus}`]}/> : null}
                 </div>
               </div>

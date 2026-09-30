@@ -110,7 +110,7 @@ export function StorePurchaseListCard({
             </span>
             {first?.pickupStatus === 'delivered' && items.length === 1 ? (
               <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
-                Item retirado
+                Entregue
               </span>
             ) : null}
             <span className="text-[11px] text-slate-500">Pedido em {formatDateLongBR(createdAt)}</span>

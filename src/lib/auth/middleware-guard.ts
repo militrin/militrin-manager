@@ -11,6 +11,7 @@ export const PROTECTED_PAGE_PREFIXES = [
   '/ingressos',
   '/cadastros',
   '/retirada',
+  '/produto',
   '/camisetas',
   '/categorias',
   '/lotes',

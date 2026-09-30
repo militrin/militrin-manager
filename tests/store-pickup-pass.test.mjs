@@ -108,13 +108,13 @@ test('#001121 entregue: ITEM RETIRADO, QR ITEM- visível, sem instrução de nov
   assert.equal(pass.pickupStatusLabel, STORE_PICKUP_PASS_COPY.pickupDelivered);
   assert.equal(pass.paymentStatusLabel, STORE_PICKUP_PASS_COPY.paymentConfirmed);
   assert.equal(pass.instruction, STORE_PICKUP_PASS_COPY.instructionDelivered);
-  assert.equal(pass.instruction, 'Item já retirado.');
+  assert.equal(pass.instruction, 'Produto entregue.');
   assert.doesNotMatch(pass.instruction, /Apresente este QR/);
   assert.equal(isOperationalStoreQrPayload(pass.qrPayload), true);
   assert.deepEqual(parseStoreOrderScanRef(pass.qrPayload), { displayNumber: null, orderNumber: null });
 });
 
-test('item pendente mostra retirada pendente e instrução de apresentar QR', () => {
+test('item pendente mostra Aguardando retirada e instrução de apresentar QR', () => {
   const pass = buildStorePickupPassData({
     ...ORDER_1121,
     itemStatus: 'confirmed',
@@ -168,14 +168,16 @@ test('QR PNG do comprovante decodifica ITEM-95F7F18C8796, o mesmo token do Turbo
   assert.match(storeFn, /\.eq\("qr_token", tokenCandidate\)/);
 });
 
-test('Minha Conta Loja usa o model compartilhado e não o QR de pedido na ficha', async () => {
+test('Minha Conta Loja redireciona para o comprovante de retirada compartilhado', async () => {
   const itemPage = await read('src/app/minha-conta/compras/loja/[storeOrderId]/itens/[itemId]/page.tsx');
+  const pickupPage = await read('src/app/produto/retirada/[source]/[orderId]/[itemId]/page.tsx');
   const orderPage = await read('src/app/minha-conta/compras/loja/[storeOrderId]/page.tsx');
   const listPage = await read('src/app/minha-conta/compras/page.tsx');
   const actions = await read('src/components/store/StorePickupPassActions.tsx');
-  assert.match(itemPage, /buildStorePickupPassData/);
-  assert.match(itemPage, /StorePickupPass/);
-  assert.doesNotMatch(itemPage, /ProductQrViewer/);
+  assert.match(itemPage, /produto\/retirada\/loja/);
+  assert.match(pickupPage, /ProductPickupPass/);
+  assert.match(pickupPage, /generateQrDataUrl/);
+  assert.doesNotMatch(pickupPage, /ProductQrViewer/);
   assert.doesNotMatch(orderPage, /StoreOrderReceiptButtons/);
   assert.match(listPage, /StorePurchaseListCard/);
   assert.match(actions, /generateQrDataUrl\(pass\.qrPayload/);
@@ -217,7 +219,7 @@ test('PDF de retirada é retrato A4, incorpora o QR e usa o mesmo payload ITEM-'
   assert.match(pdfText, /\/Subtype\s*\/Image/);
   assert.match(pdfText, /Camiseta Militrin 2026/);
   assert.match(pdfText, /#001121/);
-  assert.match(pdfText, /Apresente este QR Code na retirada do seu item/);
+  assert.match(pdfText, /Apresente este QR na retirada/);
 
   const source = await read('src/components/store/store-pickup-pass-export.ts');
   assert.match(source, /export function drawStorePickupPassPdf/);
@@ -230,7 +232,7 @@ test('PDF de retirada é retrato A4, incorpora o QR e usa o mesmo payload ITEM-'
   assert.doesNotMatch(source, /Acesso Militrin|HopWatermark/);
 });
 
-test('PDF entregue mostra ITEM RETIRADO e Item já retirado, sem instrução pendente', async () => {
+test('PDF entregue mostra ENTREGUE, sem instrução pendente', async () => {
   const pass = buildStorePickupPassData({
     ...ORDER_1121,
     itemStatus: 'delivered',
@@ -245,9 +247,8 @@ test('PDF entregue mostra ITEM RETIRADO e Item já retirado, sem instrução pen
   drawStorePickupPassPdf(doc, pass, { qrDataUrl, logoDataUrl: null, productDataUrl: null });
   assert.ok(doc.getImageProperties(qrDataUrl));
   const pdfText = Buffer.from(doc.output('arraybuffer')).toString('latin1');
-  assert.match(pdfText, /ITEM RETIRADO/);
-  assert.match(pdfText, /Item j/);
-  assert.match(pdfText, /retirado/);
+  assert.match(pdfText, /ENTREGUE/);
+  assert.match(pdfText, /Produto entregue/);
   assert.match(pdfText, /14\/09\/2026/);
-  assert.doesNotMatch(pdfText, /Apresente este QR Code na retirada do seu item/);
+  assert.doesNotMatch(pdfText, /Apresente este QR na retirada/);
 });

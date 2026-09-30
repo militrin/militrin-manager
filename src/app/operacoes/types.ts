@@ -439,6 +439,8 @@ export type AdditionalItem = {
   order_reference: string;
   has_qr: boolean;
   qr_href: string | null;
+  qr_page_href: string | null;
+  pickup_qr_mode: string | null;
 };
 
 export const REASON_CODES = [

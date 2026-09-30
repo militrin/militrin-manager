@@ -5,7 +5,8 @@ import { useState, useTransition } from "react";
 import { ParticipantIssuesDialog } from "@/app/inscricoes/participant-issues-dialog";
 import { CopyableId } from "@/components/CopyableId";
 import type { ActionResult, AdditionalItem, OperationTicketDetails, PickupCapabilities, PickupEvent, ReasonPayload, WristbandReplacePayload } from "../types";
-import { additionalItemIdentity, additionalItemStatusLabel } from "@/lib/operations/additional-product-items";
+import { additionalItemIdentity, additionalItemStatusLabel, canDeliverProductLine } from "@/lib/operations/additional-product-items";
+import { DeliverProductConfirmDialog } from "@/components/product-pickup/DeliverProductConfirmDialog";
 import { WristbandCodeModal } from "./WristbandCodeModal";
 import { ReasonDialog } from "./ReasonDialog";
 import { GrantStoreItemModal } from "./GrantStoreItemModal";
@@ -129,6 +130,7 @@ export function ExpandedTicketDetails({
   const [showCheckinConfirm, setShowCheckinConfirm] = useState(false);
   const [showReplaceWristband, setShowReplaceWristband] = useState(false);
   const [showTicketView, setShowTicketView] = useState(false);
+  const [pendingDeliverItem, setPendingDeliverItem] = useState<AdditionalItem | null>(null);
   const age = getAge(detail?.birth_date ?? null);
 
   if (busy && !detail) {
@@ -594,27 +596,21 @@ export function ExpandedTicketDetails({
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {item.qr_href && capabilities.canDeliverStoreItems ? (
-                    <a
-                      href={`${item.qr_href}?inline=1`}
-                      target="_blank"
-                      rel="noreferrer"
+                  {item.qr_page_href && capabilities.canDeliverStoreItems ? (
+                    <Link
+                      href={item.qr_page_href}
                       className="rounded-lg border border-cyan-500/40 px-3 py-1.5 text-xs text-cyan-200"
                     >
                       Ver QR
-                    </a>
+                    </Link>
                   ) : null}
-                  {item.status === "confirmed" && capabilities.canDeliverStoreItems ? (
+                  {canDeliverProductLine({ status: item.status, pickupQrMode: item.pickup_qr_mode }) && capabilities.canDeliverStoreItems ? (
                     <button
                       type="button"
                       disabled={busy}
                       onClick={() => {
                         setAdditionalItemMessage(null);
-                        void onDeliverAdditionalItem({ id: item.id, source: item.source }).then((result) => {
-                          if (result && "success" in result && !result.success) {
-                            setAdditionalItemMessage(result.message ?? "Não foi possível entregar o item.");
-                          }
-                        });
+                        setPendingDeliverItem(item);
                       }}
                       className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40"
                     >
@@ -622,6 +618,8 @@ export function ExpandedTicketDetails({
                     </button>
                   ) : item.status === "reserved" ? (
                     <span className="text-xs text-amber-300">Aguardando confirmação de pagamento</span>
+                  ) : item.status === "delivered" ? (
+                    <span className="rounded-full border border-emerald-500/40 px-2.5 py-1 text-xs text-emerald-200">Entregue</span>
                   ) : null}
                 </div>
               </div>
@@ -723,6 +721,23 @@ export function ExpandedTicketDetails({
             return { success: true };
           }}
           onClose={() => setShowUndoKit(false)}
+        />
+      ) : null}
+
+      {pendingDeliverItem ? (
+        <DeliverProductConfirmDialog
+          productName={pendingDeliverItem.store_item_name}
+          quantity={pendingDeliverItem.quantity}
+          orderReference={pendingDeliverItem.order_reference}
+          customerName={detail.full_name || detail.participant_name}
+          onCancel={() => setPendingDeliverItem(null)}
+          onConfirm={async () => {
+            const result = await onDeliverAdditionalItem({ id: pendingDeliverItem.id, source: pendingDeliverItem.source });
+            if (result && "success" in result && !result.success) {
+              return { success: false, message: result.message ?? "Não foi possível entregar o item." };
+            }
+            return { success: true, message: result && "message" in result ? result.message : "Produto entregue." };
+          }}
         />
       ) : null}
 

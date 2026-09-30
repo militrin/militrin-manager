@@ -114,9 +114,10 @@ test("historico do pedido resolve nome do ator a partir de audit_logs.details->>
 
 // ── QR individual ────────────────────────────────────────────────────────
 
-test("detalhe do pedido oferece baixar QR individual do item, reaproveitando a rota ja existente (nao gera QR novo)", () => {
-  assert.match(orderDetailActions, /\/api\/loja\/pedidos\/\$\{storeOrderId\}\/itens\/\$\{itemId\}\/qrcode/);
-  assert.match(orderDetailActions, /hasQr && \(status === 'confirmed' \|\| status === 'delivered'\)/);
+test("detalhe do pedido oferece Ver QR do item na pagina de comprovante, sem gerar QR novo", () => {
+  assert.match(orderDetailActions, /\/produto\/retirada\/loja\/\$\{storeOrderId\}\/\$\{itemId\}/);
+  assert.match(orderDetailActions, /hasQr && canViewQr && \(status === 'confirmed' \|\| status === 'delivered'\)/);
+  assert.match(orderDetailActions, /DeliverProductConfirmDialog/);
 });
 
 // ── Acoes administrativas reaproveitadas (nenhuma RPC nova de mutacao) ──────
@@ -131,7 +132,8 @@ test("acoes de confirmar pagamento/cancelar/entregar/desfazer entrega reaproveit
 });
 
 test("acao de cancelar so aparece pra pedido pending, e store.deliver nunca ganha acoes de catalogo/pagamento -- so entrega por item", () => {
-  assert.match(orderDetailActions, /if \(status !== 'pending'\) return null;/);
+  assert.match(orderDetailActions, /if \(!canConfirm && !canCancelLocalCharge && !hasGatewayCharge\) return null;/);
+  assert.match(orderDetailActions, /status === 'pending'/);
   assert.doesNotMatch(orderDetailActions, /store\.manage/);
   assert.match(lojaActions, /export async function confirmStoreOrderPaymentAction[\s\S]{0,80}await assertPermission\("store\.manage"\);/);
   assert.match(lojaActions, /export async function cancelStoreOrderAction[\s\S]{0,80}await assertPermission\("store\.manage"\);/);
