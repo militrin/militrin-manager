@@ -70,7 +70,11 @@ async function issueTicket(admin, ctx, assignHolder) {
     p_assign_holder: assignHolder,
   });
   assert.equal(issued.error, null, issued.error?.message);
-  return issued.data[0].ticket_id;
+  const ticketId = issued.data[0].ticket_id;
+  const owner = await ctx.service.from('tickets').update({ owner_user_id: ctx.userId }).eq('id', ticketId).select('owner_user_id').single();
+  assert.equal(owner.error, null, owner.error?.message);
+  assert.equal(owner.data.owner_user_id, ctx.userId);
+  return ticketId;
 }
 
 test('A-C: alterar e remover titular textual preserva owner e nao cria Cadastro', async () => {
@@ -174,6 +178,144 @@ test('F: filtro com titular usa holder_full_name, nao participant_id', async () 
   assert.ok(row, 'ingresso nomeado deve aparecer em com titular');
   assert.equal(row.has_holder, true);
   assert.equal(row.holder_name, 'João');
+});
+
+test('Fase 8B SELF mesmo nome preserva FKs e nao gera holder_changed', async () => {
+  const service = createClient(apiUrl, serviceKey, options);
+  const ctx = await seedAdminEvent(service, `${Date.now()}-same`);
+  const ticketId = await issueTicket(ctx.admin, ctx, true);
+  const before = await service.from('tickets').select('owner_user_id,participant_id,intended_owner_contact_id,order_item_id').eq('id', ticketId).single();
+  const itemBefore = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  assert.ok(itemBefore.data.participant_id, 'SELF/materializado precisa de participant');
+  assert.ok(itemBefore.data.registration_contact_id, 'SELF/materializado precisa de Cadastro');
+  const historyBefore = await service.from('ticket_holder_history').select('id').eq('ticket_id', ticketId);
+  const auditsBefore = await service.from('audit_logs').select('id').eq('entity_id', ticketId).eq('action', 'holder_changed');
+
+  const same = await ctx.admin.rpc('admin_set_ticket_holder_name', {
+    p_ticket_id: ticketId,
+    p_holder_name: `  ${itemBefore.data.holder_full_name}  `,
+    p_reason_code: 'holder_request',
+  });
+  assert.equal(same.error, null, same.error?.message);
+  assert.equal(same.data.changed, false);
+
+  const itemAfter = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  const ticketAfter = await service.from('tickets').select('owner_user_id,participant_id,intended_owner_contact_id').eq('id', ticketId).single();
+  assert.equal(itemAfter.data.holder_full_name, itemBefore.data.holder_full_name);
+  assert.equal(itemAfter.data.participant_id, itemBefore.data.participant_id);
+  assert.equal(itemAfter.data.registration_contact_id, itemBefore.data.registration_contact_id);
+  assert.equal(ticketAfter.data.participant_id, before.data.participant_id);
+  assert.equal(ticketAfter.data.owner_user_id, before.data.owner_user_id);
+  assert.equal(ticketAfter.data.intended_owner_contact_id, before.data.intended_owner_contact_id);
+
+  const historyAfter = await service.from('ticket_holder_history').select('id').eq('ticket_id', ticketId);
+  const auditsAfter = await service.from('audit_logs').select('id').eq('entity_id', ticketId).eq('action', 'holder_changed');
+  assert.equal((historyAfter.data ?? []).length, (historyBefore.data ?? []).length);
+  assert.equal((auditsAfter.data ?? []).length, (auditsBefore.data ?? []).length);
+
+  const second = await ctx.admin.rpc('issue_manual_ticket_batch', {
+    p_registration_contact_id: ctx.contactId,
+    p_event_id: ctx.eventId,
+    p_ticket_category_id: ctx.categoryId,
+    p_batch_id: ctx.batchId,
+    p_quantity: 1,
+    p_pricing_gender: 'male',
+    p_shirt_type: null,
+    p_shirt_size: null,
+    p_payment_method: 'courtesy',
+    p_notes: null,
+    p_assign_holder: true,
+  });
+  assert.ok(second.error, 'unicidade SELF deve continuar a valer apos no-op');
+  assert.match(second.error.message, /EXISTING_OPERATIONAL_TICKET|HOLDER_ALREADY_HAS_TICKET_FOR_EVENT/);
+});
+
+test('Fase 8B troca real Fabiano→Alessandro zera FKs e preserva owner', async () => {
+  const service = createClient(apiUrl, serviceKey, options);
+  const ctx = await seedAdminEvent(service, `${Date.now()}-swap`);
+  const ticketId = await issueTicket(ctx.admin, ctx, true);
+  const before = await service.from('tickets').select('owner_user_id,participant_id,intended_owner_contact_id,order_item_id').eq('id', ticketId).single();
+  const itemBefore = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  assert.ok(itemBefore.data.participant_id);
+  assert.ok(itemBefore.data.registration_contact_id);
+
+  const swapped = await ctx.admin.rpc('admin_set_ticket_holder_name', {
+    p_ticket_id: ticketId, p_holder_name: 'Alessandro Parizotto', p_reason_code: 'holder_request',
+  });
+  assert.equal(swapped.error, null, swapped.error?.message);
+  assert.equal(swapped.data.changed, true);
+
+  const itemAfter = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  const ticketAfter = await service.from('tickets').select('owner_user_id,participant_id,intended_owner_contact_id').eq('id', ticketId).single();
+  assert.equal(itemAfter.data.holder_full_name, 'Alessandro Parizotto');
+  assert.equal(itemAfter.data.participant_id, null);
+  assert.equal(itemAfter.data.registration_contact_id, null);
+  assert.equal(ticketAfter.data.participant_id, null);
+  assert.equal(ticketAfter.data.owner_user_id, before.data.owner_user_id);
+  assert.equal(ticketAfter.data.intended_owner_contact_id, before.data.intended_owner_contact_id);
+  assert.notEqual(ticketAfter.data.owner_user_id, null);
+
+  const history = await service.from('ticket_holder_history').select('operation,previous_holder_name,new_holder_name').eq('ticket_id', ticketId);
+  assert.ok((history.data ?? []).some((row) => row.operation === 'holder_changed' && row.new_holder_name === 'Alessandro Parizotto'));
+});
+
+test('Fase 8B named mesmo nome permanece textual; nome diferente so atualiza texto', async () => {
+  const service = createClient(apiUrl, serviceKey, options);
+  const ctx = await seedAdminEvent(service, `${Date.now()}-named`);
+  const ticketId = await issueTicket(ctx.admin, ctx, false);
+  const before = await service.from('tickets').select('owner_user_id,participant_id,intended_owner_contact_id,order_item_id').eq('id', ticketId).single();
+  await ctx.admin.rpc('admin_set_ticket_holder_name', {
+    p_ticket_id: ticketId, p_holder_name: 'João da Silva', p_reason_code: 'third_party_ticket',
+  });
+  const afterNamed = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  assert.equal(afterNamed.data.holder_full_name, 'João da Silva');
+  assert.equal(afterNamed.data.participant_id, null);
+  assert.equal(afterNamed.data.registration_contact_id, null);
+
+  const same = await ctx.admin.rpc('admin_set_ticket_holder_name', {
+    p_ticket_id: ticketId, p_holder_name: 'João da Silva', p_reason_code: 'holder_request',
+  });
+  assert.equal(same.error, null, same.error?.message);
+  assert.equal(same.data.changed, false);
+  const stillNamed = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  assert.equal(stillNamed.data.holder_full_name, 'João da Silva');
+  assert.equal(stillNamed.data.participant_id, null);
+  assert.equal(stillNamed.data.registration_contact_id, null);
+
+  const renamed = await ctx.admin.rpc('admin_set_ticket_holder_name', {
+    p_ticket_id: ticketId, p_holder_name: 'Maria Souza', p_reason_code: 'holder_request',
+  });
+  assert.equal(renamed.error, null, renamed.error?.message);
+  const afterRename = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id').eq('id', before.data.order_item_id).single();
+  const ticketAfter = await service.from('tickets').select('owner_user_id,participant_id').eq('id', ticketId).single();
+  assert.equal(afterRename.data.holder_full_name, 'Maria Souza');
+  assert.equal(afterRename.data.participant_id, null);
+  assert.equal(afterRename.data.registration_contact_id, null);
+  assert.equal(ticketAfter.data.owner_user_id, before.data.owner_user_id);
+  assert.equal(ticketAfter.data.participant_id, null);
+});
+
+test('Fase 8B unassigned para nome permanece o comportamento atual', async () => {
+  const service = createClient(apiUrl, serviceKey, options);
+  const ctx = await seedAdminEvent(service, `${Date.now()}-unassigned`);
+  const ticketId = await issueTicket(ctx.admin, ctx, false);
+  const before = await service.from('tickets').select('owner_user_id,participant_id,order_item_id').eq('id', ticketId).single();
+  const itemBefore = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id,ownership_status').eq('id', before.data.order_item_id).single();
+  assert.equal(itemBefore.data.holder_full_name, null);
+
+  const assigned = await ctx.admin.rpc('admin_set_ticket_holder_name', {
+    p_ticket_id: ticketId, p_holder_name: 'Titular Novo', p_reason_code: 'holder_request',
+  });
+  assert.equal(assigned.error, null, assigned.error?.message);
+  assert.equal(assigned.data.changed, true);
+  const itemAfter = await service.from('order_items').select('holder_full_name,participant_id,registration_contact_id,ownership_status').eq('id', before.data.order_item_id).single();
+  const ticketAfter = await service.from('tickets').select('owner_user_id,participant_id').eq('id', ticketId).single();
+  assert.equal(itemAfter.data.holder_full_name, 'Titular Novo');
+  assert.equal(itemAfter.data.ownership_status, 'assigned');
+  assert.equal(itemAfter.data.participant_id, null);
+  assert.equal(itemAfter.data.registration_contact_id, null);
+  assert.equal(ticketAfter.data.owner_user_id, before.data.owner_user_id);
+  assert.equal(ticketAfter.data.participant_id, null);
 });
 
 test('G: criar conta homonima nao altera ingresso nem owner', async () => {

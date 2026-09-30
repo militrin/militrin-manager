@@ -139,6 +139,34 @@ test('leitura operacional prioriza holder_full_name', async () => {
   assert.match(timeline, /canonicalHolderName\(orderItem\?\.holder_full_name/);
 });
 
+test('Fase 8B: mesmo titular (trim) e no-op e preserva FKs; troca real continua textual', async () => {
+  const sql = await read('../supabase/migrations/20261116000000_ticket_holder_same_name_noop.sql');
+  const fn = sql.slice(sql.indexOf('create or replace function public.apply_ticket_holder_name_internal'));
+  assert.match(fn, /v_previous_name is not distinct from v_name then/);
+  assert.match(fn, /'changed', false/);
+  assert.doesNotMatch(
+    fn.slice(fn.indexOf('Mesmo titular'), fn.indexOf('if p_require_event_flags')),
+    /v_item\.participant_id is null/,
+  );
+  assert.match(fn, /Troca real de texto: titular vira textual/);
+  assert.match(fn, /participant_id = null/);
+  assert.match(fn, /registration_contact_id = null/);
+  assert.doesNotMatch(fn, /set owner_user_id/);
+  assert.doesNotMatch(fn, /intended_owner_contact_id/);
+  assert.doesNotMatch(fn, /perform public\.assert_ticket_holder_contact_available/);
+  assert.doesNotMatch(fn, /ILIKE/);
+  assert.doesNotMatch(fn, /lower\(v_previous_name\)/);
+  assert.doesNotMatch(fn, /unaccent/);
+  assert.match(sql, /Nao faz backfill/);
+});
+
+test('comparacao canonica de titular e apenas trim, sem fold de caixa ou acento', () => {
+  assert.equal(canonicalHolderName(' Bruna Sell '), 'Bruna Sell');
+  assert.equal(canonicalHolderName('Bruna Sell'), canonicalHolderName('  Bruna Sell  '));
+  assert.notEqual(canonicalHolderName('bruna sell'), canonicalHolderName('Bruna Sell'));
+  assert.notEqual(canonicalHolderName('Bruna Sell'), canonicalHolderName('Bruna  Sell'));
+});
+
 test('checkout nomeado futuro grava so o nome e nao cria identidade', async () => {
   const [sql, wizard] = await Promise.all([
     read('../supabase/migrations/20261030000000_named_checkout_textual_holder_only.sql'),
