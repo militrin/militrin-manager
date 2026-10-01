@@ -318,6 +318,9 @@ export type OperationTicketDetails = TicketBackedOperationEntry & {
   } | null;
   can_finalize_ticket: boolean;
   can_issue_ticket: boolean;
+  can_view_cadastro: boolean;
+  owner_registration_contact_id: string | null;
+  owner_registration_source: "owner_user" | "intended_owner" | null;
   registration_contact_pin: string | null;
   order_tickets: OperationOrderTicketSummary[];
   kit_items: Array<{

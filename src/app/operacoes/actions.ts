@@ -40,6 +40,7 @@ import {
 } from "@/lib/operations/additional-product-items";
 import type { AdditionalItem } from "./types";
 import { getCurrentOrganizationContext } from "@/lib/organizations/current-organization";
+import { resolveTicketOwnerRegistrationContact } from "@/lib/registrations/cadastro-listing";
 import { orderDisplayReference, ticketDisplayReference, canonicalTicketDisplayCode, ticketMatchesExactDisplayCode, publicOrderCode } from "@/lib/display-reference";
 import { resolveOperatorNames } from "@/lib/admin/operator-names";
 import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
@@ -1377,6 +1378,9 @@ async function buildTicketDetails(
         used_at,
         participant_id,
         event_id,
+        organization_id,
+        owner_user_id,
+        intended_owner_contact_id,
         order_id,
         issued_at,
         participants(
@@ -1427,6 +1431,7 @@ async function buildTicketDetails(
         events(
           id,
           name,
+          organization_id,
           kit_enabled,
           wristband_enabled,
           wristband_required_for_kit,
@@ -1455,6 +1460,18 @@ async function buildTicketDetails(
     : null;
   const contactId = detailOrderItem?.registration_contact_id
     ? String(detailOrderItem.registration_contact_id)
+    : null;
+  const detailEventRelation = getRelation(
+    ticketRow.events as Record<string, unknown> | Array<Record<string, unknown>> | null,
+  );
+  const ownerOrganizationId = ticketRow.organization_id
+    ? String(ticketRow.organization_id)
+    : detailEventRelation?.organization_id
+      ? String(detailEventRelation.organization_id)
+      : "";
+  const ticketOwnerUserId = ticketRow.owner_user_id ? String(ticketRow.owner_user_id) : null;
+  const ticketIntendedOwnerContactId = ticketRow.intended_owner_contact_id
+    ? String(ticketRow.intended_owner_contact_id)
     : null;
 
   const { error: ensureKitError } = await supabase.rpc("ensure_ticket_kit_items", { p_ticket_id: ticketId });
@@ -1540,6 +1557,42 @@ async function buildTicketDetails(
   if (checkinError) return { success: false as const, message: checkinError.message };
   if (buyerError) return { success: false as const, message: buyerError.message };
   if (cadastroError) return { success: false as const, message: cadastroError.message };
+
+  let ownerCadastroContacts: Array<{ id: string; organizationId: string; userId: string | null }> = [];
+  if (ownerOrganizationId && ticketOwnerUserId) {
+    const { data: ownerCadastroRows, error: ownerCadastroError } = await supabase
+      .from("registration_contacts")
+      .select("id, user_id, organization_id")
+      .eq("organization_id", ownerOrganizationId)
+      .eq("user_id", ticketOwnerUserId);
+    if (ownerCadastroError) return { success: false as const, message: ownerCadastroError.message };
+    ownerCadastroContacts = ((ownerCadastroRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id ?? ownerOrganizationId),
+      userId: row.user_id ? String(row.user_id) : null,
+    }));
+  } else if (ownerOrganizationId && ticketIntendedOwnerContactId) {
+    const { data: intendedCadastroRow, error: intendedCadastroError } = await supabase
+      .from("registration_contacts")
+      .select("id, user_id, organization_id")
+      .eq("id", ticketIntendedOwnerContactId)
+      .eq("organization_id", ownerOrganizationId)
+      .maybeSingle();
+    if (intendedCadastroError) return { success: false as const, message: intendedCadastroError.message };
+    if (intendedCadastroRow?.id) {
+      ownerCadastroContacts = [{
+        id: String(intendedCadastroRow.id),
+        organizationId: String(intendedCadastroRow.organization_id ?? ownerOrganizationId),
+        userId: intendedCadastroRow.user_id ? String(intendedCadastroRow.user_id) : null,
+      }];
+    }
+  }
+  const ownerCadastro = resolveTicketOwnerRegistrationContact({
+    ownerUserId: ticketOwnerUserId,
+    intendedOwnerContactId: ticketIntendedOwnerContactId,
+    organizationId: ownerOrganizationId,
+    contacts: ownerCadastroContacts,
+  });
 
   // Itens adicionais: loja solo (store_order_items vinculados ao Cadastro/
   // participant) UNION compre junto (order_items.item_kind='product' da
@@ -1937,6 +1990,7 @@ async function buildTicketDetails(
   } catch {
     canIssueTicket = false;
   }
+  const canViewCadastro = await hasPermission("participants.view");
 
   const registrationContact = (() => {
     if (!participantId) return null;
@@ -1984,6 +2038,9 @@ async function buildTicketDetails(
     shirt_stock: shirtStock,
     can_finalize_ticket: canFinalizeTicket,
     can_issue_ticket: canIssueTicket,
+    can_view_cadastro: canViewCadastro,
+    owner_registration_contact_id: ownerCadastro.ownerRegistrationContactId,
+    owner_registration_source: ownerCadastro.ownerRegistrationSource,
     registration_contact_pin: registrationContactPin,
     additional_items: additionalItems,
   };

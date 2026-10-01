@@ -284,6 +284,14 @@ export function ExpandedTicketDetails({
           >
             Ver ingresso
           </button>
+          {detail.can_view_cadastro && detail.owner_registration_contact_id ? (
+            <Link
+              href={`/cadastros/${detail.owner_registration_contact_id}`}
+              className="inline-flex h-9 items-center rounded-lg border border-teal-500/40 bg-teal-500/10 px-3 text-xs text-teal-200"
+            >
+              Ver cadastro
+            </Link>
+          ) : null}
           {detail.can_issue_ticket ? (
             <Link
               href={detail.registration_contact_pin ? `/ingressos/emitir?pin=${detail.registration_contact_pin}` : "/ingressos/emitir"}

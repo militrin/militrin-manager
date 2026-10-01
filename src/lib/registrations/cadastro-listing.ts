@@ -111,6 +111,58 @@ export function cadastroHrefForOwnedTicket(input: {
   return "/cadastros";
 }
 
+export type TicketOwnerRegistrationSource = "owner_user" | "intended_owner";
+
+export type TicketOwnerRegistrationContact = {
+  id: string;
+  organizationId: string;
+  userId?: string | null;
+};
+
+export type TicketOwnerRegistrationResolution = {
+  ownerRegistrationContactId: string | null;
+  ownerRegistrationSource: TicketOwnerRegistrationSource | null;
+};
+
+/**
+ * Cadastro do PROPRIETÁRIO do ingresso para navegação administrativa.
+ * Titular / participant / order_items.registration_contact_id não entram.
+ * intended_owner só vale quando owner_user_id está ausente.
+ */
+export function resolveTicketOwnerRegistrationContact(input: {
+  ownerUserId?: string | null;
+  intendedOwnerContactId?: string | null;
+  organizationId?: string | null;
+  contacts: readonly TicketOwnerRegistrationContact[];
+}): TicketOwnerRegistrationResolution {
+  const empty: TicketOwnerRegistrationResolution = {
+    ownerRegistrationContactId: null,
+    ownerRegistrationSource: null,
+  };
+  const organizationId = String(input.organizationId ?? "").trim();
+  if (!organizationId) return empty;
+
+  const inOrg = input.contacts.filter((contact) => String(contact.organizationId) === organizationId);
+  const ownerUserId = String(input.ownerUserId ?? "").trim();
+  if (ownerUserId) {
+    const matches = inOrg.filter((contact) => String(contact.userId ?? "").trim() === ownerUserId);
+    if (matches.length !== 1) return empty;
+    return {
+      ownerRegistrationContactId: matches[0].id,
+      ownerRegistrationSource: "owner_user",
+    };
+  }
+
+  const intendedId = String(input.intendedOwnerContactId ?? "").trim();
+  if (!intendedId) return empty;
+  const intended = inOrg.find((contact) => contact.id === intendedId) ?? null;
+  if (!intended) return empty;
+  return {
+    ownerRegistrationContactId: intended.id,
+    ownerRegistrationSource: "intended_owner",
+  };
+}
+
 export function fichaIncludesOwnedTicket(input: {
   listingClass: CadastroListingClass;
   hasUserId: boolean;
