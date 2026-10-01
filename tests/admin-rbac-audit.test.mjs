@@ -26,10 +26,14 @@ test('estoque com inventory.view permanece somente leitura sem inventory.adjust/
   ]);
   assert.match(page, /"inventory\.adjust"/);
   assert.match(page, /"inventory\.view_history"/);
-  assert.match(table, /canAdjustInventory \? <div/);
+  assert.match(table, /canAdjustInventory \? \(/);
+  assert.match(table, /Registrar entrada/);
+  assert.match(table, /Histórico de entradas/);
   assert.match(table, /canViewHistory \? \(/);
   assert.match(table, /Somente leitura/);
-  assert.match(actions, /addInventoryQuantityAction[\s\S]*assertPermission\("inventory\.adjust"\)/);
+  assert.match(actions, /createInventoryReceiptAction[\s\S]*assertPermission\("inventory\.adjust"\)/);
+  assert.match(actions, /listEventInventoryReceiptsAction[\s\S]*assertPermission\("inventory\.view_history"\)/);
+  assert.doesNotMatch(actions, /addInventoryQuantityAction/);
   assert.doesNotMatch(actions, /inventory\.add_order/);
 });
 

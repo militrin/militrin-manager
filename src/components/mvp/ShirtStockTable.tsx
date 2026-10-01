@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { shirtDeliveriesHref } from "@/lib/operations/history/url";
 import {
-  addInventoryQuantityAction,
   adjustInventoryQuantityAction,
   getInventoryMovementsAction,
   resetEventShirtInventoryAction,
@@ -16,6 +15,8 @@ import { formatDateTimeBR } from "@/lib/utils/date";
 import { Info } from "lucide-react";
 import { resolveShirtStockAvailability } from "@/lib/inventory/availability";
 import { ADMIN_LIST_ROW_CLASS, ADMIN_LIST_ZEBRA_CLASS, ADMIN_TABLE_ZEBRA_CLASS, adminTableRowProps } from "@/components/admin";
+import { RegisterInventoryReceiptDialog } from "@/app/camisetas/components/RegisterInventoryReceiptDialog";
+import { InventoryReceiptHistoryDialog } from "@/app/camisetas/components/InventoryReceiptHistoryDialog";
 
 type ShirtStockRow = {
   id: string;
@@ -40,7 +41,7 @@ type ShirtStockTableProps = {
   canClearHistory: boolean;
 };
 
-type BulkMode = "purchase" | "adjustment" | null;
+type BulkMode = "adjustment" | null;
 
 function formatMovementType(type: string) {
   switch (type) {
@@ -99,13 +100,15 @@ export function ShirtStockTable({
   canViewDeliveries = false,
   canLimitSelection,
   canResetInventory,
-  canClearHistory,
+  canClearHistory: _canClearHistory,
 }: ShirtStockTableProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isSavingLimit, startLimitTransition] = useTransition();
   const [isResetPending, startResetTransition] = useTransition();
   const [historyRowId, setHistoryRowId] = useState<string | null>(null);
+  const [receiptFormOpen, setReceiptFormOpen] = useState(false);
+  const [receiptHistoryOpen, setReceiptHistoryOpen] = useState(false);
   const [bulkMode, setBulkMode] = useState<BulkMode>(null);
   const [bulkQuantities, setBulkQuantities] = useState<Record<string, string>>({});
   const [bulkNotes, setBulkNotes] = useState<string>("");
@@ -227,12 +230,14 @@ export function ShirtStockTable({
     void loadHistory(rowId);
   }
 
-  function openBulkMode(mode: Exclude<BulkMode, null>) {
+  function openBulkMode() {
     setFeedback(null);
     setHistoryRowId(null);
+    setReceiptFormOpen(false);
+    setReceiptHistoryOpen(false);
     setBulkQuantities({});
     setBulkNotes("");
-    setBulkMode((current) => (current === mode ? null : mode));
+    setBulkMode((current) => (current === "adjustment" ? null : "adjustment"));
   }
 
   function closeBulkMode() {
@@ -262,11 +267,7 @@ export function ShirtStockTable({
         setFeedback({ type: "error", message: `Quantidade inválida para ${rowLabel(row)}.` });
         return;
       }
-      if (bulkMode === "purchase" && parsed <= 0) {
-        setFeedback({ type: "error", message: `A quantidade de ${rowLabel(row)} deve ser maior que zero.` });
-        return;
-      }
-      if (bulkMode === "adjustment" && parsed === 0) continue;
+      if (parsed === 0) continue;
       entries.push({ row, quantity: parsed });
     }
 
@@ -282,8 +283,12 @@ export function ShirtStockTable({
     startTransition(async () => {
       const results = await Promise.all(
         entries.map(async ({ row, quantity }) => {
-          const payload = { event_id: eventId, inventory_id: row.id, quantity, notes: bulkNotes };
-          const result = bulkMode === "purchase" ? await addInventoryQuantityAction(payload) : await adjustInventoryQuantityAction(payload);
+          const result = await adjustInventoryQuantityAction({
+            event_id: eventId,
+            inventory_id: row.id,
+            quantity,
+            notes: bulkNotes,
+          });
           return { row, result };
         }),
       );
@@ -392,7 +397,7 @@ export function ShirtStockTable({
           </div>
         ) : null}
 
-        {(canLimitSelection || canResetInventory || canClearHistory) ? (
+        {(canLimitSelection || canResetInventory) ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {canLimitSelection ? (
               <>
@@ -425,53 +430,67 @@ export function ShirtStockTable({
                 Zerar estoque
               </button>
             ) : null}
-
-            {canClearHistory ? (
-              <button
-                type="button"
-                onClick={() => setResetMode("full")}
-                disabled={isResetPending}
-                className="rounded-xl border border-red-600/60 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50"
-              >
-                Zerar estoque e limpar histórico
-              </button>
-            ) : null}
           </div>
         ) : null}
       </section>
 
-      {canAdjustInventory ? <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => openBulkMode("purchase")}
-          disabled={isPending}
-          className={`rounded-xl border px-3 py-1.5 text-xs transition ${bulkMode === "purchase" ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-emerald-800/80 text-emerald-300 hover:border-emerald-600"}`}
-        >
-          Adicionar encomenda
-        </button>
-        <button
-          type="button"
-          onClick={() => openBulkMode("adjustment")}
-          disabled={isPending}
-          className={`rounded-xl border px-3 py-1.5 text-xs transition ${bulkMode === "adjustment" ? "border-amber-500 bg-amber-500/10 text-amber-200" : "border-amber-800/80 text-amber-300 hover:border-amber-600"}`}
-        >
-          Ajustar estoque
-        </button>
-      </div> : null}
+      {(canAdjustInventory || canViewHistory) ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {canAdjustInventory ? (
+            <button
+              type="button"
+              onClick={() => {
+                setFeedback(null);
+                setBulkMode(null);
+                setReceiptHistoryOpen(false);
+                setReceiptFormOpen(true);
+              }}
+              disabled={isPending}
+              className="rounded-xl border border-emerald-800/80 px-3 py-1.5 text-xs text-emerald-300 transition hover:border-emerald-600"
+            >
+              Registrar entrada
+            </button>
+          ) : null}
+          {canViewHistory ? (
+            <button
+              type="button"
+              onClick={() => {
+                setFeedback(null);
+                setBulkMode(null);
+                setReceiptFormOpen(false);
+                setReceiptHistoryOpen(true);
+              }}
+              className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-slate-500"
+            >
+              Histórico de entradas
+            </button>
+          ) : null}
+          {canAdjustInventory ? (
+            <button
+              type="button"
+              onClick={() => openBulkMode()}
+              disabled={isPending}
+              className={`rounded-xl border px-3 py-1.5 text-xs transition ${bulkMode === "adjustment" ? "border-amber-500 bg-amber-500/10 text-amber-200" : "border-amber-800/80 text-amber-300 hover:border-amber-600"}`}
+            >
+              Ajustar estoque
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {bulkMode ? (
         <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
           <p className="text-sm font-semibold text-slate-100">
-            {bulkMode === "purchase" ? "Adicionar encomenda" : "Ajustar estoque"} — preencha os tamanhos recebidos/ajustados e confirme uma única vez
+            Ajustar estoque — preencha os tamanhos ajustados e confirme uma única vez
           </p>
           <label className="mt-3 block space-y-1 text-sm">
-            <span className="text-slate-300">{bulkMode === "purchase" ? "Observação (opcional, aplicada a todos os tamanhos)" : "Motivo (obrigatório, aplicado a todos os tamanhos)"}</span>
+            <span className="text-slate-300">Motivo (obrigatório, aplicado a todos os tamanhos)</span>
             <input
               type="text"
               value={bulkNotes}
               onChange={(event) => setBulkNotes(event.target.value)}
               className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none"
-              placeholder={bulkMode === "purchase" ? "Ex.: Encomenda de agosto" : "Ex.: Correção de contagem física"}
+              placeholder="Ex.: Correção de contagem física"
             />
           </label>
           <div className="mt-4 flex justify-end gap-2">
@@ -525,7 +544,7 @@ export function ShirtStockTable({
               </th>
               <th className="px-2 py-2 font-medium">Entregas</th>
               <th className="px-2 py-2 font-medium">
-                {bulkMode === "purchase" ? "Quantidade recebida" : bulkMode === "adjustment" ? "Ajuste (+/-)" : "Histórico"}
+                {bulkMode === "adjustment" ? "Ajuste (+/-)" : "Movimentações"}
               </th>
             </tr>
           </thead>
@@ -590,7 +609,7 @@ export function ShirtStockTable({
                             step={1}
                             value={bulkQuantities[row.id] ?? ""}
                             onChange={(event) => updateBulkQuantity(row.id, event.target.value)}
-                            placeholder={bulkMode === "purchase" ? "0" : "+/-0"}
+                            placeholder="+/-0"
                             className="w-24 rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-1 text-sm text-slate-100 outline-none"
                           />
                         ) : canViewHistory ? (
@@ -600,7 +619,7 @@ export function ShirtStockTable({
                             disabled={historyLoadingRowId === row.id}
                             className="h-7 rounded-lg border border-slate-700 px-2 text-xs text-slate-200 transition hover:border-slate-500"
                           >
-                            {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Ver histórico"}
+                            {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Movimentações técnicas"}
                           </button>
                         ) : (
                           <span className="text-xs text-slate-500">Somente leitura</span>
@@ -612,7 +631,7 @@ export function ShirtStockTable({
                       <tr {...adminTableRowProps({ detail: true })}>
                         <td colSpan={10} className="bg-slate-950/40 px-3 py-3">
                           <div className="rounded-xl border border-slate-800/90 bg-slate-950/70 p-4">
-                            <p className="text-sm font-semibold text-slate-100">Histórico de movimentações</p>
+                            <p className="text-sm font-semibold text-slate-100">Movimentações técnicas</p>
                             <div className="mt-3 space-y-2">
                               {historyItems.length === 0 ? (
                                 <p className="text-sm text-slate-400">Nenhuma movimentação registrada para esta combinação.</p>
@@ -701,7 +720,7 @@ export function ShirtStockTable({
                       step={1}
                       value={bulkQuantities[row.id] ?? ""}
                       onChange={(event) => updateBulkQuantity(row.id, event.target.value)}
-                      placeholder={bulkMode === "purchase" ? "0" : "+/-0"}
+                      placeholder="+/-0"
                       className="w-24 rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-1 text-sm text-slate-100 outline-none"
                     />
                   ) : null}
@@ -723,7 +742,7 @@ export function ShirtStockTable({
                         disabled={historyLoadingRowId === row.id}
                         className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-700 px-3 text-sm text-slate-200 transition hover:border-slate-500"
                       >
-                        {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Histórico"}
+                        {historyLoadingRowId === row.id ? "Carregando..." : isHistoryOpen ? "Fechar" : "Movimentações técnicas"}
                       </button>
                     ) : !canViewDeliveries ? (
                       <span className="text-xs text-slate-500">Somente leitura</span>
@@ -750,7 +769,7 @@ export function ShirtStockTable({
                 </dl>
                 {isHistoryOpen ? (
                   <div className="mt-3 rounded-xl border border-slate-800/90 bg-slate-950/70 p-3">
-                    <p className="text-sm font-semibold text-slate-100">Histórico de movimentações</p>
+                    <p className="text-sm font-semibold text-slate-100">Movimentações técnicas</p>
                     <div className="mt-3 space-y-2">
                       {historyItems.length === 0 ? (
                         <p className="text-sm text-slate-400">Nenhuma movimentação registrada para esta combinação.</p>
@@ -799,18 +818,12 @@ export function ShirtStockTable({
           <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-5 text-slate-100">
             <h3 className="text-lg font-semibold">Zerar estoque deste evento?</h3>
             <p className="mt-2 text-sm text-slate-300">
-              Esta ação zerará todas as quantidades de camisetas e babylooks do evento selecionado e {resetMode === "full" ? "removerá o histórico de movimentações de estoque" : "preservará o histórico de movimentações"}. Pedidos, participantes, tickets e pagamentos não serão apagados.
+              Esta ação zerará as quantidades operacionais de camisetas e babylooks do evento. O histórico de entradas e o ledger técnico são preservados. Pedidos, participantes, tickets e pagamentos não serão apagados.
             </p>
 
-            {resetMode === "full" ? (
-              <p className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                Modo de risco: limpeza completa de histórico. Use somente para ambiente de teste/homologação.
-              </p>
-            ) : (
-              <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-                Modo recomendado: apenas zerar quantidades operacionais e preservar histórico.
-              </p>
-            )}
+            <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+              Recebidas na tela passa a 0. As entradas já registradas continuam visíveis no histórico de entradas.
+            </p>
 
             <div className="mt-4 grid gap-3">
               <label className="space-y-1 text-sm">
@@ -855,6 +868,23 @@ export function ShirtStockTable({
           </div>
         </div>
       ) : null}
+
+      <RegisterInventoryReceiptDialog
+        open={receiptFormOpen}
+        eventId={eventId}
+        rows={rows}
+        onClose={() => setReceiptFormOpen(false)}
+        onSuccess={(message) => {
+          setFeedback({ type: "success", message });
+          router.refresh();
+        }}
+      />
+
+      <InventoryReceiptHistoryDialog
+        open={receiptHistoryOpen}
+        eventId={eventId}
+        onClose={() => setReceiptHistoryOpen(false)}
+      />
     </div>
   );
 }

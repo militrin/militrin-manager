@@ -4,6 +4,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/admin/permissions";
+import { resolveOperatorNames } from "@/lib/admin/operator-names";
+import { getShirtSizeOrder, getShirtTypeOrder } from "@/lib/constants/shirts";
+import { dateTimePartsInEventTimeZone } from "@/lib/utils/date";
 
 type ActionResult = {
   success: boolean;
@@ -26,18 +29,42 @@ type InventoryHistoryResult = {
   movements: InventoryMovementItem[];
 };
 
+export type InventoryReceiptItem = {
+  inventory_id: string;
+  shirt_type: string;
+  shirt_size: string;
+  quantity: number;
+};
+
+export type InventoryReceiptRecord = {
+  id: string;
+  description: string;
+  ordered_at: string | null;
+  received_at: string;
+  supplier: string | null;
+  notes: string | null;
+  status: string;
+  origin: string;
+  created_by: string | null;
+  created_at: string;
+  operator_label: string;
+  total_quantity: number;
+  items: InventoryReceiptItem[];
+};
+
+type InventoryReceiptListResult = {
+  success: boolean;
+  message: string;
+  code?: string | null;
+  receipts: InventoryReceiptRecord[];
+};
+
 type SupabaseActionError = {
   message?: string;
   code?: string;
   details?: string;
   hint?: string;
 };
-
-const addInventorySchema = z.object({
-  inventory_id: z.string().uuid("ID inválido."),
-  quantity: z.number().int().positive("A quantidade precisa ser maior que zero."),
-  notes: z.string().trim().max(300, "A observação deve ter no máximo 300 caracteres.").optional().or(z.literal("")),
-});
 
 const adjustInventorySchema = z.object({
   inventory_id: z.string().uuid("ID inválido."),
@@ -55,6 +82,47 @@ const adjustInventorySchema = z.object({
 const historySchema = z.object({
   event_id: z.string().uuid("ID inválido."),
   inventory_id: z.string().uuid("ID inválido."),
+});
+
+const createReceiptSchema = z
+  .object({
+    event_id: z.string().uuid("ID inválido."),
+    idempotency_key: z.string().uuid("Chave de idempotência inválida."),
+    description: z.string().trim().min(1, "A descrição é obrigatória.").max(200, "A descrição deve ter no máximo 200 caracteres."),
+    received_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data de recebimento inválida."),
+    ordered_at: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Data do pedido inválida.")
+      .optional()
+      .or(z.literal("")),
+    supplier: z.string().trim().max(200, "Fornecedor deve ter no máximo 200 caracteres.").optional().or(z.literal("")),
+    notes: z.string().trim().max(500, "A observação deve ter no máximo 500 caracteres.").optional().or(z.literal("")),
+    items: z
+      .array(
+        z.object({
+          inventory_id: z.string().uuid("ID inválido."),
+          quantity: z
+            .number()
+            .int("A quantidade deve ser um inteiro.")
+            .nonnegative("A quantidade não pode ser negativa.")
+            .max(2147483647, "Quantidade excede o limite."),
+        }),
+      )
+      .min(1, "Informe ao menos uma quantidade."),
+  })
+  .superRefine((value, ctx) => {
+    const parts = dateTimePartsInEventTimeZone(new Date());
+    const today = `${parts.year}-${parts.month}-${parts.day}`;
+    if (value.received_at > today) {
+      ctx.addIssue({ code: "custom", path: ["received_at"], message: "Data de recebimento não pode ser futura." });
+    }
+    if (value.ordered_at && value.ordered_at > value.received_at) {
+      ctx.addIssue({ code: "custom", path: ["ordered_at"], message: "Data do pedido não pode ser posterior ao recebimento." });
+    }
+  });
+
+const eventHistorySchema = z.object({
+  event_id: z.string().uuid("ID inválido."),
 });
 
 const setLimitSchema = z.object({
@@ -108,50 +176,156 @@ function sanitizeNotes(notes: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+function sortReceiptItems(items: InventoryReceiptItem[]): InventoryReceiptItem[] {
+  return [...items].sort((a, b) => {
+    const typeDiff = getShirtTypeOrder(a.shirt_type) - getShirtTypeOrder(b.shirt_type);
+    if (typeDiff !== 0) return typeDiff;
+    return getShirtSizeOrder(a.shirt_size) - getShirtSizeOrder(b.shirt_size);
+  });
+}
+
+function receiptOperatorLabel(origin: string, createdBy: string | null, names: Map<string, string>): string {
+  if (origin === "historical_backfill" || !createdBy) {
+    return "Registro histórico";
+  }
+  return names.get(createdBy) ?? "Operador não identificado";
+}
+
 function revalidateInventoryPages(eventId: string) {
   revalidatePath("/camisetas");
   revalidatePath(`/painel/eventos/${eventId}`);
   revalidatePath("/inscricao");
 }
 
-export async function addInventoryQuantityAction(payload: {
+export async function createInventoryReceiptAction(payload: {
   event_id: string;
-  inventory_id: string;
-  quantity: number;
+  idempotency_key: string;
+  description: string;
+  received_at: string;
+  ordered_at?: string;
+  supplier?: string;
   notes?: string;
-}): Promise<ActionResult> {
+  items: Array<{ inventory_id: string; quantity: number }>;
+}): Promise<ActionResult & { receipt_id?: string | null }> {
   await assertPermission("inventory.adjust");
 
-  const parsed = addInventorySchema.safeParse(payload);
+  const parsed = createReceiptSchema.safeParse(payload);
   if (!parsed.success) {
     return { success: false, message: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  const items = parsed.data.items.filter((item) => item.quantity > 0);
+  if (items.length === 0) {
+    return { success: false, message: "Informe ao menos uma quantidade maior que zero." };
+  }
+
+  const inventoryIds = new Set(items.map((item) => item.inventory_id));
+  if (inventoryIds.size !== items.length) {
+    return { success: false, message: "Item duplicado na entrada." };
+  }
+
+  const totalPieces = items.reduce((sum, item) => sum + item.quantity, 0);
+  if (totalPieces > 2147483647) {
+    return { success: false, message: "Quantidade total excede o limite." };
+  }
+
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.rpc("add_inventory_quantity", {
-      p_event_id: payload.event_id,
-      p_inventory_id: parsed.data.inventory_id,
-      p_quantity: parsed.data.quantity,
+    const { data, error } = await supabase.rpc("create_inventory_receipt", {
+      p_event_id: parsed.data.event_id,
+      p_description: parsed.data.description,
+      p_received_at: parsed.data.received_at,
+      p_ordered_at: parsed.data.ordered_at ? parsed.data.ordered_at : null,
+      p_supplier: sanitizeNotes(parsed.data.supplier),
       p_notes: sanitizeNotes(parsed.data.notes),
+      p_items: items,
+      p_idempotency_key: parsed.data.idempotency_key,
     });
 
     if (error) {
       throw error;
     }
 
-    revalidateInventoryPages(payload.event_id);
-    return { success: true, message: "Encomenda adicionada com sucesso." };
+    revalidateInventoryPages(parsed.data.event_id);
+    return {
+      success: true,
+      message: "Entrada registrada com sucesso.",
+      receipt_id: typeof data === "string" ? data : null,
+    };
   } catch (error) {
-    const supabaseError = getSupabaseError(error);
-    console.error("ERRO AO ADICIONAR ENCOMENDA:", {
-      message: supabaseError?.message,
-      code: supabaseError?.code,
-      details: supabaseError?.details,
-      hint: supabaseError?.hint,
+    return getActionErrorResult(error, "Não foi possível registrar a entrada.");
+  }
+}
+
+export async function listEventInventoryReceiptsAction(payload: {
+  event_id: string;
+}): Promise<InventoryReceiptListResult> {
+  await assertPermission("inventory.view_history");
+
+  const parsed = eventHistorySchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      success: false,
+      message: parsed.error.issues[0]?.message ?? "ID inválido.",
+      receipts: [],
+    };
+  }
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.rpc("list_event_inventory_receipts", {
+      p_event_id: parsed.data.event_id,
     });
 
-    return getActionErrorResult(error, "Não foi possível adicionar a encomenda.");
+    if (error) {
+      throw error;
+    }
+
+    const rawReceipts = Array.isArray(data) ? data : [];
+    const receipts = rawReceipts.map((row) => {
+      const record = (row ?? {}) as Record<string, unknown>;
+      const items = Array.isArray(record.items)
+        ? (record.items as Array<Record<string, unknown>>).map((item) => ({
+            inventory_id: String(item.inventory_id ?? ""),
+            shirt_type: String(item.shirt_type ?? ""),
+            shirt_size: String(item.shirt_size ?? ""),
+            quantity: Number(item.quantity ?? 0),
+          }))
+        : [];
+      return {
+        id: String(record.id ?? ""),
+        description: String(record.description ?? ""),
+        ordered_at: record.ordered_at ? String(record.ordered_at) : null,
+        received_at: String(record.received_at ?? ""),
+        supplier: record.supplier ? String(record.supplier) : null,
+        notes: record.notes ? String(record.notes) : null,
+        status: String(record.status ?? "posted"),
+        origin: String(record.origin ?? "live"),
+        created_by: record.created_by ? String(record.created_by) : null,
+        created_at: String(record.created_at ?? ""),
+        operator_label: "",
+        total_quantity: Number(record.total_quantity ?? 0),
+        items: sortReceiptItems(items),
+      } satisfies InventoryReceiptRecord;
+    });
+
+    const names = await resolveOperatorNames(receipts.map((receipt) => receipt.created_by).filter((id): id is string => Boolean(id)));
+    return {
+      success: true,
+      message: "Histórico de entradas carregado.",
+      receipts: receipts.map((receipt) => ({
+        ...receipt,
+        operator_label: receiptOperatorLabel(receipt.origin, receipt.created_by, names),
+      })),
+    };
+  } catch (error) {
+    const result = getActionErrorResult(error, "Não foi possível carregar o histórico de entradas.");
+    return {
+      success: false,
+      message: result.message,
+      code: result.code,
+      receipts: [],
+    };
   }
 }
 
