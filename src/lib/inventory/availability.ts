@@ -82,6 +82,22 @@ export function shirtAvailabilityText(availableStock: number, enforcePhysicalSto
   return 'Disponivel';
 }
 
+export const SHIRT_STOCK_CHANGED_MESSAGE =
+  "Esse tamanho acabou de ficar indisponível. Escolha outro tamanho.";
+
+export function isCanonicalShirtStockError(serialized: string) {
+  const normalized = serialized.toLowerCase();
+  return (
+    normalized.includes("shirt_out_of_stock")
+    || normalized.includes("sem estoque")
+    || normalized.includes("há apenas")
+    || normalized.includes("ha apenas")
+    || normalized.includes("estoque insuficiente")
+    || normalized.includes("estoque indisponivel")
+    || normalized.includes("estoque indisponível")
+  );
+}
+
 /** max(0, reservadas − estoque físico). Não compensa sobra de outra variante. */
 export function toOrderQuantity(
   totalQuantity: number,

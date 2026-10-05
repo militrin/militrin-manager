@@ -493,7 +493,11 @@ export default async function TicketDetailPage({
                   ) : null}
                 </p>
               ) : null}
-              {(shirtKitItem || shirtType || shirtSize) && canChangeShirt ? <p className="flex flex-wrap items-center gap-2">Camiseta: <strong>{shirtType && shirtSize ? `${shirtType} ${shirtSize}` : 'Nao identificada'}</strong><ShirtContextAction ticketId={ticketId} initial={currentShirtOption} options={shirtOptions.map(option=>({value:`${String(option.shirt_type)}|${String(option.shirt_size)}`,label:String(option.option_label)}))}/></p> : null}
+              {(shirtKitItem || shirtType || shirtSize) && canChangeShirt ? <p className="flex flex-wrap items-center gap-2">Camiseta: <strong>{shirtType && shirtSize ? `${shirtType} ${shirtSize}` : 'Nao identificada'}</strong><ShirtContextAction ticketId={ticketId} initial={currentShirtOption} options={shirtOptions.map((option) => {
+                const value = `${String(option.shirt_type)}|${String(option.shirt_size)}`;
+                const available = option.physical_available == null ? null : Number(option.physical_available);
+                return { value, label: String(option.option_label), disabled: available != null && available <= 0 && value !== currentShirtOption };
+              })}/></p> : null}
               {kitItems.length > 0 ? <p>Status kit entregue: {kitDeliveredCount === kitItems.length ? 'Entregue' : kitSummary}</p> : null}
             </div>
 

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { hasPermission } from '@/lib/admin/permissions';
+import { isCanonicalShirtStockError } from '@/lib/inventory/availability';
 import { getCurrentOrganizationContext } from '@/lib/organizations/current-organization';
 import { inferColumnMapping, type CanonicalField } from '@/lib/imports/columns';
 import { parseSpreadsheetFile } from '@/lib/imports/parse-file';
@@ -1587,7 +1588,7 @@ export async function executeImportBatchAction(
         .eq('id', row.id);
       skippedRows += 1;
     } catch (error) {
-  const message =
+  const rawMessage =
     error instanceof Error
       ? error.message
       : typeof error === 'object' && error !== null
@@ -1600,6 +1601,9 @@ export async function executeImportBatchAction(
             .filter(Boolean)
             .join(' | ')
         : String(error);
+  const message = isCanonicalShirtStockError(rawMessage)
+    ? 'Não há estoque disponível para o tamanho desta linha. A importação desta linha não foi concluída.'
+    : rawMessage;
 
   console.error('[IMPORT ERROR]', {
     batchId,

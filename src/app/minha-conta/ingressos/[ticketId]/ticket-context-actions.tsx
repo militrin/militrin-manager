@@ -23,9 +23,14 @@ export function HolderContextAction({ ticketId, hasHolder, currentName = "" }: {
 // categoria pos-pagamento/check-in): nunca silencioso -- exige um motivo
 // textual, gravado pela propria RPC no audit_logs, igual ao padrao ja usado
 // por owner_cancel_ticket/admin_transfer_ticket_ownership neste projeto.
-function SelectAction({ label, buttonLabel, initial, options, save, warning, requireReason }: { label:string; buttonLabel:string; initial:string; options:Option[]; save:(value:string, reason?:string)=>Promise<{success:boolean;message:string}>; warning?: string; requireReason?: boolean }) {
+function SelectAction({ label, buttonLabel, initial, options, save, warning, requireReason }: { label:string; buttonLabel:string; initial:string; options:Option[]; save:(value:string, reason?:string)=>Promise<{success:boolean;message:string;shirtStockChanged?:boolean}>; warning?: string; requireReason?: boolean }) {
   const [open,setOpen]=useState(false); const [value,setValue]=useState(initial); const [reason,setReason]=useState(''); const [message,setMessage]=useState<string|null>(null); const [pending,startTransition]=useTransition(); const router=useRouter();
-  const submit=()=>startTransition(async()=>{const result=await save(value, requireReason ? reason.trim() : undefined);setMessage(result.message);if(result.success){router.refresh();setOpen(false);}});
+  const submit=()=>startTransition(async()=>{
+    const result=await save(value, requireReason ? reason.trim() : undefined);
+    setMessage(result.message);
+    if(result.success){router.refresh();setOpen(false);return;}
+    if("shirtStockChanged" in result && result.shirtStockChanged){router.refresh();}
+  });
   const canSubmit = Boolean(value) && (!requireReason || reason.trim().length > 0);
   return <><button type="button" onClick={()=>{setMessage(null);setReason('');setOpen(true);}} className="text-xs font-medium text-emerald-300 hover:underline">{buttonLabel}</button>{message&&!open?<span className="text-xs text-emerald-300">{message}</span>:null}<Dialog title={label} open={open} close={()=>setOpen(false)}><div className="mt-4 space-y-4"><select value={value} onChange={e=>setValue(e.target.value)} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3"><option value="">Selecione</option>{options.map(o=><option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}</select>{warning?<div className="rounded-xl border border-amber-600/40 bg-amber-950/20 p-3 text-xs text-amber-100"><p>{warning}</p>{requireReason?<label className="mt-2 block space-y-1"><span className="font-medium">Motivo da alteração (obrigatório)</span><textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} className="w-full rounded-lg border border-amber-700/40 bg-slate-950 px-3 py-2 text-slate-100"/></label>:null}</div>:null}{message?<p className="text-sm text-rose-300">{message}</p>:null}<div className="flex justify-end gap-2"><button type="button" onClick={()=>setOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2">Cancelar</button><button type="button" disabled={pending||!canSubmit} onClick={submit} className="rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-950 disabled:opacity-40">Salvar</button></div></div></Dialog></>;
 }

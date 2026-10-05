@@ -103,7 +103,13 @@ export function ParticipantIssuesDialog({ participantId, participantName, issues
     startTransition(async () => {
       const result = await (mode === "self" ? resolveMyParticipantDataIssuesAction : resolveParticipantDataIssuesAction)({ participantId, expectedIssueIds: expectedIssueIds ?? issues.map((issue) => issue.id), values: payload });
       setMessage(result.message);
-      if (!result.success) return;
+      if (!result.success) {
+        if (result.message.includes("indisponível") || result.message.includes("indisponivel")) {
+          const options = await getParticipantIssueOptionsAction(participantId);
+          if (options.success && options.shirts.length) setLoadedShirts(options.shirts);
+        }
+        return;
+      }
       const remaining = (result.remainingIssues ?? []) as ParticipantDataIssue[];
       setIssues(mode === "self" ? [] : remaining); setValues({}); router.refresh();
       await onResolved?.({ ticketId: result.ticketId ?? null, finalization: result.finalization ?? null, message: result.message });

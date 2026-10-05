@@ -9,6 +9,7 @@ import { formatDateBR, toISODateFromBR } from '@/lib/utils/date';
 import { upsertCustomerProfileCompat } from '@/lib/account/upsert-customer-profile';
 import { publicOrderCode } from '@/lib/display-reference';
 import { assertPermission } from '@/lib/admin/permissions';
+import { isCanonicalShirtStockError, SHIRT_STOCK_CHANGED_MESSAGE } from '@/lib/inventory/availability';
 
 const emailProvider = getEmailProvider();
 
@@ -245,7 +246,10 @@ export async function adminChangeTicketShirtAction(ticketId: string, shirtOption
     p_ticket_id: ticketId, p_new_shirt_type: shirtType, p_new_shirt_size: shirtSize,
   });
   if (error) {
-    if (error.message.includes('SHIRT_OUT_OF_STOCK')) return { success: false, message: 'Esta camiseta nao esta disponivel no estoque.' };
+    const serialized = `${error.message ?? ''} ${error.details ?? ''}`;
+    if (isCanonicalShirtStockError(serialized)) {
+      return { success: false as const, shirtStockChanged: true as const, message: SHIRT_STOCK_CHANGED_MESSAGE };
+    }
     if (error.message.includes('SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION')) {
       return { success: false, message: 'O tamanho nao pode mais ser alterado porque este ingresso ja teve kit entregue ou check-in realizado.' };
     }
@@ -297,21 +301,17 @@ export async function reviewTicketItemChangeAction(formData: FormData) {
     p_notes: notes || null,
   });
   if (error) {
-    if (error.message.includes('SHIRT_OUT_OF_STOCK')) {
-      return { success: false, message: 'Não há mais estoque disponível para o tamanho solicitado.' };
+    if (isCanonicalShirtStockError(error.message) || error.message.includes('SHIRT_OUT_OF_STOCK')) {
+      return { success: false, shirtStockChanged: true as const, message: SHIRT_STOCK_CHANGED_MESSAGE };
     }
     if (error.message.includes('SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION')) {
       return { success: false, message: 'Este ingresso já teve kit entregue ou check-in realizado — a aprovação normal está bloqueada. Rejeite esta solicitação e, se necessário, use a correção administrativa na Central de Operações.' };
     }
-    // Corrida entre duas aprovações concorrentes pedindo a mesma variante com
-    // 1 unidade restante: a checagem de disponibilidade em
-    // admin_change_ticket_shirt nao desconta reserved_quantity (so
-    // delivered_quantity), entao quem realmente barra a segunda aprovacao e o
-    // CHECK (reserved_quantity + delivered_quantity <= total_quantity) da
-    // propria tabela de estoque -- nao o erro estruturado SHIRT_OUT_OF_STOCK.
-    // Mesma mensagem amigavel pro organizador nos dois casos.
+    // Corrida entre duas aprovações concorrentes pedindo a mesma variante:
+    // o CHECK da tabela de estoque pode recusar a segunda se o assert
+    // canonico nao for a primeira barreira visivel. Mesma mensagem amigavel.
     if (error.message.includes('event_kit_item_variant_inventory_check')) {
-      return { success: false, message: 'Não há mais estoque disponível para o tamanho solicitado.' };
+      return { success: false, shirtStockChanged: true as const, message: SHIRT_STOCK_CHANGED_MESSAGE };
     }
     if (error.message.includes('ja revisada')) {
       return { success: false, message: 'Esta solicitação já foi revisada por outra pessoa.' };

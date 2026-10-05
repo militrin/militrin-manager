@@ -47,6 +47,10 @@ import { formatOperatorDisplayName } from "@/lib/admin/operator-display";
 import { isUndefinedDatabaseFunction } from "@/lib/supabase/missing-rpc";
 import { OFFICIAL_SHIRT_SIZE_ORDER, SHIRT_TYPES } from "@/lib/constants/shirts";
 import {
+  isCanonicalShirtStockError,
+  SHIRT_STOCK_CHANGED_MESSAGE,
+} from "@/lib/inventory/availability";
+import {
   clampCentralPage,
   clampCentralPageSize,
   filterFallbackCentralRow,
@@ -2453,6 +2457,22 @@ export async function undoFullKitDeliveryAction(payload: { ticket_id: string; re
   return { success: true, message: "Entrega do kit revertida com sucesso." };
 }
 
+export async function getAdminTicketShirtOptionsAction(ticketId: string) {
+  await assertPermission("inventory.change_participant_shirt");
+  if (!isUuid(ticketId)) return { success: false as const, message: "Identificador de ingresso inválido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_admin_ticket_shirt_options", { p_ticket_id: ticketId });
+  if (error) return { success: false as const, message: error.message };
+  return {
+    success: true as const,
+    options: ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      shirt_type: String(row.shirt_type ?? ""),
+      shirt_size: String(row.shirt_size ?? ""),
+      available: row.physical_available == null ? 1 : Number(row.physical_available),
+    })),
+  };
+}
+
 export async function changeShirtAction(payload: { ticketId: string; shirtType: string; shirtSize: string }) {
   await assertPermission("inventory.change_participant_shirt");
   if (!isUuid(payload.ticketId)) return invalidTicketId();
@@ -2462,7 +2482,13 @@ export async function changeShirtAction(payload: { ticketId: string; shirtType: 
     p_new_shirt_type: payload.shirtType,
     p_new_shirt_size: payload.shirtSize,
   });
-  if (error) return { success: false, ...operationRpcError(error) };
+  if (error) {
+    const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+    if (isCanonicalShirtStockError(serialized)) {
+      return { success: false as const, shirtStockChanged: true as const, message: SHIRT_STOCK_CHANGED_MESSAGE };
+    }
+    return { success: false, ...operationRpcError(error) };
+  }
   revalidatePath("/operacoes");
   return { success: true, message: "Camiseta alterada com sucesso." };
 }
@@ -2488,7 +2514,13 @@ export async function correctShirtAfterOperationAction(payload: {
     p_reason_code: payload.reasonCode,
     p_reason_text: payload.reasonText?.trim() || null,
   });
-  if (error) return { success: false, ...operationRpcError(error) };
+  if (error) {
+    const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+    if (isCanonicalShirtStockError(serialized)) {
+      return { success: false as const, shirtStockChanged: true as const, message: SHIRT_STOCK_CHANGED_MESSAGE };
+    }
+    return { success: false, ...operationRpcError(error) };
+  }
   revalidatePath("/operacoes");
   revalidatePath(`/ingressos/${payload.ticketId}`);
   return { success: true, message: "Tamanho corrigido com sucesso." };

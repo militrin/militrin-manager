@@ -150,7 +150,7 @@ test('frontend converte SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION em mensagem ami
 
   const editar = await readFile(editarActionsUrl, 'utf8');
   assert.match(editar, /function friendlyShirtRpcError/);
-  assert.match(editar, /error\.message\.includes\("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION"\)/);
+  assert.match(editar, /serialized\.includes\("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION"\)/);
 
   const inscricoes = await readFile(inscricoesActionsUrl, 'utf8');
   assert.match(inscricoes, /serialized\.includes\("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION"\)/);
@@ -161,8 +161,10 @@ test('pagina de editar cadastro calcula shirtLocked = kit entregue OU check-in f
   assert.match(actionsTs, /shirtLocked: shirtDelivered \|\| shirtCheckinDone/);
   assert.match(actionsTs, /shirtCheckinDone = ticket\.status === "used"/);
   const pageTs = await readFile(editarPageUrl, 'utf8');
-  assert.match(pageTs, /disabled=\{shirtLocked\}/);
-  assert.match(pageTs, /disabled=\{shirtLocked\|\|!shirtType\}/);
+  assert.match(pageTs, /setShirtLocked\(context\.shirtLocked\)/);
+  assert.match(pageTs, /Corrigir tamanho após operação/);
+  assert.match(pageTs, /saveShirt/);
+  assert.doesNotMatch(pageTs, /disabled=\{shirtLocked\}/);
   assert.doesNotMatch(pageTs, /shirtDelivered/);
 });
 

@@ -6,6 +6,7 @@ import { getEmailProvider } from "@/lib/email/fake-provider";
 import { publicOrderCode } from "@/lib/display-reference";
 import { assertPermission } from "@/lib/admin/permissions";
 import { normalizeShirtSize, normalizeShirtType } from "@/lib/constants/shirts";
+import { isCanonicalShirtStockError, SHIRT_STOCK_CHANGED_MESSAGE } from "@/lib/inventory/availability";
 import type { UpdatePaymentStatusInput } from "./payment-status.types";
 
 const emailProvider = getEmailProvider();
@@ -19,13 +20,10 @@ function resolveIssueRpcError(error: { message?: string; details?: string | null
   if (serialized.includes("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION")) {
     return "O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.";
   }
-  if (!serialized.includes("SHIRT_OUT_OF_STOCK")) return error.message ?? "Não foi possível reavaliar o cadastro.";
-  try {
-    const detail = JSON.parse(error.details ?? "{}") as { message?: string; shirt_type?: string; shirt_size?: string };
-    return detail.message ?? `Não há estoque disponível para ${detail.shirt_type ?? "Camiseta"} ${detail.shirt_size ?? ""}. A alteração não foi confirmada.`;
-  } catch {
-    return "Não há estoque disponível para esta camiseta. A alteração não foi confirmada.";
+  if (isCanonicalShirtStockError(serialized) || serialized.includes("SHIRT_OUT_OF_STOCK")) {
+    return SHIRT_STOCK_CHANGED_MESSAGE;
   }
+  return error.message ?? "Não foi possível reavaliar o cadastro.";
 }
 
 export type ResolveParticipantDataIssuesInput = {
@@ -387,7 +385,13 @@ export async function changeParticipantShirtAction(input: {
     p_new_shirt_type: shirtType,
     p_new_shirt_size: shirtSize,
   });
-  if (error) return { success: false, message: error.message };
+  if (error) {
+    const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+    if (isCanonicalShirtStockError(serialized)) {
+      return { success: false, shirtStockChanged: true as const, message: SHIRT_STOCK_CHANGED_MESSAGE };
+    }
+    return { success: false, message: error.message };
+  }
 
   revalidatePath("/inscricoes");
 

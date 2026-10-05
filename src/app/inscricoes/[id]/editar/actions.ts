@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { assertPermission, hasPermission } from "@/lib/admin/permissions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { finalizeCadastroPaymentAndTicketAction } from "@/app/cadastros/actions";
+import { isCanonicalShirtStockError, SHIRT_STOCK_CHANGED_MESSAGE } from "@/lib/inventory/availability";
 
 const ALLOWED_GENDERS = new Set(["male", "female", "other", "prefer_not_to_say"]);
 
@@ -119,14 +120,37 @@ export async function confirmParticipantPaymentFromEditAction(participantId: str
   });
 }
 
-function friendlyShirtRpcError(error: { message: string }): Error {
-  if (error.message.includes("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION")) {
+function friendlyShirtRpcError(error: { message: string; details?: string | null }): Error {
+  const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+  if (serialized.includes("SHIRT_SIZE_CHANGE_LOCKED_AFTER_OPERATION")) {
     return new Error("O tamanho não pode mais ser alterado porque este ingresso já teve kit entregue ou check-in realizado.");
   }
-  if (error.message.includes("SHIRT_OUT_OF_STOCK")) {
-    return new Error("Não há estoque disponível para este modelo e tamanho.");
+  if (isCanonicalShirtStockError(serialized)) {
+    return new Error(SHIRT_STOCK_CHANGED_MESSAGE);
   }
   return new Error(error.message);
+}
+
+type ShirtChangeFailure = {
+  success: false;
+  shirtStockChanged?: true;
+  message: string;
+  shirtOptions?: Array<Record<string, unknown>>;
+};
+
+async function shirtChangeStockFailure(participantId: string, error: { message: string; details?: string | null }): Promise<ShirtChangeFailure> {
+  const friendly = friendlyShirtRpcError(error);
+  const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+  if (!isCanonicalShirtStockError(serialized)) {
+    throw friendly;
+  }
+  const refreshed = await getParticipantEditContext(participantId);
+  return {
+    success: false,
+    shirtStockChanged: true,
+    message: SHIRT_STOCK_CHANGED_MESSAGE,
+    shirtOptions: refreshed.shirtOptions,
+  };
 }
 
 export async function changeParticipantShirtFromEditAction(input: {
@@ -144,7 +168,7 @@ export async function changeParticipantShirtFromEditAction(input: {
     p_new_shirt_type: input.shirtType,
     p_new_shirt_size: input.shirtSize,
   });
-  if (error) throw friendlyShirtRpcError(error);
+  if (error) return shirtChangeStockFailure(input.participantId, error);
   revalidatePath(`/inscricoes/${input.participantId}/editar`);
   revalidatePath(`/ingressos/${input.ticketId}`);
   return { success: true as const, message: "Camiseta atualizada." };
@@ -170,7 +194,7 @@ export async function correctParticipantShirtAfterOperationAction(input: {
     p_reason_code: input.reasonCode,
     p_reason_text: input.reasonText?.trim() || null,
   });
-  if (error) throw friendlyShirtRpcError(error);
+  if (error) return shirtChangeStockFailure(input.participantId, error);
   revalidatePath(`/inscricoes/${input.participantId}/editar`);
   revalidatePath(`/ingressos/${input.ticketId}`);
   return { success: true as const, message: "Tamanho corrigido com sucesso." };
