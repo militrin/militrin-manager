@@ -16,6 +16,26 @@ function normalizePin(value: string) {
   return value.trim().toUpperCase();
 }
 
+function mapManualIssueShirtStockMessage(serialized: string) {
+  const normalized = serialized.toLowerCase();
+  if (
+    !normalized.includes("sem estoque")
+    && !normalized.includes("há apenas")
+    && !normalized.includes("ha apenas")
+    && !normalized.includes("estoque insuficiente")
+    && !normalized.includes("estoque indisponivel")
+    && !normalized.includes("estoque indisponível")
+  ) {
+    return null;
+  }
+  if (normalized.includes("há apenas") || normalized.includes("ha apenas")) {
+    const match = serialized.match(/Há apenas \d+ unidades? dispon[ií]ve(?:l|is) para [^.]+/i);
+    if (match) return `${match[0].replace(/\s+/g, " ").trim()}.`.replace("..", ".");
+    return "Há apenas 1 unidade disponível para este tamanho.";
+  }
+  return "Esse tamanho acabou de ficar indisponível. Escolha outro tamanho.";
+}
+
 export type IssueTicketReason = "courtesy" | "system_failure" | "administrative_correction" | "other";
 
 export async function getEventShirtOptionsAction(eventId: string) {
@@ -183,6 +203,10 @@ export async function issueTicketAction(input: {
   });
   if (error) {
     const serialized = `${error.message ?? ""} ${error.details ?? ""}`;
+    const stockMessage = mapManualIssueShirtStockMessage(serialized);
+    if (stockMessage) {
+      return { success: false as const, shirtStockChanged: true as const, message: stockMessage };
+    }
     if (serialized.includes("EXISTING_OPERATIONAL_TICKET")) {
       let ticketCode = "";
       try {

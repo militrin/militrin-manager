@@ -136,6 +136,16 @@ export function IssueTicketForm({ events, initialPin, initialContact, initialEve
       if (response.success) {
         idempotencyKeyRef.current = crypto.randomUUID();
       }
+      if (!response.success && "shirtStockChanged" in response && response.shirtStockChanged) {
+        const shirtResponse = await getEventShirtOptionsAction(eventId);
+        if (shirtResponse.success) {
+          setHasShirts(shirtResponse.hasShirts);
+          setLimitToStock(shirtResponse.limitToStock);
+          setShirtOptions(shirtResponse.options);
+          const nextSizes = shirtResponse.options.find((option) => option.type === shirtType)?.sizes ?? [];
+          if (!nextSizes.includes(shirtSize)) setShirtSize("");
+        }
+      }
       setResult(response);
     });
   }
