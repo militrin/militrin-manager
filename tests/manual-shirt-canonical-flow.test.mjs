@@ -25,9 +25,11 @@ test("estoque fisico legado e espelhado no saldo ticket-first", async () => {
 
 test("tela de camisetas separa demanda reservada de disponibilidade fisica", async () => {
   const page = await read("../src/app/camisetas/page.tsx");
+  const table = await read("../src/components/mvp/ShirtStockTable.tsx");
   assert.match(page, /event_kit_item_variant_inventory/);
   assert.match(page, /reserved_quantity: reserved/);
-  assert.match(page, /available: Math\.max\(row\.total_quantity - delivered, 0\)/);
+  assert.match(table, /resolveShirtStockAvailability/);
+  assert.match(table, /physicalAvailable/);
 });
 
 test("ficha usa a camiseta ticket-first e nunca deixa o navegador escolher outra variante", async () => {

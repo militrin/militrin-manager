@@ -26,7 +26,7 @@ export async function getEventShirtOptionsAction(eventId: string) {
   const [{ data: event, error: eventError }, { data: hasShirtItemRows, error: kitItemsError }, { data: inventoryRows, error: inventoryError }] = await Promise.all([
     supabase.from("events").select("limit_shirt_selection_to_stock").eq("id", eventId).maybeSingle(),
     supabase.from("event_kit_items").select("id").eq("event_id", eventId).eq("item_type", "shirt").eq("is_active", true).limit(1),
-    supabase.from("shirt_inventory").select("shirt_type,shirt_size,total_quantity,reserved_quantity,delivered_quantity").eq("event_id", eventId),
+    supabase.rpc("get_event_shirt_stock_for_selection", { p_event_id: eventId }),
   ]);
   if (eventError) return { success: false as const, message: eventError.message };
   if (kitItemsError) return { success: false as const, message: kitItemsError.message };

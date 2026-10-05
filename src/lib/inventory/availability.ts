@@ -9,8 +9,9 @@
  * Falta encomendar = demanda acima do físico, por variante, sem compensar
  * sobra de outro tamanho. No modo sob encomenda isso é operacional, não erro.
  *
- * Esta função NÃO decide se uma nova reserva é permitida. Essa trava continua
- * em events.limit_shirt_selection_to_stock / shirt_supply_mode='stock'.
+ * Display admin (Livre para reservar) pode ser negativo.
+ * Nova reserva / select de checkout usa availableForNewReservation, que
+ * trunca em zero. A trava continua em events.limit_shirt_selection_to_stock.
  */
 
 export type ShirtStockQuantities = {
@@ -47,6 +48,38 @@ export function availableForReservation(
   reservedQuantity: number,
 ) {
   return physicalAvailable(totalQuantity, deliveredQuantity) - asNonNegativeInt(reservedQuantity);
+}
+
+/**
+ * Quantidade livre para uma NOVA reserva.
+ * max(total - delivered - reserved - unaccountedPending, 0)
+ *
+ * Entregue nunca volta a ficar disponível. reserved legado de
+ * shirt_inventory NÃO deve ser passado aqui — usar a demanda canônica
+ * de event_kit_item_variant_inventory.
+ */
+export function availableForNewReservation(
+  totalQuantity: number,
+  deliveredQuantity: number,
+  reservedQuantity: number,
+  unaccountedPendingQuantity = 0,
+) {
+  return Math.max(
+    0,
+    availableForReservation(totalQuantity, deliveredQuantity, reservedQuantity)
+      - asNonNegativeInt(unaccountedPendingQuantity),
+  );
+}
+
+export const SHIRT_LOW_STOCK_THRESHOLD = 5;
+
+export function shirtAvailabilityText(availableStock: number, enforcePhysicalStock: boolean) {
+  if (!enforcePhysicalStock) return 'Disponivel para encomenda';
+  const available = asNonNegativeInt(availableStock);
+  if (available <= 0) return 'Esgotado';
+  if (available === 1) return 'Resta apenas 1 unidade';
+  if (available <= SHIRT_LOW_STOCK_THRESHOLD) return `Restam apenas ${available} unidades`;
+  return 'Disponivel';
 }
 
 /** max(0, reservadas − estoque físico). Não compensa sobra de outra variante. */

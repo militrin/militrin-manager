@@ -33,6 +33,8 @@ export type ShirtInventorySourceRow = {
   total_quantity: number | null | undefined;
   reserved_quantity: number | null | undefined;
   delivered_quantity: number | null | undefined;
+  /** Quando a RPC canônica envia o valor, não recalcular a partir de reserved/delivered. */
+  available_quantity?: number | null | undefined;
 };
 
 export type ShirtInventoryVariant = {
@@ -100,13 +102,19 @@ export function buildShirtInventoryVariants(rows: ShirtInventorySourceRow[]): Sh
     const total = Number(row.total_quantity ?? 0);
     const reserved = Number(row.reserved_quantity ?? 0);
     const delivered = Number(row.delivered_quantity ?? 0);
+    const hasCanonicalAvailable = row.available_quantity != null && Number.isFinite(Number(row.available_quantity));
+    const available = hasCanonicalAvailable
+      ? Number(row.available_quantity)
+      : total - reserved - delivered;
 
     const existing = grouped.get(key);
     if (existing) {
       existing.total_quantity += total;
       existing.reserved_quantity += reserved;
       existing.delivered_quantity += delivered;
-      existing.available_quantity = existing.total_quantity - existing.reserved_quantity - existing.delivered_quantity;
+      existing.available_quantity = hasCanonicalAvailable
+        ? existing.available_quantity + available
+        : existing.total_quantity - existing.reserved_quantity - existing.delivered_quantity;
       continue;
     }
 
@@ -117,7 +125,7 @@ export function buildShirtInventoryVariants(rows: ShirtInventorySourceRow[]): Sh
       total_quantity: total,
       reserved_quantity: reserved,
       delivered_quantity: delivered,
-      available_quantity: total - reserved - delivered,
+      available_quantity: available,
     });
   }
 

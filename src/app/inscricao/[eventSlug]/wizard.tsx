@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { BirthDateInput } from '@/components/forms/BirthDateInput';
 import { MilitrinEventArtwork } from '@/components/militrin';
 import { SHIRT_TYPES, makeShirtInventoryKey, normalizeShirtSize, normalizeShirtType } from '@/lib/constants/shirts';
+import { shirtAvailabilityText } from '@/lib/inventory/availability';
 import {
   createPublicMultiOrderAction,
   generatePublicOrderPixAction,
@@ -484,14 +485,6 @@ function orderItemsLabel(items: OrderLineItem[]) {
     productCount > 0 ? `${productCount} produto${productCount === 1 ? '' : 's'}` : null,
   ].filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join(' · ') : '0 itens';
-}
-
-function shirtAvailabilityText(availableStock: number, enforcePhysicalStock: boolean) {
-  if (!enforcePhysicalStock) return 'Disponivel para encomenda';
-  if (availableStock <= 0) return 'Esgotado';
-  if (availableStock === 1) return 'Resta apenas 1 unidade';
-  if (availableStock <= 5) return `Restam apenas ${availableStock} unidades`;
-  return 'Disponivel';
 }
 
 export function RegistrationWizard({

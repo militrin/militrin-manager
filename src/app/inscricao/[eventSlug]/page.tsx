@@ -210,10 +210,7 @@ export default async function EventRegistrationPage({ params }: { params: Promis
     supabase.rpc('get_event_ticket_categories', { p_event_id: event.id }),
     supabase.from('ticket_category_benefits').select('id, ticket_category_id, name, description, sort_order').order('sort_order', { ascending: true }),
     supabase.rpc('get_event_kit_items', { p_event_id: event.id }),
-    supabase
-      .from('shirt_inventory')
-      .select('shirt_type, shirt_size, total_quantity, reserved_quantity, delivered_quantity')
-      .eq('event_id', event.id),
+    supabase.rpc('get_event_shirt_stock_for_selection', { p_event_id: event.id }),
     supabase.rpc('get_event_payment_methods_setup', { p_event_id: event.id }),
   ]);
 
@@ -297,12 +294,13 @@ export default async function EventRegistrationPage({ params }: { params: Promis
       : [],
   }));
 
-  const inventory = buildShirtInventoryVariants((inventoryData ?? []).map((row) => ({
+  const inventory = buildShirtInventoryVariants(((inventoryData ?? []) as Array<Record<string, unknown>>).map((row) => ({
     shirt_type: String(row.shirt_type),
     shirt_size: String(row.shirt_size),
     total_quantity: Number(row.total_quantity ?? 0),
     reserved_quantity: Number(row.reserved_quantity ?? 0),
     delivered_quantity: Number(row.delivered_quantity ?? 0),
+    available_quantity: Number(row.available_quantity ?? 0),
   })));
 
   const activeKitItems = kitItems.filter((item: { is_active: boolean }) => item.is_active);

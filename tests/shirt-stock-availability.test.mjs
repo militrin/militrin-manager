@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-const { resolveShirtStockAvailability } = await import('../src/lib/inventory/availability.ts');
+const { resolveShirtStockAvailability, availableForNewReservation, shirtAvailabilityText, SHIRT_LOW_STOCK_THRESHOLD } = await import('../src/lib/inventory/availability.ts');
 const { freeToReserveQuantity, shirtDeficitQuantity } = await import('../src/lib/dashboard/operational-shirt-demand.ts');
 
 test('caso A: 70 total, 1 reservada, 0 entregue → físico 70 / livre 69', () => {
@@ -123,4 +123,40 @@ test('modo sob encomenda continua aceitando escolha com saldo <= 0; somente esto
   assert.match(table, /Livre para<br \/>reservar/);
   assert.doesNotMatch(table, /Overbooking/);
   assert.doesNotMatch(table, /Esgotado/);
+  assert.match(wizard, /import \{ shirtAvailabilityText \} from '@\/lib\/inventory\/availability'/);
+  assert.match(emitir, /get_event_shirt_stock_for_selection/);
+});
+
+test('P0 nova reserva: entregue nao volta; reserved legado divergente nao entra na formula', () => {
+  assert.equal(availableForNewReservation(4, 4, 0), 0);
+  assert.equal(availableForNewReservation(3, 1, 2), 0);
+  assert.equal(availableForNewReservation(11, 9, 1), 1);
+  assert.equal(availableForNewReservation(79, 57, 21), 1);
+  assert.equal(availableForNewReservation(4, 4, 99), 0);
+  assert.notEqual(availableForNewReservation(4, 0, 0), 0);
+  assert.equal(availableForNewReservation(4, 0, 0), 4);
+  assert.equal(availableForNewReservation(0, 0, 0), 0);
+});
+
+test('writer: available 0 rejeita; 1 passa uma vez; segunda concorrente rejeita', () => {
+  const state = { total: 1, delivered: 0, reserved: 0, pending: 0 };
+  function tryReserve(qty) {
+    const available = availableForNewReservation(state.total, state.delivered, state.reserved, state.pending);
+    if (available < qty) return false;
+    state.pending += qty;
+    return true;
+  }
+  assert.equal(availableForNewReservation(4, 4, 0, 0), 0);
+  assert.equal(tryReserve(1), true);
+  assert.equal(tryReserve(1), false);
+});
+
+test('select: 0 esgotado, 1 singular, baixo Restam, acima do threshold Disponivel', () => {
+  assert.equal(SHIRT_LOW_STOCK_THRESHOLD, 5);
+  assert.equal(shirtAvailabilityText(0, true), 'Esgotado');
+  assert.equal(shirtAvailabilityText(1, true), 'Resta apenas 1 unidade');
+  assert.equal(shirtAvailabilityText(4, true), 'Restam apenas 4 unidades');
+  assert.equal(shirtAvailabilityText(5, true), 'Restam apenas 5 unidades');
+  assert.equal(shirtAvailabilityText(6, true), 'Disponivel');
+  assert.equal(shirtAvailabilityText(0, false), 'Disponivel para encomenda');
 });
