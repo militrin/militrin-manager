@@ -23,6 +23,7 @@ import { resendSignupConfirmation } from '@/lib/account/resend-signup-confirmati
 import { createServiceRoleSupabaseClient } from '@/lib/supabase/admin';
 import { appBaseUrl } from '@/lib/urls/app-base-url';
 import { cardPaymentReturnUrl } from '@/lib/payments/card-return-url';
+import { checkoutHoldExpiresAtIso } from '@/lib/payments/checkout-hold';
 import { createPasswordRecoveryState, verifyPasswordRecoveryState } from '@/lib/account/password-recovery-state';
 import { publicOrderChargeDescription } from '@/lib/display-reference';
 import { isGatewayChargeUnpersistedError } from '@/lib/payments/gateway-charge-unpersisted';
@@ -2376,7 +2377,7 @@ async function withHydratedCardCheckoutUrl(input: {
       payload: {
         providerPaymentId: input.payment.gateway_payment_id,
         checkoutUrl,
-        expiresAt: input.payment.expires_at ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        expiresAt: input.payment.expires_at ?? checkoutHoldExpiresAtIso(),
         gatewayInstallmentId: input.payment.gateway_installment_id,
         charges: [{
           providerPaymentId: input.payment.gateway_payment_id,

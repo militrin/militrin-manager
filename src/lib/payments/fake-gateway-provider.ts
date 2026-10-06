@@ -12,6 +12,7 @@ import type {
 } from "@/lib/payments/provider";
 import { getHeader } from "@/lib/payments/http-headers";
 import { assertPositiveGatewayAmount } from "@/lib/payments/gateway-amount";
+import { checkoutHoldExpiresAtIso } from "@/lib/payments/checkout-hold";
 
 /**
  * Implementacao "fake" do contrato canonico `PaymentGatewayProvider` (nao
@@ -24,9 +25,17 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
   readonly name = "fake" as const;
 
   private readonly webhookToken: string | null;
+  private readonly getPaymentImpl?: (input: GetPaymentInput) => Promise<GatewayPaymentSnapshot>;
+  private readonly cancelPaymentImpl?: (input: CancelPaymentInput) => Promise<void>;
 
-  constructor(options?: { webhookToken?: string | null }) {
+  constructor(options?: {
+    webhookToken?: string | null;
+    getPayment?: (input: GetPaymentInput) => Promise<GatewayPaymentSnapshot>;
+    cancelPayment?: (input: CancelPaymentInput) => Promise<void>;
+  }) {
     this.webhookToken = options?.webhookToken ?? null;
+    this.getPaymentImpl = options?.getPayment;
+    this.cancelPaymentImpl = options?.cancelPayment;
   }
 
   async createPixPayment(input: CreatePixPaymentInput): Promise<CreatePixPaymentResult> {
@@ -40,7 +49,7 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
       pixQrCodeImage: `data:image/svg+xml;utf8,${encodeURIComponent(
         `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><rect width='100%' height='100%' fill='#0f172a'/><text x='12' y='120' fill='#10b981' font-size='10' font-family='monospace'>${pixCode.slice(0, 28)}</text></svg>`
       )}`,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      expiresAt: checkoutHoldExpiresAtIso(),
     };
   }
 
@@ -61,7 +70,7 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
       providerPaymentId,
       status: "pending",
       checkoutUrl: `https://checkout.invalid/asaas/${providerPaymentId}`,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      expiresAt: checkoutHoldExpiresAtIso(),
       installments,
       gatewayInstallmentId: installments >= 2 ? `inst_${input.orderId}` : null,
       charges,
@@ -69,6 +78,7 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
   }
 
   async getPayment(input: GetPaymentInput): Promise<GatewayPaymentSnapshot> {
+    if (this.getPaymentImpl) return this.getPaymentImpl(input);
     return {
       providerPaymentId: input.providerPaymentId,
       status: "pending",
@@ -80,8 +90,12 @@ export class FakeGatewayProvider implements PaymentGatewayProvider {
     };
   }
 
-  async cancelPayment(_input: CancelPaymentInput): Promise<void> {
-    void _input;
+  async cancelPayment(input: CancelPaymentInput): Promise<void> {
+    if (this.cancelPaymentImpl) {
+      await this.cancelPaymentImpl(input);
+      return;
+    }
+    void input;
   }
 
   async refundPayment(_input: RefundPaymentInput): Promise<void> {

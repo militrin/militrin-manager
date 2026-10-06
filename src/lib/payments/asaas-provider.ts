@@ -11,11 +11,12 @@ import type {
   RefundPaymentInput,
 } from "./provider.ts";
 import { mapAsaasPaymentStatus, mapAsaasWebhookProviderStatus, mapAsaasWebhookToInternalStatus } from "./asaas-status-map.ts";
-import { earlierIsoTimestamp, pixDueDateEndOfDay } from "./pix-due-date.ts";
 import { verifyAsaasWebhookToken } from "./asaas-webhook-token.ts";
 import { ASAAS_REFUND_TIMEOUT_MS, GatewayTimeoutError, isGatewayTimeoutError } from "./gateway-timeout.ts";
 import { assertPositiveGatewayAmount, parseAsaasGatewayAmount } from "./gateway-amount.ts";
 import { GatewayChargeUnpersistedError } from "./gateway-charge-unpersisted.ts";
+import { AsaasApiError, isAsaasPaymentAlreadyDeletedError } from "./asaas-api-error.ts";
+import { checkoutHoldExpiresAtIso } from "./checkout-hold.ts";
 
 export type AsaasEnvironment = "sandbox" | "production";
 
@@ -42,6 +43,7 @@ type AsaasPayment = {
   invoiceUrl?: string | null;
   installment?: string | null;
   installmentNumber?: number | null;
+  deleted?: boolean | null;
 };
 
 const OPEN_CARD_STATUSES = new Set([
@@ -157,7 +159,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
         body && typeof body === "object" && "errors" in (body as Record<string, unknown>)
           ? JSON.stringify((body as Record<string, unknown>).errors)
           : `HTTP ${response.status}`;
-      throw new Error(`Asaas API error (${path}): ${message}`);
+      throw new AsaasApiError(path, response.status, message, body);
     }
 
     return body as T;
@@ -229,7 +231,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       status: mapAsaasPaymentStatus(payment.status),
       pixCode: qrCode.payload,
       pixQrCodeImage: `data:image/png;base64,${qrCode.encodedImage}`,
-      expiresAt: earlierIsoTimestamp(qrCode.expirationDate, pixDueDateEndOfDay(input.dueDate)) ?? pixDueDateEndOfDay(input.dueDate),
+      expiresAt: checkoutHoldExpiresAtIso(),
     };
   }
 
@@ -311,7 +313,7 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       providerPaymentId: payment.id,
       status: mapAsaasPaymentStatus(payment.status),
       checkoutUrl,
-      expiresAt: `${input.dueDate}T23:59:59-03:00`,
+      expiresAt: checkoutHoldExpiresAtIso(),
       installments,
       gatewayInstallmentId: installmentId,
       charges,
@@ -397,6 +399,18 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
 
   async getPayment(input: GetPaymentInput): Promise<GatewayPaymentSnapshot> {
     const payment = await this.request<AsaasPayment>(`/payments/${input.providerPaymentId}`);
+    if (payment.deleted) {
+      return {
+        providerPaymentId: payment.id,
+        status: "cancelled",
+        providerStatus: "DELETED",
+        paidAt: payment.paymentDate,
+        feeAmount: payment.netValue != null ? Number((payment.value - payment.netValue).toFixed(2)) : null,
+        netAmount: payment.netValue,
+        amount: parseAsaasGatewayAmount(payment.value),
+        checkoutUrl: this.invoiceUrlOf(payment) || null,
+      };
+    }
     return {
       providerPaymentId: payment.id,
       status: mapAsaasPaymentStatus(payment.status),
@@ -404,13 +418,19 @@ export class AsaasPaymentProvider implements PaymentGatewayProvider {
       paidAt: payment.paymentDate,
       feeAmount: payment.netValue != null ? Number((payment.value - payment.netValue).toFixed(2)) : null,
       netAmount: payment.netValue,
+      amount: parseAsaasGatewayAmount(payment.value),
       checkoutUrl: this.invoiceUrlOf(payment) || null,
     };
   }
 
   async cancelPayment(input: CancelPaymentInput): Promise<void> {
     void input.reason;
-    await this.request(`/payments/${input.providerPaymentId}`, { method: "DELETE" });
+    try {
+      await this.request(`/payments/${input.providerPaymentId}`, { method: "DELETE" });
+    } catch (error) {
+      if (isAsaasPaymentAlreadyDeletedError(error)) return;
+      throw error;
+    }
   }
 
   async refundPayment(input: RefundPaymentInput): Promise<void> {
